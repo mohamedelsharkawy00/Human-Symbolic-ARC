@@ -1,0 +1,5 @@
+Input NormalizeOrientation[1] Union
+Seeds NormalizeOrientation[1] ExtendTo[3] Foreground Union
+Seeds NormalizeOrientation[1] Foreground Recolor[3] Union
+FlipHorizontal Split[1] TileX[1] Recolor[8] MoveRow[9] Union
+InputFiltered[2] NormalizeOrientation[1] MaskBy[8] MoveRow[9] RestoreOrientation Union

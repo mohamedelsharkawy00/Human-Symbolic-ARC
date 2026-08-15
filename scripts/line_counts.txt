@@ -1,0 +1,234 @@
+1813711    sep1010.20260426T090236.892176.tb7_                 profiling\output\vtune_results\data.0
+440755     007bbfb7.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\logs
+4120       crash_benchmark_2026-03-27_12-28-06_PM.txt          notes
+2766       dicer.db                                            profiling\output\vtune_results\sqlite-db
+2488       output.txt                                          CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline
+2130       cuda_solver.cu                                      src
+1791       cpu_stacks_vtune.csv                                profiling\output
+1244       dsl_executor.hpp                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+1163       solver_executor.hpp                                 include
+1076       solver_executor.hpp                                 CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+843        environment.hpp                                     CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+774        gui.hpp                                             include
+752        environment.hpp                                     include
+666        analyze.py                                          profiling
+662        gui.hpp                                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+534        vulkan_context.hpp                                  include
+527        vulkan_context.hpp                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+515        solver_beam.hpp                                     include
+507        source_lines.csv                                    profiling\output
+392        solver_beam.hpp                                     CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+350        analyze.cpython-313.pyc                             profiling\__pycache__
+350        context_values.cfg                                  profiling\output\vtune_results\config
+330        analyze.py                                          CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\profiling
+273        puzzle_loader.hpp                                   include
+260        fixed_dsl.hpp                                       include
+257        window_manager.hpp                                  include
+252        analysis_type.cfg                                   profiling\output\vtune_results\config
+245        puzzle_loader.hpp                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+242        window_manager.hpp                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+233        line_counts.txt                                     scripts
+218        main.cpp                                            CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\src
+212        cuda_dsl.cuh                                        include
+208        SESSION_HANDOUT.txt                                 notes
+208        main.cpp                                            src
+194        hotspots.txt                                        profiling\output
+128        sound_manager.hpp                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+128        sound_manager.hpp                                   include
+124        vert.glsl                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\src\shaders
+124        claude_session_summary_20260329.txt                 CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+118        vert.glsl                                           src\shaders
+116        logger.hpp                                          CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+107        perfrun-2026.04.26-09h02m36s.17696.log              profiling\output\vtune_results\log
+99         profile.bat                                         scripts
+97         baseline_benchmark_2026-04-20_02-51-52_AM.txt       CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\benchmarks
+97         fastest_benchmark_2026-03-30_12-28-59_PM.txt        notes
+96         backup.py                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\scripts
+96         backup.py                                           scripts
+96         os_utilities.hpp                                    include
+85         make_resources.py                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\scripts
+85         make_resources.py                                   scripts
+84         os_utilities.hpp                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+82         global_app_state.hpp                                include
+78         search_strategies.txt                               CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\3_search
+78         SESSION_SUMMARY.md                                  notes
+78         logger.hpp                                          include
+78         search_strategies.txt                               notes\3_search
+77         let_var_p2_implementation.txt                       notes\2_dsl
+77         let_var_p2_implementation.txt                       CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\2_dsl
+72         observational_equivalence.txt                       notes\3_search
+72         observational_equivalence.txt                       CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\3_search
+70         generation_baking.txt                               notes
+68         CMakeLists.txt                                      .
+68         CMakeLists.txt                                      CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline
+65         dsl_executor.hpp                                    include
+57         global_app_state.hpp                                CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
+56         project_status 06-04-2026.txt                       notes\5_misc
+52         arch_concepts_p1_current.txt                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+52         arch_concepts_p1_current.txt                        notes\1_overall_design
+52         profile_nsys.bat                                    scripts
+51         cuda_lessons.txt                                    notes
+51         project_status 04-04-2026.txt                       notes\5_misc
+47         arch_concepts_p2_future.txt                         CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+47         arch_concepts_p2_future.txt                         notes\1_overall_design
+46         CMakePresets.json                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline
+46         CMakePresets.json                                   .
+46         shark_and_dorr.txt                                  notes\5_misc
+46         shark_and_dorr.txt                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+44         profile.bat                                         CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\profiling
+42         count_lines.ps1                                     scripts
+42         human_bias.txt                                      CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+42         code_explanation_p2.txt                             notes\1_overall_design
+42         code_explanation_p2.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+42         human_bias.txt                                      notes\5_misc
+41         scalar_purge_plan.txt                               notes\5_misc
+41         beam_diversity_fix.txt                              notes\3_search
+41         beam_diversity_fix.txt                              CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\3_search
+39         notes.txt                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+39         notes.txt                                           notes\5_misc
+38         design_decisions.txt                                notes\1_overall_design
+38         design_decisions.txt                                CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+38         threads.csv                                         profiling\output
+37         priors_and_robustness.txt                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+37         priors_and_robustness.txt                           notes\1_overall_design
+36         collection.cfg                                      profiling\output\vtune_results\config
+35         invariance_taxonomy.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\3_search
+35         invariance_taxonomy.txt                             notes\3_search
+33         read_me.txt                                         profiling
+31         contest_hardening_plan.txt                          CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\4_to_do
+31         contest_hardening_plan.txt                          notes\4_to_do
+30         code_explanation_p1.txt                             notes\1_overall_design
+30         code_explanation_p1.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+29         search_dir.cfg                                      profiling\output\vtune_results\config
+27         concise_notes.txt                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+27         concise_notes.txt                                   notes\5_misc
+27         benchmark_plan.txt                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\4_to_do
+27         competition_info.txt                                notes\5_misc
+27         unary_dilemma.txt                                   notes\2_dsl
+27         competition_info.txt                                CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+27         unary_dilemma.txt                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\2_dsl
+27         benchmark_plan.txt                                  notes\4_to_do
+25         runsa.options                                       profiling\output\vtune_results\config
+24         to_do.txt                                           notes
+24         removing_let_var.txt                                notes\2_dsl
+24         log.cfg                                             profiling\output\vtune_results\config
+24         read_me.txt                                         CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\profiling
+24         removing_let_var.txt                                CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\2_dsl
+24         vtune_results.vtune                                 profiling\output\vtune_results
+22         personal_action_items.txt                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+21         interior_color_tradeoff.txt                         notes
+19         regression_benchmark_todo.txt                       notes\4_to_do
+19         regression_benchmark_todo.txt                       CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\4_to_do
+18         rules.txt                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
+18         code_explanation_p3.txt                             notes\1_overall_design
+18         rules.txt                                           notes\5_misc
+18         code_explanation_p3.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
+17         let_var_p1_analysis.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\2_dsl
+17         build.bat                                           scripts
+17         let_var_p1_analysis.txt                             notes\2_dsl
+16         settings.local.json                                 CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\.claude
+16         build.bat                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\scripts
+16         filter_vtune.ps1                                    profiling
+15         implementation_notes_todos.txt                      CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\4_to_do
+15         implementation_notes_todos.txt                      notes\4_to_do
+14         container.metadata                                  profiling\output\vtune_results\sqlite-db\_cache_grouper_data4_dd_thread
+14         to_do.txt                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline
+13         kaggle-mcp-backup.txt                               notes
+12         grouper.metadata                                    profiling\output\vtune_results\sqlite-db
+12         67385a82.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          045e512c.txt                                        solutions
+9          05269061.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          05269061.txt                                        solutions
+9          007bbfb7.txt                                        solutions
+9          00d62c1b.txt                                        solutions
+9          025d127b.txt                                        solutions
+9          017c7c7b.txt                                        solutions
+9          05f2a901.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          045e512c.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          0520fde7.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          007bbfb7.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          08ed6ac7.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+9          06df4c85.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+8          to_do.txt                                           notes\4_to_do
+7          nsys_command.txt                                    profiling
+7          frag.glsl                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\src\shaders
+7          frag.glsl                                           src\shaders
+5          systemcollector-17696-DESKTOP-8FQJR7Q.sc            profiling\output\vtune_results\data.0
+4          count_lines.bat                                     scripts
+4          state.cfg                                           profiling\output\vtune_results\config
+3          mrtehelpers-2026.04.26-09h02m36s.17696.log          profiling\output\vtune_results\log
+2          NVIDIA Nsight Integration - NVIDIA Developer.url    notes\5_misc
+2          cuda_solver.cuh                                     include
+2          directory.xml                                       profiling\output\vtune_results\sqlite-db\timelinedb
+1          arc_logo.svg                                        assets
+1          a5313dff.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          arc_logo.svg                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\assets
+1          current_puzzle.txt                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\current_puzzle
+1          0520fde7.txt                                        solutions
+1          06df4c85.txt                                        solutions
+1          05f2a901.txt                                        solutions
+1          39a8645d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3618c87e.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3af2c5a8.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3aa6fb7a.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          2dc579da.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          28bf18c6.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3345333e.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          2dee498d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          5614dbcf.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          5582e5ca.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          6150a2bd.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          5bd6f4ac.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3cd86f4f.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          3c9b0459.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          5521c0d9.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          445eab21.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          0b148d64.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          09629e4f.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          1caeab9d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          178fcbfb.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          05269061 diagtile.txt                               CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          05269061 alt.txt                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          05269061 std.txt                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          05269061 second sol.txt                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          239be575.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          22168020.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          25ff71a9.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          23b5c85d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          1f85a75f.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          1cf80156.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          2013d3e2.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          1fad071e.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          662c240a.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          ba97ae07.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          b1948b0a.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          c59eb873.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          be94b721.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          a740d043.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          a416b8f3.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          aabf363d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          a87f7484.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          current_puzzle.txt                                  current_puzzle
+1          017c7c7b.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          arc_bitmask.txt                                     notes
+1          00d62c1b.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          e98196ab.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          cf98881b.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          f25fbde4.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          ed36ccf7.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          6fa7a44f.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          72ca375d.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          73251a56.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          6d0aefbc.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          673ef223.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          67a3c6ac.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          68b16354.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          7468f01a.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          9172f3a0.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          8eb1be9a.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          9dfd6313.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          9caf5b84.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          760b3cac.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          74dd1130.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+1          7b7f7511.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions
+0          .norun                                              profiling\output\vtune_results

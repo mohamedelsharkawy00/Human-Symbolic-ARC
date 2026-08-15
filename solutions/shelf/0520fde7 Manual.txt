@@ -1,0 +1,1 @@
+Input Colors Filter[5] Partition SelectColor[0] DeleteSelection Origin IntersectionList Recolor[2] AddColor[0] Union

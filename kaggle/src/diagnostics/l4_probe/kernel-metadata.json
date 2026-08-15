@@ -1,0 +1,16 @@
+{
+ "id": "mohamedelsharkawy0/arc-l4-probe",
+ "title": "ARC L4 Probe",
+ "code_file": "l4-probe.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "enable_internet": true,
+ "dataset_sources": [],
+ "kernel_sources": [],
+ "competition_sources": [],
+ "model_sources": [],
+ "machine_shape": "NvidiaL4"
+}

@@ -1,0 +1,9 @@
+Colors SizeRankColorMap Underlay FlipHorizontal Intersection
+Puzzle: 0520fde7
+Train: Solved
+Test: Solved
+Elapsed: 00:00:17.8635
+Attempts: 4591210
+Nodes: 4
+Best Score: 755.0000
+Max Depth: 6

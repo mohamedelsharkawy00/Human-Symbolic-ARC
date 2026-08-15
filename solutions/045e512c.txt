@@ -1,0 +1,9 @@
+Colors SortBySize[0] Trim ProjectOnSeeds Union
+Puzzle:       045e512c
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:19.0469
+Attempts:     3051289
+Nodes:        6
+Best Score:   6621.0000
+Max Depth:    5

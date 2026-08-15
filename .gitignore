@@ -1,0 +1,9 @@
+dumps/
+logs/
+out/
+settings/
+kaggle/input/
+kaggle/working/
+notes/
+__pycache__/
+*.pyc

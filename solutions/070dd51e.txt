@@ -1,0 +1,9 @@
+Split[2] Bridge Underlay
+Puzzle:       070dd51e
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.1444
+Attempts:     77824
+Nodes:        3
+Best Score:   5234.0000
+Max Depth:    3

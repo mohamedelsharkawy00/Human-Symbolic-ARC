@@ -1,0 +1,6 @@
+Input SelectColor[0] DeleteSelection Split SelectObjectsContainingColor[3] InvertSelection DeleteSelection Filter[1] InteriorColor[1] Outline InteriorColor[3] Union
+Input SelectColor[0] DeleteSelection Split SelectObjectsContainingColor[2] InvertSelection DeleteSelection Filter[1] InteriorColor[1] Outline InteriorColor[2] Union
+Input SelectColor[0] DeleteSelection Split SelectObjectsContainingColor[4] InvertSelection DeleteSelection Filter[1] InteriorColor[1] Outline InteriorColor[4] Union
+Input SelectColor[0] DeleteSelection Split SelectObjectsContainingColor[6] InvertSelection DeleteSelection Filter[1] InteriorColor[1] Outline InteriorColor[6] Union
+Input SelectColor[0] DeleteSelection Split SelectObjectsContainingColor[8] InvertSelection DeleteSelection Filter[1] InteriorColor[1] Outline InteriorColor[8] Union
+Target[0] Underlay

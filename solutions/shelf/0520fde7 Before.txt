@@ -1,0 +1,9 @@
+Input FlipHorizontal Filter[0] AddColor[2] Union InputPalette Intersection Invert Recolor[0] Union
+Puzzle:       0520fde7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:02:17.4519
+Attempts:     73017975
+Nodes:        10
+Best Score:   757.0000
+Max Depth:    10

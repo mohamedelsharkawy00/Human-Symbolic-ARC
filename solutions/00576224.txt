@@ -1,0 +1,9 @@
+Colors UnionList TileY[4] Fractal Underlay Input FlipHorizontal Fractal Underlay
+Puzzle: 00576224
+Train: Solved
+Test: Solved
+Elapsed: 00:00:08.5967
+Attempts: 4376390
+Nodes: 8
+Best Score: 6094.0000
+Max Depth: 8

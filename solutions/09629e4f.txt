@@ -1,0 +1,1 @@
+Colors SelectColor[5] UnionList Partition SelectSmallestObject[0] InvertSelection DeleteSelection Fit Union Input Split[1] SelectColor[5] InvertSelection DeleteSelection Trim Union

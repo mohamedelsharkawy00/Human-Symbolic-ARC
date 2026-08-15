@@ -1,0 +1,9 @@
+Colors AddColor[0] Colors SortBySize[1] MoveToEdge[1] Underlay
+Puzzle: 3618c87e
+Train: Solved
+Test: Solved
+Elapsed: 00:00:03.6983
+Attempts: 1714000
+Nodes: 10
+Best Score: 1571.5000
+Max Depth: 7

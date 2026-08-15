@@ -1,0 +1,9 @@
+Split[0] DiagTile[0] Underlay
+Puzzle:       05269061
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.1189
+Attempts:     83968
+Nodes:        3
+Best Score:   7621.5000
+Max Depth:    3

@@ -1,0 +1,729 @@
+#pragma once
+#include "environment.hpp"   // pulls in inference/infer.hpp: arc::infer(train) -> inference
+#include "inference/log.hpp" // the per-puzzle readout, written after infer()
+#include "global_app_state.hpp"
+#ifdef _MSC_VER
+#include "gui.hpp"        // full GUI/Vulkan rendering
+#else
+#include "gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
+#endif
+#include "logger.hpp"
+
+#include <cctype>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <unordered_set>
+#include <vector>
+
+namespace arc {
+using namespace std;
+
+inline grid parse_grid(const string &str, size_t &pos) {
+  grid grid;
+  memset(grid.data, 0, sizeof(grid.data));
+  size_t start = str.find('[', pos);
+  if (start == string::npos)
+    return grid;
+
+  int depth = 0;
+  size_t end = str.find(']', start);
+  for (size_t i = start; i < str.size(); ++i) {
+    if (str[i] == '[')
+      depth++;
+    else if (str[i] == ']') {
+      depth--;
+      if (depth == 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end == string::npos)
+    return grid;
+
+  pos = end + 1;
+
+  // Parse the grid in place over str[start..end] with an integer accumulator.
+  // No substring copy, no per-cell std::string/stoi: zero heap allocation.
+  bool in_number = false;
+  int num_val = 0;
+  bool num_neg = false;
+  int r = 0;
+  int c = 0;
+  int max_w = 0;
+  int d = 0;
+
+  auto flush_number = [&]() {
+    if (!in_number) return;
+    if (r < MAX_GRID_DIM && c < MAX_GRID_DIM)
+      grid.data[r][c] = num_neg ? -num_val : num_val;
+    c++;
+    num_val = 0;
+    num_neg = false;
+    in_number = false;
+  };
+
+  for (size_t i = start; i <= end; ++i) {
+    char ch = str[i];
+    if (ch == '[') {
+      d++;
+    } else if (ch == ']') {
+      flush_number();
+      if (d == 2) {
+        if (c > max_w)
+          max_w = c;
+        c = 0;
+        r++;
+      }
+      d--;
+    } else if (ch == '-') {
+      num_neg = true;
+      in_number = true;
+    } else if (isdigit((unsigned char)ch)) {
+      num_val = num_val * 10 + (ch - '0');
+      in_number = true;
+    } else {
+      flush_number();
+    }
+  }
+
+  grid.height = r;
+  grid.width = max_w;
+  return grid;
+}
+
+inline void compute_distance_maps(example &ex) {
+  int h = ex.output.height, w = ex.output.width;
+  static constexpr int drs[] = {-1, 1, 0, 0};
+  static constexpr int dcs[] = {0, 0, -1, 1};
+  for (int c = 0; c < (int)arc_color::count; ++c) {
+    // BFS from all cells matching color c — O(W*H) instead of O(W²*H²)
+    // Queue is static thread_local + clear() (not a local): it grows to the
+    // max grid size once and never reallocates again. Do not localize this.
+    static thread_local vector<pair<int,int>> q;
+    q.clear();
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        if (ex.output.data[y][x] == c) {
+          ex.distance_maps[c][y][x] = 0;
+          q.push_back({y, x});
+        } else {
+          ex.distance_maps[c][y][x] = DISTANCE_MAX;
+        }
+      }
+    size_t head = 0;
+    while (head < q.size()) {
+      auto [cy, cx] = q[head++];
+      int nd = ex.distance_maps[c][cy][cx] + 1;
+      for (int i = 0; i < 4; ++i) {
+        int ny = cy + drs[i], nx = cx + dcs[i];
+        if (ny >= 0 && ny < h && nx >= 0 && nx < w && nd < ex.distance_maps[c][ny][nx]) {
+          ex.distance_maps[c][ny][nx] = nd;
+          q.push_back({ny, nx});
+        }
+      }
+    }
+  }
+}
+
+inline void apply_solution(puzzle &task, solver_state &solver_state,
+                           vector<int> &gpu_buffer, const string &sol_str, logger &log) {
+  // Re-import (or import onto a puzzle that loaded with a solved tree) would
+  // otherwise leak the whole prior node subtree.
+  if (task.best_tree) environment::remove(task.best_tree);
+  task.best_tree = environment::parse(sol_str);
+  if (task.best_tree) {
+    task.best_node_count = environment::count_nodes(task.best_tree);
+
+    string tree_str = environment::stringify_tree_via_flat(task.best_tree);
+    auto log_score = [&](int ei, const grid &out, const example &ex, const char *phase) {
+      // For train examples, use the cached per-target CC summaries; tests
+      // aren't precomputed so the CC term is omitted there (it would only
+      // affect diagnostic output, not search behaviour).
+      const object_summary* tobjs = nullptr;
+      int tobj_count = 0;
+      if (ei >= 0 && ei < (int)task.target_objects.size() && strcmp(phase, "import_train") == 0) {
+        tobjs = task.target_objects[ei].objs;
+        tobj_count = task.target_objects[ei].count;
+      }
+      score_breakdown b = environment::analyze_output_score(
+          out, ex, task.best_node_count, tobjs, tobj_count);
+      log.debug(fmt::format(
+          "[SCORE] phase={} tree=\"{}\" ex={} mismatches={} exact_term={:.6f} histogram_error={:.6f} histogram_term={:.6f} "
+          "distance_error={:.6f} distance_term={:.6f} rarity_score={:.6f} rarity_term={:.6f} "
+          "shape_matches={} shape_term={:.6f} color_matches={} color_term={:.6f} "
+          "position_score={:.4f} position_term={:.6f} "
+          "node_penalty={:.6f} dim_penalty={:.6f} "
+          "dims_match={} solved={} "
+          "formula=({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})-({:.6f})-({:.6f})={:.6f} "
+          "total={:.6f}",
+          phase, tree_str, ei,
+          b.mismatches, b.exact_term,
+          b.histogram_error, b.histogram_term,
+          b.distance_error, b.distance_term,
+          b.rarity_score, b.rarity_term,
+          b.shape_matches, b.shape_term, b.color_matches, b.color_term,
+          b.position_score, b.position_term,
+          b.node_penalty,
+          b.dimension_penalty,
+          b.dims_match ? "true" : "false",
+          b.solved ? "true" : "false",
+          b.exact_term, b.histogram_term, b.distance_term, b.rarity_term,
+          b.shape_term, b.color_term, b.position_term,
+          b.node_penalty, b.dimension_penalty, b.total,
+          b.total));
+    };
+
+    // Evaluate and update GPU buffers
+    grid temp;
+    bool all_solved = true;
+    for (int i = 0; i < (int)task.train.size(); ++i) {
+      auto &ex = task.train[i];
+      auto [s, solved] = environment::score_tree_output(
+          task.best_tree, ex, temp, task, task.best_node_count);
+
+      log.debug(fmt::format("Example score: {} (Solved: {})", s, solved ? "YES" : "NO"));
+      log_score(i, temp, ex, "import_train");
+
+      ex.best_score = s;
+      update_display_buffer(ex.best, temp, gpu_buffer);
+      if (!solved)
+        all_solved = false;
+    }
+
+    if (all_solved) {
+      task.is_solved = true;
+      bool test_all_solved = true;
+      for (int i = 0; i < (int)task.test.size(); ++i) {
+        auto &ex = task.test[i];
+        auto [s, solved] = environment::score_tree_output(
+            task.best_tree, ex, temp, task, task.best_node_count);
+        log_score(i, temp, ex, "import_test");
+        ex.best_score = s;
+        update_display_buffer(ex.best, temp, gpu_buffer);
+        ex.output.visible = true;
+        if (!solved) test_all_solved = false;
+      }
+      if (!task.test.empty() && test_all_solved) {
+        task.is_test_solved = true;
+      }
+    }
+  }
+}
+
+// One task pulled out of a big ARC challenges JSON: the task id plus the raw
+// JSON fragment for its object ({"train":[...],"test":[...]}). The fragment is
+// exactly what load_task_from_content() expects, so the solver iterates these
+// in-memory entries the same way it iterated per-task files — no on-disk split.
+struct challenge_task {
+  string id;
+  string content;
+};
+
+// Reads a whole file into a string; empty string means missing or empty file.
+inline string read_whole_file(const string &path) {
+  ifstream f(path, ios::binary | ios::ate);
+  if (!f) return {};
+  streamoff sz = f.tellg();
+  if (sz <= 0) return {};
+  f.seekg(0);
+  string content;
+  content.resize((size_t)sz);
+  f.read(content.data(), sz);
+  return content;
+}
+
+// Walks a top-level JSON object ({"key": value, ...}) whose values open with
+// `open` and close with the matching balanced `close`, calling
+// fn(key, value_start, value_end) with inclusive positions into `content`.
+// Empty keys are skipped (the outer object's own brace, not an entry).
+template <typename Fn>
+inline void for_each_top_level_entry(const string &content, char open, char close, Fn fn) {
+  size_t pos = 0;
+  while (pos < content.size()) {
+    size_t q0 = content.find('"', pos);
+    if (q0 == string::npos) break;
+    size_t q1 = content.find('"', q0 + 1);
+    if (q1 == string::npos) break;
+    string key = content.substr(q0 + 1, q1 - q0 - 1);
+    pos = q1 + 1;
+
+    auto skip_ws = [&]() {
+      while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                                       content[pos] == '\n' || content[pos] == '\r'))
+        ++pos;
+    };
+    skip_ws();
+    if (pos >= content.size() || content[pos] != ':') continue;
+    ++pos;
+    skip_ws();
+    if (pos >= content.size() || content[pos] != open) continue;
+
+    size_t start = pos;
+    int depth = 0;
+    size_t end = string::npos;
+    for (size_t k = start; k < content.size(); ++k) {
+      if (content[k] == open) ++depth;
+      else if (content[k] == close) {
+        if (--depth == 0) { end = k; break; }
+      }
+    }
+    if (end == string::npos) break;
+    pos = end + 1;
+
+    if (!key.empty()) fn(key, start, end);
+  }
+}
+
+// Reads a big ARC challenges JSON ({"task_id": {...}, ...}) and slices it into
+// one challenge_task per top-level task, taking the file as-is. No files are
+// written. Returns the tasks sorted by id (matching the old file-listing order).
+inline vector<challenge_task> load_challenges_json(const string &json_path) {
+  vector<challenge_task> tasks;
+  string content = read_whole_file(json_path);
+
+  for_each_top_level_entry(content, '{', '}', [&](const string &key, size_t start, size_t end) {
+    tasks.push_back({key, content.substr(start, end - start + 1)});
+  });
+
+  std::sort(tasks.begin(), tasks.end(),
+            [](const challenge_task &a, const challenge_task &b) { return a.id < b.id; });
+  return tasks;
+}
+
+// Reads an ARC solutions JSON ({"task_id": [grid, grid, ...], ...}) into a map
+// from task id to its list of ground-truth test-output grids, in order. These
+// answers are absent from the challenges file; load_single_puzzle attaches them
+// to the matching test examples so the test row can be scored / "solved".
+// Returns an empty map if the file is missing (caller treats that as no answers).
+inline map<string, vector<grid>> load_solutions_json(const string &json_path) {
+  map<string, vector<grid>> solutions;
+  string content = read_whole_file(json_path);
+
+  for_each_top_level_entry(content, '[', ']', [&](const string &key, size_t start, size_t end) {
+    // Parse each grid inside the outer array. parse_grid finds the next balanced
+    // [..] from its cursor; starting just inside the outer '[' yields grid0,
+    // grid1, ... in order. Stop once the cursor passes the outer ']'.
+    vector<grid> grids;
+    size_t gpos = start + 1;
+    while (gpos < end) {
+      size_t before = gpos;
+      grid g = parse_grid(content, gpos);
+      if (gpos <= before || g.width == 0) break;  // no more grids
+      grids.push_back(g);
+    }
+    solutions[key] = std::move(grids);
+  });
+
+  return solutions;
+}
+
+inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, grid> &chars, grid &bg_grid) {
+  // Sized for: font atlas + 800x800 bg + 32 preview grids + 32*64 object
+  // preview slots + headroom for the largest puzzle's training data.
+  // Pre-reserve so init never reallocates (no contiguous-block hunts during
+  // startup; pointer stays put once GPU upload begins).
+  gpu_buffer.reserve(32 * 1024 * 1024);
+  load_font_atlas(gpu_buffer, chars);
+  bg_grid.width = 800;
+  bg_grid.height = 800;
+  bg_grid.stride = 800;
+  bg_grid.offset = (int)gpu_buffer.size();
+  gpu_buffer.resize(gpu_buffer.size() + 800 * 800, 11);
+}
+
+// EVERYTHING INFERENCE SAYS, read once and bridged onto the puzzle. Kept out
+// of the load itself because it is the expensive half: a puzzle nobody is
+// looking at and nobody is solving does not need it, and stepping through a
+// thousand puzzles should cost only the parse. Whoever needs the facts asks
+// for them — the pane when it opens, the search before it starts.
+inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
+                              int dataset_flags = 0) {
+    inference inf = infer(task.train);
+    // Background election readout -> puzzle, for GUI display.
+    {
+        auto copy_dir = [](const vector<background_hypotheses::hypothesis>& src,
+                           vector<puzzle::background_readout::cand>& dst) {
+            dst.clear();
+            for (const auto& h : src)
+                dst.push_back({ h.color, h.embeds, h.dominance, h.persists, h.score, h.span, h.gaps, h.underneath });
+        };
+        copy_dir(inf.background.across_inputs,         task.bg.across_inputs);
+        copy_dir(inf.background.across_outputs,        task.bg.across_outputs);
+        copy_dir(inf.background.across_inputs_outputs, task.bg.across_inputs_outputs);
+        task.bg.per_pair = inf.background.per_pair;
+        task.bg.input_elected  = inf.background.input_elected();
+        task.bg.output_elected = inf.background.output_elected();
+        task.bg.per_pair_mode = inf.background.is_per_pair();
+        task.bg.input_vetoed  = inf.background.input_vetoed;
+    }
+    // Everything else infer() read -> puzzle, for the GUI pane.
+    {
+        auto& F = task.facts;
+        F = puzzle::facts_readout{};
+        auto mask = [](const bool set[10]) {
+            uint16_t m = 0;
+            for (int i = 0; i < 10; ++i) if (set[i]) m |= (uint16_t)(1u << i);
+            return m;
+        };
+        F.consumed     = mask(inf.colors.consumed);
+        F.introduced   = mask(inf.colors.introduced);
+        F.preserved    = mask(inf.colors.preserved);
+        F.every_input  = mask(inf.colors.in_every_input);
+        F.every_output = mask(inf.colors.in_every_output);
+        F.every_grid   = mask(inf.colors.in_every_grid);
+        F.any_grid     = mask(inf.colors.in_any_grid);
+        F.unchanged_valid = inf.unchanged.valid;
+        F.min_kept = inf.unchanged.valid ? inf.unchanged.min_kept_fraction : 0.0f;
+        F.diff_valid = inf.color_diff.valid;
+        for (int c = 0; c < 10; ++c) {
+            F.gained[c] = inf.color_diff.gained_count[c];
+            F.lost[c]   = inf.color_diff.lost_count[c];
+        }
+        for (const auto& P : inf.correspondence.pairs)
+            F.pairs.push_back({ (int)P.input_objects.size(), (int)P.output_objects.size(),
+                                P.deleted, P.persisted, P.copied,
+                                P.invented, P.from_one, P.from_many,
+                                P.most_landings, P.most_sources,
+                                P.exact_covered_cells, P.created_cells });
+    }
+    // Object correspondence readout -> puzzle, for GUI display. One line per
+    // edge, center to center: where the object sits on its own side, and where
+    // it landed on the other. A landing with no object there (a positional hit)
+    // wears the source object's own size.
+    // EVERY ranked reading is bridged, not just the winner, so stepping the
+    // coarseness in the GUI is instant instead of a reload.
+    {
+        auto& out = task.correspondence.lines;
+        out.clear();
+        task.correspondence.readings.clear();
+        // EVERY READING IS BRIDGED, and NONE IS READ AGAIN. The election
+        // matched all of them and kept the pieces and edges, so the table is
+        // the election — same numbers, same work, done once.
+        const size_t readings = inf.correspondence.ranked.size();
+        for (size_t rank = 0; rank < readings; ++rank) {
+        // A line names the reading it belongs to by its place in THIS list.
+        const int8_t bridged = (int8_t)task.correspondence.readings.size();
+        const auto& ranked = inf.correspondence.ranked[rank];
+        const auto& read_pairs = inf.correspondence.ranked_pairs[rank];
+        puzzle::correspondence_readout::reading R;
+        R.cut_kind = (int8_t)ranked.cut_kind;
+        R.match_kind = (int8_t)ranked.match_kind.index();
+        for (const auto& P : read_pairs) R.left_over += P.left_over;
+        for (size_t pi = 0; pi < read_pairs.size(); ++pi) {
+            const auto& P = read_pairs[pi];
+            puzzle::correspondence_readout::reading::pair_read pr;
+            pr.how = P.verdict;
+            pr.left_over = P.left_over;
+            const auto& why = P.discard_why;
+            const auto& gone = P.discarded;
+            pr.dropped = (int)why.size();
+            for (size_t d = 0; d < gone.size() && d < why.size(); ++d) {
+                if (why[d] == correspondence_facts::lost_to_chance)             pr.chance++;
+                else if (why[d] == correspondence_facts::cells_already_explained) pr.stale++;
+                else                                                           pr.did_not_fit++;
+                using readout = puzzle::correspondence_readout;
+                // A dropped match names its piece on the side it was read from.
+                const auto& mine = gone[d].from_input ? P.input_objects : P.output_objects;
+                const auto& theirs = gone[d].from_input ? P.output_objects : P.input_objects;
+                const auto& src = mine[gone[d].from];
+                const int lw = gone[d].to >= 0 ? theirs[gone[d].to].width : src.width;
+                const int lh = gone[d].to >= 0 ? theirs[gone[d].to].height : src.height;
+                R.dropped_seen.push_back({ (int8_t)pi, gone[d].from,
+                                           (int8_t)(!gone[d].same_shape ? readout::line::sits_on
+                                                    : gone[d].exact     ? readout::line::exact
+                                                                        : readout::line::recolored),
+                                           why[d], gone[d].hidden,
+                                           src.left, src.top, src.width, src.height,
+                                           gone[d].col, gone[d].row, (int8_t)lw, (int8_t)lh,
+                                           gone[d].from_input });
+            }
+            R.pairs.push_back(pr);
+            // The first line each piece got, so a piece row can point at what
+            // answers it instead of searching for it again. -1 stays -1 for a
+            // piece nothing answers, which is what the row is there to say.
+            // A piece with no line of its own takes the first line whose
+            // landing overlaps its BOX. Only a jump target: what ANSWERS a piece
+            // does, read off the boxes.
+            vector<int16_t> first_input(P.input_objects.size(), (int16_t)-1);
+            vector<int16_t> first_output(P.output_objects.size(), (int16_t)-1);
+            for (const auto& e : P.edges) {
+                // Each end is a box: where the piece sits, and where it landed.
+                // Centers are the box centers, in half cells. WHICH LIST IS
+                // WHICH is the edge's own side, not the reading's.
+                const auto& mine = e.from_input ? P.input_objects : P.output_objects;
+                const auto& theirs = e.from_input ? P.output_objects : P.input_objects;
+                auto& first_mine = e.from_input ? first_input : first_output;
+                auto& first_theirs = e.from_input ? first_output : first_input;
+                const auto& o = mine[e.from];
+                const int8_t w = e.to >= 0 ? theirs[e.to].width : o.width;
+                const int8_t h = e.to >= 0 ? theirs[e.to].height : o.height;
+                const int16_t idx = (int16_t)out.size();
+                // A SITS-ON EDGE ANSWERS NOTHING. It says only which piece this
+                // one overlaps most, drawn for pieces nothing found — so it must
+                // not mark either end as answered, or the piece it was invented
+                // for drops out of UNANSWERED, which is the one place it belongs.
+                if (e.same_shape) {
+                    if (first_mine[e.from] < 0) first_mine[e.from] = idx;
+                    for (size_t j = 0; j < theirs.size(); ++j) {
+                        const auto& t = theirs[j];
+                        if (first_theirs[j] >= 0) continue;
+                        if (t.left >= e.col + w || e.col >= t.left + t.width) continue;
+                        if (t.top >= e.row + h || e.row >= t.top + t.height) continue;
+                        first_theirs[j] = idx;
+                    }
+                }
+                using readout = puzzle::correspondence_readout;
+                const int8_t kind = !e.same_shape ? readout::line::sits_on
+                                  : e.exact       ? readout::line::exact
+                                                  : readout::line::recolored;
+                out.push_back({ (int8_t)pi,
+                                (int16_t)(2 * o.left + o.width), (int16_t)(2 * o.top + o.height),
+                                (int16_t)(2 * e.col + w),  (int16_t)(2 * e.row + h),
+                                bridged,
+                                 o.left, o.top, o.width, o.height,
+                                 e.col, e.row, w, h,
+                                 kind, e.pose, e.hidden, o.color, e.outside,
+                                 e.from_input });
+            }
+            // Every piece the reading cut out, both grids, in the order it cut
+            // them, each pointing at the first line that answers it.
+            for (int side = 0; side < 2; ++side) {
+                const auto& list = side ? P.output_objects : P.input_objects;
+                const auto& first = side ? first_output : first_input;
+                for (size_t oi = 0; oi < list.size(); ++oi) {
+                    const auto& o = list[oi];
+                    // Which set of copies, and which member speaks for it, are
+                    // decided in detect_correspondence where the cells still
+                    // exist — see find_copies. Carried, not recomputed.
+                    R.pieces_seen.push_back({ (int8_t)pi, side == 0, o.color,
+                                              o.left, o.top, o.width, o.height, o.count,
+                                              (int16_t)o.edges_touching, first[oi],
+                                              o.answered,
+                                              o.motif, o.medoid,
+                                              o.blank_left, o.blank_top,
+                                              o.blank_width, o.blank_height,
+                                              o.blank_cells, o.blank_enclosed });
+                }
+            }
+        }
+        // BIGGEST FIRST INSIDE EACH PAIR, both sides together. Each grid is
+        // already cut biggest-first, but listing one grid after another restarts
+        // the run at every side — big, small, big, small. One run per pair reads
+        // straight down, and the pair stays the thing you are looking at.
+        stable_sort(R.pieces_seen.begin(), R.pieces_seen.end(),
+                    [](const auto& a, const auto& b) {
+            if (a.pair != b.pair)   return a.pair < b.pair;
+            if (a.cells != b.cells) return a.cells > b.cells;
+            if (a.from_input != b.from_input) return a.from_input;
+            if (a.y != b.y)         return a.y < b.y;
+            return a.x < b.x;
+        });
+        task.correspondence.readings.push_back(std::move(R));
+        }
+    }
+    // Written once every reading is bridged, so the file can show them all.
+    log_inference(task.id, inf, task.correspondence, idx, count, dataset_flags);
+    task.rule = inf.size;                              // size · across_input_output
+    if (inf.unchanged.valid)                           // unchanged · across_input_output
+        task.kept_cells = inf.unchanged.kept;          // (Identity only; else empty)
+    if (inf.colors.background_color >= 0)              // color · across_inputs
+        task.invariant_colors[inf.colors.background_color] = true;  // (bg only — see CAVEAT)
+    for (int i = 0; i < inf.colors.output_colors_count; ++i)  // color · across_outputs
+        task.output_colors[i] = inf.colors.output_colors[i];
+    task.output_colors_count = inf.colors.output_colors_count;
+    for (int i = 0; i < inf.colors.output_colors_by_size_count; ++i)  // across_outputs, by size
+        task.output_colors_by_size[i] = inf.colors.output_colors_by_size[i];
+    task.output_colors_by_size_count = inf.colors.output_colors_by_size_count;
+    if (inf.shape_color_map.valid) {                  // shape+color · across_input_output
+        for (int i = 0; i < inf.shape_color_map.count; ++i) {
+            task.shape_color_keys[i] = inf.shape_color_map.keys[i];
+            task.shape_color_vals[i] = inf.shape_color_map.colors[i];
+        }
+        task.shape_color_count = inf.shape_color_map.count;
+    }
+    // Dead-op verdicts: an op whose backing inferred fact is absent can only
+    // no-op here, so it leaves the generating pool now, once, not per candidate.
+    task.dead_ops[(int)node_type::SizeRankColorMap]       = (task.output_colors_by_size_count == 0);
+    // The two shape->color ops SHARE one learned table and mean different things
+    // by it: one repaints a body, the other fills a hole. Whichever detector
+    // claimed it, the other op would be reading the wrong semantics, so an
+    // unclaimed op is as dead as an empty table.
+    const auto claimed = inf.shape_color_map.claimed_by;
+    task.dead_ops[(int)node_type::ShapeColorMap] =
+        (task.shape_color_count == 0 || claimed != shape_color_map_rule::body_recolor);
+    task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =
+        (task.shape_color_count == 0 || claimed != shape_color_map_rule::interior_fill);
+    for (int k = 0; k < 45; ++k)                      // color_swap · across_input_output
+        task.color_swap_variants[k] = inf.color_swaps.variant[k];
+    task.color_swap_variants_count = inf.color_swaps.count;
+    task.allowed_colors_count = 0;                    // color-literal pin set:
+    for (int i = 0; i < 10; ++i)                      // union of all train colors
+        if (inf.colors.allowed_color(i)) {
+            task.allowed_colors[i] = true;
+            task.allowed_colors_count++;
+        }
+    task.inferred = true;
+}
+
+// Parse a single task from an in-memory JSON string `content` (which must
+// contain this task's "train"/"test" sections) into `out`, tagging it with
+// `id`. Shared by the per-file loader (load_single_puzzle) and the big
+// challenges-file loader (load_task_from_challenges). Returns true on success.
+inline bool load_task_from_content(const string &content, const string &id,
+                                   puzzle &out, vector<int> &gpu_buffer,
+                                   size_t base_gpu_buffer_size,
+                                   const vector<grid> *test_solutions = nullptr,
+                                   int idx = -1, int count = 0, int dataset_flags = 0,
+                                   bool with_inference = true) {
+  // Truncate the GPU buffer back to the base size to drop any old puzzle data
+  gpu_buffer.resize(base_gpu_buffer_size);
+  // puzzle has a raw node* best_tree; the compiler-generated dtor won't free
+  // it, so we have to release it explicitly before overwriting.
+  if (out.best_tree) environment::remove(out.best_tree);
+  out = puzzle{};
+
+  try {
+    puzzle task;
+    task.id = id;
+
+    if (content.empty()) return false;
+
+    size_t train_start = content.find("\"train\":");
+    size_t test_start = content.find("\"test\":");
+    if (train_start == string::npos || test_start == string::npos) return false;
+
+    auto get_section_end = [&](size_t start) {
+      int depth = 0;
+      bool found_open = false;
+      for (size_t k = start; k < content.size(); ++k) {
+        if (content[k] == '[') {
+          depth++;
+          found_open = true;
+        } else if (content[k] == ']') {
+          depth--;
+        }
+        if (found_open && depth == 0) return k;
+      }
+      return content.size();
+    };
+
+    auto parse_examples = [&](size_t start, size_t end,
+                              vector<example> &out_vec, bool is_train) {
+      size_t csr = start;
+      while (csr < end) {
+        size_t in_pos = content.find("\"input\"", csr);
+        if (in_pos == string::npos || in_pos > end) break;
+
+        grid in_g = parse_grid(content, in_pos);
+        if (in_g.width == 0 || in_g.height == 0) break;
+
+        if (in_g.width > MAX_GRID_DIM || in_g.height > MAX_GRID_DIM) {
+          out_vec.clear();
+          return;
+        }
+        csr = in_pos;
+
+        upload_grid(in_g, gpu_buffer);
+        example ex;
+        ex.input = in_g;
+
+        size_t out_pos = content.find("\"output\"", csr);
+        bool has_output = (out_pos != string::npos && out_pos < end);
+
+        if (has_output) {
+          grid out_g = parse_grid(content, out_pos);
+          csr = out_pos;
+
+          if (out_g.width > 0) {
+            if (out_g.width > MAX_GRID_DIM || out_g.height > MAX_GRID_DIM) {
+              out_vec.clear();
+              return;
+            }
+            upload_grid(out_g, gpu_buffer);
+            ex.output = out_g;
+
+            ex.output.visible = is_train;
+          } else {
+            ex.output.width = 0;
+          }
+        } else {
+          ex.output.width = 0;
+        }
+
+        // Test outputs are absent from the challenges JSON (the answers live in a
+        // separate solutions file). If one was supplied for this test example,
+        // attach it here so it behaves exactly like an inline output: scored,
+        // distance-mapped, and able to light up "TEST SET SOLVED". One solution
+        // grid per test input, in order (out_vec.size() == this example's index).
+        bool has_solution = false;
+        if (!is_train && !has_output && test_solutions &&
+            out_vec.size() < test_solutions->size()) {
+          // Copy before uploading: upload_grid rewrites stride/offset, and the
+          // solutions map is shared/persistent across loads — mutating it would
+          // leave a stale GPU offset behind on the next load of this task.
+          grid sol = (*test_solutions)[out_vec.size()];
+          if (sol.width > 0 && sol.width <= MAX_GRID_DIM && sol.height <= MAX_GRID_DIM) {
+            upload_grid(sol, gpu_buffer);
+            ex.output = sol;
+            ex.output.visible = false;  // hidden like a normal test target
+            has_solution = true;
+          }
+        }
+
+        ex.current = allocate_empty_grid(gpu_buffer);
+        ex.best = allocate_empty_grid(gpu_buffer);
+
+        if (has_output || has_solution) compute_distance_maps(ex);
+
+        out_vec.push_back(ex);
+      }
+    };
+
+    parse_examples(train_start, get_section_end(train_start), task.train, true);
+    parse_examples(test_start, get_section_end(test_start), task.test, false);
+
+    // ── Analysis phase + bridge ──────────────────────────────────────────────
+    // infer() reads every migrated invariant off the examples and returns them
+    // in one `inference` object. The engine's hot path (scoring / DSL / GPU)
+    // still reads the puzzle's own fields, so we BRIDGE: copy inf.* onto the
+    // matching task.* field here, once, at load. This is a temporary contract —
+    // when the root-flip lands (pure types extracted from environment.hpp), the
+    // engine will hold/read the inference object directly and these copies go
+    // away. Until then, every migrated extractor's result reaches the engine
+    // ONLY through a copy below; if you migrate another extractor, add its
+    // bridge line here or the engine silently sees zeros.
+    //
+    // CAVEAT — intentional asymmetry: inf.colors.in_every_input holds the FULL
+    // across-inputs invariant set, but the engine only ever needed the single
+    // dominant background color, so ONLY inf.colors.background_color is bridged.
+    // The full set is computed and kept on the inference object for future use
+    // (invariant-pinning of the search), but nothing consumes it yet — that is
+    // by design, not a missing bridge.
+    if (with_inference) infer_into_puzzle(task, idx, count, dataset_flags);
+    // NOT yet migrated — still computed by the engine directly:
+    environment::detect_target_objects(task);
+    out = std::move(task);
+    return true;
+  } catch (...) {
+  }
+  return false;
+}
+
+// Per-task loader: parses one challenge_task sliced from a big challenges JSON
+// (via load_challenges_json). Thin wrapper over load_task_from_content; no file
+// IO — the JSON was already read once when the whole task set was sliced.
+inline bool load_single_puzzle(const challenge_task &task, puzzle &out,
+                               vector<int> &gpu_buffer,
+                               size_t base_gpu_buffer_size,
+                               const vector<grid> *test_solutions = nullptr,
+                               int idx = -1, int count = 0, int dataset_flags = 0,
+                               bool with_inference = true) {
+  return load_task_from_content(task.content, task.id, out, gpu_buffer,
+                                base_gpu_buffer_size, test_solutions,
+                                idx, count, dataset_flags, with_inference);
+}
+
+}

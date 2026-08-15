@@ -1,0 +1,10 @@
+cd C:\Users\nitro\Desktop\ARC
+
+:: Plain ARC run (no profiler) — stability smoke test before profiling
+out\x64-RelWithDebInfo\ARC.exe
+
+:: Profile ARC until it exits on its own (nsys --duration --kill is unreliable on Windows with CUDA)
+"C:\Program Files\NVIDIA Corporation\Nsight Systems 2024.6.2\target-windows-x64\nsys.exe" profile --delay=5 --trace=cuda --sample=cpu --output=profiling/output/arc_timeline --force-overwrite true out\x64-RelWithDebInfo\ARC.exe
+
+:: Read stats from the capture
+"C:\Program Files\NVIDIA Corporation\Nsight Systems 2024.6.2\target-windows-x64\nsys.exe" stats --force-export=true --report cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum,cuda_gpu_mem_size_sum profiling/output/arc_timeline.nsys-rep

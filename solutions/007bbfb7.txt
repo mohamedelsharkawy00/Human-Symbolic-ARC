@@ -1,0 +1,9 @@
+Colors Fractal AddColor[0] Union
+Puzzle: 007bbfb7
+Train: Solved
+Test: Solved
+Elapsed: 00:00:03.4635
+Attempts: 2042768
+Nodes: 10
+Best Score: 4940.0000
+Max Depth: 5

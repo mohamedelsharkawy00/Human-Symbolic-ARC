@@ -1,0 +1,9 @@
+Input Union Seeds ExtendTo[3] Foreground Union Seeds Foreground Recolor[3] Union FlipHorizontal Split[1] TileX[1] Recolor[8] MoveRow[9] Union InputFiltered[2] MaskBy[8] MoveRow[9] Union
+Puzzle:       05a7bcf2
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:04:43.1268
+Attempts:     27829081
+Nodes:        1000000
+Best Score:   -993525.8125
+Max Depth:    20

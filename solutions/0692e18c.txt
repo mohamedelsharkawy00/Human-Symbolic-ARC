@@ -1,0 +1,1 @@
+Colors SortBySize[1] Trim SelectAll Recolor[0] Fractal Underlay Input ScaleUp[3] Underlay

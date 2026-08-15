@@ -1,0 +1,178 @@
+<title>ARC Color Pair Test</title>
+<style>
+  :root {
+    --bg:#f5f4f0; --panel:#fff; --ink:#1a1c22; --muted:#6b6f7a; --line:#e2e0d8;
+    --accent:#3b6ea5; --yes:#2f9e5f; --no:#d1483b;
+    --shadow:0 1px 2px rgba(20,22,30,.06),0 4px 16px rgba(20,22,30,.05);
+    --cell-line:rgba(128,128,128,.30);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#14151a; --panel:#1c1e26; --ink:#e9eaef; --muted:#9297a4; --line:#2b2e39;
+      --accent:#6ba6de; --yes:#43c07d; --no:#e5645a;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+      --cell-line:rgba(160,160,160,.24);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f5f4f0;--panel:#fff;--ink:#1a1c22;--muted:#6b6f7a;--line:#e2e0d8;--accent:#3b6ea5;--yes:#2f9e5f;--no:#d1483b;--cell-line:rgba(128,128,128,.30);--shadow:0 1px 2px rgba(20,22,30,.06),0 4px 16px rgba(20,22,30,.05);}
+  :root[data-theme="dark"]{--bg:#14151a;--panel:#1c1e26;--ink:#e9eaef;--muted:#9297a4;--line:#2b2e39;--accent:#6ba6de;--yes:#43c07d;--no:#e5645a;--cell-line:rgba(160,160,160,.24);--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);}
+
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; line-height:1.5;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 24px 40px; }
+  h1 { font-size:20px; font-weight:650; letter-spacing:-.01em; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13.5px; margin:0 0 22px; max-width:70ch; }
+  .sub b { color: var(--ink); font-weight:600; }
+
+  .matrix-scroll { overflow-x:auto; padding-bottom:6px; }
+  table.matrix { border-collapse:separate; border-spacing:3px; }
+  table.matrix th {
+    font-size:11px; font-weight:600; color:var(--muted); padding:0;
+    font-variant-numeric:tabular-nums;
+  }
+  table.matrix th.corner { font-size:10px; color:var(--muted); font-weight:600; text-align:right; padding-right:4px; }
+  .hd { display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .hd .sw { width:22px; height:22px; border-radius:4px; border:1px solid var(--cell-line); }
+  .rowhd { display:flex; align-items:center; gap:5px; justify-content:flex-end; }
+  .rowhd .sw { width:22px; height:22px; border-radius:4px; border:1px solid var(--cell-line); }
+  .rowhd .lb { font-size:10px; color:var(--muted); width:12px; text-align:right; }
+
+  td.cell { padding:0; }
+  .pair {
+    position:relative; width:42px; height:42px; border-radius:6px; cursor:pointer;
+    border:2px solid transparent; display:flex; align-items:center; justify-content:center;
+    transition: border-color .1s, transform .06s;
+  }
+  .pair:hover { transform: scale(1.08); }
+  .pair:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .pair .dot { width:16px; height:16px; border-radius:3px; }
+  .pair.diag { cursor:default; opacity:.35; }
+  .pair.yes { border-color: var(--yes); box-shadow: inset 0 0 0 1px var(--yes); }
+  .pair.no  { border-color: var(--no);  box-shadow: inset 0 0 0 1px var(--no); }
+  .pair .verdict {
+    position:absolute; top:-1px; right:1px; font-size:11px; font-weight:800; line-height:1;
+    text-shadow: 0 0 2px rgba(0,0,0,.6), 0 0 2px rgba(0,0,0,.6);
+  }
+  .pair.yes .verdict { color: var(--yes); }
+  .pair.no  .verdict { color: var(--no); }
+
+  .legend { display:flex; gap:16px; align-items:center; margin:14px 0 0; font-size:12.5px; color:var(--muted); }
+  .legend .k { display:inline-flex; align-items:center; gap:6px; }
+  .legend .box { width:14px; height:14px; border-radius:4px; border:2px solid; }
+
+  .tally {
+    position:sticky; bottom:0; margin-top:22px;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    box-shadow:var(--shadow); padding:14px 16px;
+    font-family: ui-monospace,"SF Mono",Menlo,monospace; font-size:12.5px; color:var(--muted); line-height:1.7;
+  }
+  .tally b { color:var(--ink); font-weight:650; }
+  .tally .count { color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>ARC Color Pair Test</h1>
+    <p class="sub">Every color against every other. Each cell shows the <b>column</b> color as a mark sitting on the <b>row</b> color as background. Click a cell to cycle its verdict — does that pairing read right (foreground pops, background recedes)? First click = <b>yes</b>, second = <b>no</b>, third clears it. The diagonal (a color on itself) is skipped.</p>
+  </header>
+
+  <div class="matrix-scroll">
+    <table class="matrix" id="matrix"></table>
+  </div>
+
+  <div class="legend">
+    <span class="k"><span class="box" style="border-color:var(--yes)"></span> yes — reads right</span>
+    <span class="k"><span class="box" style="border-color:var(--no)"></span> no — reads wrong</span>
+    <span class="k">rows = background · columns = foreground mark</span>
+  </div>
+
+  <div id="tally" class="tally"></div>
+</div>
+
+<script>
+  const PALETTE = ["#000000","#1E93FF","#F93C31","#4FCC30","#FFDC00","#999999","#E53AA3","#FF851B","#87D8F1","#921231"];
+  const NAMES = ["black","blue","red","green","yellow","grey","magenta","orange","azure","maroon"];
+  const $ = id => document.getElementById(id);
+
+  // verdict["bg,fg"] = "yes" | "no"   (bg = row background, fg = column mark)
+  const verdict = {};
+
+  function buildMatrix() {
+    const table = $("matrix");
+    // header row
+    const thead = document.createElement("tr");
+    const corner = document.createElement("th");
+    corner.className = "corner"; corner.textContent = "bg ↓  fg →";
+    thead.appendChild(corner);
+    for (let fg = 0; fg < 10; fg++) {
+      const th = document.createElement("th");
+      const hd = document.createElement("div"); hd.className = "hd";
+      const sw = document.createElement("div"); sw.className = "sw"; sw.style.background = PALETTE[fg];
+      const lb = document.createElement("div"); lb.textContent = fg;
+      hd.appendChild(sw); hd.appendChild(lb); th.appendChild(hd);
+      thead.appendChild(th);
+    }
+    table.appendChild(thead);
+
+    for (let bg = 0; bg < 10; bg++) {
+      const tr = document.createElement("tr");
+      const rh = document.createElement("th");
+      const rowhd = document.createElement("div"); rowhd.className = "rowhd";
+      const lb = document.createElement("div"); lb.className = "lb"; lb.textContent = bg;
+      const sw = document.createElement("div"); sw.className = "sw"; sw.style.background = PALETTE[bg];
+      rowhd.appendChild(lb); rowhd.appendChild(sw); rh.appendChild(rowhd);
+      tr.appendChild(rh);
+
+      for (let fg = 0; fg < 10; fg++) {
+        const td = document.createElement("td"); td.className = "cell";
+        const cell = document.createElement("div");
+        cell.className = "pair"; cell.style.background = PALETTE[bg];
+        cell.title = `${NAMES[fg]} on ${NAMES[bg]}`;
+        if (bg === fg) {
+          cell.classList.add("diag");
+        } else {
+          const dot = document.createElement("div"); dot.className = "dot"; dot.style.background = PALETTE[fg];
+          cell.appendChild(dot);
+          const v = document.createElement("div"); v.className = "verdict";
+          cell.appendChild(v);
+          cell.tabIndex = 0;
+          const key = `${bg},${fg}`;
+          const cycle = () => {
+            const cur = verdict[key];
+            const next = cur === undefined ? "yes" : cur === "yes" ? "no" : undefined;
+            if (next === undefined) delete verdict[key]; else verdict[key] = next;
+            cell.classList.toggle("yes", next === "yes");
+            cell.classList.toggle("no", next === "no");
+            v.textContent = next === "yes" ? "✓" : next === "no" ? "✕" : "";
+            updateTally();
+          };
+          cell.addEventListener("click", cycle);
+          cell.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cycle(); } });
+        }
+        td.appendChild(cell);
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+  }
+
+  function updateTally() {
+    const yes = [], no = [];
+    for (const [key, val] of Object.entries(verdict)) {
+      const [bg, fg] = key.split(",").map(Number);
+      (val === "yes" ? yes : no).push(`${fg}on${bg}`);
+    }
+    const total = 90, done = yes.length + no.length;
+    $("tally").innerHTML =
+      `<span class="count">${done}/${total} judged</span> &nbsp;·&nbsp; ` +
+      `<b>yes:</b> ${yes.join(" ") || "—"}<br>` +
+      `<b>no:</b> ${no.join(" ") || "—"}<br>` +
+      `<span style="font-size:11px">format is <b>fgON bg</b> (column-on-row)</span>`;
+  }
+
+  buildMatrix();
+  updateTally();
+</script>

@@ -1,0 +1,1 @@
+Target[0] Union InputPalette Split[1] ShapeToInteriorColorMap Union

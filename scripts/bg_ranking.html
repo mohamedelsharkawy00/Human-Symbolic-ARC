@@ -1,0 +1,131 @@
+<title>ARC Background-ness Ranking</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #000;
+  }
+  .stack { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+  .band {
+    flex: 1; position: relative; display: flex; align-items: center;
+    padding: 0 clamp(16px, 5vw, 64px); cursor: grab;
+    transition: flex-grow .12s ease;
+  }
+  .band.dragging { cursor: grabbing; opacity: .55; }
+  .band.over { box-shadow: inset 0 0 0 3px #fff; }
+  .band .grip {
+    position: absolute; left: clamp(6px, 1.5vw, 18px); top: 50%; transform: translateY(-50%);
+    color: #fff; mix-blend-mode: difference; font-size: clamp(16px, 2.4vh, 24px);
+    letter-spacing: -3px; opacity: .55; pointer-events: none;
+  }
+  .band .tag {
+    display: flex; align-items: baseline; gap: 14px;
+    font-variant-numeric: tabular-nums; mix-blend-mode: difference; color: #fff;
+  }
+  .band .idx { font-size: clamp(20px, 4vh, 44px); font-weight: 800; opacity: .85; width: 1.4em; }
+  .band .name { font-size: clamp(16px, 3vh, 30px); font-weight: 600; letter-spacing: .01em; }
+  .band .hex {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: clamp(11px, 1.6vh, 16px); opacity: .7; letter-spacing: .04em;
+  }
+  .ends {
+    position: fixed; right: clamp(12px, 3vw, 40px); top: 0; height: 100vh;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: clamp(10px, 2vh, 22px) 0; pointer-events: none; z-index: 2;
+  }
+  .ends span {
+    writing-mode: vertical-rl; text-orientation: mixed;
+    font-size: clamp(11px, 1.5vh, 15px); font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: #fff; mix-blend-mode: difference; opacity: .9;
+  }
+  .flip {
+    position: fixed; top: clamp(12px, 2.5vh, 24px); left: 50%; transform: translateX(-50%);
+    z-index: 3; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: rgba(255,255,255,.14); color: #fff; mix-blend-mode: difference;
+    border: 1.5px solid rgba(255,255,255,.5); border-radius: 999px; padding: 8px 18px;
+    backdrop-filter: blur(2px);
+  }
+  .flip:hover { background: rgba(255,255,255,.24); }
+  .flip:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  .bar { position: fixed; top: clamp(12px, 2.5vh, 24px); left: 50%; transform: translateX(-50%);
+         z-index: 3; display: flex; gap: 10px; }
+  .order-readout {
+    position: fixed; bottom: 0; left: 0; width: 100%; z-index: 3;
+    background: rgba(0,0,0,.55); backdrop-filter: blur(3px); color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+    padding: 8px 16px; text-align: center; letter-spacing: .03em;
+  }
+  .order-readout b { color: #ffe14d; }
+</style>
+
+<div class="bar">
+  <button id="flip" class="flip">⇅ Reverse</button>
+  <button id="reset" class="flip">↺ Reset</button>
+</div>
+<div id="stack" class="stack"></div>
+<div class="ends" id="ends">
+  <span id="endTop">← background (recedes)</span>
+  <span id="endBot">foreground (advances) →</span>
+</div>
+<div id="orderReadout" class="order-readout"></div>
+
+<script>
+  // background -> foreground, measured by eye (notes/Human Bias.md).
+  // Two near-ties tie-broken by hand: red more forward than blue, azure than green.
+  const RANK = [0, 9, 5, 6, 1, 2, 7, 3, 8, 4];
+  const PALETTE = ["#000000","#1E93FF","#F93C31","#4FCC30","#FFDC00","#999999","#E53AA3","#FF851B","#87D8F1","#921231"];
+  const NAMES = ["black","blue","red","green","yellow","grey","magenta","orange","azure","maroon"];
+
+  const stack = document.getElementById("stack");
+  let order = [...RANK];   // top -> bottom, live
+  let dragged = null;
+
+  function render() {
+    stack.innerHTML = "";
+    order.forEach(i => {
+      const band = document.createElement("div");
+      band.className = "band"; band.draggable = true; band.dataset.idx = i;
+      band.style.background = PALETTE[i];
+      band.innerHTML =
+        `<span class="grip">⋮⋮</span>` +
+        `<div class="tag">` +
+          `<span class="idx">${i}</span>` +
+          `<span class="name">${NAMES[i]}</span>` +
+          `<span class="hex">${PALETTE[i].toUpperCase()}</span>` +
+        `</div>`;
+
+      band.addEventListener("dragstart", () => { dragged = i; band.classList.add("dragging"); });
+      band.addEventListener("dragend", () => band.classList.remove("dragging"));
+      band.addEventListener("dragover", e => {
+        e.preventDefault();
+        if (dragged === null || dragged === i) return;
+        band.classList.add("over");
+        const from = order.indexOf(dragged), to = order.indexOf(i);
+        const rect = band.getBoundingClientRect();
+        const after = (e.clientY - rect.top) > rect.height / 2;
+        order.splice(from, 1);
+        let dest = order.indexOf(i);
+        order.splice(after ? dest + 1 : dest, 0, dragged);
+        render();
+      });
+      band.addEventListener("dragleave", () => band.classList.remove("over"));
+      band.addEventListener("drop", e => e.preventDefault());
+
+      stack.appendChild(band);
+    });
+
+    document.getElementById("orderReadout").innerHTML =
+      `top → bottom &nbsp; <b>idx:</b> ${order.join(" ")} &nbsp;·&nbsp; ` +
+      order.map(i => NAMES[i]).join(" → ");
+  }
+
+  document.getElementById("flip").addEventListener("click", () => {
+    order.reverse(); render();
+  });
+  document.getElementById("reset").addEventListener("click", () => {
+    order = [...RANK]; render();
+  });
+
+  render();
+</script>

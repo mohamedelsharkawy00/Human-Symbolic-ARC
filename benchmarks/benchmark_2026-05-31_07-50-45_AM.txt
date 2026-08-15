@@ -1,0 +1,1240 @@
+Input, RemoveColor[0], Fractal, FlipHorizontal, AddColor[0], FlipHorizontal, Union
+Puzzle:       007bbfb7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:31.3795
+Attempts:     2647035
+Nodes:        7
+Best Score:   4930.0000
+Max Depth:    7
+
+InputObjects, Colors, InteriorColor[4], Union
+Puzzle:       00d62c1b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:03.1022
+Attempts:     468442
+Nodes:        4
+Best Score:   5454.0000
+Max Depth:    4
+
+Input, TileByInputPattern[1], Filter[0], AddColor[2], Union
+Puzzle:       017c7c7b
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:03.0708
+Attempts:     597924
+Nodes:        5
+Best Score:   636.0000
+Max Depth:    5
+
+Input, DiagTile[0], Union, InputPalette, SlamRow[1], Union
+Puzzle:       025d127b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:03.5155
+Attempts:     630704
+Nodes:        6
+Best Score:   819.0000
+Max Depth:    6
+
+Input, Foreground, Largest[0], ProjectOnSeeds, Union
+Puzzle:       045e512c
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:05.1993
+Attempts:     607424
+Nodes:        5
+Best Score:   6621.0000
+Max Depth:    5
+
+InputObjects, SortBySize[0], Origin, Union, AddColor[2], Tile[2], Union
+Puzzle:       0520fde7
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0081
+Attempts:     4593721
+Nodes:        1000000
+Best Score:   -999871.6250
+Max Depth:    7
+
+InputPalette, DiagTile[0], Union
+Puzzle:       05269061
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:01.3774
+Attempts:     235683
+Nodes:        3
+Best Score:   7621.5000
+Max Depth:    3
+
+InputPalette, UnionL, SlamRow[3], Union, Target[0], Union
+Puzzle:       05f2a901
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0081
+Attempts:     5558781
+Nodes:        1000000
+Best Score:   -999259.3750
+Max Depth:    6
+
+Input, Union, InputPalette, MoveColumn[3], Union, Target[0], MoveRow[3], TurnLeft, Filter[4], ProjectOnSeeds, Union
+Puzzle:       06df4c85
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0136
+Attempts:     2329386
+Nodes:        11
+Best Score:   -1996168.0000
+Max Depth:    11
+
+Input, Split[0], Union, Filter[5], OutputPaletteBySize, Union
+Puzzle:       08ed6ac7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:07.1793
+Attempts:     1238413
+Nodes:        6
+Best Score:   1913.0000
+Max Depth:    6
+
+Input, Skew[-1], Partition, Shift[7], Shift[0], ScaleUp[3], RemoveColor[8], Union
+Puzzle:       09629e4f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0165
+Attempts:     2675599
+Nodes:        8
+Best Score:   -2999116.5000
+Max Depth:    8
+
+InputObjects, MoveColumn[1], SortBySize[1], Union, ExtendOrthogonal[2], Union, Fractal, ScaleDown[6], TileY[9], ExtendOrthogonal[2], Union
+Puzzle:       0962bcdd
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0063
+Attempts:     5588142
+Nodes:        11
+Best Score:   -999354.4375
+Max Depth:    11
+
+InputPalette, Tile[3], TileX[1], Union, Target[0], Union
+Puzzle:       0a938d79
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0111
+Attempts:     4206150
+Nodes:        1000000
+Best Score:   -1998076.0000
+Max Depth:    6
+
+InputPalette, AddColor[0], Shift[0], Union
+Puzzle:       0b148d64
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:04.8806
+Attempts:     445781
+Nodes:        4
+Best Score:   1155.0000
+Max Depth:    4
+
+InputObjects, FlipHorizontal, TurnLeft, InteriorColor[4], Union, ScaleDown[2], Union, OutputColors, Largest[2], TileY[2], Union
+Puzzle:       0ca9ddb6
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0075
+Attempts:     5765687
+Nodes:        11
+Best Score:   -1997828.2500
+Max Depth:    11
+
+Seeds, Union, RemoveColor[6], Recolor[9], Union, Target[0], Target[1], BidiColorMap[20], Union
+Puzzle:       0d3d703e
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0091
+Attempts:     5362746
+Nodes:        1000000
+Best Score:   -1999395.2500
+Max Depth:    9
+
+Input, RemoveColor[0], Fractal, TileX[6], TileY[6], Union
+Puzzle:       0dfd9992
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0209
+Attempts:     1677180
+Nodes:        1000000
+Best Score:   -993795.7500
+Max Depth:    6
+
+Target[0], Union, InputPalette, SnapToAnchors, Union
+Puzzle:       0e206a2e
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:04.2991
+Attempts:     618449
+Nodes:        5
+Best Score:   4740.0000
+Max Depth:    5
+
+Input, Fractal, Union, OutputColors, TileByInputPattern[0], Recolor[8], Union, FlipHorizontal, Union
+Puzzle:       10fcaaa3
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0081
+Attempts:     6742803
+Nodes:        9
+Best Score:   -2997919.0000
+Max Depth:    9
+
+Input, SlamColumn[1], Union, Filter[2], TileByInputPattern[0], ScaleDown[9], TileByInputPattern[1], ProjectOnSeeds, FlipHorizontal, Filter[2], Shift[3], Union, Filter[2], TileY[6], Union
+Puzzle:       11852cab
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0103
+Attempts:     6042273
+Nodes:        15
+Best Score:   -1998198.2500
+Max Depth:    15
+
+Target[0], Skew[-1], ProjectOnSeeds, TurnLeft, Union, TurnRight, Foreground, Union, Shift[6], Union, MoveRow[-1], Union, Shift[6], Union
+Puzzle:       1190bc91
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0068
+Attempts:     4452838
+Nodes:        14
+Best Score:   -1998717.5000
+Max Depth:    14
+
+Input, MoveRow[-9], MoveColumn[27], Union
+Puzzle:       1190e5a7
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0134
+Attempts:     2980480
+Nodes:        1000000
+Best Score:   -999902.0000
+Max Depth:    4
+
+Input, Colors, InteriorColor[-1], MoveRow[1], MoveRow[1], Union, Shift[3], Union
+Puzzle:       11dc524f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0060
+Attempts:     5779072
+Nodes:        8
+Best Score:   -1999400.3750
+Max Depth:    8
+
+InputObjects, DiagTile[0], TileX[1], Union, InputPalette, UnionL, Pattern, Tile[1], Union
+Puzzle:       137eaa0f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0123
+Attempts:     4989426
+Nodes:        1000000
+Best Score:   -998910.3750
+Max Depth:    9
+
+Input, Pattern, Difference, Union, Target[0], Union, FlipHorizontal, Filter[8], TileX[4], Shift[2], Union
+Puzzle:       13f06aa5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0104
+Attempts:     5301084
+Nodes:        11
+Best Score:   -1998510.0000
+Max Depth:    11
+
+Input, Union, OutputColors, Difference, ScaleUp[3], Union, InputPalette, Union
+Puzzle:       1478ab18
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0082
+Attempts:     6064268
+Nodes:        8
+Best Score:   -1998822.8750
+Max Depth:    8
+
+InputObjects, ScaleUp[2], Bridge, ScaleDown[2], RotateToTarget, AddColor[2], Union, Largest[3], MoveColumn[3], Union, MoveRow[-3], Union, OutputColors, Largest[1], Union
+Puzzle:       14b8e18c
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0111
+Attempts:     5898577
+Nodes:        15
+Best Score:   -1998430.7500
+Max Depth:    15
+
+InputObjects, ScaleUp[2], Bridge, ScaleDown[2], RotateToTarget, AddColor[2], Union, Largest[3], MoveColumn[3], Union, MoveRow[-3], Union, OutputColors, Largest[1], Union
+Puzzle:       14b8e18c
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0392
+Attempts:     5898577
+Nodes:        15
+Best Score:   -1998430.7500
+Max Depth:    15
+
+Input, RemoveColor[1], Partition, FlipVertical, Colors, FlipVertical, Union
+Puzzle:       15660dd6
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0132
+Attempts:     2026313
+Nodes:        7
+Best Score:   -998340.0000
+Max Depth:    7
+
+InputObjects, Colors, SlamColumn[27], Union, FlipVertical, Union, RemoveColor[8], Union
+Puzzle:       17829a00
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0180
+Attempts:     2943289
+Nodes:        8
+Best Score:   -999490.1875
+Max Depth:    8
+
+InputPalette, BidiColorMap[2], TileY[5], Union, ScaleDown[3], FlipVertical, Union, InputPalette, Split[0], TileX[1], Union, Target[0], Union
+Puzzle:       178fcbfb
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0031
+Attempts:     6012768
+Nodes:        13
+Best Score:   -1998753.1250
+Max Depth:    13
+
+Target[0], Skew[-1], SlamColumn[-9], ProjectOnSeeds, Union, Filter[8], Union, TurnRight, Union
+Puzzle:       17b866bd
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0198
+Attempts:     2706853
+Nodes:        9
+Best Score:   -999371.3750
+Max Depth:    9
+
+Input, SlamColumn[1], Fractal, RemoveColor[6], InteriorColor[9], Union
+Puzzle:       18286ef8
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0090
+Attempts:     4501528
+Nodes:        6
+Best Score:   -1996591.2500
+Max Depth:    6
+
+InputObjects, FlipVertical, SlamRow[3], Union, AddColor[7], Union, Largest[2], FlipVertical, Union, OutputColors, Union
+Puzzle:       182e5d0f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0097
+Attempts:     4700100
+Nodes:        11
+Best Score:   -1998641.7500
+Max Depth:    11
+
+Input, Tile[0], Union, MoveRow[1], MoveRow[1], FlipHorizontal, TileY[4], MoveColumn[1], Pattern, Union
+Puzzle:       18447a8d
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0093
+Attempts:     4750622
+Nodes:        10
+Best Score:   -1998846.0000
+Max Depth:    10
+
+Input, Union, TurnRight, ExtendDiagonal[2], Skew[-1], Union, Invert, Fit, ExtendDiagonal[2], TileX[9], Union
+Puzzle:       1a07d186
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0125
+Attempts:     5196700
+Nodes:        11
+Best Score:   -1999428.7500
+Max Depth:    11
+
+InputObjects, BidiColorMap[39], Union
+Puzzle:       1a244afd
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0180
+Attempts:     4552481
+Nodes:        3
+Best Score:   -1998371.7500
+Max Depth:    3
+
+InputPalette, OutputPaletteBySize, Union, IntersectL, ScaleDown[2], Union, Target[0], Union
+Puzzle:       1b2d62fb
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0084
+Attempts:     5491452
+Nodes:        1000000
+Best Score:   -2999684.5000
+Max Depth:    8
+
+Input, BidiColorMap[4], MoveRow[9], Union, RemoveColor[6], Fractal, Union
+Puzzle:       1b59e163
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0139
+Attempts:     3240390
+Nodes:        7
+Best Score:   -998701.8125
+Max Depth:    7
+
+
+Puzzle:       1b60fb0c
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:00.0008
+Attempts:     0
+Nodes:        1000000
+Best Score:   -3000000.0000
+Max Depth:    0
+
+Target[0], Union, InputPalette, SlamRow[-1], MoveRow[1], Union
+Puzzle:       1b8318e3
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0108
+Attempts:     4036996
+Nodes:        6
+Best Score:   -1997600.5000
+Max Depth:    6
+
+InputPalette, Invert, Smallest[3], Recolor[2], Union
+Puzzle:       1be83260
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0154
+Attempts:     2036842
+Nodes:        5
+Best Score:   -997816.3750
+Max Depth:    5
+
+
+Puzzle:       1bfc4729
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:00.0007
+Attempts:     0
+Nodes:        1000000
+Best Score:   -2000000.0000
+Max Depth:    0
+
+Seeds, TurnLeft, ScaleDown[4], MoveRow[27], Union
+Puzzle:       1c786137
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0211
+Attempts:     1408147
+Nodes:        5
+Best Score:   -1999077.5000
+Max Depth:    5
+
+Target[0], Union, InputPalette, UnionL, SlamColumn[27], Union
+Puzzle:       1caeab9d
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0081
+Attempts:     4954193
+Nodes:        1000000
+Best Score:   -998805.6250
+Max Depth:    6
+
+InputPalette, AddColor[0], Union
+Puzzle:       1cf80156
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.5308
+Attempts:     70782
+Nodes:        3
+Best Score:   607.0000
+Max Depth:    3
+
+InputObjects, Largest[0], AddColor[8], Union, Seeds, Select[1], Recolor[2], Union
+Puzzle:       1d61978c
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0106
+Attempts:     4581860
+Nodes:        1000000
+Best Score:   2384.0000
+Max Depth:    8
+
+Input, RemoveColor[0], Intersection, SlamColumn[9], Union, Target[0], Union
+Puzzle:       1e0a9b12
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:06.0604
+Attempts:     1027751
+Nodes:        7
+Best Score:   2451.5000
+Max Depth:    7
+
+InputObjects, SortBySize[0], FlipVertical, AddColor[2], Union
+Puzzle:       1e32b0e9
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0109
+Attempts:     4314773
+Nodes:        5
+Best Score:   -1998481.2500
+Max Depth:    5
+
+InputObjects, TurnLeft, InteriorColor[3], Union, SlamRow[1], Union, SlamColumn[27], Union, OutputColors, Union
+Puzzle:       1e5d6875
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0085
+Attempts:     5667968
+Nodes:        10
+Best Score:   -998855.3750
+Max Depth:    10
+
+Input, Union, Seeds, Recolor[4], Union, InputPalette, MoveColumn[-9], SlamColumn[3], Union
+Puzzle:       1efba499
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0089
+Attempts:     4741455
+Nodes:        9
+Best Score:   -1997618.1250
+Max Depth:    9
+
+Target[0], MoveRow[3], Union
+Puzzle:       1f0c79e5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0062
+Attempts:     6892607
+Nodes:        3
+Best Score:   -3000022.2500
+Max Depth:    3
+
+Target[0], MoveRow[3], Union
+Puzzle:       1f0c79e5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0386
+Attempts:     6892838
+Nodes:        3
+Best Score:   -3000022.2500
+Max Depth:    3
+
+InputPalette, AddColor[0], Smallest[0], Union
+Puzzle:       1f85a75f
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:12.1882
+Attempts:     529297
+Nodes:        4
+Best Score:   396.0000
+Max Depth:    4
+
+InputPalette, TileY[1], Skew[1], ProjectOnSeeds, RemoveColor[8], Union, MoveRow[9], Union, Seeds, Union
+Puzzle:       1f876c06
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0149
+Attempts:     4982419
+Nodes:        10
+Best Score:   -1999242.7500
+Max Depth:    10
+
+InputObjects, TileByInputPattern[0], RemoveColor[2], ScaleUp[2], Union
+Puzzle:       1fad071e
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:11.5736
+Attempts:     1381239
+Nodes:        5
+Best Score:   570.0000
+Max Depth:    5
+
+InputObjects, Split[1], Shift[7], Union
+Puzzle:       2013d3e2
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0102
+Attempts:     2888059
+Nodes:        1000000
+Best Score:   1006.6000
+Max Depth:    4
+
+Input, FlipHorizontal, Intersection, TileY[5], Union, MoveColumn[9], Union, Seeds, Union, MoveColumn[9], TileX[4], Union
+Puzzle:       20fb2937
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0094
+Attempts:     4486935
+Nodes:        12
+Best Score:   -998774.5625
+Max Depth:    12
+
+InputObjects, RemoveColor[3], InteriorColor[4], Union
+Puzzle:       2204b7a8
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0095
+Attempts:     5187564
+Nodes:        4
+Best Score:   -1998641.2500
+Max Depth:    4
+
+Input, Foreground, Union, SlamColumn[-3], Union, Target[0], Union
+Puzzle:       22168020
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0092
+Attempts:     5113456
+Nodes:        1000000
+Best Score:   -999463.8750
+Max Depth:    7
+
+InputPalette, SlamRow[1], AddColor[7], TileX[13], TileY[14], Union
+Puzzle:       22208ba4
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0078
+Attempts:     5224075
+Nodes:        6
+Best Score:   -2999032.5000
+Max Depth:    6
+
+InputObjects, TurnLeft, InteriorColor[8], Union, ScaleDown[4], InputPalette, Recolor[8], Shift[7], TurnLeft, InteriorColor[8], Union
+Puzzle:       22233c11
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0081
+Attempts:     5356406
+Nodes:        11
+Best Score:   -1999365.5000
+Max Depth:    11
+
+InputPalette, Split[0], Origin, ScaleDown[6], Union
+Puzzle:       22425bda
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0272
+Attempts:     3205973
+Nodes:        1000000
+Best Score:   -1999474.1250
+Max Depth:    5
+
+OutputColors, MoveRow[-1], MoveRow[-3], ProjectOnSeeds, Union, RemoveColor[9], Tile[1], Recolor[7], Union
+Puzzle:       22806e14
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0091
+Attempts:     4457375
+Nodes:        9
+Best Score:   -1998414.2500
+Max Depth:    9
+
+InputObjects, Select[0], AddColor[2], TileY[2], Union, InputPalette, Union
+Puzzle:       2281f1f4
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0137
+Attempts:     5603157
+Nodes:        7
+Best Score:   -1997251.7500
+Max Depth:    7
+
+Target[0], Union, InputPalette, InteriorColor[0], RemoveColor[3], BidiColorMap[8], Union
+Puzzle:       228f6490
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0070
+Attempts:     4864919
+Nodes:        7
+Best Score:   -1998544.0000
+Max Depth:    7
+
+InputObjects, Intersection, Bridge, Union
+Puzzle:       22eb0ac0
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:03.8125
+Attempts:     584074
+Nodes:        4
+Best Score:   5208.0000
+Max Depth:    4
+
+InputObjects, Union
+Puzzle:       230f2e48
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0050
+Attempts:     5290742
+Nodes:        2
+Best Score:   -1999271.7500
+Max Depth:    2
+
+Input, Split[0], Union, Origin, Split[0], Union, Filter[0], AddColor[8], MoveColumn[1], Union, MoveColumn[-3], Union
+Puzzle:       234bbc79
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0138
+Attempts:     3671080
+Nodes:        12
+Best Score:   -2999606.0000
+Max Depth:    12
+
+Input, Split[0], TurnLeft, InteriorColor[2], Union, OutputPaletteBySize, ExtendOrthogonal[7], Union, IntersectL, OutputPaletteBySize, ExtendOrthogonal[7], Union
+Puzzle:       23581191
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0084
+Attempts:     5792197
+Nodes:        12
+Best Score:   -998747.0000
+Max Depth:    12
+
+InputObjects, RotateToPortrait, ExtendOrthogonal[2], TileY[1], Union
+Puzzle:       239be575
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0492
+Attempts:     929268
+Nodes:        1000000
+Best Score:   465.5000
+Max Depth:    5
+
+
+Puzzle:       23b5c85d
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:00.0040
+Attempts:     0
+Nodes:        1000000
+Best Score:   -5000000.0000
+Max Depth:    0
+
+OutputColors, TileX[1], Partition, TileX[9], Filter[0], Union, Target[7], Union
+Puzzle:       252143c9
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0093
+Attempts:     3741210
+Nodes:        8
+Best Score:   -999736.6250
+Max Depth:    8
+
+Input, Colors, AddColor[3], Union
+Puzzle:       253bf280
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0139
+Attempts:     2445666
+Nodes:        1000000
+Best Score:   -4998042.5000
+Max Depth:    4
+
+
+Puzzle:       25c199f5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:00.0001
+Attempts:     0
+Nodes:        1000000
+Best Score:   -5000000.0000
+Max Depth:    0
+
+OutputColors, InteriorColor[-1], TileY[1], ScaleUp[2], ScaleDown[5], ProjectOnSeeds, TileY[12], Union
+Puzzle:       25d487eb
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0176
+Attempts:     3302058
+Nodes:        1000000
+Best Score:   -999177.5625
+Max Depth:    8
+
+OutputColors, InteriorColor[-1], TileY[1], ScaleUp[2], ScaleDown[5], ProjectOnSeeds, TileY[12], Union
+Puzzle:       25d487eb
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0587
+Attempts:     3302989
+Nodes:        1000000
+Best Score:   -999177.5625
+Max Depth:    8
+
+Input, IntersectL, InputPalette, MoveColumn[-3], MoveColumn[-3], Union, Invert, Smallest[1], Union
+Puzzle:       25e02866
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0073
+Attempts:     2378399
+Nodes:        9
+Best Score:   417.0000
+Max Depth:    9
+
+Target[0], Union, InputPalette, MoveColumn[1], Union
+Puzzle:       25ff71a9
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:03.8677
+Attempts:     503312
+Nodes:        5
+Best Score:   776.0000
+Max Depth:    5
+
+Input, FlipHorizontal, BidiColorMap[41], Union
+Puzzle:       2601afb7
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0204
+Attempts:     3026817
+Nodes:        1000000
+Best Score:   -998370.8125
+Max Depth:    4
+
+InputPalette, FlipHorizontal, ProjectOnSeeds, Union, InputPalette, ScaleDown[4], Union
+Puzzle:       264363fd
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0163
+Attempts:     1642502
+Nodes:        7
+Best Score:   -1998503.6250
+Max Depth:    7
+
+InputObjects, Intersection, AddColor[2], BidiColorMap[1], Union, Largest[4], BidiColorMap[1], Union, InputPalette, InteriorColor[6], Union, Target[2], Union
+Puzzle:       272f95fa
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0033
+Attempts:     3336110
+Nodes:        13
+Best Score:   -998945.1875
+Max Depth:    13
+
+InputObjects, FlipHorizontal, Partition, Union, InputPalette, Invert, Recolor[8], Largest[0], Union
+Puzzle:       278e5215
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0183
+Attempts:     2596968
+Nodes:        9
+Best Score:   -1998781.0000
+Max Depth:    9
+
+Target[3], Union
+Puzzle:       27a28665
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0106
+Attempts:     3028488
+Nodes:        1000000
+Best Score:   -3999564.0000
+Max Depth:    2
+
+InputPalette, AddColor[0], Fractal, Union
+Puzzle:       28bf18c6
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:04.6043
+Attempts:     431672
+Nodes:        4
+Best Score:   612.0000
+Max Depth:    4
+
+Input, Skew[-1], Union, Partition, Intersection
+Puzzle:       28e73c20
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0046
+Attempts:     4113248
+Nodes:        5
+Best Score:   -4000098.2500
+Max Depth:    5
+
+InputObjects, RotateToTarget, AddColor[2], Union, TileY[8], Union, Smallest[1], ScaleUp[3], Union
+Puzzle:       29623171
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0244
+Attempts:     3200433
+Nodes:        9
+Best Score:   -1999380.0000
+Max Depth:    9
+
+InputObjects, MoveColumn[1], ScaleUp[5], MoveRow[1], Union, OutputColors, ProjectOnSeeds, RemoveColor[0], SlamRow[9], Skew[1], ExtendOrthogonal[7], BidiColorMap[25], Union
+Puzzle:       29c11459
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0095
+Attempts:     3712350
+Nodes:        13
+Best Score:   -999414.3750
+Max Depth:    13
+
+Input, Shift[0], Largest[0], MoveColumn[3], Union, TileY[17], RemoveColor[0], Union
+Puzzle:       29ec7d0e
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0190
+Attempts:     1475719
+Nodes:        8
+Best Score:   -2996302.0000
+Max Depth:    8
+
+Input, RemoveColor[4], TurnLeft, DiagTile[1], Union, Filter[7], Intersection
+Puzzle:       2a28add5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0168
+Attempts:     2707128
+Nodes:        7
+Best Score:   -999817.8750
+Max Depth:    7
+
+Input, RemoveColor[4], TurnLeft, DiagTile[1], Union, Filter[7], Intersection
+Puzzle:       2a28add5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0454
+Attempts:     2707352
+Nodes:        7
+Best Score:   -999817.8750
+Max Depth:    7
+
+Input, BidiColorMap[2], RemoveColor[2], Union, Foreground, Shift[3], SlamRow[1], Union
+Puzzle:       2bcee788
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0109
+Attempts:     3750012
+Nodes:        8
+Best Score:   -1999477.0000
+Max Depth:    8
+
+OutputColors, Tile[1], AddColor[0], TileY[2], Union, InputPalette, Union
+Puzzle:       2bee17df
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0148
+Attempts:     3394566
+Nodes:        7
+Best Score:   -1999423.7500
+Max Depth:    7
+
+InputObjects, InputObjects, SlamRow[1], Union, ScaleDown[4], Union, Target[2], TileX[16], Union
+Puzzle:       2c608aff
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0356
+Attempts:     3120351
+Nodes:        9
+Best Score:   -2999222.5000
+Max Depth:    9
+
+InputObjects, TurnRight, Largest[5], ProjectOnSeeds, Union
+Puzzle:       2ccd9fef
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0099
+Attempts:     2900942
+Nodes:        5
+Best Score:   -998020.0625
+Max Depth:    5
+
+Seeds, MoveColumn[27], MoveRow[-3], Union
+Puzzle:       2dc579da
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0018
+Attempts:     2595730
+Nodes:        1000000
+Best Score:   -999645.3125
+Max Depth:    4
+
+Input, InteriorColor[-1], Union, ScaleDown[5], BidiColorMap[2], Shift[4], Union, Shift[4], Union, ScaleDown[5], BidiColorMap[2], Union
+Puzzle:       2dd70a9a
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0187
+Attempts:     3432307
+Nodes:        12
+Best Score:   -1998319.2500
+Max Depth:    12
+
+
+Puzzle:       
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0446
+Attempts:     3432554
+Nodes:        1000000
+Best Score:   0.0000
+Max Depth:    0
+
+InputObjects, Union
+Puzzle:       2dee498d
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.0386
+Attempts:     1996
+Nodes:        2
+Best Score:   2325.5000
+Max Depth:    2
+
+Input, Colors, InteriorColor[4], Union
+Puzzle:       2e65ae53
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0245
+Attempts:     1700294
+Nodes:        4
+Best Score:   -996627.3750
+Max Depth:    4
+
+InputObjects, Union, FlipHorizontal, ScaleUp[4], Partition, Colors, InteriorColor[-1], Union
+Puzzle:       2f767503
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0265
+Attempts:     2908341
+Nodes:        8
+Best Score:   -995138.2500
+Max Depth:    8
+
+InputObjects, InteriorColor[-1], SlamColumn[1], Union, Pattern, Foreground, Union, MoveRow[-3], FlipVertical, TurnRight, TileY[4], Union
+Puzzle:       2faf500b
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0093
+Attempts:     3291049
+Nodes:        12
+Best Score:   -1999364.3750
+Max Depth:    12
+
+InputObjects, FlipVertical, Union, Input, ScaleDown[5], Union
+Puzzle:       305b1341
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0192
+Attempts:     1578538
+Nodes:        6
+Best Score:   -1997166.8750
+Max Depth:    6
+
+Input, Union, TurnLeft, TileY[6], MoveRow[-1], Union
+Puzzle:       30f42897
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0073
+Attempts:     3708850
+Nodes:        1000000
+Best Score:   -999258.3750
+Max Depth:    6
+
+Input, ScaleUp[5], TurnRight, TurnRight, MoveColumn[-1], Union, Input, Filter[6], Union
+Puzzle:       31aa019c
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0103
+Attempts:     3208396
+Nodes:        9
+Best Score:   -1999711.3750
+Max Depth:    9
+
+InputObjects, InteriorColor[-1], TileX[18], BidiColorMap[10], Union, Seeds, Recolor[2], TileX[18], BidiColorMap[10], Union
+Puzzle:       320afe60
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0174
+Attempts:     2508261
+Nodes:        10
+Best Score:   -1998799.2500
+Max Depth:    10
+
+
+Puzzle:       321b1fc6
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:00.0003
+Attempts:     0
+Nodes:        1000000
+Best Score:   -2000000.0000
+Max Depth:    0
+
+InputPalette, Union, Foreground, AddColor[3], Union, Target[0], Union, Input
+Puzzle:       32597951
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:32.2893
+Attempts:     2223226
+Nodes:        8
+Best Score:   8360.0000
+Max Depth:    8
+
+Target[0], ScaleDown[2], TileByInputPattern[0], Union
+Puzzle:       33067df9
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0132
+Attempts:     3162547
+Nodes:        4
+Best Score:   -3000304.5000
+Max Depth:    4
+
+Seeds, MoveColumn[1], Union, MoveColumn[-9], UnionL, AddColor[9], BidiColorMap[15], Union, Target[1], Union
+Puzzle:       332202d5
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0088
+Attempts:     2862032
+Nodes:        10
+Best Score:   -1998080.2500
+Max Depth:    10
+
+Target[0], Union, InputPalette, Largest[0], Union, FlipHorizontal, RemoveColor[3], Union
+Puzzle:       3345333e
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:13.8113
+Attempts:     1251185
+Nodes:        8
+Best Score:   876.0000
+Max Depth:    8
+
+InputObjects, Union, Filter[5], TileX[5], Union
+Puzzle:       337b420f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0089
+Attempts:     3573210
+Nodes:        5
+Best Score:   -2999141.2500
+Max Depth:    5
+
+InputObjects, Union, Filter[5], TileX[5], Union
+Puzzle:       337b420f
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0397
+Attempts:     3573432
+Nodes:        5
+Best Score:   -2999141.2500
+Max Depth:    5
+
+InputObjects, Intersection, SlamColumn[-1], Union
+Puzzle:       342ae2ed
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0205
+Attempts:     2659704
+Nodes:        4
+Best Score:   -1999337.8750
+Max Depth:    4
+
+Input, Union, MoveColumn[-1], MoveColumn[-1], Union
+Puzzle:       342dd610
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0194
+Attempts:     3138085
+Nodes:        1000000
+Best Score:   -1999140.7500
+Max Depth:    5
+
+Input, RemoveColor[4], TileX[16], TileY[8], SlamColumn[1], Union, InteriorColor[8], Union
+Puzzle:       34cfa167
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0108
+Attempts:     1994123
+Nodes:        8
+Best Score:   -997973.1875
+Max Depth:    8
+
+Input, Union, Seeds, TileY[2], Union, ScaleDown[2], Recolor[0], Union
+Puzzle:       3618c87e
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:20.6378
+Attempts:     2260169
+Nodes:        8
+Best Score:   1608.5000
+Max Depth:    8
+
+Input, Union, TurnLeft, FlipVertical, RemoveColor[9], Union
+Puzzle:       3631a71a
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0087
+Attempts:     804059
+Nodes:        6
+Best Score:   -2993069.7500
+Max Depth:    6
+
+Input, RemoveColor[1], TileX[7], Union, MoveColumn[3], MoveRow[-3], Union
+Puzzle:       363442ee
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0254
+Attempts:     3168039
+Nodes:        7
+Best Score:   -1997836.7500
+Max Depth:    7
+
+Seeds, ProjectOnSeeds, Tile[3], Union, SlamColumn[3], TileY[8], Union
+Puzzle:       36d67576
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0335
+Attempts:     1493795
+Nodes:        7
+Best Score:   -1997612.6250
+Max Depth:    7
+
+InputObjects, SortBySize[0], AddColor[0], Union, ScaleDown[5], Union
+Puzzle:       36fdfd69
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0142
+Attempts:     1210098
+Nodes:        6
+Best Score:   -1998071.0000
+Max Depth:    6
+
+OutputColors, ScaleDown[2], Shift[6], ProjectOnSeeds, Union
+Puzzle:       37ce87bb
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.0244
+Attempts:     1487964
+Nodes:        5
+Best Score:   -1999237.2500
+Max Depth:    5
+
+Input, RemoveColor[0], SlamColumn[-27], AddColor[0], Union
+Puzzle:       3906de3d
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:33.2849
+Attempts:     1200510
+Nodes:        5
+Best Score:   2145.0000
+Max Depth:    5
+
+Input, Union, Seeds, TileX[3], Union, InputPalette, Union
+Puzzle:       396d80d7
+Train:        Timeout
+Test:         N/A
+Elapsed:      00:00:40.1595
+Attempts:     1060792
+Nodes:        7
+Best Score:   -998421.3125
+Max Depth:    7
+

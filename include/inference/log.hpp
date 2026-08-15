@@ -1,0 +1,317 @@
+// log.hpp — the per-puzzle readout.
+// Design story in notes/1 - Overall Design/Inference Master.md
+//
+// Last in the family: it reads every fact and writes none.
+
+#pragma once
+#include "inference/infer.hpp"
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <ostream>
+#include <string>
+#include <vector>
+
+namespace arc {
+using namespace std;
+
+// Dump EVERYTHING infer() read off the puzzle into logs/inference/<id>.txt
+// (one file per puzzle, rewritten on each load, so a walk across puzzles
+// keeps every reading). Called by puzzle_loader after infer(), so infer()
+// stays pure. Skipped headless, same reason as logger.hpp: Kaggle disk quota.
+//
+// ONE FUNCTION PER SECTION, in the order they land in the file, so the section
+// a question is about is the only one that has to be read.
+#ifdef _MSC_VER
+
+// A color set as digits: "0,3,4", or "-" for none.
+inline string colorset(const bool member[10]) {
+    string listed;
+    for (int color = 0; color < 10; ++color)
+        if (member[color]) {
+            if (!listed.empty()) listed += ',';
+            listed += (char)('0' + color);
+        }
+    return listed.empty() ? string("-") : listed;
+}
+
+// Say what the cut DOES, not what it is called. The words live once, in
+// correspondence.hpp beside the cuts themselves — see split_names.
+inline const char* split_name(int cut_kind) { return split_names[cut_kind]; }
+
+// Which grid an edge starts on. A reading holds both, so this is per edge.
+inline const char* edge_side(const correspondence_facts::edge& edge) {
+    return edge.from_input ? "in->out" : "out->in";
+}
+
+// What kind of edge it is, in the order the claim weakens.
+inline const char* edge_kind(const correspondence_facts::edge& edge) {
+    return !edge.same_shape ? "  sits on" : edge.exact ? "  exact" : "  recolored";
+}
+
+// Idx/count/flags mirror the UI header: 1-based zero-padded index over the
+// loaded count, and the dataset chips (TRN/EVL/TST from the DS_* flags).
+inline void report_header(ostream& report, const string& id,
+                          int idx, int count, int dataset_flags) {
+    report << "puzzle " << id;
+    if (idx >= 0 && count > 0) {
+        string position = to_string(idx + 1), total = to_string(count);
+        report << "  "
+          << string(total.size() - min(total.size(), position.size()), '0')
+          << position << '/' << total;
+    }
+    if (dataset_flags) {
+        report << "  ";
+        bool first = true;
+        for (auto [flag, chip] : {pair{1, "TRN"}, {2, "EVL"}, {4, "TST"}}) {
+            if (!(dataset_flags & flag)) continue;
+            if (!first) report << '+';
+            report << chip;
+            first = false;
+        }
+    }
+    report << "\n\n";
+}
+
+inline void report_dims(ostream& report, const output_dimension_rule& size) {
+    report << "[dims]\n";
+    report << "rule " << (int)size.Chosen << "\n\n";
+}
+
+inline void report_colors(ostream& report, const color_facts& colors) {
+    report << "[colors]\n";
+    report << "consumed " << colorset(colors.consumed)
+      << "  introduced " << colorset(colors.introduced)
+      << "  preserved " << colorset(colors.preserved) << "\n";
+    report << "every_input " << colorset(colors.in_every_input)
+      << "  any_input " << colorset(colors.in_any_input)
+      << "  every_output " << colorset(colors.in_every_output)
+      << "  any_output " << colorset(colors.in_any_output) << "\n";
+    report << "every_grid " << colorset(colors.in_every_grid)
+      << "  any_grid " << colorset(colors.in_any_grid)
+      << "  background " << (int)colors.background_color << "\n";
+    report << "output_colors ";
+    for (int i = 0; i < colors.output_colors_count; ++i)
+        report << (int)colors.output_colors[i];
+    report << "  by_size ";
+    for (int i = 0; i < colors.output_colors_by_size_count; ++i)
+        report << (int)colors.output_colors_by_size[i];
+    report << "\n\n";
+}
+
+inline void report_background(ostream& report, const background_hypotheses& background) {
+    report << "[background] input=" << (int)background.input_elected()
+      << "  output=" << (int)background.output_elected()
+      << (background.is_per_pair() ? "  MODE=PER-PAIR" : "") << "\n "
+      << " across_inputs=" << (int)background_hypotheses::top(background.across_inputs)
+      << " across_outputs=" << (int)background_hypotheses::top(background.across_outputs)
+      << " across_inputs_outputs=" << (int)background_hypotheses::top(background.across_inputs_outputs)
+      << "  per_pair";
+    for (int8_t color : background.per_pair) report << ' ' << (int)color;
+    report << "\n";
+    auto dump = [&](const char* name, const vector<background_hypotheses::hypothesis>& ranked) {
+        report << "  " << name << " (color embeds dom persists SCORE span gaps under):\n";
+        for (const auto& candidate : ranked)
+            report << "    " << (int)candidate.color << "  " << candidate.embeds << "  "
+              << candidate.dominance << "  " << candidate.persists
+              << "  " << candidate.score << "  " << candidate.span
+              << "  " << candidate.gaps << "  " << candidate.underneath << "\n";
+    };
+    dump("across_inputs", background.across_inputs);
+    dump("across_outputs", background.across_outputs);
+    dump("across_inputs_outputs", background.across_inputs_outputs);
+    report << "\n";
+}
+
+inline void report_color_swaps(ostream& report, const color_swap_rule& swaps) {
+    report << "[color_swaps] count " << swaps.count << "\n";
+    int variant = 0;
+    for (int first = 0; first < 10; ++first)
+        for (int second = first + 1; second < 10; ++second, ++variant)
+            if (swaps.variant[variant])
+                report << "swap " << first << "<->" << second << "\n";
+    report << "\n";
+}
+
+inline void report_shape_color_map(ostream& report, const shape_color_map_rule& rule) {
+    static const char* claimed_name[] = { "nobody", "body_recolor", "interior_fill" };
+    report << "[shape_color_map] valid " << rule.valid
+      << " count " << rule.count
+      << " claimed_by " << claimed_name[rule.claimed_by] << "\n";
+    for (int i = 0; i < rule.count; ++i)
+        report << "shape " << rule.keys[i]
+          << " -> color " << (int)rule.colors[i] << "\n";
+    report << "\n";
+}
+
+inline void report_unchanged(ostream& report, const unchanged_cells_facts& unchanged) {
+    report << "[unchanged] valid " << unchanged.valid;
+    if (unchanged.valid) {
+        report << "  min_kept " << unchanged.min_kept_fraction << "  per_pair";
+        for (float kept : unchanged.kept_fraction) report << ' ' << kept;
+    }
+    report << "\n\n";
+}
+
+inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
+    report << "[color_diff] valid " << diff.valid << "\n";
+    if (diff.valid)
+        for (int color = 0; color < 10; ++color)
+            if (diff.gained_count[color] || diff.lost_count[color])
+                report << "color " << color
+                  << "  gained " << diff.gained_count[color]
+                  << "  lost " << diff.lost_count[color] << "\n";
+    report << "\n";
+}
+
+// The election's own numbers, so a tie is readable as a tie. BOX CELLS is what
+// the pieces' own boxes cover — two readings can tie on pieces and left over
+// and still differ here.
+inline void report_correspondence_readings(ostream& report, const correspondence_facts& correspondence) {
+    report << "[correspondence] valid " << correspondence.valid
+      << "  split " << split_name((int)correspondence.cut_kind) << "\n";
+    // Which readings were actually in the election. Everything else below was
+    // run for the table and never competed — see pick_split.
+    report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
+              " competed and are shown only so the table can be read\n";
+    for (size_t i = 0; i < correspondence.ranked.size(); ++i) {
+        const auto& reading = correspondence.ranked[i];
+        report << "  reading " << i
+          << "  says it in " << (int)(reading.describe_cost * 100.0 + 0.5)
+          << "% of plain  cut into " << reading.pieces_found;
+        report << ", used " << reading.pieces_used
+          << " (" << reading.exact << " exact, " << reading.recolored << " recolored, "
+          << reading.sits_on << " sits on), " << reading.left_over
+          << " left over, boxes cover " << reading.box_cells << " cells";
+        if (!reading.pieces_can_fit) report << "  (no piece fits the other grid)";
+        report << "   " << split_name((int)reading.cut_kind)
+          << "  [" << reading.match_kind.label() << "]";
+        report << (i == 0 ? "   ELECTED\n" : "\n");
+    }
+}
+
+// WHAT EACH READING ACTUALLY CUT AND WHERE EACH PIECE WENT, every reading, both
+// sides. The numbers above can agree while the cuts disagree, and only the
+// pieces say how; and a reading that leaves a cell over is only readable next
+// to the edges it did draw. `seen` is the GUI's bridged readout — templated so
+// this file keeps knowing nothing about its types.
+template <class Readout>
+inline void report_pieces_seen(ostream& report, const Readout& seen) {
+    for (size_t i = 0; i < seen.readings.size(); ++i) {
+        report << "  reading " << i << " pieces   "
+          << split_name(seen.readings[i].cut_kind)
+          << "  [" << match_mode::from_index(seen.readings[i].match_kind).label()
+          << "]\n";
+        for (const auto& seen_piece : seen.readings[i].pieces_seen)
+            report << "    pair " << (int)seen_piece.pair << ' ' << (seen_piece.from_input ? "in " : "out")
+              << "  color " << (int)seen_piece.color
+              << " at " << (int)seen_piece.x << ',' << (int)seen_piece.y
+              << ' ' << (int)seen_piece.w << 'x' << (int)seen_piece.h
+              << " px " << seen_piece.cells << " edges " << seen_piece.edges << "\n";
+        for (const auto& line : seen.lines) {
+            if (line.rank != (int8_t)i) continue;
+            report << "    pair " << (int)line.pair
+              << "  " << (int)line.from_w << 'x' << (int)line.from_h
+              << " at " << (int)line.from_x << ',' << (int)line.from_y
+              << " -> " << (int)line.to_w << 'x' << (int)line.to_h
+              << " at " << (int)line.to_x << ',' << (int)line.to_y;
+            if (line.hidden) report << ", " << (int)line.hidden << " hidden";
+            if (line.outside) report << ", " << (int)line.outside << " off grid";
+            report << "\n";
+        }
+    }
+}
+
+// One pair's pieces on both sides, then every edge, then what was found and
+// thrown away — a missing line is only readable next to the reason it is
+// missing.
+inline void report_one_pair(ostream& report, size_t pair_index,
+                            const correspondence_facts::pair_info& pair) {
+    report << "pair " << pair_index
+      << "  in_objects " << pair.input_objects.size()
+      << "  out_objects " << pair.output_objects.size()
+      << "  class " << pair.most_sources << '-' << pair.most_landings
+      << "  went nowhere " << pair.deleted << " one " << pair.persisted
+      << " many " << pair.copied
+      << "  came from nothing " << pair.invented << " one " << pair.from_one
+      << " many " << pair.from_many
+      << "  exact " << pair.found_exact << " recolored " << pair.found_recolored
+      << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
+      << " turned " << pair.turned << " dropped " << pair.dropped
+      << "  left_over " << pair.left_over
+      << "  carried_cells " << pair.exact_covered_cells
+      << "  created_cells " << pair.created_cells << "\n";
+    for (size_t i = 0; i < pair.input_objects.size(); ++i) {
+        const auto& piece = pair.input_objects[i];
+        report << "  in[" << i << "] color " << (int)piece.color
+          << " at " << (int)piece.left << ',' << (int)piece.top
+          << " " << (int)piece.width << 'x' << (int)piece.height
+          << " px " << piece.count << " shape " << piece.shape
+          << " edges " << piece.edges_touching << "\n";
+    }
+    for (size_t i = 0; i < pair.output_objects.size(); ++i) {
+        const auto& landing = pair.output_objects[i];
+        report << "  out[" << i << "] color " << (int)landing.color
+          << " at " << (int)landing.left << ',' << (int)landing.top
+          << " " << (int)landing.width << 'x' << (int)landing.height
+          << " px " << landing.count << " shape " << landing.shape
+          << " edges " << landing.edges_touching << "\n";
+    }
+    static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };
+    report << "  edges " << pair.edges.size() << ", "
+      << how_name[pair.verdict] << "\n";
+    for (const auto& edge : pair.edges) {
+        report << "  " << edge_side(edge) << " [" << (int)edge.from << "] -> ";
+        if (edge.to >= 0) report << '[' << (int)edge.to << ']';
+        else              report << "place";
+        report << " at " << (int)edge.col << ',' << (int)edge.row << edge_kind(edge);
+        if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
+        if (edge.recolored_to >= 0) report << " -> " << (int)edge.recolored_to;
+        // Which way round it was sitting: turned, and/or mirrored
+        if (edge.pose) {
+            report << "  ";
+            if (edge.pose & 1) report << "turned ";
+            if (edge.pose & 2) report << "flipped_rows ";
+            if (edge.pose & 4) report << "flipped_cols";
+        }
+        report << "\n";
+    }
+
+    for (size_t i = 0; i < pair.discarded.size(); ++i) {
+        const auto& edge = pair.discarded[i];
+        report << "  dropped " << edge_side(edge) << " [" << (int)edge.from
+          << "] at " << (int)edge.col << ','
+          << (int)edge.row << edge_kind(edge)
+          << "  " << correspondence_facts::refusal_names[pair.discard_why[i]] << "\n";
+    }
+}
+
+#endif
+
+template <class Readout>
+inline void log_inference(const string& id, const inference& inf, const Readout& seen,
+                          int idx = -1, int count = 0, int dataset_flags = 0) {
+#ifdef _MSC_VER
+    static once_flag dir_flag;
+    call_once(dir_flag, [] { filesystem::create_directories("logs/inference"); });
+    ofstream report("logs/inference/" + (id.empty() ? "unknown" : id) + ".txt", ios::trunc);
+    if (!report.is_open()) return;
+
+    report_header(report, id, idx, count, dataset_flags);
+    report_dims(report, inf.size);
+    report_colors(report, inf.colors);
+    report_background(report, inf.background);
+    report_color_swaps(report, inf.color_swaps);
+    report_shape_color_map(report, inf.shape_color_map);
+    report_unchanged(report, inf.unchanged);
+    report_color_diff(report, inf.color_diff);
+    report_correspondence_readings(report, inf.correspondence);
+    report_pieces_seen(report, seen);
+    for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)
+        report_one_pair(report, i, inf.correspondence.pairs[i]);
+#endif
+}
+
+}  // namespace arc

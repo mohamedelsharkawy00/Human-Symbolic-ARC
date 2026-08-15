@@ -1,0 +1,1 @@
+Colors SortBySize[1] Split SelectObjectsWithHoles[1] Recolor[1] SelectAll InvertSelection SelectObjectsWithHoles[2] Recolor[3] SelectAll InvertSelection SelectObjectsWithHoles[3] Recolor[2] SelectAll InvertSelection SelectObjectsWithHoles[4] Recolor[4] Union

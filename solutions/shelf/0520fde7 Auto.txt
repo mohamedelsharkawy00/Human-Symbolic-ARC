@@ -1,0 +1,9 @@
+InputObjects TileByInputPattern[0] Filter[0] Split[1] AddColor[2] Union MoveColumn[3] Union
+Puzzle:       0520fde7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:47.7106
+Attempts:     21725445
+Nodes:        8
+Best Score:   763.0000
+Max Depth:    8
