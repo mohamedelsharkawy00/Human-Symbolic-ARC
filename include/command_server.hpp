@@ -1,7 +1,8 @@
 #pragma once
 // Local control port: lets a script (or Claude) drive the GUI over TCP.
-// Protocol: connect to 127.0.0.1:2026, send one command line, receive one
-// reply line ("ok ..." or "error ..."), connection closes. Pure transport:
+// Protocol: connect to 127.0.0.1:<port>, send one command line, receive one
+// reply line ("ok ..." or "error ..."), connection closes. The first app takes
+// 2026 and each later one the next free port up. Pure transport:
 // what commands mean is decided by the handler wired up in main().
 // winsock2.h must precede windows.h, so include this header before the
 // other Win32 headers.
@@ -25,33 +26,55 @@ public:
   // Takes the command line, returns the reply line.
   using handler = function<string(const string &)>;
 
-  inline bool init(unsigned short port, handler h) {
+  // Takes the first port to try. A second app walks upward to the next free one,
+  // so two instances never fight over 2026.
+  inline bool init(unsigned short first_port, handler h) {
     m_handler = move(h);
     filesystem::create_directories("logs");
-    // Fresh receipts each launch: the log records this session, not history.
-    m_log.open("logs/commands.txt", ios::trunc);
 
     WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return fail("WSAStartup failed");
-    m_listen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (m_listen == INVALID_SOCKET) return fail("socket() failed");
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+      open_log(first_port);
+      return fail("WSAStartup failed");
+    }
 
-    // Local-only: bind to the loopback address so nothing off-machine can connect.
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    // ::bind is the socket call; plain bind would find std::bind here.
-    if (::bind(m_listen, (sockaddr *)&addr, (int)sizeof(addr)) == SOCKET_ERROR)
-      return fail(fmt::format("bind to port {} failed (in use?)", port));
-    if (listen(m_listen, SOMAXCONN) == SOCKET_ERROR) return fail("listen() failed");
+    for (int port = first_port; port < first_port + port_scan && port < 65536; ++port) {
+      m_listen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      if (m_listen == INVALID_SOCKET) {
+        open_log(first_port);
+        return fail("socket() failed");
+      }
 
-    // Non-blocking accept: the frame-loop poll costs nothing when nobody connects.
-    u_long nonblock = 1;
-    ioctlsocket(m_listen, FIONBIO, &nonblock);
-    log_line(fmt::format("listening on 127.0.0.1:{}", port));
-    return true;
+      // Local-only: bind to the loopback address so nothing off-machine can connect.
+      sockaddr_in addr{};
+      addr.sin_family = AF_INET;
+      addr.sin_port = htons((unsigned short)port);
+      addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      // ::bind is the socket call; plain bind would find std::bind here.
+      // A taken port is the expected case with a second app, not an error.
+      if (::bind(m_listen, (sockaddr *)&addr, (int)sizeof(addr)) == SOCKET_ERROR ||
+          listen(m_listen, SOMAXCONN) == SOCKET_ERROR) {
+        closesocket(m_listen);
+        m_listen = INVALID_SOCKET;
+        continue;
+      }
+
+      m_port = (unsigned short)port;
+      // Non-blocking accept: the frame-loop poll costs nothing when nobody connects.
+      u_long nonblock = 1;
+      ioctlsocket(m_listen, FIONBIO, &nonblock);
+      open_log(m_port);
+      log_line(fmt::format("listening on 127.0.0.1:{}", m_port));
+      return true;
+    }
+
+    open_log(first_port);
+    return fail(fmt::format("no free port in {}..{}", first_port,
+                            first_port + port_scan - 1));
   }
+
+  // Which port this app actually got, so callers can report it.
+  inline unsigned short port() const { return m_port; }
 
   // Called once per frame on the main thread; serves at most one command.
   inline void poll() {
@@ -86,9 +109,20 @@ public:
   }
 
 private:
+  // How many ports to try before giving up, counting from the one asked for.
+  static constexpr int port_scan = 10;
+
   SOCKET m_listen = INVALID_SOCKET;
+  unsigned short m_port = 0;
   handler m_handler;
   ofstream m_log;
+
+  // One receipt file per port: a second app must not overwrite the first's
+  // record. Fresh each launch, so the log is this session, not history.
+  inline void open_log(unsigned short port) {
+    if (m_log.is_open()) return;
+    m_log.open(fmt::format("logs/commands_{}.txt", port), ios::trunc);
+  }
 
   // Read up to the first newline (or timeout/limit); trims trailing \r\n.
   inline string read_line(SOCKET s) {

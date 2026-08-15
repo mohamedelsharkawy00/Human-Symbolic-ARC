@@ -78,8 +78,15 @@ int main() {
 
 	// Command port: one line in, one line out. Vocabulary is the ui_action
 	// names, plus "state" (read where the app is) and "puzzle <id>" (jump).
+	// --port N says where to start looking; the server walks up from there, so a
+	// second app never fights the first for 2026.
+	unsigned short first_port = 2026;
+	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--port "))
+		if (int given = _wtoi(arg + 7); given > 0 && given < 65536)
+			first_port = (unsigned short)given;
+
 	command_server cmd_server;
-	cmd_server.init(2026, [&](const string &line) -> string {
+	cmd_server.init(first_port, [&](const string &line) -> string {
 		if (line == "state") {
 			auto &st = solver.get_solver_state();
 			int idx = st.puzzle_idx.load();

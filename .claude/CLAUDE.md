@@ -50,14 +50,16 @@
 15. The standards above are a result of the user being lazy-smart.
 
 # 3. Command Port
-1. The GUI app listens on `127.0.0.1:2026`, one TCP connection per command: connect, send one line, read one reply line (`ok ...` or `error ...`), app closes.
+1. The GUI app listens on `127.0.0.1:<port>`, one TCP connection per command: connect, send one line, read one reply line (`ok ...` or `error ...`), app closes.
+   1. The first app takes 2026 and each later one the next free port up, so two apps never fight, `--port N` says where to start looking.
+   2. Which port an app got is the `listening on` line in its own receipt log.
 2. Vocabulary: every `ui_action` name (spellings in `include/global_app_state.hpp`), plus `state` (read-only status) and `puzzle <id>` (jump by id).
 3. Look before acting: `state` returns `id idx paused benchmarking solved elapsed`.
 4. Puzzle jumps land asynchronously, poll `state` until the id changes.
 5. The solver runs only while unpaused (`toggle_pause`), and auto-pauses on solve.
 6. "Connection refused" means the app is not running, start `out\x64-Release\ARC.exe` with repo root as working directory, pass `--minimized` so the window starts minimized and never steals the user's screen, the agent drives blind through the port anyway.
    1. Minimize is sticky, it saves to `settings/settings.txt` and restores next launch, the user un-minimizes by clicking the taskbar icon.
-7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands.txt`, the trustworthy record, cleared on each app launch.
+7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands_<port>.txt`, the trustworthy record, one file per app, cleared on each app launch.
 8. GUI build only, compiled out of the Kaggle/headless build.
 
 # 4. Thinking
