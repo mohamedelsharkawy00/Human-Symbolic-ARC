@@ -54,6 +54,12 @@ int main() {
 	}
 #endif
 
+	// Claim the folder before anything is built or written, so a second app
+	// stops here instead of overwriting this one's solutions and settings.
+#ifdef _MSC_VER
+	claim_folder_or_exit();
+#endif
+
 	// Core State & Logic
 	global_app_state app_state;
 	beam_solver solver(app_state);

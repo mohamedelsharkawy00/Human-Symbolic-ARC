@@ -2,11 +2,40 @@
 #include <cstdint>
 #include <cstdlib>  // getenv_s / strtoul for ARC_WS_MAX_GB / ARC_COMMIT_GB
 #include <filesystem>
+#include <fstream>
 #include <windows.h>
 #undef TRANSPARENT  // conflicts with environment.hpp sentinel
 // OS specific window and power management helpers
 
 namespace arc {
+
+// One app per folder. The port is the only thing an app keeps to itself, so a
+// second app here would overwrite this one's solutions, settings and logs.
+// The claim is a file handle nobody else may share, released by the operating
+// system even on a crash or an end task, so it can never be left stuck.
+inline void claim_folder_or_exit() {
+  std::filesystem::create_directories("logs");
+  static HANDLE claim = CreateFileW(L"logs\\app.lock", GENERIC_WRITE, 0, nullptr,
+                                    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (claim != INVALID_HANDLE_VALUE) return;
+
+  const wchar_t *why =
+      L"Another app is already running in this folder.\n\n"
+      L"It would overwrite this one's solutions, settings and logs, so only one "
+      L"runs per folder.\n\n"
+      L"To work alongside it, open a worktree:\n"
+      L"    git worktree add -b <branch> ..\\ARC-<name>\n\n"
+      L"then build and run there instead.";
+  // Minimized means an agent is driving blind, and a dialog nobody can click
+  // would hang forever, so leave the reason in the log and go.
+  if (!wcsstr(GetCommandLineW(), L"--minimized"))
+    MessageBoxW(nullptr, why, L"ARC is already running here", MB_OK | MB_ICONWARNING);
+  if (std::ofstream note("logs/refused_to_start.txt", std::ios::trunc); note)
+    note << "another app is already running in this folder, only one runs per "
+            "folder because they share solutions, settings and logs\n"
+            "open a worktree instead: git worktree add -b <branch> ..\\ARC-<name>\n";
+  ExitProcess(1);
+}
 
 inline void enter_fullscreen(HWND hwnd, int w, int h) {
   DEVMODE dm_screen_settings;

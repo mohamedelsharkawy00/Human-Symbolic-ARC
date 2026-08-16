@@ -83,6 +83,13 @@ Read `README.md` first, it is the home for everything about the project itself.
 6. Ports are machine-wide, not per folder, so apps from different worktrees still walk up from 2026.
 7. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset slug and `scripts\kaggle_push.py` refuses from anywhere else.
 8. Share work between worktrees by committing, never by reaching into the other folder.
+9. A worktree branch is an ordinary branch, nothing about it is lesser. The only difference is where the files sit: switching branches swaps the files in one folder, a worktree gives a second folder so two branches are open at once.
+   1. That is exactly why this project needs them, switching would swap files out from under a running app and a half finished build.
+10. Work done in a worktree lives on its branch until it is merged back, and merging happens in the folder receiving the work.
+    1. The worktree session catches up FIRST, `git merge main` in its own folder, and resolves conflicts there, whoever caused the divergence resolves it.
+    2. Then the main session runs `git merge <branch>`, which is trivial after that.
+    3. Conflicts are git stopping to make someone choose, that is the collision surfacing loudly instead of one side silently winning.
+11. Nothing has to be merged. Exploratory work is thrown away with `git worktree remove` and `git branch -D <branch>`, and main never knows.
 
 # 5. Thinking
 1. Truth first and foremost, Claude defaults truth-last, fluent before checked. It must not.
