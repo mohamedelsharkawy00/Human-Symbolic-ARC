@@ -68,7 +68,7 @@ Read `README.md` first, it is the home for everything about the project itself.
 # 4. Worktrees
 1. Look before settling in, nothing announces another session, so ask the two things that already know.
    1. `git worktree list` names every folder open on this repo, more than one means someone else is set up.
-   2. A reply on `127.0.0.1:2026` means an app is already running, so a session is live even if only one folder exists.
+   2. Send `state` to `127.0.0.1:2026`, an `ok ...` line back means an app is already running, so a session is live even if only one folder exists, and "connection refused" means none is.
    3. `git status` in a folder someone else is using shows their uncommitted work, that folder is taken.
 2. If either check says the main tree is busy, work in a worktree instead, `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
 3. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
