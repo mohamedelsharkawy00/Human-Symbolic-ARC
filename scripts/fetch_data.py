@@ -37,14 +37,56 @@ Usage:
 import argparse, io, json, os, sys, urllib.request, zipfile
 
 ARCHIVE = "https://github.com/arcprize/ARC-AGI-2/archive/refs/heads/main.zip"
+# Latest commit that touched the puzzles, so a README edit never reads as new data.
+LATEST_DATA_COMMIT = ("https://api.github.com/repos/arcprize/ARC-AGI-2/commits"
+                      "?path=data&per_page=1")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUT = os.path.join(ROOT, "kaggle", "input", "competitions",
                            "arc-prize-2026-arc-agi-2")
+# Records which upstream commit the local puzzles came from, so --check can tell
+# "we are behind" from "we are current" without downloading anything.
+STAMP_NAME = ".fetched_from.json"
 
 # How many training tasks stand in for the hidden test set, and the grid Kaggle
 # uses as a placeholder answer in the sample submission.
 TEST_STAND_IN = 240
 PLACEHOLDER_GRID = [[0, 0], [0, 0]]
+
+
+def upstream_commit():
+    """Return (sha, date) of the newest commit touching the puzzle data."""
+    request = urllib.request.Request(LATEST_DATA_COMMIT,
+                                     headers={"User-Agent": "arc-fetch-data"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        newest = json.load(response)[0]
+    return newest["sha"], newest["commit"]["author"]["date"]
+
+
+def read_stamp(directory):
+    try:
+        with open(os.path.join(directory, STAMP_NAME)) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def check(directory):
+    """Say whether upstream moved since we fetched. Never changes anything."""
+    stamp = read_stamp(directory)
+    if stamp is None:
+        print("[*] No fetch stamp; run scripts/fetch_data.py to record one.")
+        return
+    try:
+        sha, date = upstream_commit()
+    except Exception:
+        # Offline or rate-limited is not news. Stay quiet so builds are not noisy.
+        return
+    if sha == stamp.get("sha"):
+        return
+    print(f"[!] Puzzle data upstream changed on {date[:10]} "
+          f"(local copy is from {stamp.get('date', '?')[:10]}).")
+    print("[!] Run: python scripts/fetch_data.py   -- deliberately, since")
+    print("[!] benchmark numbers before and after are not comparable.")
 
 
 def download_tasks():
@@ -91,9 +133,15 @@ def write_json(directory, name, payload):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=DEFAULT_OUT)
+    parser.add_argument("--check", action="store_true",
+                        help="report whether upstream moved; change nothing")
     args = parser.parse_args()
-    os.makedirs(args.out, exist_ok=True)
 
+    if args.check:
+        check(args.out)
+        return
+
+    os.makedirs(args.out, exist_ok=True)
     splits = download_tasks()
     if not splits["training"] or not splits["evaluation"]:
         sys.exit("error: the archive held no task files; did the layout change?")
@@ -113,6 +161,15 @@ def main():
                {task_id: [{"attempt_1": PLACEHOLDER_GRID, "attempt_2": PLACEHOLDER_GRID}
                           for _ in training_challenges[task_id]["test"]]
                 for task_id in stand_in_ids})
+
+    # Record where this came from, so --check can compare without downloading.
+    try:
+        sha, date = upstream_commit()
+        with open(os.path.join(args.out, STAMP_NAME), "w") as handle:
+            json.dump({"sha": sha, "date": date}, handle, indent=2)
+        print(f"[*] Fetched from commit {sha[:7]} ({date[:10]})")
+    except Exception as problem:
+        print(f"[!] Could not record the source commit: {problem}")
 
     print(f"[*] Done -> {args.out}")
 

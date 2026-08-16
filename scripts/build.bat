@@ -33,6 +33,20 @@ exit /b %BUILD_STATUS%
 set "BUILD_RAN=1"
 set "BUILD_STATUS=0"
 
+:: The repo ships no puzzles (the rules forbid redistributing them), so fetch
+:: them the first time and never again. One file answers "is the data here"; a
+:: fetch that fails is reported and the build carries on, since a machine with
+:: no internet can still want a binary.
+if not exist "kaggle\input\competitions\arc-prize-2026-arc-agi-2\arc-agi_training_challenges.json" (
+    echo Puzzle data missing. Fetching it once...
+    python "scripts\fetch_data.py"
+    if errorlevel 1 echo [!] Fetch failed. Run "python scripts\fetch_data.py" once you are online.
+) else (
+    :: Only reports; updating stays a deliberate act because changing the data
+    :: makes benchmark numbers before and after incomparable. Silent offline.
+    python "scripts\fetch_data.py" --check
+)
+
 :: Ensure MSVC environment if not already present
 if not defined DevEnvDir (
     call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul
