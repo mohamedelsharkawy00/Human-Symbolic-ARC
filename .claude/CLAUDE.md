@@ -53,6 +53,8 @@ Read `README.md` first, it is the home for everything about the project itself.
 1. The GUI app listens on `127.0.0.1:<port>`, one TCP connection per command: connect, send one line, read one reply line (`ok ...` or `error ...`), app closes.
    1. The first app takes 2026 and each later one the next free port up, so two apps never fight, `--port N` says where to start looking.
    2. Which port an app got is the `listening on` line in its own receipt log.
+   3. ONE APP PER FOLDER. The port is the only thing an app keeps to itself, everything it writes is per folder, so a second app in the same folder overwrites the first: `solutions/<id>.txt`, `logs/<id>.txt`, `logs/inference/<id>.txt`, `logs/solver.txt`, `settings/settings.txt`, `kaggle/working/submission.json`. Solutions are the ground truth record, so this loses the most valuable thing here.
+   4. The port walk is therefore for apps in DIFFERENT worktrees, not for two in one.
 2. Vocabulary: every `ui_action` name (spellings in `include/global_app_state.hpp`), plus `state` (read-only status) and `puzzle <id>` (jump by id).
 3. Look before acting: `state` returns `id idx paused benchmarking solved elapsed`.
 4. Puzzle jumps land asynchronously, poll `state` until the id changes.
@@ -60,6 +62,7 @@ Read `README.md` first, it is the home for everything about the project itself.
 6. "Connection refused" means the app is not running, start `out\x64-Release\ARC.exe` with repo root as working directory, pass `--minimized` so the window starts minimized and never steals the user's screen, the agent drives blind through the port anyway.
    1. Minimize is sticky, it saves to `settings/settings.txt` and restores next launch, the user un-minimizes by clicking the taskbar icon.
 7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands_<port>.txt`, the trustworthy record, one file per app, cleared on each app launch.
+   1. A log ending in `stopped` means the app closed cleanly, a log that simply ends means it was killed or crashed, end task cannot announce itself so its absence is the tell.
 8. The command port is GUI build only, the headless Kaggle build has none.
 9. `state` ends with `gpu_used=<percent>`, and the receipt log opens with how much of the card is already taken plus whether a sibling app got 2026 first.
    1. Two idle apps sit at about 17% of 6140 MB, that is the baseline, well above it means the card is shared with something.
