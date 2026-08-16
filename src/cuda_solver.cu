@@ -13,6 +13,18 @@ void pinned_buffer_free(void* ptr) {
     if (ptr) cudaFreeHost(ptr);
 }
 
+gpu_memory read_gpu_memory() {
+    gpu_memory status;
+    size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes == 0)
+        return status;
+    status.free_mb = free_bytes / (1024ull * 1024ull);
+    status.total_mb = total_bytes / (1024ull * 1024ull);
+    status.used_mb = status.total_mb - status.free_mb;
+    status.used_percent = (int)((status.used_mb * 100ull) / status.total_mb);
+    return status;
+}
+
 bool cuda_init() {
     int device_count = 0;
     cudaError_t err = cudaGetDeviceCount(&device_count);

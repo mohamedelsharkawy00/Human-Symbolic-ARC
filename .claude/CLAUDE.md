@@ -61,8 +61,21 @@ Read `README.md` first, it is the home for everything about the project itself.
    1. Minimize is sticky, it saves to `settings/settings.txt` and restores next launch, the user un-minimizes by clicking the taskbar icon.
 7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands_<port>.txt`, the trustworthy record, one file per app, cleared on each app launch.
 8. The command port is GUI build only, the headless Kaggle build has none.
+9. `state` ends with `gpu_used=<percent>`, and the receipt log opens with how much of the card is already taken plus whether a sibling app got 2026 first.
+   1. Two idle apps sit at about 17% of 6140 MB, that is the baseline, well above it means the card is shared with something.
+   2. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
 
-# 4. Thinking
+# 4. Worktrees
+1. A second session works in its own folder made by `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
+2. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
+   1. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.
+3. Everything mutable is already per folder: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, and the backup pool.
+4. The first build in a new worktree fetches its own puzzles, so nothing needs copying or linking by hand.
+5. Ports are machine-wide, not per folder, so apps from different worktrees still walk up from 2026.
+6. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset slug and `scripts\kaggle_push.py` refuses from anywhere else.
+7. Share work between worktrees by committing, never by reaching into the other folder.
+
+# 5. Thinking
 1. Truth first and foremost, Claude defaults truth-last, fluent before checked. It must not.
 2. Verify before asserting, flag guesses as guesses.
 3. If Claude is not sure, it should say so.

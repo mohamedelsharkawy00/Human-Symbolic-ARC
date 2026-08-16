@@ -76,6 +76,9 @@ public:
   // Which port this app actually got, so callers can report it.
   inline unsigned short port() const { return m_port; }
 
+  // Put a line of our own in the receipt log, next to the commands.
+  inline void note(const string &msg) { log_line(msg); }
+
   // Called once per frame on the main thread; serves at most one command.
   inline void poll() {
     if (m_listen == INVALID_SOCKET) return;

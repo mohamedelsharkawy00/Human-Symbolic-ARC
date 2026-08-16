@@ -92,11 +92,14 @@ int main() {
 			int idx = st.puzzle_idx.load();
 			bool solved = idx >= 0 && idx < solver.get_puzzle_count() &&
 			              solver.get_puzzle(idx).is_solved;
+			// gpu_used says whether the card is shared right now, so nobody reads
+			// a contended run as a regression.
+			gpu_memory gpu = read_gpu_memory();
 			return fmt::format(
-				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={}",
+				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}%",
 				solver.current_puzzle_id(), idx, solver.get_puzzle_count(),
 				(bool)app_state.is_paused, (bool)app_state.is_benchmarking,
-				solved, format_elapsed(get_elapsed(app_state, st)));
+				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent);
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);
@@ -109,6 +112,17 @@ int main() {
 			}
 		return "error unknown command " + line;
 	});
+
+	// Say once, at startup, how busy the card already is and whether a sibling
+	// app took 2026 before us. Both mean this run shares the GPU, and a shared
+	// run is not comparable to one that had the card to itself.
+	{
+		gpu_memory gpu = read_gpu_memory();
+		cmd_server.note(fmt::format(
+			"gpu {} MB of {} MB in use ({}%){}", gpu.used_mb, gpu.total_mb,
+			gpu.used_percent,
+			cmd_server.port() != 2026 ? ", another app already holds 2026" : ""));
+	}
 #endif
 
 	// Data Buffers & Solver Setup
