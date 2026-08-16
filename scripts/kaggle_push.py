@@ -19,6 +19,13 @@ import argparse, json, os, shutil, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET = "mohamedelsharkawy0/solver-source-code"
+# Every worktree pushes to this one dataset, so only one of them is allowed to.
+# Pick the tree that owns submissions; the others stop here instead of silently
+# overwriting an upload. One submission a day makes racing pointless anyway.
+OWNER_TREE = "ARC"
+# Remembers the version we last pushed FROM HERE, so a push that would land on
+# top of someone else's is refused rather than discovered later.
+PUSH_STAMP = os.path.join(ROOT, "kaggle", "input", ".last_push.json")
 # Staging dir mirrors the REAL Kaggle mount path (verified by the build kernel's
 # filesystem probe): datasets mount FLAT at /kaggle/input/<slug>/ -- no datasets/
 # subdir, no <owner> in the path. (The handoff's "datasets/<owner>/<slug>" was wrong.)
@@ -69,6 +76,35 @@ def sync():
     shutil.copytree(tp_src, tp_dst)
     print(f"synced {len(SRC_FILES)} src + {len(INC_FILES)} headers + third_party/fmt -> {os.path.relpath(PKG, ROOT)}")
 
+def remote_version():
+    """Newest version number Kaggle reports for the dataset, or None."""
+    r = subprocess.run(["kaggle", "datasets", "status", DATASET],
+                       capture_output=True, text=True)
+    return (r.stdout or "").strip() or None
+
+def check_owner():
+    """Only the owning tree may push, and only if nobody pushed since we did."""
+    here = os.path.basename(ROOT)
+    if here != OWNER_TREE:
+        sys.exit(f"refusing: pushes come from '{OWNER_TREE}', this is '{here}'. "
+                 f"Every worktree shares one dataset, so pushing here would "
+                 f"overwrite whatever '{OWNER_TREE}' last sent.")
+    try:
+        with open(PUSH_STAMP) as fh:
+            seen = json.load(fh).get("status")
+    except (OSError, ValueError):
+        return
+    now = remote_version()
+    if now and seen and now != seen:
+        sys.exit("refusing: the dataset moved since this tree last pushed "
+                 "(someone or something else uploaded). Re-check before pushing, "
+                 f"then delete {os.path.relpath(PUSH_STAMP, ROOT)} to proceed.")
+
+def record_push():
+    os.makedirs(os.path.dirname(PUSH_STAMP), exist_ok=True)
+    with open(PUSH_STAMP, "w") as fh:
+        json.dump({"status": remote_version(), "at": time.strftime("%Y-%m-%d %H:%M:%S")}, fh, indent=2)
+
 def push(msg):
     r = subprocess.run(
         ["kaggle", "datasets", "version", "-p", PKG, "-m", msg, "--dir-mode", "zip"],
@@ -97,9 +133,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-m", "--message", default="update source", help="dataset version message")
     args = ap.parse_args()
+    check_owner()
     sync()
     push(args.message)
     wait_ready()
+    record_push()
     print("done.")
     print()
     print("NEXT: re-pin the notebook to THIS dataset version, or it builds stale code:")
