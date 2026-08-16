@@ -63,6 +63,7 @@ Read `README.md` first, it is the home for everything about the project itself.
 8. The command port is GUI build only, the headless Kaggle build has none.
 9. `state` ends with `gpu_used=<percent>`, and the receipt log opens with how much of the card is already taken plus whether a sibling app got 2026 first.
    1. Two idle apps sit at about 17% of 6140 MB, that is the baseline, well above it means the card is shared with something.
+   2. It is a snapshot taken when asked, not a watch, so one reading near the baseline means nothing big is running, never that nothing is.
    2. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
 
 # 4. Worktrees
