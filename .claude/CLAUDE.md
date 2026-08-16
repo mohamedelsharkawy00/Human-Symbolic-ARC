@@ -77,7 +77,10 @@ Read `README.md` first, it is the home for everything about the project itself.
    3. The signals behind it: `git worktree list` names every folder open on this repo, `state` on `127.0.0.1:2026` answering `ok ...` means an app is live ("connection refused" means none), and `git status` showing uncommitted work means that folder is taken.
    4. None of them can go stale, because none is a marker anyone has to release.
 3. If either check says the main tree is busy, work in a worktree instead: `git worktree add -b <branch> ..\ARC-<name>`.
-4. Edits do NOT cross between worktrees until they are committed. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.
+4. Edits do NOT cross between worktrees until they are committed. This is what makes parallel sessions safe.
+   1. The symptom is a change that seems not to exist over there: an unknown flag, an old message, a guard that does not fire, a fix that "did not apply". Nothing is broken, that folder is simply at an older commit.
+   2. So COMMIT FIRST, then create the worktree or bring an existing one up with `git reset --hard main`. Never test an uncommitted change from another folder, the test is answering about the old code.
+   3. Worth taking seriously: this caught Claude twice in one session, both times while testing a guard it had just written, and the second time it pushed to Kaggle because the guard it was testing was not there yet.
 5. Already per folder, nothing to arrange: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, the backup pool. The first build fetches its own puzzles.
 6. Ports are machine-wide, so apps in different worktrees walk up from 2026.
 7. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset and one kernel. `scripts\kaggle_push.py` refuses from anywhere else, and `kaggle kernels push` is not guarded, so do not run it from a worktree.
