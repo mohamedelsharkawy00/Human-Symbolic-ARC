@@ -67,29 +67,22 @@ Read `README.md` first, it is the home for everything about the project itself.
 9. `state` ends with `gpu_used=<percent>`, and the receipt log opens with how much of the card is already taken plus whether a sibling app got 2026 first.
    1. Two idle apps sit at about 17% of 6140 MB, that is the baseline, well above it means the card is shared with something.
    2. It is a snapshot taken when asked, not a watch, so one reading near the baseline means nothing big is running, never that nothing is.
-   2. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
+   3. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
 
 # 4. Worktrees
-1. Look before settling in, nothing announces another session, so ask the things that already know.
+1. A folder is the unit of parallel work here, because everything the app and the build write is per folder, and switching branches in place would swap files out from under a running app and a live build. That is the whole reason worktrees are used rather than switching.
+2. Look before settling in, nothing announces another session, so ask the things that already know.
    1. `python scripts\session_check.py --all` asks all of them at once and is the short way to do this.
    2. Every build runs that check already, so a collision speaks up at the moment it would matter.
    3. The signals behind it: `git worktree list` names every folder open on this repo, `state` on `127.0.0.1:2026` answering `ok ...` means an app is live ("connection refused" means none), and `git status` showing uncommitted work means that folder is taken.
    4. None of them can go stale, because none is a marker anyone has to release.
-2. If either check says the main tree is busy, work in a worktree instead, `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
-3. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
-   1. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.
-4. Everything mutable is already per folder: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, and the backup pool.
-5. The first build in a new worktree fetches its own puzzles, so nothing needs copying or linking by hand.
-6. Ports are machine-wide, not per folder, so apps from different worktrees still walk up from 2026.
-7. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset slug and `scripts\kaggle_push.py` refuses from anywhere else.
-8. Share work between worktrees by committing, never by reaching into the other folder.
-9. A worktree branch is an ordinary branch, nothing about it is lesser. The only difference is where the files sit: switching branches swaps the files in one folder, a worktree gives a second folder so two branches are open at once.
-   1. That is exactly why this project needs them, switching would swap files out from under a running app and a half finished build.
-10. Work done in a worktree lives on its branch until it is merged back, and merging happens in the folder receiving the work.
-    1. The worktree session catches up FIRST, `git merge main` in its own folder, and resolves conflicts there, whoever caused the divergence resolves it.
-    2. Then the main session runs `git merge <branch>`, which is trivial after that.
-    3. Conflicts are git stopping to make someone choose, that is the collision surfacing loudly instead of one side silently winning.
-11. Nothing has to be merged. Exploratory work is thrown away with `git worktree remove` and `git branch -D <branch>`, and main never knows.
+3. If either check says the main tree is busy, work in a worktree instead: `git worktree add -b <branch> ..\ARC-<name>`.
+4. Edits do NOT cross between worktrees until they are committed. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.
+5. Already per folder, nothing to arrange: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, the backup pool. The first build fetches its own puzzles.
+6. Ports are machine-wide, so apps in different worktrees walk up from 2026.
+7. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset and one kernel. `scripts\kaggle_push.py` refuses from anywhere else, and `kaggle kernels push` is not guarded, so do not run it from a worktree.
+8. Share work by committing, never by reaching into the other folder.
+9. The worktree session merges main into its own branch FIRST and resolves conflicts there, whoever caused the divergence resolves it, then the main session's merge is trivial.
 
 # 5. Thinking
 1. Truth first and foremost, Claude defaults truth-last, fluent before checked. It must not.
