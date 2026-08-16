@@ -105,6 +105,20 @@ def record_push():
     with open(PUSH_STAMP, "w") as fh:
         json.dump({"status": remote_version(), "at": time.strftime("%Y-%m-%d %H:%M:%S")}, fh, indent=2)
 
+def push_kernel():
+    """Re-pin the notebook to the newest dataset version, guarded the same way.
+
+    The raw `kaggle kernels push` has no guard of its own, and every worktree
+    shares one kernel, so going through here is what makes the rule real.
+    """
+    kernel_dir = os.path.join(ROOT, "kaggle", "src", "arc_build")
+    r = subprocess.run(["kaggle", "kernels", "push", "-p", kernel_dir],
+                       capture_output=True, text=True)
+    print(r.stdout.strip())
+    if r.returncode != 0:
+        print(r.stderr.strip()); sys.exit(1)
+    print("kernel re-pinned to the latest dataset version.")
+
 def push(msg):
     r = subprocess.run(
         ["kaggle", "datasets", "version", "-p", PKG, "-m", msg, "--dir-mode", "zip"],
@@ -132,8 +146,13 @@ def wait_ready(timeout_s=180):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("-m", "--message", default="update source", help="dataset version message")
+    ap.add_argument("--kernel", action="store_true",
+                    help="re-pin the notebook instead of pushing the source")
     args = ap.parse_args()
     check_owner()
+    if args.kernel:
+        push_kernel()
+        sys.exit(0)
     sync()
     push(args.message)
     wait_ready()
@@ -141,10 +160,10 @@ if __name__ == "__main__":
     print("done.")
     print()
     print("NEXT: re-pin the notebook to THIS dataset version, or it builds stale code:")
-    print("    kaggle kernels push -p kaggle/src/arc_build")
-    print(f"  (RUN FROM THE MAIN WORKTREE '{OWNER_TREE}' ONLY. Every worktree shares one kernel,")
-    print("   and unlike this script that command has no guard, so a push from")
-    print("   elsewhere overwrites whatever was pinned last.)")
+    print("    python scripts/kaggle_push.py --kernel")
+    print("  (go through this script, not `kaggle kernels push` directly. Every")
+    print("   worktree shares one kernel and the raw command has no guard, so a")
+    print("   push from elsewhere silently overwrites whatever was pinned last.)")
     print("  (the push auto-pins latest -> the browser won't prompt 'update dataset")
     print("   version'. Then open arc-build in the browser, set accelerator = L4x4,")
     print("   Save & Run All. Skipping the push means you must click 'Update' in the GUI.)")
