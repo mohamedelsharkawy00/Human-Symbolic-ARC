@@ -12,8 +12,11 @@ MAX_BACKUPS = 2
 # different question from MAX_BACKUPS, so it gets its own number -- tying the
 # two together would checkpoint every second build.
 CHECKPOINT_EVERY = 200
-HISTORY_DIR = os.path.join("..", "ARC Backups")
 PROJECT_ROOT = "."
+# Named after the folder being backed up, so a second worktree keeps its own
+# pool instead of rotating this one's snapshots away.
+HISTORY_DIR = os.path.join(
+    "..", os.path.basename(os.path.abspath(PROJECT_ROOT)) + " Backups")
 # Directories to exclude. "dumps" holds multi-GB WER crash dumps that must
 # never be copied into snapshots (was ballooning backups to 100+ GB).
 # Skip what is already safe or rebuildable: ".git" holds the history (copying it
