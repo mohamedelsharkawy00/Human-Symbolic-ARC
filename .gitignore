@@ -4,6 +4,8 @@ out/
 settings/
 kaggle/input/
 kaggle/working/
-notes/
+notes/.mkdocs/.venv/
+notes/5 - Competition/concept_sources/
+notes/5 - Competition/nvarc_reference/
 __pycache__/
 *.pyc
