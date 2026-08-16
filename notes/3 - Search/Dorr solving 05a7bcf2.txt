@@ -1,9 +1,0 @@
-Dorr solving: 05a7bcf2
-- Searching the output objects in the input, looking for key objects first that are least redundant to reduce SNR, assuming 1;1 and different translations after/ less priority in order to save energy, hence the sorting of ops and the inference, by energy/complexity/compute effort, smallest first
-
-- Form the simplest hypothes on the first example, when it fails on the subsequent examples start by abonding the faild one and searching for increasingly complex solutoins
-
-- Dorr: there always a pattern, a pattern inside the output itself, its period and other attributes derived from the input.
-- Shark: also a pattern between exammples hence searching for the invariants, and the invariant rule, mimizing emm..., mimzing diffrences minimizing the variants, find an invariant rule to explain the variant, and make it invariant
-
-- When trying on the test input, when a rule suddenly produces N/A values or doesn't do a change in the output, be suspicsious of the rule
