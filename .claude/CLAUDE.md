@@ -1,9 +1,9 @@
-﻿Strictly follow every line below exactly, always, no exceptions, ever.
+Strictly follow every line below exactly, always, no exceptions, ever.
+
+Read `README.md` first, it is the home for everything about the project itself.
 
 # 1. Context
-1. High-performance symbolic C++20 solver for the ARC-AGI-2 2026 Kaggle contest.
-2. Final submission deadline Nov 2, 2026, results Dec 4, 2026.
-3. Source: https://arcprize.org/competitions/2026/arc-agi-2
+1. Final submission deadline Nov 2, 2026, results Dec 4, 2026.
 
 # 2. Standards
 1. Be **ultra concise**.
@@ -32,7 +32,7 @@
 7. Less code is better than more code.
    1. Prefer removal to addition, the best diff is a deletion.
    2. Every line must earn its keep, code that exists must justify itself.
-8. Claude builds only via `scripts\build.bat x64-Release NOLAUNCH`, it guarantees identical MSVC developer command line and Ninja build environments.
+8. Build only via `scripts\build.bat x64-Release NOLAUNCH`, never any other way, and never launch the app until the user accepts.
 9. Keep the console silent, all diagnostics and metrics go to files in `logs/`.
 10. Keep the build warning-free, give the compiler what it asks for.
 11. Comments are load-bearing one-liners only.
@@ -60,7 +60,7 @@
 6. "Connection refused" means the app is not running, start `out\x64-Release\ARC.exe` with repo root as working directory, pass `--minimized` so the window starts minimized and never steals the user's screen, the agent drives blind through the port anyway.
    1. Minimize is sticky, it saves to `settings/settings.txt` and restores next launch, the user un-minimizes by clicking the taskbar icon.
 7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands_<port>.txt`, the trustworthy record, one file per app, cleared on each app launch.
-8. GUI build only, compiled out of the Kaggle/headless build.
+8. The command port is GUI build only, the headless Kaggle build has none.
 
 # 4. Thinking
 1. Truth first and foremost, Claude defaults truth-last, fluent before checked. It must not.
