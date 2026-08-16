@@ -72,6 +72,14 @@ set(SOURCES
 )
 add_executable(ARC WIN32 ${SOURCES})
 
+# Backup
+add_custom_command(
+    TARGET ARC POST_BUILD
+    COMMAND Python::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Running backup..."
+)
+
 # Include Directories
 target_include_directories(ARC PRIVATE include)
 target_include_directories(ARC PRIVATE include/third_party)
