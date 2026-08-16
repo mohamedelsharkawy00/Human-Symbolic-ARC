@@ -66,14 +66,18 @@ Read `README.md` first, it is the home for everything about the project itself.
    2. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
 
 # 4. Worktrees
-1. A second session works in its own folder made by `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
-2. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
+1. Look before settling in, nothing announces another session, so ask the two things that already know.
+   1. `git worktree list` names every folder open on this repo, more than one means someone else is set up.
+   2. A reply on `127.0.0.1:2026` means an app is already running, so a session is live even if only one folder exists.
+   3. `git status` in a folder someone else is using shows their uncommitted work, that folder is taken.
+2. If either check says the main tree is busy, work in a worktree instead, `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
+3. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
    1. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.
-3. Everything mutable is already per folder: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, and the backup pool.
-4. The first build in a new worktree fetches its own puzzles, so nothing needs copying or linking by hand.
-5. Ports are machine-wide, not per folder, so apps from different worktrees still walk up from 2026.
-6. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset slug and `scripts\kaggle_push.py` refuses from anywhere else.
-7. Share work between worktrees by committing, never by reaching into the other folder.
+4. Everything mutable is already per folder: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, and the backup pool.
+5. The first build in a new worktree fetches its own puzzles, so nothing needs copying or linking by hand.
+6. Ports are machine-wide, not per folder, so apps from different worktrees still walk up from 2026.
+7. Only the `ARC` tree may push to Kaggle, every worktree shares one dataset slug and `scripts\kaggle_push.py` refuses from anywhere else.
+8. Share work between worktrees by committing, never by reaching into the other folder.
 
 # 5. Thinking
 1. Truth first and foremost, Claude defaults truth-last, fluent before checked. It must not.
