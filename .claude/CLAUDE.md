@@ -67,10 +67,11 @@ Read `README.md` first, it is the home for everything about the project itself.
    2. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
 
 # 4. Worktrees
-1. Look before settling in, nothing announces another session, so ask the two things that already know.
-   1. `git worktree list` names every folder open on this repo, more than one means someone else is set up.
-   2. Send `state` to `127.0.0.1:2026`, an `ok ...` line back means an app is already running, so a session is live even if only one folder exists, and "connection refused" means none is.
-   3. `git status` in a folder someone else is using shows their uncommitted work, that folder is taken.
+1. Look before settling in, nothing announces another session, so ask the things that already know.
+   1. `python scripts\session_check.py --all` asks all of them at once and is the short way to do this.
+   2. Every build runs that check already, so a collision speaks up at the moment it would matter.
+   3. The signals behind it: `git worktree list` names every folder open on this repo, `state` on `127.0.0.1:2026` answering `ok ...` means an app is live ("connection refused" means none), and `git status` showing uncommitted work means that folder is taken.
+   4. None of them can go stale, because none is a marker anyone has to release.
 2. If either check says the main tree is busy, work in a worktree instead, `git worktree add -b <branch> ..\ARC-<name>`, sharing one history, and `git worktree remove` throws it away.
 3. Edits do NOT cross between worktrees until they are committed, a worktree only ever sees committed code.
    1. This is what makes parallel sessions safe, and it is the thing that looks like a bug when a fix seems not to apply.

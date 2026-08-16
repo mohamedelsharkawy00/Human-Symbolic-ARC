@@ -47,6 +47,10 @@ if not exist "kaggle\input\competitions\arc-prize-2026-arc-agi-2\arc-agi_trainin
     python "scripts\fetch_data.py" --check
 )
 
+:: Nothing announces a second session, so ask here, where a collision would
+:: matter, instead of hoping someone remembers to look. Silent when alone.
+python "scripts\session_check.py"
+
 :: Ensure MSVC environment if not already present
 if not defined DevEnvDir (
     call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul
