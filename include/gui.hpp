@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "environment.hpp"
 #include "grid_buffer.hpp"
 #include "global_app_state.hpp"
@@ -704,72 +704,8 @@ inline bool draw_grid_view(
 // as Name or Name[0-N] for annotated ops. Read-only for now â€” the first piece of
 // the in-GUI composer (next step: click a token to append it to a draft program
 // and let the existing hover-preview engine show the effect live).
-// Classify an op into one of the 7 palette tabs. The seam is "what does the op
-// do to the layer", in pipeline-authoring order. This is presentation-only, so
-// it lives here as a lookup (no X-macro churn). Every node_type lands in exactly
-// one tab; see notes/2 - DSL/Op Algebra.md for the rationale.
-inline op_tab classify_op(node_type t) {
-  // COMBINE â€” the four ops that LAND the current list on the canvas. Clear also
-  // writes the canvas (modifies_canvas is true) but lands nothing â€” it wipes â€”
-  // so it is an ACT, not a combine, and falls through to REDUCE below.
-  if (is_combine_op(t)) return op_tab::combine;
-  switch (t) {
-    // GET â€” pure sources only. Input reads the raw grid; Output reads the live
-    // canvas as-is (RAW). Both carry no annotation â€” nothing baked in.
-    case node_type::Input: case node_type::Output:
-    // Seeds is a pure source too: a load-time list (input objects minus the
-    // largest), returned as-is â€” it reads nothing from the running list.
-    case node_type::Seeds:
-      return op_tab::get;
-    // Colors extracts the palette as objects from `last` â€” a producing act.
-    case node_type::Colors:
-      return op_tab::map;
-    // REDUCE â€” makes less (crop / strip). DeleteSelection erases the marked
-    // cells: an act consuming the SELECT marks, not a selector itself.
-    case node_type::Trim: case node_type::Fit: case node_type::Outline:
-    case node_type::DeleteSelection:
-    // UnionList/IntersectionList collapse many objects into one â€” they make less.
-    case node_type::UnionList: case node_type::IntersectionList:
-      return op_tab::reduce;
-    // SELECT â€” lossless: marks a subset, drops nothing (the true SELECT role)
-    case node_type::SelectObjectsWithHoles: case node_type::SelectColor:
-    case node_type::SelectLargestObject: case node_type::SelectSmallestObject:
-    case node_type::SelectObjectsContainingColor:
-    case node_type::SelectMostCommonColor:
-    case node_type::SelectAll: case node_type::InvertSelection:
-      return op_tab::select;
-    // TRANSLATE â€” rigid geometry (reposition / reorient / resize)
-    case node_type::Shift: case node_type::MoveRow: case node_type::MoveColumn:
-    case node_type::SlamRow: case node_type::SlamColumn: case node_type::TurnRight:
-    case node_type::TurnLeft: case node_type::FlipHorizontal: case node_type::FlipVertical:
-    case node_type::NormalizeOrientation: case node_type::RestoreOrientation:
-    case node_type::ScaleUp: case node_type::ScaleDown: case node_type::Skew:
-    case node_type::AlignToCanvas: case node_type::Origin: case node_type::Layout:
-      return op_tab::translate;
-    // MAP â€” rewrite content in place (recolor / reason / logic)
-    case node_type::Recolor: case node_type::InteriorColor:
-    case node_type::ShapeColorMap: case node_type::ShapeToInteriorColorMap:
-    case node_type::BidiColorMap: case node_type::SizeRankColorMap:
-    case node_type::ProjectOnSeeds:
-    case node_type::SnapToAnchors: case node_type::OverlapCorner:
-    // SortBySize rewrites the list's order in place, count unchanged.
-    case node_type::SortBySize:
-    // MaskBy/MaskOut/ReadUnder rewrite the object list using the canvas beneath
-    // as reference â€” canvas-reading ACTs, not selectors (the predicate is
-    // external to the object) and not combines (they never write the canvas).
-    case node_type::MaskBy: case node_type::MaskOut: case node_type::ReadUnder:
-      return op_tab::map;
-    // GENERATE â€” makes more (replicate / grow / add)
-    case node_type::TileX: case node_type::TileY: case node_type::Tile:
-    case node_type::DiagTile: case node_type::TileByInputPattern: case node_type::Pattern:
-    case node_type::Fractal: case node_type::ExtendOrthogonal: case node_type::ExtendDiagonal:
-    case node_type::ExtendTo: case node_type::Bridge: case node_type::AddColor:
-    // Split/Partition make objects (more) out of the grid.
-    case node_type::Split: case node_type::Partition:
-      return op_tab::generate;
-    default: return op_tab::map; // any future op surfaces somewhere visible
-  }
-}
+// Which tab an op is drawn under is its role, read straight off the op list
+// (role_of, cuda_dsl.cuh). See notes/2 - DSL/Op Algebra.md.
 
 // Top-edge drawer overlay: a full-width panel that floats on top of the live
 // frame, covering the header band from the top of the screen down to the
@@ -1685,34 +1621,33 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   int gap = pad * 2;
   int line_h = box_h + gap;
 
-  // tab_names/tab_actions are indexed by op_tab ORDINAL (must not move â€” hash and
-  // active-tab int depend on it). Sentence display order lives in `roles` below.
-  static const char *tab_names[(int)op_tab::count] = {
+  // tab_names/tab_actions are indexed by op_role ORDINAL (must not move â€” hash and
+  // active-tab int depend on it). Sentence display order lives in `sentence` below.
+  static const char *tab_names[(int)op_role::count] = {
     "GET", "REDUCE", "SELECT", "TRANSLATE", "MAP", "GENERATE", "COMBINE"};
-  static const ui_action tab_actions[(int)op_tab::count] = {
+  static const ui_action tab_actions[(int)op_role::count] = {
     ui_action::op_tab_get, ui_action::op_tab_reduce, ui_action::op_tab_select,
     ui_action::op_tab_translate, ui_action::op_tab_map, ui_action::op_tab_generate,
     ui_action::op_tab_combine};
   int active = app_state.op_tab.load();
 
   // --- Role grouping (grammar: GET SELECT ACT COMBINE) ----------------------
-  // A two-level read laid over the ordinal-frozen op_tab enum: the sentence has
-  // four roles, and ACT has kinds. Pure draw-time table â€” no enum touched, so
-  // the hash and classify_op are undisturbed. Each role lists its member tabs
-  // in display order; a role with one member draws no second row.
-  struct role_t { const char *name; vector<op_tab> kinds; };
-  static const role_t roles[] = {
-    {"GET",     {op_tab::get}},
-    {"SELECT",  {op_tab::select}},
-    {"ACT",     {op_tab::reduce, op_tab::translate, op_tab::map, op_tab::generate}},
-    {"COMBINE", {op_tab::combine}},
+  // A two-level read laid over the ordinal-frozen op_role enum: the sentence has
+  // four parts, and ACT has kinds. Pure draw-time table, no enum touched. Each
+  // part lists its member tabs in display order; one member draws no second row.
+  struct sentence_part { const char *name; vector<op_role> kinds; };
+  static const sentence_part sentence[] = {
+    {"GET",     {op_role::get}},
+    {"SELECT",  {op_role::select}},
+    {"ACT",     {op_role::reduce, op_role::translate, op_role::map, op_role::generate}},
+    {"COMBINE", {op_role::combine}},
   };
-  constexpr int role_count = (int)(sizeof(roles) / sizeof(roles[0]));
+  constexpr int part_count = (int)(sizeof(sentence) / sizeof(sentence[0]));
   // Which role owns the active tab, so its kinds show on the sub-row.
-  int active_role = 0;
-  for (int r = 0; r < role_count; ++r)
-    for (op_tab k : roles[r].kinds)
-      if ((int)k == active) active_role = r;
+  int active_part = 0;
+  for (int r = 0; r < part_count; ++r)
+    for (op_role k : sentence[r].kinds)
+      if ((int)k == active) active_part = r;
 
   int hmargin = lay.base_margin * 3; // tripled horizontal edge padding
   auto rows_for = [&](const vector<string> &labels) {
@@ -1730,7 +1665,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   auto labels_for = [&](int tab) {
     vector<int> ids;
     for (int i = 0; i < n; ++i)
-      if ((int)classify_op((node_type)i) == tab) ids.push_back(i);
+      if ((int)role_of((node_type)i) == tab) ids.push_back(i);
     sort(ids.begin(), ids.end(), [](int a, int b) {
       return string(type_name[a]) < string(type_name[b]);
     });
@@ -1743,12 +1678,12 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
     return labels;
   };
 
-  vector<string> role_labels;
-  for (int r = 0; r < role_count; ++r) role_labels.push_back(roles[r].name);
+  vector<string> part_labels;
+  for (int r = 0; r < part_count; ++r) part_labels.push_back(sentence[r].name);
   // Sub-kind row: only drawn when the active role has more than one kind.
-  bool has_subrow = roles[active_role].kinds.size() > 1;
+  bool has_subrow = sentence[active_part].kinds.size() > 1;
   vector<string> sub_labels;
-  if (has_subrow) for (op_tab k : roles[active_role].kinds) sub_labels.push_back(tab_names[(int)k]);
+  if (has_subrow) for (op_role k : sentence[active_part].kinds) sub_labels.push_back(tab_names[(int)k]);
   vector<string> op_labels = labels_for(active);
 
   // The drawer is as deep as its deepest tab, and always reserves the sub-kind
@@ -1757,16 +1692,16 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   // nothing to do with ops, and a drawer that resizes as you switch tabs moves
   // the handle out from under the cursor that is holding it.
   int deepest_ops = 0;
-  for (int t = 0; t < (int)op_tab::count; ++t)
+  for (int t = 0; t < (int)op_role::count; ++t)
     deepest_ops = max(deepest_ops, rows_for(labels_for(t)));
   int deepest_sub = 0;
-  for (int r = 0; r < role_count; ++r) {
-    if (roles[r].kinds.size() <= 1) continue;
+  for (int r = 0; r < part_count; ++r) {
+    if (sentence[r].kinds.size() <= 1) continue;
     vector<string> names;
-    for (op_tab k : roles[r].kinds) names.push_back(tab_names[(int)k]);
+    for (op_role k : sentence[r].kinds) names.push_back(tab_names[(int)k]);
     deepest_sub = max(deepest_sub, rows_for(names));
   }
-  int tab_rows = rows_for(role_labels) + deepest_sub;
+  int tab_rows = rows_for(part_labels) + deepest_sub;
   int panel_h = lay.base_margin + (tab_rows + deepest_ops) * line_h + gap;
 
   // Drawer model: a fixed-height panel that lives ABOVE the screen and slides
@@ -1801,14 +1736,14 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   // top-most rows scroll in last as it's pulled down).
   int header_y = panel_top + drawer_border_t(scale) + vgap;
 
-  // op_tab -> its ui_action, so a sub-kind click reuses the existing handler.
-  auto action_for = [&](op_tab t) {
-    for (int i = 0; i < (int)op_tab::count; ++i)
+  // op_role -> its ui_action, so a sub-kind click reuses the existing handler.
+  auto action_for = [&](op_role t) {
+    for (int i = 0; i < (int)op_role::count; ++i)
       if ((int)t == i) return tab_actions[i];
     return ui_action::none;
   };
   // Draw one centered, wrapping row of tab boxes; returns the y of the next row.
-  auto draw_tab_row = [&](const vector<op_tab> &kinds, const vector<const char*> &labels,
+  auto draw_tab_row = [&](const vector<op_role> &kinds, const vector<const char*> &labels,
                           int start_y, auto is_active, auto is_debt) {
     int total = 0;
     for (size_t k = 0; k < labels.size(); ++k)
@@ -1829,16 +1764,16 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   };
 
   // --- Role row: GET SELECT ACT COMBINE -------------------------------------
-  vector<op_tab> role_first; vector<const char*> role_names;
-  for (int r = 0; r < role_count; ++r) { role_first.push_back(roles[r].kinds.front()); role_names.push_back(roles[r].name); }
-  int tab_y = draw_tab_row(role_first, role_names, header_y,
-    [&](size_t r){ return (int)r == active_role; },
+  vector<op_role> part_first; vector<const char*> part_names;
+  for (int r = 0; r < part_count; ++r) { part_first.push_back(sentence[r].kinds.front()); part_names.push_back(sentence[r].name); }
+  int tab_y = draw_tab_row(part_first, part_names, header_y,
+    [&](size_t r){ return (int)r == active_part; },
     [&](size_t){ return false; });  // no debt tabs left â€” nothing draws red
 
   // --- Sub-kind row (only when the active role has more than one kind) -------
   if (has_subrow) {
-    const auto &kinds = roles[active_role].kinds;
-    vector<const char*> knames; for (op_tab k : kinds) knames.push_back(tab_names[(int)k]);
+    const auto &kinds = sentence[active_part].kinds;
+    vector<const char*> knames; for (op_role k : kinds) knames.push_back(tab_names[(int)k]);
     tab_y = draw_tab_row(kinds, knames, tab_y + line_h,
       [&](size_t k){ return (int)kinds[k] == active; },
       [&](size_t){ return false; });  // no debt kinds left

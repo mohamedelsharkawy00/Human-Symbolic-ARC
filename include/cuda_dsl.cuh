@@ -143,86 +143,114 @@ struct fixed_object_list {
     }
 };
 
+// What an op does to the layer, in pipeline-authoring order (a single solution
+// line reads left-to-right through these): bring a source in (GET) -> cut it
+// down (REDUCE) -> pick objects (SELECT) -> move it (TRANSLATE) -> recolor or
+// reason (MAP) -> grow it (GENERATE) -> merge into the canvas (COMBINE).
+// The generator's four sentence roles fold out of this: the middle four are ACT.
+// Order is frozen — the GUI indexes its tab rows by these ordinals.
+enum class op_role { get, reduce, select, translate, map, generate, combine, count };
+
 // --- Op vocabulary: the single home of the DSL op list ---
 // CPU (search, GUI, serializer) and GPU (kernel dispatch) both derive from
 // this one macro, so the two sides cannot drift apart.
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
-#define NODE_PRIMITIVES /* Schema: X(ID, NAME, IS_ANNOTATED, VAR_COUNT) */ \
-  X(Input, "Input", 0, 1)                                     \
-  X(Output, "Output", 0, 1)                                   \
-  X(Seeds, "Seeds", 0, 1)                                     \
-  X(Fractal, "Fractal", 0, 1)                                 \
-  X(Intersection, "Intersection", 0, 1)                       \
-  X(Union, "Union", 0, 1)                                     \
-  X(Difference, "Difference", 0, 1)                           \
-  X(DeleteSelection, "DeleteSelection", 0, 1)                 \
-  X(Shift, "Shift", 1, 8)                                     \
-  X(TurnRight, "TurnRight", 0, 1)                             \
-  X(TurnLeft, "TurnLeft", 0, 1)                               \
-  X(FlipHorizontal, "FlipHorizontal", 0, 1)                   \
-  X(FlipVertical, "FlipVertical", 0, 1)                       \
-  X(Recolor, "Recolor", 1, 12)                                \
-  X(Split, "Split", 1, 3)                                     \
-  X(Colors, "Colors", 0, 1)                                   \
-  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 1)     \
-  X(InteriorColor, "InteriorColor", 1, 11)                    \
-  X(ScaleUp, "ScaleUp", 1, 9)                                 \
-  X(ScaleDown, "ScaleDown", 1, 9)                             \
-  X(Pattern, "Pattern", 0, 1)                                 \
-  X(Trim, "Trim", 0, 1)                                       \
-  X(MoveRow, "MoveRow", 1, 8)                                 \
-  X(MoveColumn, "MoveColumn", 1, 8)                           \
-  X(SlamRow, "SlamRow", 1, 8)                                 \
-  X(SlamColumn, "SlamColumn", 1, 8)                           \
-  X(SelectLargestObject, "SelectLargestObject", 1, 10)        \
-  X(SelectSmallestObject, "SelectSmallestObject", 1, 10)      \
-  X(Skew, "Skew", 1, 47)                                      \
-  X(TileX, "TileX", 1, 30)                                    \
-  X(TileY, "TileY", 1, 30)                                    \
-  X(Bridge, "Bridge", 0, 1)                                   \
-  X(Partition, "Partition", 0, 1)                             \
-  X(AddColor, "AddColor", 1, 10)                              \
-  X(Fit, "Fit", 0, 1)                                         \
-  X(DiagTile, "DiagTile", 1, 2)                               \
-  X(TileByInputPattern, "TileByInputPattern", 1, 2)           \
-  X(Tile, "Tile", 1, 4)                                       \
-  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1)                   \
-  X(IntersectionList, "IntersectionList", 0, 1)               \
-  X(UnionList, "UnionList", 0, 1)                             \
-  X(Origin, "Origin", 0, 1)                                   \
-  X(AlignToCanvas, "AlignToCanvas", 0, 1)                     \
-  X(SortBySize, "SortBySize", 1, 2)                           \
-  X(SizeRankColorMap, "SizeRankColorMap", 0, 1)               \
-  X(ExtendOrthogonal, "ExtendOrthogonal", 1, 9)               \
-  X(ExtendDiagonal, "ExtendDiagonal", 1, 9)                   \
-  X(NormalizeOrientation, "NormalizeOrientation", 1, 2)       \
-  X(RestoreOrientation, "RestoreOrientation", 0, 1)           \
-  X(BidiColorMap, "BidiColorMap", 1, 45)                      \
-  X(SnapToAnchors, "SnapToAnchors", 0, 1)                     \
-  X(ShapeColorMap, "ShapeColorMap", 0, 1)                     \
-  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 1) \
-  X(OverlapCorner, "OverlapCorner", 0, 1)                     \
-  X(ExtendTo, "ExtendTo", 1, 8)                               \
-  X(MaskBy, "MaskBy", 1, 11)                                  \
-  X(MaskOut, "MaskOut", 1, 11)                                \
-  X(Underlay, "Underlay", 0, 1)                               \
-  X(ReadUnder, "ReadUnder", 0, 1)                             \
-  X(MoveToEdge, "MoveToEdge", 1, 8)                           \
-  X(VoteDenoise, "VoteDenoise", 0, 1)                         \
-  X(Outline, "Outline", 0, 1)                                 \
-  X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 1, 10) \
-  X(Layout, "Layout", 1, 9)                                   \
-  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 1, 5)   \
-  X(SelectColor, "SelectColor", 1, 10)                        \
-  X(SelectAll, "SelectAll", 0, 1)                             \
-  X(InvertSelection, "InvertSelection", 0, 1)
+// ROLE is a column here, not a list elsewhere, so a new op cannot be added
+// without saying what it does — the macro will not compile without it.
+#define NODE_PRIMITIVES /* Schema: X(ID, NAME, IS_ANNOTATED, VAR_COUNT, ROLE) */ \
+  X(Input, "Input", 0, 1, get)                                \
+  X(Output, "Output", 0, 1, get)                              \
+  X(Seeds, "Seeds", 0, 1, get)                                \
+  X(Fractal, "Fractal", 0, 1, generate)                       \
+  X(Intersection, "Intersection", 0, 1, combine)              \
+  X(Union, "Union", 0, 1, combine)                            \
+  X(Difference, "Difference", 0, 1, combine)                  \
+  /* DeleteSelection consumes the marks, it does not make them: an act. */ \
+  X(DeleteSelection, "DeleteSelection", 0, 1, reduce)         \
+  X(Shift, "Shift", 1, 8, translate)                          \
+  X(TurnRight, "TurnRight", 0, 1, translate)                  \
+  X(TurnLeft, "TurnLeft", 0, 1, translate)                    \
+  X(FlipHorizontal, "FlipHorizontal", 0, 1, translate)        \
+  X(FlipVertical, "FlipVertical", 0, 1, translate)            \
+  X(Recolor, "Recolor", 1, 12, map)                           \
+  X(Split, "Split", 1, 3, generate)                           \
+  /* Colors extracts the palette as objects — a producing act, not a source. */ \
+  X(Colors, "Colors", 0, 1, map)                              \
+  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 1, select) \
+  X(InteriorColor, "InteriorColor", 1, 11, map)               \
+  X(ScaleUp, "ScaleUp", 1, 9, translate)                      \
+  X(ScaleDown, "ScaleDown", 1, 9, translate)                  \
+  X(Pattern, "Pattern", 0, 1, generate)                       \
+  X(Trim, "Trim", 0, 1, reduce)                               \
+  X(MoveRow, "MoveRow", 1, 8, translate)                      \
+  X(MoveColumn, "MoveColumn", 1, 8, translate)                \
+  X(SlamRow, "SlamRow", 1, 8, translate)                      \
+  X(SlamColumn, "SlamColumn", 1, 8, translate)                \
+  X(SelectLargestObject, "SelectLargestObject", 1, 10, select) \
+  X(SelectSmallestObject, "SelectSmallestObject", 1, 10, select) \
+  X(Skew, "Skew", 1, 47, translate)                           \
+  X(TileX, "TileX", 1, 30, generate)                          \
+  X(TileY, "TileY", 1, 30, generate)                          \
+  X(Bridge, "Bridge", 0, 1, generate)                         \
+  X(Partition, "Partition", 0, 1, generate)                   \
+  X(AddColor, "AddColor", 1, 10, generate)                    \
+  X(Fit, "Fit", 0, 1, reduce)                                 \
+  X(DiagTile, "DiagTile", 1, 2, generate)                     \
+  X(TileByInputPattern, "TileByInputPattern", 1, 2, generate) \
+  X(Tile, "Tile", 1, 4, generate)                             \
+  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1, map)              \
+  X(IntersectionList, "IntersectionList", 0, 1, reduce)       \
+  X(UnionList, "UnionList", 0, 1, reduce)                     \
+  X(Origin, "Origin", 0, 1, translate)                        \
+  X(AlignToCanvas, "AlignToCanvas", 0, 1, translate)          \
+  X(SortBySize, "SortBySize", 1, 2, map)                      \
+  X(SizeRankColorMap, "SizeRankColorMap", 0, 1, map)          \
+  X(ExtendOrthogonal, "ExtendOrthogonal", 1, 9, generate)     \
+  X(ExtendDiagonal, "ExtendDiagonal", 1, 9, generate)         \
+  X(NormalizeOrientation, "NormalizeOrientation", 1, 2, translate) \
+  X(RestoreOrientation, "RestoreOrientation", 0, 1, translate) \
+  X(BidiColorMap, "BidiColorMap", 1, 45, map)                 \
+  X(SnapToAnchors, "SnapToAnchors", 0, 1, map)                \
+  X(ShapeColorMap, "ShapeColorMap", 0, 1, map)                \
+  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 1, map) \
+  X(OverlapCorner, "OverlapCorner", 0, 1, map)                \
+  X(ExtendTo, "ExtendTo", 1, 8, generate)                     \
+  /* The canvas-readers judge by what lies beneath, not by the object: acts. */ \
+  X(MaskBy, "MaskBy", 1, 11, map)                             \
+  X(MaskOut, "MaskOut", 1, 11, map)                           \
+  X(Underlay, "Underlay", 0, 1, combine)                      \
+  X(ReadUnder, "ReadUnder", 0, 1, map)                        \
+  X(MoveToEdge, "MoveToEdge", 1, 8, translate)                \
+  X(VoteDenoise, "VoteDenoise", 0, 1, map)                    \
+  X(Outline, "Outline", 0, 1, reduce)                         \
+  X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 1, 10, select) \
+  X(Layout, "Layout", 1, 9, translate)                        \
+  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 1, 5, select) \
+  X(SelectColor, "SelectColor", 1, 10, select)                \
+  X(SelectAll, "SelectAll", 0, 1, select)                     \
+  X(InvertSelection, "InvertSelection", 0, 1, select)
 
 enum class node_type : uint8_t {
-#define X(id, n, is_ann, var) id,
+#define X(id, n, is_ann, var, role) id,
     NODE_PRIMITIVES
 #undef X
     type_count
 };
+
+// Every op's role, straight off the ROLE column. The one thing anyone reads to
+// ask what an op does — nobody keeps a second list.
+// A SWITCH, not a table: the kernel calls this (via is_get_op, in
+// gpu_eval_program_warp), and a table would be host memory the device cannot
+// reach. Relaxed-constexpr compiles that silently and it faults at runtime, so
+// this must stay pure comparison with nothing to dereference.
+inline constexpr op_role role_of(node_type t) {
+    switch (t) {
+#define X(id, n, is_ann, var, role) case node_type::id: return op_role::role;
+    NODE_PRIMITIVES
+#undef X
+    default: return op_role::map;
+    }
+}
 
 struct gpu_flat_op {
     node_type type;
@@ -241,24 +269,13 @@ inline constexpr bool modifies_canvas(node_type t) {
 }
 
 // --- Generation roles (the sentence: GET SELECT ACT COMBINE) --------------
-// One home for the four roles the generator's legality rules speak in.
-// GET = pure source (chain start). SELECT = marks cells, drops nothing.
-// COMBINE = lands the list on the canvas. ACT = everything else that does work.
-inline constexpr bool is_get_op(node_type t) {
-    return t == node_type::Input || t == node_type::Output ||
-           t == node_type::Seeds;
-}
-inline constexpr bool is_select_op(node_type t) {
-    return t == node_type::SelectObjectsWithHoles || t == node_type::SelectColor ||
-           t == node_type::SelectLargestObject || t == node_type::SelectSmallestObject ||
-           t == node_type::SelectObjectsContainingColor ||
-           t == node_type::SelectMostCommonColor ||
-           t == node_type::SelectAll || t == node_type::InvertSelection;
-}
-inline constexpr bool is_combine_op(node_type t) {
-    return t == node_type::Union || t == node_type::Underlay ||
-           t == node_type::Intersection || t == node_type::Difference;
-}
+// The four roles the generator's legality rules speak in, read off the ROLE
+// column. GET = pure source (chain start). SELECT = marks objects, drops
+// nothing. COMBINE = lands the list on the canvas. ACT = the four middle roles
+// folded together — everything else that does work.
+inline constexpr bool is_get_op(node_type t)     { return role_of(t) == op_role::get; }
+inline constexpr bool is_select_op(node_type t)  { return role_of(t) == op_role::select; }
+inline constexpr bool is_combine_op(node_type t) { return role_of(t) == op_role::combine; }
 inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }

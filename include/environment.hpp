@@ -50,13 +50,13 @@ namespace arc {
 	// node_type and the NODE_PRIMITIVES op list live in cuda_dsl.cuh (single home).
 
 	inline constexpr const char* type_name[] = {
-	#define X(id, name, is_ann, var) name,
+	#define X(id, name, is_ann, var, role) name,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
 	inline constexpr node_type primitive_types[] = {
-	#define X(id, n, is_ann, var) node_type::id,
+	#define X(id, n, is_ann, var, role) node_type::id,
 		NODE_PRIMITIVES
 	#undef X
 	};
@@ -65,13 +65,13 @@ namespace arc {
 	// --- Shared node-type metadata helpers (used by serializer, GUI, solver) ---
 
 	inline constexpr bool type_is_annotated[] = {
-	#define X(id, n, is_ann, var) (bool)is_ann,
+	#define X(id, n, is_ann, var, role) (bool)is_ann,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
 	inline constexpr int type_var_count[] = {
-	#define X(id, n, is_ann, var) var,
+	#define X(id, n, is_ann, var, role) var,
 		NODE_PRIMITIVES
 	#undef X
 	};

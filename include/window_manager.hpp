@@ -159,13 +159,13 @@ private:
   inline void execute_action(ui_action action) {
     switch (action) {
       case ui_action::toggle_pause:   m_solver_threading.toggle_pause(); break;
-      case ui_action::op_tab_get:       m_app_state.op_tab = (int)op_tab::get; break;
-      case ui_action::op_tab_reduce:    m_app_state.op_tab = (int)op_tab::reduce; break;
-      case ui_action::op_tab_select:    m_app_state.op_tab = (int)op_tab::select; break;
-      case ui_action::op_tab_translate: m_app_state.op_tab = (int)op_tab::translate; break;
-      case ui_action::op_tab_map:       m_app_state.op_tab = (int)op_tab::map; break;
-      case ui_action::op_tab_generate:  m_app_state.op_tab = (int)op_tab::generate; break;
-      case ui_action::op_tab_combine:   m_app_state.op_tab = (int)op_tab::combine; break;
+      case ui_action::op_tab_get:       m_app_state.op_tab = (int)op_role::get; break;
+      case ui_action::op_tab_reduce:    m_app_state.op_tab = (int)op_role::reduce; break;
+      case ui_action::op_tab_select:    m_app_state.op_tab = (int)op_role::select; break;
+      case ui_action::op_tab_translate: m_app_state.op_tab = (int)op_role::translate; break;
+      case ui_action::op_tab_map:       m_app_state.op_tab = (int)op_role::map; break;
+      case ui_action::op_tab_generate:  m_app_state.op_tab = (int)op_role::generate; break;
+      case ui_action::op_tab_combine:   m_app_state.op_tab = (int)op_role::combine; break;
       case ui_action::toggle_log: {
         logging_mode m = m_app_state.log_mode;
         m_app_state.log_mode = (m == logging_mode::none) ? logging_mode::stream : logging_mode::none;
