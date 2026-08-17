@@ -152,17 +152,20 @@ namespace arc {
 		// the state AFTER this op runs, so the generator can steer the next op.
 		bool sel_waiting = false;    // a selection made, no act on it yet
 		bool work_unlanded = false;  // touched the list since the last combine
+		bool something_picked = false;  // marks exist on the list right now
 		node_type last_combine = node_type::type_count;  // kind of the most recent combine (type_count = none yet)
 
 		node() : ref_count(1) {}
 		node(node_type t, int16_t v = 0) : ref_count(1), type(t), value(v) {}
 		node(const node& other) : ref_count(1), arg(other.arg), hash(other.hash), type(other.type), value(other.value), max_depth(other.max_depth),
-			sel_waiting(other.sel_waiting), work_unlanded(other.work_unlanded), last_combine(other.last_combine) {}
+			sel_waiting(other.sel_waiting), work_unlanded(other.work_unlanded),
+			something_picked(other.something_picked), last_combine(other.last_combine) {}
 		node& operator=(const node& other) {
 			if (this != &other) {
 				arg = other.arg; hash = other.hash;
 				type = other.type; value = other.value; max_depth = other.max_depth;
-				sel_waiting = other.sel_waiting; work_unlanded = other.work_unlanded; last_combine = other.last_combine;
+				sel_waiting = other.sel_waiting; work_unlanded = other.work_unlanded;
+				something_picked = other.something_picked; last_combine = other.last_combine;
 			}
 			return *this;
 		}
@@ -185,20 +188,28 @@ namespace arc {
 	inline void set_generation_debt(node* n) {
 		bool prev_sel = n->arg ? n->arg->sel_waiting : false;
 		bool prev_work = n->arg ? n->arg->work_unlanded : false;
+		bool prev_picked = n->arg ? n->arg->something_picked : false;
 		node_type prev_combine = n->arg ? n->arg->last_combine : node_type::type_count;
 		node_type t = n->type;
 		if (is_get_op(t)) {
 			// A fresh source: nothing selected, but the new list owes a landing.
 			n->sel_waiting = false; n->work_unlanded = true; n->last_combine = prev_combine;
+			// A fetch hands back a brand new list, and new objects carry no marks.
+			n->something_picked = false;
 		} else if (is_select_op(t)) {
 			// A selection now waits to be acted on; touched the list.
 			n->sel_waiting = true; n->work_unlanded = true; n->last_combine = prev_combine;
+			n->something_picked = true;
 		} else if (is_combine_op(t)) {
 			// Lands the list: work discharged, selection must already be gone.
 			n->sel_waiting = prev_sel; n->work_unlanded = false; n->last_combine = t;
+			// A paint passes the list through untouched, marks included.
+			n->something_picked = prev_picked;
 		} else { // ACT
 			// The first act clears any waiting selection; re-owes a landing.
 			n->sel_waiting = false; n->work_unlanded = true; n->last_combine = prev_combine;
+			// Marks ride along on the objects an act hands forward.
+			n->something_picked = prev_picked;
 		}
 	}
 
@@ -210,6 +221,10 @@ namespace arc {
 		// The chain starts from the input whether or not anyone says so, so a
 		// null arg already HAS a source.
 		bool has_get = true;
+		// Rule 0: an op that does nothing without a pick is never worth offering
+		// before one. It would only respell the chain it wraps, one op longer.
+		// `SelectAll` is how a chain says "all of them", so nothing is lost.
+		if (needs_a_pick(type) && !(arg && arg->something_picked)) return false;
 		if (is_get_op(type)) {
 			// Rule 1: first op, or right after a combine. A leading Input is
 			// barred: it is a second spelling of the start every chain already

@@ -280,6 +280,19 @@ inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }
 
+// Ops that do NOTHING when nothing is picked, so offering one before a pick is
+// pure waste: it spells a program the search already has, one op longer. The
+// generator refuses them until something is marked (legal_next).
+// Each entry is kernel-checked, never guessed — Recolor and Shift pass unpicked
+// objects through untouched, DeleteSelection deletes nothing, Partition cuts
+// nothing without walls. Grows as more acts are taught to read the marks.
+// NOT here: UnionList / IntersectionList, which do real work either way (with
+// no marks they merge everything into one).
+inline constexpr bool needs_a_pick(node_type t) {
+    return t == node_type::Recolor || t == node_type::Shift ||
+           t == node_type::DeleteSelection || t == node_type::Partition;
+}
+
 // =====================================================================
 // GPU-side execution types (reduced limits for VRAM)
 // =====================================================================
