@@ -1,1 +1,1 @@
-Colors SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split Trim Layout[7] ScaleDown[7] Union
+Colors SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split Trim Layout[7] SelectAll ScaleDown[7] Union

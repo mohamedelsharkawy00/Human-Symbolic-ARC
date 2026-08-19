@@ -291,7 +291,12 @@ inline constexpr bool needs_a_pick(node_type t) {
     return t == node_type::Recolor || t == node_type::Shift ||
            t == node_type::DeleteSelection || t == node_type::Partition ||
            t == node_type::TurnRight || t == node_type::TurnLeft ||
-           t == node_type::FlipHorizontal || t == node_type::FlipVertical;
+           t == node_type::FlipHorizontal || t == node_type::FlipVertical ||
+           t == node_type::MoveRow || t == node_type::MoveColumn ||
+           t == node_type::SlamRow || t == node_type::SlamColumn ||
+           t == node_type::MoveToEdge || t == node_type::Origin ||
+           t == node_type::AlignToCanvas || t == node_type::Skew ||
+           t == node_type::ScaleUp || t == node_type::ScaleDown;
 }
 
 // =====================================================================

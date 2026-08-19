@@ -1299,6 +1299,9 @@ __device__ gpu_object_list& gpu_exec_align_to_canvas(gpu_exec_context& ctx, cons
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
 
         if (!empty_canvas) {
             // Two snap candidates per axis (touch-but-don't-overlap, gap=0):
@@ -1332,6 +1335,9 @@ __device__ gpu_object_list& gpu_exec_origin(gpu_exec_context& ctx, const gpu_obj
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
         obj.x1 = (int16_t)(obj.width - 1);
         obj.y1 = (int16_t)(obj.height - 1);
         obj.x0 = 0; obj.y0 = 0;
@@ -1617,6 +1623,9 @@ __device__ gpu_object_list& gpu_exec_move(gpu_exec_context& ctx, const gpu_objec
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
         if (horizontal) { obj.x0 += delta; obj.x1 += delta; }
         else { obj.y0 += delta; obj.y1 += delta; }
         res.count++;
@@ -1649,6 +1658,9 @@ __device__ gpu_object_list& gpu_exec_slam_row(gpu_exec_context& ctx, const gpu_o
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
         if (dx == 0) { res.count++; continue; }
         // Clamp to the mask's actual extent: bbox dims can exceed 30 (Shift/Union can
         // push an object's bbox past the grid), but the mask is only 30x30 and `nm` is
@@ -1690,6 +1702,9 @@ __device__ gpu_object_list& gpu_exec_slam_column(gpu_exec_context& ctx, const gp
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
         if (dy == 0) { res.count++; continue; }
         int w = min((int)obj.width, GPU_MAX_GRID), h = min((int)obj.height, GPU_MAX_GRID);  // clamp: bbox can exceed mask's 30x30 -> nm OOB
         int8_t (*nm)[GPU_MAX_GRID] = reinterpret_cast<int8_t(*)[GPU_MAX_GRID]>(ctx.op_scratch);  // global scratch (coalesced), not per-thread local
@@ -1747,6 +1762,13 @@ __device__ void gpu_exec_scale_up_warp(gpu_exec_context& ctx, int8_t factor, int
         int nh = min(oh * factor, GPU_MAX_GRID);
 
         auto& obj = res->objects[i];
+        // Only what was picked is resized; the rest ride through untouched.
+        if (!sobj.selected) {
+            gpu_warp_copy_object(obj, sobj, lane);
+            if (lane == 0) res->count = i + 1;
+            __syncwarp();
+            continue;
+        }
         // Dest cell pulls its source via /factor (nearest-neighbour upscale).
         gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
             int sr = dr / factor, sc = dc / factor;
@@ -1782,6 +1804,13 @@ __device__ void gpu_exec_scale_down_warp(gpu_exec_context& ctx, int8_t factor, i
         int nh = max((oh + factor - 1) / factor, 1);
 
         auto& obj = res->objects[i];
+        // Only what was picked is resized; the rest ride through untouched.
+        if (!sobj.selected) {
+            gpu_warp_copy_object(obj, sobj, lane);
+            if (lane == 0) res->count = i + 1;
+            __syncwarp();
+            continue;
+        }
         // Each dest cell is the majority vote of its factor x factor source block.
         gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
             return gpu_majority_vote(sobj.mask, dr, dc, factor, oh, ow);
@@ -1910,6 +1939,9 @@ __device__ gpu_object_list& gpu_exec_skew(gpu_exec_context& ctx, const gpu_objec
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked moves; the rest ride through where they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!obj.selected) { res.count++; continue; }
         int oy0 = obj.y0;
         int min_c = 1000, max_c = -1000, min_r = 1000, max_r = -1000;
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v_) {
@@ -2504,6 +2536,8 @@ __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const g
     for (int i = 0; i < res.count; ++i) {
         res.objects[i] = src.objects[i];
         auto& o = res.objects[i];
+        // Only what was picked travels; the rest stay where they are.
+        if (!o.selected) continue;
         int w = min((int)o.width, GPU_MAX_GRID), h = min((int)o.height, GPU_MAX_GRID);
         int steps = 0;
         for (; steps <= GPU_MAX_GRID; ++steps) {

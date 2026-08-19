@@ -1,1 +1,1 @@
-Split[1] Trim SlamRow[1] Split[0] Underlay
+Split[1] Trim SelectAll SlamRow[1] Split[0] Underlay
