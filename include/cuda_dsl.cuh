@@ -196,7 +196,6 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
   X(AddColor, "AddColor", 1, 10, generate)                    \
   X(Fit, "Fit", 0, 1, reduce)                                 \
   X(DiagTile, "DiagTile", 1, 2, generate)                     \
-  X(TileByInputPattern, "TileByInputPattern", 1, 2, generate) \
   X(Tile, "Tile", 1, 4, generate)                             \
   X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1, map)              \
   X(IntersectionList, "IntersectionList", 0, 1, reduce)       \
@@ -290,7 +289,9 @@ inline constexpr bool is_act_op(node_type t) {
 // no marks they merge everything into one).
 inline constexpr bool needs_a_pick(node_type t) {
     return t == node_type::Recolor || t == node_type::Shift ||
-           t == node_type::DeleteSelection || t == node_type::Partition;
+           t == node_type::DeleteSelection || t == node_type::Partition ||
+           t == node_type::TurnRight || t == node_type::TurnLeft ||
+           t == node_type::FlipHorizontal || t == node_type::FlipVertical;
 }
 
 // =====================================================================

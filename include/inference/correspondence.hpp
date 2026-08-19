@@ -1530,6 +1530,24 @@ inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
     return { width, height };
 }
 
+// THIS BLOCK IS NOT FOR AN OP TO USE. It is elected by looking at BOTH grids,
+// which is why the strict rule can afford to be strict: a unit that fits only
+// once in the input usually fits twice in a taller output, and the output side
+// carries the proof. 017c7c7b pair 1 is the case -- a 4-tall unit, 6-tall input
+// (fits once and a bit), 9-tall output (fits twice), found on the output.
+// An op sees the input only, and the test pair has no output at all, so it can
+// never reach this block. Hand an op the elected block and it solves train off
+// the answer and misses on test -- a good-looking solution right up until it is
+// scored.
+//
+// SO THE Pattern OP DIVERGES FROM THIS ON PURPOSE. Same function, different
+// question: this one proves a grid repeats and has two grids to prove it with,
+// Pattern only names the unit to continue with and has one. It calls
+// repeat_periods with must_fit_twice=false. The two agree wherever a period is
+// real and can only part where the evidence is one-and-a-half copies thin --
+// which is exactly where false periods live, so the divergence is a standing
+// risk, not a settled thing. If Pattern ever reads a motif nobody believes,
+// this is the first place to look.
 inline pair<int, int> block_of(const grid& input, const grid& output, int8_t background,
                                split_kind cut_kind, int sizes_width, int sizes_height) {
     if (cut_kind != split_kind::repeating_motif)

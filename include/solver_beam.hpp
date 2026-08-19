@@ -846,6 +846,14 @@ public:
         sol_str.pop_back();
       if (!sol_str.empty()) {
         lock_guard<mutex> lock(m_solver_state.mtx);
+        // Importing wants the facts, so it asks for them. Ops that learn a
+        // table (ShapeColorMap and kin) have nothing to say about a puzzle
+        // nobody has read, and would paint an empty grid for every example.
+        // A reload with the inference pane shut skips inference, and while
+        // paused nothing ever fills it in -- so ask here, never assume.
+        if (!p.inferred)
+          infer_into_puzzle(p, m_solver_state.puzzle_idx,
+                            (int)m_puzzle_tasks.size(), m_dataset_flags.load());
         apply_solution(p, m_solver_state, *m_gpu_buffer, sol_str, m_log);
         if (p.is_solved) {
           active_example_count = (int)p.train.size();

@@ -191,40 +191,6 @@ __device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& ou
     }
 }
 
-// --- Find repeat periods ---
-// Hole-tolerant: a transparent cell is a "don't care" that never vetoes a
-// period (so a periodic grid punched with holes, e.g. 0dfd9992, still resolves
-// to its true small period). A clean pattern finds the same period as before,
-// so extraction tasks are unaffected. NOTE: a period must be witnessed by at
-// least one non-transparent equality, else an all-hole stripe would falsely
-// accept w=1.
-__device__ void gpu_find_repeat_periods(const gpu_fixed_object& obj, int& best_w, int& best_h) {
-    int mw = obj.width, mh = obj.height;
-    best_w = mw; best_h = mh;
-    for (int w = 1; w <= mw; ++w) {
-        bool match = true; bool witnessed = false;
-        for (int r = 0; r < mh && match; ++r)
-            // cm == c % w via a wrapping counter (modulo is a GPU divide; the
-            // modulus w is fixed and c increments by 1).
-            for (int c = w, cm = 0; c < mw && match; ++c, cm = (cm + 1 == w ? 0 : cm + 1)) {
-                int8_t a = obj.mask[r][c], b = obj.mask[r][cm];
-                if (a == GPU_TRANSPARENT || b == GPU_TRANSPARENT) continue;
-                if (a != b) match = false; else witnessed = true;
-            }
-        if (match && (witnessed || w == mw)) { best_w = w; break; }
-    }
-    for (int h = 1; h <= mh; ++h) {
-        bool match = true; bool witnessed = false;
-        for (int c = 0; c < mw && match; ++c)
-            for (int r = h, rm = 0; r < mh && match; ++r, rm = (rm + 1 == h ? 0 : rm + 1)) {
-                int8_t a = obj.mask[r][c], b = obj.mask[rm][c];  // rm == r % h
-                if (a == GPU_TRANSPARENT || b == GPU_TRANSPARENT) continue;
-                if (a != b) match = false; else witnessed = true;
-            }
-        if (match && (witnessed || h == mh)) { best_h = h; break; }
-    }
-}
-
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {
     int counts[11];
     memset(counts, 0, sizeof(counts));
@@ -925,14 +891,18 @@ __device__ gpu_object_list& gpu_exec_recolor(gpu_exec_context& ctx, const gpu_ob
 // dims/anchor on lane 0. Ops that only touch headers or only masks can use
 // gpu_warp_copy_header / gpu_warp_fill_mask alone instead of the full skeleton.
 
+// Copy one object verbatim, mask and marks included. The one home for "this
+// object rides through untouched", which every act needs for what wasn't picked.
+__device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fixed_object& sobj, int lane) {
+    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
+    int8_t* d = reinterpret_cast<int8_t*>(&dobj);
+    const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
+    for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
+}
+
 // Copy the first `n` objects verbatim and set the output count.
 __device__ inline void gpu_warp_copy_objects(gpu_object_list* res, const gpu_object_list* src, int n, int lane) {
-    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
-    for (int i = 0; i < n; ++i) {
-        int8_t* d = reinterpret_cast<int8_t*>(&res->objects[i]);
-        const int8_t* s = reinterpret_cast<const int8_t*>(&src->objects[i]);
-        for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
-    }
+    for (int i = 0; i < n; ++i) gpu_warp_copy_object(res->objects[i], src->objects[i], lane);
     if (lane == 0) res->count = n;
     __syncwarp();
 }
@@ -1612,6 +1582,14 @@ __device__ void gpu_exec_transform_warp(gpu_exec_context& ctx, node_type type, i
         int nh = is_turn ? min(w, GPU_MAX_GRID) : min(h, GPU_MAX_GRID);
 
         auto& obj = res->objects[i];
+        // Only what was picked turns; the rest ride through as they are. Nothing
+        // picked means this op changes nothing — no falling back to "everything".
+        if (!sobj.selected) {
+            gpu_warp_copy_object(obj, sobj, lane);
+            if (lane == 0) res->count = i + 1;
+            __syncwarp();
+            continue;
+        }
         // Dest cell (dr, dc) pulls from its source cell via the inverse map.
         gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
             int sr, sc;
@@ -1957,13 +1935,25 @@ __device__ gpu_object_list& gpu_exec_skew(gpu_exec_context& ctx, const gpu_objec
     return res;
 }
 
+// Lets repeat_periods read an object: it wants width, height and data[r][c],
+// and a packed mask already indexes that way. No copy, no second period rule.
+struct gpu_object_view {
+    const gpu_packed_mask& data;
+    int width, height;
+};
+
 __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& obj_src = src.objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
         int best_w, best_h;
-        gpu_find_repeat_periods(obj_src, best_w, best_h);
+        // One finder for everyone (core_types.hpp). Loose evidence on purpose:
+        // naming the unit to continue with is a different question from proving
+        // a grid repeats, and a motif that fits once and a bit is still the
+        // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.
+        const gpu_object_view view{ obj_src.mask, obj_src.width, obj_src.height };
+        repeat_periods(view, GPU_TRANSPARENT, best_w, best_h, /*must_fit_twice=*/false);
         gpu_fixed_object obj;
         obj.x0 = obj_src.x0; obj.y0 = obj_src.y0;
         obj.width = (int16_t)best_w; obj.height = (int16_t)best_h;
@@ -3220,16 +3210,6 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             gpu_exec_tile_warp(ctx, value, false, lane);
             continue;
         }
-        if (type == node_type::TileByInputPattern && has_last) {
-            int pw, ph;
-            // One home for the recipe, in core_types.hpp: inference cuts by the
-            // same period this tiles by.
-            repeat_periods(ctx.input, -2, pw, ph);  // -2: no cell is background, compare raw  // all lanes compute same
-            bool horizontal = (value == 0);
-            int8_t period = (int8_t)(horizontal ? pw : ph);
-            gpu_exec_tile_warp(ctx, period, horizontal, lane);
-            continue;
-        }
         if (type == node_type::NormalizeOrientation && has_last) {
             // variant 0: by grid shape (legacy portrait). variant 1: canonical
             // pose — whole grid votes, works on square grids.
@@ -3328,11 +3308,11 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::AddColor:       result = last ? &gpu_exec_add_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Fit:            result = last ? &gpu_exec_fit(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Skew:           result = last ? &gpu_exec_skew(ctx, *last, value) : &gpu_acquire(ctx); break;
-            case node_type::Pattern:        result = last ? &gpu_exec_pattern(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Trim:           result = last ? &gpu_exec_trim(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::DiagTile:       result = last ? &gpu_exec_diag_tile(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Fractal:        result = last ? &gpu_exec_fractal(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Tile:           result = last ? &gpu_exec_tile(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::Pattern:        result = last ? &gpu_exec_pattern(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::ProjectOnSeeds: result = last ? &gpu_exec_project_on_seeds(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::IntersectionList:  result = last ? &gpu_exec_intersect_list(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::UnionList:         result = last ? &gpu_exec_union_list(ctx, *last) : &gpu_acquire(ctx); break;

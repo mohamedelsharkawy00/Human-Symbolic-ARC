@@ -1,1 +1,9 @@
-Split[1] SelectAll Recolor[2] TileByInputPattern[1] Underlay
+Pattern BidiColorMap[9] Fractal Underlay
+Puzzle:       017c7c7b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:02.7253
+Attempts:     868193
+Nodes:        5
+Best Score:   639.0000
+Max Depth:    4

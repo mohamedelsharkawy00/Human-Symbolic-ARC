@@ -27,7 +27,7 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 // The smallest block a grid repeats: the shortest run of columns that
 // repeats across it, and of rows that repeats down it. A grid that repeats
 // nothing gets back its own width and height. Single home of the recipe: the
-// kernel tiles by it (TileByInputPattern) and inference cuts by it
+// the Pattern op reads the unit by it and inference cuts by it
 // (split_kind::repeating_motif), so the two can never read a different period
 // off the same grid.
 //
@@ -52,8 +52,15 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 // answer only under an added rule, must divide the grid exactly, and what it
 // found was then always a whole number of the smallest. Removed 2026-08-12.
 template <typename Grid>
+// `must_fit_twice` is the caller's question, not a setting. Asking "does this
+// repeat?" is a claim about the picture and needs two whole copies as evidence
+// (inference). Asking "what unit do I continue with?" is a different question --
+// the output already says it continues, so one whole copy and a matching stub
+// names the unit (the Pattern op). 017c7c7b pair 1 is 6 tall with a 4-tall
+// motif: real, and invisible to the stricter question.
 ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
-                                           int& width, int& height) {
+                                           int& width, int& height,
+                                           bool must_fit_twice = true) {
     width = g.width; height = g.height;
     auto row_holds = [&](int w) {
         for (int r = 0; r < g.height; ++r)
@@ -81,9 +88,11 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     // the full 3 wide. No period fitting twice means the grid does not
     // repeat on that axis, and the width stays whole.
     // The cost of this rule is in notes/4 - To Do/A Repeat Has To Fit Twice.md.
-    for (int w = 1; w * 2 <= g.width; ++w)
+    const int widest = must_fit_twice ? g.width / 2 : g.width - 1;
+    const int tallest = must_fit_twice ? g.height / 2 : g.height - 1;
+    for (int w = 1; w <= widest; ++w)
         if (row_holds(w)) { width = w; break; }
-    for (int h = 1; h * 2 <= g.height; ++h)
+    for (int h = 1; h <= tallest; ++h)
         if (col_holds(h)) { height = h; break; }
 }
 

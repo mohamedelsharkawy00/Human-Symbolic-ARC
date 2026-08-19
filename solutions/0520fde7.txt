@@ -1,4 +1,4 @@
-Colors SizeRankColorMap Underlay FlipHorizontal Intersection
+Colors SizeRankColorMap Underlay SelectAll FlipHorizontal Intersection
 Puzzle: 0520fde7
 Train: Solved
 Test: Solved

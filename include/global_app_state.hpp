@@ -310,6 +310,7 @@ inline string serialize_settings(const global_app_state& app, bool muted, int pu
 	line("benchmark_timeout", app.benchmark_timeout_seconds);
 	line("benchmark_limit", app.benchmark_puzzle_limit);
 	line("minimized", (int)app.gui_minimized.load());
+	line("logging", (int)(app.log_mode.load() == logging_mode::stream));
 	line("inference_view", app.inference_view.load());
 	line("inference_rank", app.inference_rank.load());
 	line("inference_edge", app.inference_edge.at.load());
@@ -329,6 +330,9 @@ inline void apply_settings(global_app_state& app, const unordered_map<string, st
 	app.inference_view.store(settings_int(kv, "inference_view", global_app_state::INFERENCE_OFF)
 	                         % global_app_state::INFERENCE_STEPS);
 	app.inference_rank.store(settings_int(kv, "inference_rank", 0));
+	// Logging stays where it was left: a run whose log is off records nothing,
+	// and finding that out afterwards costs the run.
+	app.log_mode.store(settings_int(kv, "logging", 0) ? logging_mode::stream : logging_mode::none);
 	// -2 is OFF and -1 is ALL whatever the list, so what was saved still means
 	// what it said next launch.
 	app.inference_edge.at.store(settings_int(kv, "inference_edge", SHOW_ALL));
