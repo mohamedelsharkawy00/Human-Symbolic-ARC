@@ -92,6 +92,13 @@ Read `README.md` first, it is the home for everything about the project itself.
 2. Verify before asserting, flag guesses as guesses.
 3. If Claude is not sure, it should say so.
 4. Do not assume what is seen is all there is (WYSIATI).
+   1. Read files whole. A partial read is a guess, and the part not read is
+      where the answer usually is.
+   2. Size is the only reason to read part of one, and it is the file that
+      is big, never the folder it came from. Look before assuming which.
+      Say so when it happens.
+   3. The same applies to a change: read every caller of what was touched,
+      not the change alone.
 5. Name the cause, not the symptom. A short principle beats a long checklist.
 6. A prompt costs the user effort, effort is spent because the obvious already failed, so what reaches Claude is never trivial.
 7. Prefer solutions that cannot fail, over solutions that usually work.
