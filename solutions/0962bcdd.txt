@@ -1,2 +1,2 @@
-Colors SortBySize[1] SelectLargestObject[0] InvertSelection DeleteSelection Trim InteriorColor[-1] Split[1] Trim ExtendOrthogonal[2] Union
-Input Colors SortBySize[1] SelectSmallestObject[0] InvertSelection DeleteSelection Trim Split[1] Trim Union ExtendDiagonal[2] Union
+Colors SortBySize[1] SelectLargestObject[0] InvertSelection DeleteSelection SelectAll Trim InteriorColor[-1] Split[1] SelectAll Trim ExtendOrthogonal[2] Union
+Input Colors SortBySize[1] SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union ExtendDiagonal[2] Union

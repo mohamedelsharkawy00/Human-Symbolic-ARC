@@ -1,1 +1,1 @@
-Colors SortBySize[1] Trim SelectAll ScaleUp[2] AddColor[0] Union
+Colors SortBySize[1] SelectAll Trim SelectAll ScaleUp[2] AddColor[0] Union

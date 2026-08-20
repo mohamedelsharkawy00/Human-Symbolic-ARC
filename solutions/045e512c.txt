@@ -1,4 +1,4 @@
-Colors SortBySize[0] Trim ProjectOnSeeds Union
+Colors SortBySize[0] SelectAll Trim ProjectOnSeeds Union
 Puzzle:       045e512c
 Train:        Solved
 Test:         Solved

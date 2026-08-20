@@ -1865,6 +1865,9 @@ __device__ gpu_object_list& gpu_exec_outline(gpu_exec_context& ctx, const gpu_ob
         const auto& obj_src = src.objects[i];
         res.objects[res.count] = obj_src;
         auto& obj = res.objects[res.count];
+        // Only what was picked is reduced to its edge; the rest ride through
+        // whole. Nothing picked means this op does nothing.
+        if (!obj.selected) { res.count++; continue; }
         for (int r = 0; r < obj_src.height; ++r)
             for (int c = 0; c < obj_src.width; ++c) {
                 if (obj_src.mask[r][c] == GPU_TRANSPARENT) continue;
@@ -1889,6 +1892,8 @@ __device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& obj_src = src.objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
+        // Only what was picked is stretched to the grid; the rest ride through.
+        if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int sw = obj_src.width, sh = obj_src.height;
         int nw = min((int)gw, GPU_MAX_GRID), nh = min((int)gh, GPU_MAX_GRID);
         gpu_fixed_object obj;
@@ -2143,6 +2148,9 @@ __device__ gpu_object_list& gpu_exec_trim(gpu_exec_context& ctx, const gpu_objec
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& obj_src = src.objects[i];
+        // Fitting the box to the pixels is a deliberate act (the frame law), so
+        // it happens only to what was picked; the rest keep the box they had.
+        if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int16_t min_r = obj_src.height, max_r = -1, min_c = obj_src.width, max_c = -1;
         bool has_pix = false;
         GPU_DEV_FOR_EACH_PIXEL(obj_src, r, c, v_) {

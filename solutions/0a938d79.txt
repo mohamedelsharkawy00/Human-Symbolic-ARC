@@ -1,1 +1,1 @@
-Union Input Colors SortBySize[1] Trim NormalizeOrientation[0] TileX[1] Tile[3] RestoreOrientation Union
+Union Input Colors SortBySize[1] SelectAll Trim NormalizeOrientation[0] TileX[1] Tile[3] RestoreOrientation Union

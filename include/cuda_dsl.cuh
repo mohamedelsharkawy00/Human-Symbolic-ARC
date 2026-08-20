@@ -296,7 +296,9 @@ inline constexpr bool needs_a_pick(node_type t) {
            t == node_type::SlamRow || t == node_type::SlamColumn ||
            t == node_type::MoveToEdge || t == node_type::Origin ||
            t == node_type::AlignToCanvas || t == node_type::Skew ||
-           t == node_type::ScaleUp || t == node_type::ScaleDown;
+           t == node_type::ScaleUp || t == node_type::ScaleDown ||
+           t == node_type::Trim || t == node_type::Fit ||
+           t == node_type::Outline;
 }
 
 // =====================================================================
