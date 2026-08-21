@@ -1,1 +1,1 @@
-Colors SortBySize[1] SelectAll Trim AddColor[0] SelectAll InvertSelection SelectLargestObject[1] InvertSelection DeleteSelection Union
+Colors SelectAll SortBySize[1] SelectAll Trim AddColor[0] SelectAll InvertSelection SelectLargestObject[1] InvertSelection DeleteSelection Union

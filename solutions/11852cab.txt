@@ -1,1 +1,1 @@
-Union Input Colors SortBySize[1] UnionList SelectAll Trim SelectAll TurnRight Union TurnRight Union TurnRight Union
+Union Input Colors SelectAll SortBySize[1] UnionList SelectAll Trim SelectAll TurnRight Union TurnRight Union TurnRight Union

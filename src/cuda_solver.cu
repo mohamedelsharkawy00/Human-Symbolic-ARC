@@ -384,15 +384,31 @@ __device__ gpu_object_list& gpu_exec_select_most_common_color(gpu_exec_context& 
     return res;
 }
 
-// SortBySize: returns the full source list reordered by pixel count.
+// SortBySize: reorder the PICKED objects by pixel count, among the slots they
+// already occupy. Everything unpicked stays exactly where it is, so the act
+// touches only what was chosen -- the same law the other acts follow, said for
+// an ordering: a sort of some is a sort of their own places.
 // value=0 -> descending (biggest first), value=1 -> ascending (smallest first).
+// Nothing picked means nothing is reordered.
 __device__ gpu_object_list& gpu_exec_sort_by_size(gpu_exec_context& ctx, const gpu_object_list& src, int desc) {
     auto& res = gpu_acquire(ctx);
     if (src.count <= 0) return res;
-    int counts[GPU_KERNEL_MAX_OBJECTS], indices[GPU_KERNEL_MAX_OBJECTS];
     int n = src.count > GPU_KERNEL_MAX_OBJECTS ? GPU_KERNEL_MAX_OBJECTS : src.count;
-    for (int i = 0; i < n; ++i) { counts[i] = gpu_count_pixels(src.objects[i]); indices[i] = i; }
-    for (int i = 1; i < n; ++i) {
+    // The whole list rides through in place first; the sort only moves the picked.
+    for (int i = 0; i < n; ++i) res.objects[i] = src.objects[i];
+    res.count = n;
+
+    int slots[GPU_KERNEL_MAX_OBJECTS], counts[GPU_KERNEL_MAX_OBJECTS], indices[GPU_KERNEL_MAX_OBJECTS];
+    int m = 0;
+    for (int i = 0; i < n; ++i)
+        if (src.objects[i].selected) {
+            slots[m] = i; indices[m] = i;
+            counts[m] = gpu_count_pixels(src.objects[i]);
+            ++m;
+        }
+    if (m == 0) return res;
+
+    for (int i = 1; i < m; ++i) {
         int j = i;
         while (j > 0 && (desc ? counts[j] > counts[j-1] : counts[j] < counts[j-1])) {
             int tc = counts[j]; counts[j] = counts[j-1]; counts[j-1] = tc;
@@ -400,8 +416,8 @@ __device__ gpu_object_list& gpu_exec_sort_by_size(gpu_exec_context& ctx, const g
             j--;
         }
     }
-    for (int i = 0; i < n; ++i) res.objects[i] = src.objects[indices[i]];
-    res.count = n;
+    // k-th picked slot receives the k-th object in sorted order.
+    for (int k = 0; k < m; ++k) res.objects[slots[k]] = src.objects[indices[k]];
     return res;
 }
 

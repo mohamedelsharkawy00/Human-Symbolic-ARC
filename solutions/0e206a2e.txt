@@ -1,1 +1,1 @@
-Colors SortBySize[1] SnapToAnchors Union
+Colors SelectAll SortBySize[1] SnapToAnchors Union

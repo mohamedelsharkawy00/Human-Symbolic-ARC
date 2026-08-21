@@ -1,1 +1,1 @@
-Colors SortBySize[1] SelectAll Trim ShapeColorMap BidiColorMap[0] Underlay Input Underlay
+Colors SelectAll SortBySize[1] SelectAll Trim ShapeColorMap BidiColorMap[0] Underlay Input Underlay

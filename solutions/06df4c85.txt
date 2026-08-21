@@ -1,1 +1,1 @@
-Colors SortBySize[1] Union Seeds Bridge Underlay Input Underlay
+Colors SelectAll SortBySize[1] Union Seeds Bridge Underlay Input Underlay

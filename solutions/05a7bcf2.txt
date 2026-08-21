@@ -1,4 +1,4 @@
-Colors SortBySize[1] SelectAll Trim NormalizeOrientation[1] Union
+Colors SelectAll SortBySize[1] SelectAll Trim NormalizeOrientation[1] Union
 Input Colors SelectColor[4] InvertSelection DeleteSelection ExtendTo[0] ReadUnder Split SelectColor[2] DeleteSelection Split[1] ExtendTo[0] Union
 Input Colors SelectColor[4] InvertSelection DeleteSelection SelectAll Recolor[3] Union
 Input Colors SelectColor[8] InvertSelection DeleteSelection Union
