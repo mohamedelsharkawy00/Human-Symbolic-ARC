@@ -1,4 +1,4 @@
-Colors UnionList TileY[4] Fractal Underlay Input SelectAll FlipHorizontal Fractal Underlay
+Colors UnionList SelectAll TileY[4] Fractal Underlay Input SelectAll FlipHorizontal Fractal Underlay
 Puzzle: 00576224
 Train: Solved
 Test: Solved

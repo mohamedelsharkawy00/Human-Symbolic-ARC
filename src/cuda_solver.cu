@@ -2267,10 +2267,20 @@ __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool ho
         int oy0 = horizontal ? sy  : 0;
 
         auto& t = res->objects[i];
+        // Only what was picked is tiled; the rest ride through as they are.
+        // Nothing picked means this op does nothing.
+        if (!obj.selected) {
+            gpu_warp_copy_object(t, obj, lane);
+            __syncwarp();
+            continue;
+        }
         if (lane == 0) {
             t.x0 = (int16_t)ox0; t.y0 = (int16_t)oy0;
             t.width = (int16_t)ow; t.height = (int16_t)oh;
             t.x1 = (int16_t)(ox0 + ow - 1); t.y1 = (int16_t)(oy0 + oh - 1);
+            // A tiled object is the SAME object, grown -- so it keeps its mark,
+            // like Trim, Fit and Pattern. A rebuilt one starts unmarked.
+            t.selected = obj.selected;
         }
         // Byte-gather the mask: each lane owns ONE packed dest byte = 2 dest cells
         // in the same row. Each dest cell pulls its source via the tiling period

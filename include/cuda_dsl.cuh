@@ -301,7 +301,8 @@ inline constexpr bool needs_a_pick(node_type t) {
            t == node_type::Outline ||
            t == node_type::InteriorColor || t == node_type::BidiColorMap ||
            t == node_type::VoteDenoise || t == node_type::ShapeToInteriorColorMap ||
-           t == node_type::SortBySize;
+           t == node_type::SortBySize ||
+           t == node_type::TileX || t == node_type::TileY;
 }
 
 // =====================================================================
