@@ -1,4 +1,4 @@
-Colors AddColor[0] Colors SelectAll SortBySize[1] SelectAll MoveToEdge[1] Underlay
+Colors SelectAll AddColor[0] Colors SelectAll SortBySize[1] SelectAll MoveToEdge[1] Underlay
 Puzzle: 3618c87e
 Train: Solved
 Test: Solved

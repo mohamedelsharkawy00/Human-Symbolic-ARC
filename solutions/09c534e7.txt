@@ -1,1 +1,1 @@
-Union Input Colors SelectAll SortBySize[1] Split[0] SelectAll Recolor[10] Union Outline Difference Output AddColor[1] Union
+Union Input Colors SelectAll SortBySize[1] Split[0] SelectAll Recolor[10] Union Outline Difference Output SelectAll AddColor[1] Union

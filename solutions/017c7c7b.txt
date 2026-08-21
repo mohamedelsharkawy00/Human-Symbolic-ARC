@@ -1,4 +1,4 @@
-Pattern SelectAll BidiColorMap[9] Fractal Underlay
+SelectAll Pattern SelectAll BidiColorMap[9] Fractal Underlay
 Puzzle:       017c7c7b
 Train:        Solved
 Test:         Solved

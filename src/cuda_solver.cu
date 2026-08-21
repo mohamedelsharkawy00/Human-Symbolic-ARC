@@ -1877,6 +1877,8 @@ __device__ gpu_object_list& gpu_exec_add_color(gpu_exec_context& ctx, const gpu_
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked gains the color; the rest ride through as they are.
+        if (!obj.selected) { res.count++; continue; }
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c)
                 if (obj.mask[r][c] == GPU_TRANSPARENT) obj.mask[r][c] = color;
@@ -2016,6 +2018,8 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& obj_src = src.objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
+        // Only what was picked is reduced to its unit; the rest ride through.
+        if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int best_w, best_h;
         // One finder for everyone (core_types.hpp). Loose evidence on purpose:
         // naming the unit to continue with is a different question from proving
@@ -2373,7 +2377,11 @@ __device__ gpu_object_list& gpu_exec_fractal(gpu_exec_context& ctx, const gpu_ob
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& s = src.objects[i];
         if (s.width <= 0 || s.height <= 0) continue;
+        // Only what was picked is stamped into itself; the rest ride through.
+        if (!s.selected) { res.objects[res.count++] = s; continue; }
         gpu_fixed_object& out = res.objects[res.count];
+        // Same object grown, so it keeps its mark (a rebuilt one starts unmarked).
+        out.selected = s.selected;
         out.x0 = 0; out.y0 = 0;
         out.x1 = (int16_t)(w - 1); out.y1 = (int16_t)(h - 1);
         out.width = (int16_t)w; out.height = (int16_t)h;
@@ -2515,6 +2523,8 @@ __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gp
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const gpu_fixed_object& obj = src.objects[i];
         if (obj.width <= 0 || obj.height <= 0) continue;
+        // Only what was picked grows rays; the rest ride through as they are.
+        if (!obj.selected) { res.objects[res.count++] = obj; continue; }
 
         // Find center cell: non-transparent pixel closest to bbox center.
         int bcx = (obj.x0 + obj.x1) / 2 - obj.x0;
@@ -2538,6 +2548,8 @@ __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gp
         int nh = min(y1 - y0 + 1, GPU_MAX_GRID);
 
         gpu_fixed_object& out = res.objects[res.count++];
+        // The rays belong to the object that grew them, so they carry its mark.
+        out.selected = obj.selected;
         out.x0 = (int16_t)x0; out.y0 = (int16_t)y0;
         out.x1 = (int16_t)x1; out.y1 = (int16_t)y1;
         out.width = (int16_t)nw; out.height = (int16_t)nh;

@@ -1,4 +1,4 @@
-Colors Fractal AddColor[0] Union
+Colors SelectAll Fractal AddColor[0] Union
 Puzzle: 007bbfb7
 Train: Solved
 Test: Solved

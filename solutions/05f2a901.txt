@@ -1,1 +1,1 @@
-Colors SelectColor[8] InvertSelection DeleteSelection SelectAll Trim Union Input Colors SelectColor[2] InvertSelection DeleteSelection SelectAll Trim SelectAll AlignToCanvas Union AddColor[0] Output AddColor[0] Union
+Colors SelectColor[8] InvertSelection DeleteSelection SelectAll Trim Union Input Colors SelectColor[2] InvertSelection DeleteSelection SelectAll Trim SelectAll AlignToCanvas Union AddColor[0] Output SelectAll AddColor[0] Union
