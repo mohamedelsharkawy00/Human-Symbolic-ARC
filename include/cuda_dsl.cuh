@@ -298,7 +298,9 @@ inline constexpr bool needs_a_pick(node_type t) {
            t == node_type::AlignToCanvas || t == node_type::Skew ||
            t == node_type::ScaleUp || t == node_type::ScaleDown ||
            t == node_type::Trim || t == node_type::Fit ||
-           t == node_type::Outline;
+           t == node_type::Outline ||
+           t == node_type::InteriorColor || t == node_type::BidiColorMap ||
+           t == node_type::VoteDenoise || t == node_type::ShapeToInteriorColorMap;
 }
 
 // =====================================================================

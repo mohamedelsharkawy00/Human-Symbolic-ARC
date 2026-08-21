@@ -844,6 +844,15 @@ __device__ void gpu_interior_paint_warp(const gpu_fixed_object& obj_src,
     __syncwarp();
 }
 
+// Copy one object verbatim, mask and marks included. The one home for "this
+// object rides through untouched", which every act needs for what wasn't picked.
+__device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fixed_object& sobj, int lane) {
+    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
+    int8_t* d = reinterpret_cast<int8_t*>(&dobj);
+    const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
+    for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
+}
+
 __device__ void gpu_exec_interior_color_warp(gpu_exec_context& ctx, int8_t color, int lane) {
     gpu_object_list* src = gpu_resolve_last(ctx);
     if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
@@ -853,6 +862,12 @@ __device__ void gpu_exec_interior_color_warp(gpu_exec_context& ctx, int8_t color
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj_src = src->objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
+        // Only what was picked has its interior filled; the rest ride through.
+        if (!obj_src.selected) {
+            gpu_warp_copy_object(res->objects[outc], obj_src, lane);
+            ++outc;
+            continue;
+        }
         int f = color;
         if (color < 0) {                                  // first-color fill
             if (lane == 0) f = gpu_obj_first_color(obj_src);
@@ -890,15 +905,6 @@ __device__ gpu_object_list& gpu_exec_recolor(gpu_exec_context& ctx, const gpu_ob
 // with a one-line "where does cell (r,c) come from" lambda, then stamp the new
 // dims/anchor on lane 0. Ops that only touch headers or only masks can use
 // gpu_warp_copy_header / gpu_warp_fill_mask alone instead of the full skeleton.
-
-// Copy one object verbatim, mask and marks included. The one home for "this
-// object rides through untouched", which every act needs for what wasn't picked.
-__device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fixed_object& sobj, int lane) {
-    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
-    int8_t* d = reinterpret_cast<int8_t*>(&dobj);
-    const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
-    for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
-}
 
 // Copy the first `n` objects verbatim and set the output count.
 __device__ inline void gpu_warp_copy_objects(gpu_object_list* res, const gpu_object_list* src, int n, int lane) {
@@ -1016,6 +1022,8 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
+        // Only what was picked swaps colors; the rest ride through as they are.
+        if (!obj.selected) { res.count++; continue; }
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c) {
                 int8_t v = obj.mask[r][c];
@@ -1193,6 +1201,12 @@ __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx,
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj_src = src->objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
+        // Only what was picked is looked up and filled; the rest ride through.
+        if (!obj_src.selected) {
+            gpu_warp_copy_object(res->objects[outc], obj_src, lane);
+            ++outc;
+            continue;
+        }
 
         int f = -1;
         if (lane == 0) {
@@ -1897,6 +1911,8 @@ __device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object
         int sw = obj_src.width, sh = obj_src.height;
         int nw = min((int)gw, GPU_MAX_GRID), nh = min((int)gh, GPU_MAX_GRID);
         gpu_fixed_object obj;
+        // Same object, same mark -- a fresh one would start unmarked.
+        obj.selected = obj_src.selected;
         obj.x0 = 0; obj.y0 = 0;
         obj.width = (int16_t)nw; obj.height = (int16_t)nh;
         obj.x1 = (int16_t)(nw - 1); obj.y1 = (int16_t)(nh - 1);
@@ -1992,6 +2008,9 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         const gpu_object_view view{ obj_src.mask, obj_src.width, obj_src.height };
         repeat_periods(view, GPU_TRANSPARENT, best_w, best_h, /*must_fit_twice=*/false);
         gpu_fixed_object obj;
+        // The unit is the same object, so it keeps its mark. A fresh
+        // gpu_fixed_object starts unmarked and would drop the pick silently.
+        obj.selected = obj_src.selected;
         obj.x0 = obj_src.x0; obj.y0 = obj_src.y0;
         obj.width = (int16_t)best_w; obj.height = (int16_t)best_h;
         obj.x1 = obj.x0 + (int16_t)best_w - 1; obj.y1 = obj.y0 + (int16_t)best_h - 1;
@@ -2032,6 +2051,8 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& s = src.objects[i];
         if (s.width <= 0 || s.height <= 0) continue;
+        // Only what was picked is denoised; the rest ride through as they are.
+        if (!s.selected) { res.objects[res.count++] = s; continue; }
         gpu_fixed_object obj = s;
         const int w = s.width, h = s.height;
 
@@ -2161,6 +2182,9 @@ __device__ gpu_object_list& gpu_exec_trim(gpu_exec_context& ctx, const gpu_objec
         }
         if (!has_pix) continue;
         gpu_fixed_object obj;
+        // A rebuilt object is the SAME object, so it keeps its mark. A fresh
+        // gpu_fixed_object starts unmarked, which would drop the pick silently.
+        obj.selected = obj_src.selected;
         obj.x0 = obj_src.x0 + min_c; obj.y0 = obj_src.y0 + min_r;
         obj.width = max_c - min_c + 1; obj.height = max_r - min_r + 1;
         obj.x1 = obj.x0 + obj.width - 1; obj.y1 = obj.y0 + obj.height - 1;

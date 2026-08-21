@@ -1,1 +1,1 @@
-Colors UnionList VoteDenoise Underlay
+Colors UnionList SelectAll VoteDenoise Underlay

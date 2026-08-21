@@ -1,1 +1,1 @@
-Colors BidiColorMap[12] BidiColorMap[20] BidiColorMap[24] BidiColorMap[44] Union
+Colors SelectAll BidiColorMap[12] BidiColorMap[20] BidiColorMap[24] BidiColorMap[44] Union
