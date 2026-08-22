@@ -208,8 +208,10 @@ namespace arc {
 		} else { // ACT
 			// The first act clears any waiting selection; re-owes a landing.
 			n->sel_waiting = false; n->work_unlanded = true; n->last_combine = prev_combine;
-			// Marks ride along on the objects an act hands forward.
-			n->something_picked = prev_picked;
+			// Marks ride along on the objects an act hands forward -- unless the
+			// act hands back different objects, and then there is nothing for a
+			// mark to be attached to.
+			n->something_picked = hands_back_new_objects(t) ? false : prev_picked;
 		}
 	}
 

@@ -157,77 +157,80 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
 // without saying what it does — the macro will not compile without it.
+// THE ORDER IS THE SEARCH ORDER, simplest first: fewest variants, then fewest
+// lines of code. Ties: turns before flips, rights before lefts, inputs before
+// outputs, canvas as Union/Underlay/Intersection/Difference, then fewer letters.
 #define NODE_PRIMITIVES /* Schema: X(ID, NAME, IS_ANNOTATED, VAR_COUNT, ROLE) */ \
-  X(Input, "Input", 0, 1, get)                                \
-  X(Output, "Output", 0, 1, get)                              \
-  X(Seeds, "Seeds", 0, 1, get)                                \
-  X(Fractal, "Fractal", 0, 1, generate)                       \
-  X(Intersection, "Intersection", 0, 1, combine)              \
-  X(Union, "Union", 0, 1, combine)                            \
-  X(Difference, "Difference", 0, 1, combine)                  \
-  /* DeleteSelection consumes the marks, it does not make them: an act. */ \
-  X(DeleteSelection, "DeleteSelection", 0, 1, reduce)         \
-  X(Shift, "Shift", 1, 8, translate)                          \
-  X(TurnRight, "TurnRight", 0, 1, translate)                  \
-  X(TurnLeft, "TurnLeft", 0, 1, translate)                    \
-  X(FlipHorizontal, "FlipHorizontal", 0, 1, translate)        \
-  X(FlipVertical, "FlipVertical", 0, 1, translate)            \
-  X(Recolor, "Recolor", 1, 12, map)                           \
-  X(Split, "Split", 1, 3, generate)                           \
-  /* Colors extracts the palette as objects — a producing act, not a source. */ \
-  X(Colors, "Colors", 0, 1, map)                              \
-  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 1, select) \
-  X(InteriorColor, "InteriorColor", 1, 11, map)               \
-  X(ScaleUp, "ScaleUp", 1, 9, translate)                      \
-  X(ScaleDown, "ScaleDown", 1, 9, translate)                  \
-  X(Pattern, "Pattern", 0, 1, generate)                       \
-  X(Trim, "Trim", 0, 1, reduce)                               \
-  X(MoveRow, "MoveRow", 1, 8, translate)                      \
-  X(MoveColumn, "MoveColumn", 1, 8, translate)                \
-  X(SlamRow, "SlamRow", 1, 8, translate)                      \
-  X(SlamColumn, "SlamColumn", 1, 8, translate)                \
-  X(SelectLargestObject, "SelectLargestObject", 1, 10, select) \
-  X(SelectSmallestObject, "SelectSmallestObject", 1, 10, select) \
-  X(Skew, "Skew", 1, 47, translate)                           \
-  X(TileX, "TileX", 1, 30, generate)                          \
-  X(TileY, "TileY", 1, 30, generate)                          \
-  X(Bridge, "Bridge", 0, 1, generate)                         \
-  X(Partition, "Partition", 0, 1, generate)                   \
-  X(AddColor, "AddColor", 1, 10, generate)                    \
-  X(Fit, "Fit", 0, 1, reduce)                                 \
-  X(DiagTile, "DiagTile", 1, 2, generate)                     \
-  X(Tile, "Tile", 1, 4, generate)                             \
-  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1, map)              \
-  X(IntersectionList, "IntersectionList", 0, 1, reduce)       \
-  X(UnionList, "UnionList", 0, 1, reduce)                     \
-  X(Origin, "Origin", 0, 1, translate)                        \
-  X(AlignToCanvas, "AlignToCanvas", 0, 1, translate)          \
-  X(SortBySize, "SortBySize", 1, 2, map)                      \
-  X(SizeRankColorMap, "SizeRankColorMap", 0, 1, map)          \
-  X(ExtendOrthogonal, "ExtendOrthogonal", 1, 9, generate)     \
-  X(ExtendDiagonal, "ExtendDiagonal", 1, 9, generate)         \
-  X(NormalizeOrientation, "NormalizeOrientation", 1, 2, translate) \
-  X(RestoreOrientation, "RestoreOrientation", 0, 1, translate) \
-  X(BidiColorMap, "BidiColorMap", 1, 45, map)                 \
-  X(SnapToAnchors, "SnapToAnchors", 0, 1, map)                \
-  X(ShapeColorMap, "ShapeColorMap", 0, 1, map)                \
-  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 1, map) \
-  X(OverlapCorner, "OverlapCorner", 0, 1, map)                \
-  X(ExtendTo, "ExtendTo", 1, 8, generate)                     \
-  /* The canvas-readers judge by what lies beneath, not by the object: acts. */ \
-  X(MaskBy, "MaskBy", 1, 11, map)                             \
-  X(MaskOut, "MaskOut", 1, 11, map)                           \
-  X(Underlay, "Underlay", 0, 1, combine)                      \
-  X(ReadUnder, "ReadUnder", 0, 1, map)                        \
-  X(MoveToEdge, "MoveToEdge", 1, 8, translate)                \
-  X(VoteDenoise, "VoteDenoise", 0, 1, map)                    \
-  X(Outline, "Outline", 0, 1, reduce)                         \
+  X(SelectAll, "SelectAll", 0, 1, select)                                        \
+  X(InvertSelection, "InvertSelection", 0, 1, select)                            \
+  X(TurnRight, "TurnRight", 0, 1, translate)                                     \
+  X(TurnLeft, "TurnLeft", 0, 1, translate)                                       \
+  X(FlipHorizontal, "FlipHorizontal", 0, 1, translate)                           \
+  X(FlipVertical, "FlipVertical", 0, 1, translate)                               \
+  X(Input, "Input", 0, 1, get)                                                   \
+  X(Output, "Output", 0, 1, get)                                                 \
+  X(Origin, "Origin", 0, 1, translate)                                           \
+  X(Union, "Union", 0, 1, combine)                                               \
+  /* DeleteSelection consumes the marks, it does not make them: an act. */       \
+  X(DeleteSelection, "DeleteSelection", 0, 1, reduce)                            \
+  /* The canvas-readers judge by what lies beneath, not by the object: acts. */  \
+  X(ReadUnder, "ReadUnder", 0, 1, map)                                           \
+  X(Outline, "Outline", 0, 1, reduce)                                            \
+  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 1, select)                \
+  /* Colors extracts the palette as objects — a producing act, not a source. */  \
+  X(Colors, "Colors", 0, 1, map)                                                 \
+  X(Trim, "Trim", 0, 1, reduce)                                                  \
+  X(OverlapCorner, "OverlapCorner", 0, 1, map)                                   \
+  X(Underlay, "Underlay", 0, 1, combine)                                         \
+  X(Fit, "Fit", 0, 1, reduce)                                                    \
+  X(Intersection, "Intersection", 0, 1, combine)                                 \
+  X(Fractal, "Fractal", 0, 1, generate)                                          \
+  X(Difference, "Difference", 0, 1, combine)                                     \
+  X(UnionList, "UnionList", 0, 1, reduce)                                        \
+  X(AlignToCanvas, "AlignToCanvas", 0, 1, translate)                             \
+  X(IntersectionList, "IntersectionList", 0, 1, reduce)                          \
+  X(SizeRankColorMap, "SizeRankColorMap", 0, 1, map)                             \
+  X(Pattern, "Pattern", 0, 1, generate)                                          \
+  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1, map)                                 \
+  X(Bridge, "Bridge", 0, 1, generate)                                            \
+  X(Partition, "Partition", 0, 1, generate)                                      \
+  X(RestoreOrientation, "RestoreOrientation", 0, 1, translate)                   \
+  X(ShapeColorMap, "ShapeColorMap", 0, 1, map)                                   \
+  X(Seeds, "Seeds", 0, 1, get)                                                   \
+  X(VoteDenoise, "VoteDenoise", 0, 1, map)                                       \
+  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 1, map)               \
+  X(SnapToAnchors, "SnapToAnchors", 0, 1, map)                                   \
+  X(SortBySize, "SortBySize", 1, 2, map)                                         \
+  X(DiagTile, "DiagTile", 1, 2, generate)                                        \
+  X(NormalizeOrientation, "NormalizeOrientation", 1, 2, translate)               \
+  X(Split, "Split", 1, 3, generate)                                              \
+  X(Tile, "Tile", 1, 4, generate)                                                \
+  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 1, 5, select)              \
+  X(MoveRow, "MoveRow", 1, 8, translate)                                         \
+  X(MoveColumn, "MoveColumn", 1, 8, translate)                                   \
+  X(Shift, "Shift", 1, 8, translate)                                             \
+  X(MoveToEdge, "MoveToEdge", 1, 8, translate)                                   \
+  X(SlamRow, "SlamRow", 1, 8, translate)                                         \
+  X(SlamColumn, "SlamColumn", 1, 8, translate)                                   \
+  X(ExtendTo, "ExtendTo", 1, 8, generate)                                        \
+  X(ExtendDiagonal, "ExtendDiagonal", 1, 9, generate)                            \
+  X(ExtendOrthogonal, "ExtendOrthogonal", 1, 9, generate)                        \
+  X(ScaleUp, "ScaleUp", 1, 9, translate)                                         \
+  X(ScaleDown, "ScaleDown", 1, 9, translate)                                     \
+  X(Layout, "Layout", 1, 9, translate)                                           \
+  X(SelectColor, "SelectColor", 1, 10, select)                                   \
   X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 1, 10, select) \
-  X(Layout, "Layout", 1, 9, translate)                        \
-  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 1, 5, select) \
-  X(SelectColor, "SelectColor", 1, 10, select)                \
-  X(SelectAll, "SelectAll", 0, 1, select)                     \
-  X(InvertSelection, "InvertSelection", 0, 1, select)
+  X(SelectLargestObject, "SelectLargestObject", 1, 10, select)                   \
+  X(SelectSmallestObject, "SelectSmallestObject", 1, 10, select)                 \
+  X(AddColor, "AddColor", 1, 10, generate)                                       \
+  X(MaskBy, "MaskBy", 1, 11, map)                                                \
+  X(MaskOut, "MaskOut", 1, 11, map)                                              \
+  X(InteriorColor, "InteriorColor", 1, 11, map)                                  \
+  X(Recolor, "Recolor", 1, 12, map)                                              \
+  X(TileX, "TileX", 1, 30, generate)                                             \
+  X(TileY, "TileY", 1, 30, generate)                                             \
+  X(BidiColorMap, "BidiColorMap", 1, 45, map)                                    \
+  X(Skew, "Skew", 1, 47, translate)
 
 enum class node_type : uint8_t {
 #define X(id, n, is_ann, var, role) id,
@@ -277,6 +280,19 @@ inline constexpr bool is_select_op(node_type t)  { return role_of(t) == op_role:
 inline constexpr bool is_combine_op(node_type t) { return role_of(t) == op_role::combine; }
 inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
+}
+
+// Ops that hand back objects OTHER than the ones they were given, so no mark
+// can cross them. A mark is attached to an object's identity: a carve turns one
+// object into several, and the several are new; DeleteSelection keeps exactly
+// the ones that were NOT picked. Everything else passes its objects forward, so
+// the marks ride along with them.
+// The same property decides whether an op can be selection-gated at all -- every
+// gated act is one-object-in, one-object-out. Kernel is the truth, this is the
+// claim; the drift-proof version is a column plus a startup self-check.
+inline constexpr bool hands_back_new_objects(node_type t) {
+    return t == node_type::Split || t == node_type::Colors ||
+           t == node_type::Partition || t == node_type::DeleteSelection;
 }
 
 // Ops that do NOTHING when nothing is picked, so offering one before a pick is
