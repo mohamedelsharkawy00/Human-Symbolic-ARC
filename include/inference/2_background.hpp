@@ -1,11 +1,11 @@
-// background.hpp — which color is the canvas, elected per side.
+// 2_background.hpp — which color is the canvas, elected per side.
 // Design story in notes/1 - Overall Design/Inference Master.md, section 3g.
 //
 // Self-contained: the election reads grids and nothing else. It shares no name
-// with correspondence.hpp in either direction, so the two are siblings.
+// with 3_correspondence.hpp in either direction, so the two are siblings.
 
 #pragma once
-#include "inference/readings.hpp"
+#include "inference/1_readings.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <utility>

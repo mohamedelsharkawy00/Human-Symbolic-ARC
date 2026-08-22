@@ -1,10 +1,10 @@
-// log.hpp — the per-puzzle readout.
+// 5_log.hpp — the per-puzzle readout.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // Last in the family: it reads every fact and writes none.
 
 #pragma once
-#include "inference/infer.hpp"
+#include "inference/4_infer.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>

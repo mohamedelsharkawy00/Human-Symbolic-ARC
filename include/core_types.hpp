@@ -12,7 +12,7 @@
 
 // FNV-1a fingerprint of a glyph's bbox occupancy (1 = glyph pixel, 0 = empty),
 // seeded with w,h. Single home of the recipe: the CPU hashes learned keys
-// (inference/readings.hpp) and the kernel hashes again at apply time
+// (inference/1_readings.hpp) and the kernel hashes again at apply time
 // both call this, so learned keys cannot silently miss.
 // occ(i): is pixel i (row-major within the bbox) part of the glyph.
 template <typename OccupancyAt>
@@ -100,7 +100,7 @@ namespace arc {
 
 
 // Below both the engine and inference, so either can be read without the other.
-// Reached through inference/infer.hpp, the one door to everything below it.
+// Reached through inference/4_infer.hpp, the one door to everything below it.
 
 // The pieces a puzzle is made of: colors, grids, one train pair.
 enum class arc_color : int8_t {
@@ -133,7 +133,7 @@ constexpr float SCORE_MIN = -1000000.0f;
 //
 //   GROUPING IS 8 — "is this one thing?" A diagonal join makes one object out
 //   of two, which is what a person sees. Every cut in inference groups through
-//   walk_out (inference/readings.hpp), which is 8 and offers no alternative.
+//   walk_out (inference/1_readings.hpp), which is 8 and offers no alternative.
 //
 //   ADJACENCY IS 4 — "what is beside this?" A diagonal is a corner touch and
 //   not a border, so a wall with a diagonal gap must not leak through it.

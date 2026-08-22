@@ -1,5 +1,5 @@
 # Groups every puzzle by its dimension rule (Identity / Scale / Fixed /
-# BoundingBox), mirroring derive_dimension_rule in include/inference/infer.hpp
+# BoundingBox), mirroring derive_dimension_rule in include/inference/4_infer.hpp
 # (incl. the cross-multiplied ratio check — no integer truncation).
 # Usage: python scripts/list_puzzles_by_size_rule.py [rule_name]
 #   no arg    -> summary counts + writes analysis/puzzles_by_size_rule.txt

@@ -1,7 +1,7 @@
 #pragma once
 // Single home of the grid/color limits the GPU_* names below alias, and of
 // output_dimension_rule, whose cases the kernel switches on.
-#include "inference/infer.hpp"
+#include "inference/4_infer.hpp"
 
 #include <vector>
 #include <cstdint>

@@ -1,4 +1,4 @@
-// infer.hpp — read the examples like a human.
+// 4_infer.hpp — read the examples like a human.
 // Design story, rationale, and experiment records
 // in notes/1 - Overall Design/Inference Master.md
 //
@@ -6,9 +6,7 @@
 // it claims; some can fail) and a detector (the one pass that reads that rule
 // off the pairs), and nothing else.
 //
-// THE READING ORDER is infer()'s body, at the bottom of this file, and nowhere
-// else. It is not the file order and never was — a channel sits where it reads
-// best, and runs when its inputs are ready:
+// THE READING ORDER, the one every file number and every include follows:
 //
 //   SIZE            what decides the output's width and height
 //   COLORS          which colors appear where, and in what order
@@ -23,10 +21,10 @@
 // took ALL of itself along — facts, machinery, and the detector that fills
 // them. infer() calls in and gets its answer back:
 //
-//   inference/readings.hpp        the shared base: count it, box it, walk it
-//   inference/correspondence.hpp  pick_split
-//   inference/background.hpp      elect_background
-//   inference/log.hpp             the per-puzzle readout
+//   inference/1_readings.hpp        the shared base: count it, box it, walk it
+//   inference/2_background.hpp      elect_background
+//   inference/3_correspondence.hpp  pick_split
+//   inference/5_log.hpp             the per-puzzle readout
 //
 // Facts, not verdicts: consumers fold and gate downstream. One exception —
 // background_hypotheses keeps its runners-up ranked, because something later
@@ -40,9 +38,9 @@
 // returns (detect_color_presence and friends, behind detect_color_facts).
 
 #pragma once
-#include "inference/readings.hpp"
-#include "inference/correspondence.hpp"
-#include "inference/background.hpp"
+#include "inference/1_readings.hpp"
+#include "inference/2_background.hpp"
+#include "inference/3_correspondence.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>

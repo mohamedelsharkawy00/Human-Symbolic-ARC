@@ -47,8 +47,8 @@ INC_FILES = [
     "core_types.hpp",
     "cuda_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
     "fixed_dsl.hpp", "global_app_state.hpp", "gui_stub.hpp",
-    "inference/readings.hpp", "inference/correspondence.hpp",
-    "inference/background.hpp", "inference/infer.hpp", "inference/log.hpp",
+    "inference/1_readings.hpp", "inference/3_correspondence.hpp",
+    "inference/2_background.hpp", "inference/4_infer.hpp", "inference/5_log.hpp",
     "logger.hpp", "os_utilities.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
     "solver_executor.hpp", "sound_manager.hpp", "submission.hpp",
 ]

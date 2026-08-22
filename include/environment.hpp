@@ -16,7 +16,7 @@
 #include "cuda_dsl.cuh"
 // The one door to everything below the engine: infer(), and through it the
 // core types (arc_color, grid, example, output_dimension_rule) and the limits.
-#include "inference/infer.hpp"
+#include "inference/4_infer.hpp"
 
 namespace arc {
 	using namespace std;
@@ -464,7 +464,7 @@ namespace arc {
 		// Background election readout, for GUI display / verification. Plain
 		// data (no dependency on the inference family): puzzle_loader copies the four
 		// per-direction elections off the inference object here. See
-		// background_hypotheses (inference/background.hpp) for the source of truth.
+		// background_hypotheses (inference/2_background.hpp) for the source of truth.
 		struct background_readout {
 			struct cand { int8_t color = -1; int embeds = 0, dominance = 0; bool persists = false; int score = 0, span = 0, gaps = 0; bool underneath = false; };
 			// one ranked list per direction; [0] is that direction's winner
@@ -478,7 +478,7 @@ namespace arc {
 		background_readout bg;
 		// Object correspondence readout, for GUI display / verification. Same
 		// deal as background_readout: plain data, filled by puzzle_loader off
-		// correspondence_facts (inference/correspondence.hpp), one entry per edge.
+		// correspondence_facts (inference/3_correspondence.hpp), one entry per edge.
 		// Centers are in HALF CELLS (2*x0 + w) so an even-sized object centers
 		// BETWEEN two cells instead of being nudged off by one.
 		struct correspondence_readout {
@@ -599,7 +599,7 @@ namespace arc {
 			// account for says nothing without the size of the thing it failed at.
 			int cells = 0;
 			// The cut names live once, beside the cuts themselves —
-			// arc::split_names in inference/correspondence.hpp.
+			// arc::split_names in inference/3_correspondence.hpp.
 		};
 		correspondence_readout correspondence;
 		// Everything else infer() read, for the GUI pane. Same plain-data deal:
@@ -747,7 +747,7 @@ namespace arc {
 		}
 
 		// Detect invariant colors: present in ALL training inputs.
-		// MOVED to inference/infer.hpp (arc::detect_color_presence).
+		// MOVED to inference/4_infer.hpp (arc::detect_color_presence).
 		// Reading the always-present (across_inputs) colors is inference's job. The
 		// engine only needs the single dominant background color for
 		// segmentation (Colors skips it, Split erases it); puzzle_loader bridges
@@ -763,24 +763,24 @@ namespace arc {
 		// every color = exactly one connected region so the two coincide. For puzzles
 		// where one color has multiple disjoint regions of different sizes, a connected-
 		// components-aware variant is needed (see notes/2_dsl/learned_orderings.txt).
-		// detect_output_colors_by_size MOVED to inference/infer.hpp
+		// detect_output_colors_by_size MOVED to inference/4_infer.hpp
 		// (arc::detect_output_colors_by_size). Ranking across-outputs colors by
 		// pixel count is inference's job; puzzle_loader bridges
 		// inf.colors.output_colors_by_size / _count onto the puzzle for the
 		// OutputColorsBySize op. (The inference version reads the background color
 		// directly to skip the background, same value as the old p.invariant_colors.)
 
-		// detect_output_colors MOVED to inference/infer.hpp (arc::detect_output_colors).
+		// detect_output_colors MOVED to inference/4_infer.hpp (arc::detect_output_colors).
 		// Reading the across_outputs palette is inference's job. Nothing in the
 		// engine consumes the ordered palette since the InferredOutputColors op
 		// was deleted; the by-size ranking is the surviving consumer.
 
-		// detect_size_rule MOVED to inference/infer.hpp (arc::output_dimension_rule::infer_rule).
+		// detect_size_rule MOVED to inference/4_infer.hpp (arc::output_dimension_rule::infer_rule).
 		// Reading a rule from the examples is inference's job; the output_dimension_rule TYPE
 		// stays here because the DSL/GPU path sizes output grids from it. The
 		// engine no longer computes it directly — puzzle_loader calls arc::infer(p),
 		// which returns an `inference` object; its output_dimension_rule is copied to p.rule.
-		// See inference/infer.hpp for the verified-foundation notes (1,147-puzzle corpus).
+		// See inference/4_infer.hpp for the verified-foundation notes (1,147-puzzle corpus).
 
 		static inline void update_hash(node* n) {
 			if (!n)

@@ -1,4 +1,4 @@
-// readings.hpp — how to read a grid at all: count it, box it, walk it, name its shape.
+// 1_readings.hpp — how to read a grid at all: count it, box it, walk it, name its shape.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // The shared base every channel stands on. Nothing here asks a question about
