@@ -81,54 +81,6 @@ int main() {
 	// Render Context
 	vulkan_context context;
 	context.init(window_manager.get_hwnd(), w, h);
-
-	// Command port: one line in, one line out. Vocabulary is the ui_action
-	// names, plus "state" (read where the app is) and "puzzle <id>" (jump).
-	// --port N says where to start looking; the server walks up from there, so a
-	// second app never fights the first for 2026.
-	unsigned short first_port = 2026;
-	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--port "))
-		if (int given = _wtoi(arg + 7); given > 0 && given < 65536)
-			first_port = (unsigned short)given;
-
-	command_server cmd_server;
-	cmd_server.init(first_port, [&](const string &line) -> string {
-		if (line == "state") {
-			auto &st = solver.get_solver_state();
-			int idx = st.puzzle_idx.load();
-			bool solved = idx >= 0 && idx < solver.get_puzzle_count() &&
-			              solver.get_puzzle(idx).is_solved;
-			// gpu_used says whether the card is shared right now, so nobody reads
-			// a contended run as a regression.
-			gpu_memory gpu = read_gpu_memory();
-			return fmt::format(
-				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}%",
-				solver.current_puzzle_id(), idx, solver.get_puzzle_count(),
-				(bool)app_state.is_paused, (bool)app_state.is_benchmarking,
-				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent);
-		}
-		if (line.starts_with("puzzle ")) {
-			string id = line.substr(7);
-			return solver.jump_to_puzzle_id(id) ? "ok " + id : "error unknown id " + id;
-		}
-		for (size_t i = 1; i < size(ui_action_names); ++i)
-			if (line == ui_action_names[i]) {
-				window_manager.perform((ui_action)i);
-				return "ok";
-			}
-		return "error unknown command " + line;
-	});
-
-	// Say once, at startup, how busy the card already is and whether a sibling
-	// app took 2026 before us. Both mean this run shares the GPU, and a shared
-	// run is not comparable to one that had the card to itself.
-	{
-		gpu_memory gpu = read_gpu_memory();
-		cmd_server.note(fmt::format(
-			"gpu {} MB of {} MB in use ({}%){}", gpu.used_mb, gpu.total_mb,
-			gpu.used_percent,
-			cmd_server.port() != 2026 ? ", another app already holds 2026" : ""));
-	}
 #endif
 
 	// Data Buffers & Solver Setup
@@ -211,6 +163,88 @@ int main() {
 	// Settings writer: snapshot once a second, write only when something changed.
 	string last_settings;
 	auto last_settings_check = chrono::steady_clock::now();
+
+	// THE PORT OPENS LAST, after everything a command can reach exists. A
+	// screenshot draws the frame where it is asked for, so the handler needs the
+	// same buffers and counters the frame loop draws from.
+	// Command port: one line in, one line out. Vocabulary is the ui_action
+	// names, plus "state" (read where the app is), "puzzle <id>" (jump) and
+	// "screenshot <path>" (what the window would look like, written as a PNG).
+	// --port N says where to start looking; the server walks up from there, so a
+	// second app never fights the first for 2026.
+	unsigned short first_port = 2026;
+	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--port "))
+		if (int given = _wtoi(arg + 7); given > 0 && given < 65536)
+			first_port = (unsigned short)given;
+
+	command_server cmd_server;
+	cmd_server.init(first_port, [&](const string &line) -> string {
+		// TAKEN RIGHT HERE, because this handler already runs on the thread that
+		// draws — the port is polled from inside the frame loop. Handing the
+		// work to that loop and waiting for it was waiting on ourselves.
+		// The window is never touched: the frame goes into memory, so a
+		// minimized app answers exactly like a visible one.
+		if (line.starts_with("screenshot ")) {
+			const string path = line.substr(11);
+			if (path.empty()) return "error screenshot needs a path";
+			// DRAWN TWICE, AND ONLY THE SECOND IS KEPT. A frame fills the buffer
+			// it draws from as it goes, so the card only has it on the frame
+			// after — which the window never notices, drawing sixty a second,
+			// and which a single picture would show as an empty screen. The
+			// first pass is how the frame says what it wants; the second draws
+			// it. Nothing here waits on the window, so it holds while minimized.
+			auto &st = solver.get_solver_state();
+			for (int pass = 0; pass < 2; ++pass) {
+				context.upload_all_data(gpu_buffer);
+				app_state.needs_upload = false;
+				if (!context.begin_capture(w, h)) return "error could not draw the frame";
+				if (int p_idx = st.puzzle_idx; p_idx >= 0 && p_idx < solver.get_puzzle_count()) {
+					lock_guard<mutex> lock(st.mtx);
+					draw_frame(&context, chars, bg_grid, st, app_state,
+						solver.get_puzzle(p_idx), w, h, fps, aps, gpu_ms, p_idx,
+						solver.get_puzzle_count(), gpu_buffer);
+				}
+				if (!context.end_capture(pass == 1 ? path : string()))
+					return "error could not write " + path;
+			}
+			return "ok " + path;
+		}
+		if (line == "state") {
+			auto &st = solver.get_solver_state();
+			int idx = st.puzzle_idx.load();
+			bool solved = idx >= 0 && idx < solver.get_puzzle_count() &&
+			              solver.get_puzzle(idx).is_solved;
+			// gpu_used says whether the card is shared right now, so nobody reads
+			// a contended run as a regression.
+			gpu_memory gpu = read_gpu_memory();
+			return fmt::format(
+				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}%",
+				solver.current_puzzle_id(), idx, solver.get_puzzle_count(),
+				(bool)app_state.is_paused, (bool)app_state.is_benchmarking,
+				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent);
+		}
+		if (line.starts_with("puzzle ")) {
+			string id = line.substr(7);
+			return solver.jump_to_puzzle_id(id) ? "ok " + id : "error unknown id " + id;
+		}
+		for (size_t i = 1; i < size(ui_action_names); ++i)
+			if (line == ui_action_names[i]) {
+				window_manager.perform((ui_action)i);
+				return "ok";
+			}
+		return "error unknown command " + line;
+	});
+
+	// Say once, at startup, how busy the card already is and whether a sibling
+	// app took 2026 before us. Both mean this run shares the GPU, and a shared
+	// run is not comparable to one that had the card to itself.
+	{
+		gpu_memory gpu = read_gpu_memory();
+		cmd_server.note(fmt::format(
+			"gpu {} MB of {} MB in use ({}%){}", gpu.used_mb, gpu.total_mb,
+			gpu.used_percent,
+			cmd_server.port() != 2026 ? ", another app already holds 2026" : ""));
+	}
 #endif
 
 	// Program Loop. Windows drives it off the window message pump and renders

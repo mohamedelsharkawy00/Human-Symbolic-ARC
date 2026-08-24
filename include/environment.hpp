@@ -486,8 +486,8 @@ namespace arc {
 				int8_t pair = 0;
 				// Center of the piece, and of where it landed
 				int16_t from_col = 0, from_row = 0, to_col = 0, to_row = 0;
-				// Which reading of the split this line belongs to; 0 explained
-				// most. 'C' walks these.
+				// Which reading of the split this line belongs to, as a place
+				// in `readings`. 'C' walks these.
 				int8_t rank = 0;
 				// The two boxes the line joins, in cells: where the piece sits
 				// and where it landed. Drawn one pixel thin.
@@ -514,9 +514,10 @@ namespace arc {
 				bool from_input = true;
 			};
 			vector<line> lines;
-			// One entry per reading of the split, best first: what it cut on,
-			// what it cost, and what it threw away. This is why one reading
-			// leads and another trails.
+			// One entry per reading of the split, IN THE ORDER THE TABLE IS
+			// DRAWN: one row per cut, one column per freedom, so a reading's
+			// place here IS its cell. What it cut on, what it cost and what it
+			// threw away is why one reading leads and another trails.
 			struct reading {
 				// WHERE THIS READING SITS IN THE TABLE: which cut down the
 					// side, which freedoms across the top. Two bytes, not two
@@ -583,6 +584,15 @@ namespace arc {
 						bool from_input = true;
 				};
 				vector<dropped_row> dropped_seen;
+				// EVERY CELL THE READING COULD NOT ACCOUNT FOR, named by the
+				// grid it sits on. The pane's left-over number is this list's
+				// length, so the number and what you can point at cannot drift.
+				struct left_over_row {
+					int8_t pair = 0;
+					bool from_input = true;
+					int8_t x = 0, y = 0;
+				};
+				vector<left_over_row> left_over_seen;
 				struct pair_read {
 					// How the forward pass decided (correspondence_facts::how)
 					int8_t how = 0;
@@ -594,6 +604,10 @@ namespace arc {
 				vector<pair_read> pairs;
 			};
 			vector<reading> readings;
+			// WHICH ONE INFERENCE CHOSE, a place in `readings`. The list is in
+			// table order, so the winner can sit anywhere in it and being first
+			// no longer says so.
+			int8_t chosen = 0;
 			// Non-background cells across both grids of every train pair. What a
 			// table cell is a share OF — a bare count of what a reading could not
 			// account for says nothing without the size of the thing it failed at.

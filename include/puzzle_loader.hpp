@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -393,30 +394,36 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
     // edge, center to center: where the object sits on its own side, and where
     // it landed on the other. A landing with no object there (a positional hit)
     // wears the source object's own size.
-    // EVERY ranked reading is bridged, not just the winner, so stepping the
+    // EVERY reading is bridged, not just the chosen one, so stepping the
     // coarseness in the GUI is instant instead of a reload.
     {
         auto& out = task.correspondence.lines;
         out.clear();
         task.correspondence.readings.clear();
+        task.correspondence.chosen = inf.correspondence.chosen;
         // EVERY READING IS BRIDGED, and NONE IS READ AGAIN. The election
         // matched all of them and kept the pieces and edges, so the table is
         // the election — same numbers, same work, done once.
-        const size_t readings = inf.correspondence.ranked.size();
+        const size_t readings = inf.correspondence.readings.size();
         for (size_t rank = 0; rank < readings; ++rank) {
         // A line names the reading it belongs to by its place in THIS list.
         const int8_t bridged = (int8_t)task.correspondence.readings.size();
-        const auto& ranked = inf.correspondence.ranked[rank];
-        const auto& read_pairs = inf.correspondence.ranked_pairs[rank];
+        const auto& ranked = inf.correspondence.readings[rank];
+        const auto& read_pairs = inf.correspondence.reading_pairs[rank];
         puzzle::correspondence_readout::reading R;
         R.cut_kind = (int8_t)ranked.cut_kind;
         R.match_kind = (int8_t)ranked.match_kind.index();
-        for (const auto& P : read_pairs) R.left_over += P.left_over;
+        for (const auto& P : read_pairs) R.left_over += (int)P.left_over.size();
         for (size_t pi = 0; pi < read_pairs.size(); ++pi) {
             const auto& P = read_pairs[pi];
             puzzle::correspondence_readout::reading::pair_read pr;
             pr.how = P.verdict;
-            pr.left_over = P.left_over;
+            pr.left_over = (int)P.left_over.size();
+            // The cells themselves, so the number above has something to point
+            // at. Read in grid order, which is the order they were found in.
+            for (const auto& cell : P.left_over)
+                R.left_over_seen.push_back({ (int8_t)pi, cell.from_input,
+                                             (int8_t)cell.col, (int8_t)cell.row });
             const auto& why = P.discard_why;
             const auto& gone = P.discarded;
             pr.dropped = (int)why.size();
@@ -449,6 +456,27 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
             // does, read off the boxes.
             vector<int16_t> first_input(P.input_objects.size(), (int16_t)-1);
             vector<int16_t> first_output(P.output_objects.size(), (int16_t)-1);
+            // WHICH PIECE A LANDING IS ON. A landing that names no piece still
+            // fell somewhere, and if it fell inside a piece's box that piece is
+            // what it means. THE TIGHTEST BOX WINS: boxes nest, and a ring's box
+            // holds whatever sits in its hole, which is not the ring.
+            auto piece_under = [](const auto& pieces, int col, int row, int w, int h) {
+                int16_t found = -1;
+                int smallest = 0;
+                for (size_t i = 0; i < pieces.size(); ++i) {
+                    const auto& t = pieces[i];
+                    if (col < t.left || row < t.top) continue;
+                    if (col + w > t.left + t.width || row + h > t.top + t.height) continue;
+                    const int box = t.width * t.height;
+                    if (found >= 0 && box >= smallest) continue;
+                    found = (int16_t)i;
+                    smallest = box;
+                }
+                return found;
+            };
+            // The two pieces every line so far joins, so one already said is
+            // never said again.
+            vector<pair<int16_t, int16_t>> said;
             for (const auto& e : P.edges) {
                 // Each end is a box: where the piece sits, and where it landed.
                 // Centers are the box centers, in half cells. WHICH LIST IS
@@ -460,13 +488,30 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
                 const auto& o = mine[e.from];
                 const int8_t w = e.to >= 0 ? theirs[e.to].width : o.width;
                 const int8_t h = e.to >= 0 ? theirs[e.to].height : o.height;
+                // WHERE THE TWO ENDS SAY THE SAME THING, WALK IT ONCE. A reading
+                // runs both ways round, so a piece found at a place and the piece
+                // sitting at that place found back at it are one fact told twice —
+                // and the walk showed the whole list over again from the other
+                // side. THE INPUT SIDE IS THE ONE KEPT, because the edges arrive
+                // input first and the first to say it is the one that stays.
+                // Said here and not in the matching, which needs both ends to
+                // know which cells it has accounted for.
+                const int16_t landed_on = e.to >= 0 ? e.to
+                                        : piece_under(theirs, e.col, e.row, w, h);
+                if (landed_on >= 0) {
+                    const auto joins = e.from_input ? pair{ e.from, landed_on }
+                                                    : pair{ landed_on, e.from };
+                    if (ranges::find(said, joins) != said.end()) continue;
+                    said.push_back(joins);
+                }
                 const int16_t idx = (int16_t)out.size();
-                // A SITS-ON EDGE ANSWERS NOTHING. It says only which piece this
-                // one overlaps most, drawn for pieces nothing found — so it must
-                // not mark either end as answered, or the piece it was invented
-                // for drops out of UNANSWERED, which is the one place it belongs.
+                // A SITS-ON EDGE ANSWERS BOTH ENDS. Same stuff rearranged is
+                // a claim about two objects, and it names them both, so both
+                // jump to this line. Only a landing on bare ground has one end,
+                // and then the far side is found by overlap instead.
+                if (first_mine[e.from] < 0) first_mine[e.from] = idx;
+                if (e.to >= 0 && first_theirs[e.to] < 0) first_theirs[e.to] = idx;
                 if (e.same_shape) {
-                    if (first_mine[e.from] < 0) first_mine[e.from] = idx;
                     for (size_t j = 0; j < theirs.size(); ++j) {
                         const auto& t = theirs[j];
                         if (first_theirs[j] >= 0) continue;
@@ -509,17 +554,24 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
                 }
             }
         }
-        // BIGGEST FIRST INSIDE EACH PAIR, both sides together. Each grid is
-        // already cut biggest-first, but listing one grid after another restarts
-        // the run at every side — big, small, big, small. One run per pair reads
-        // straight down, and the pair stays the thing you are looking at.
+        // IN THE ORDER THE SCREEN READS, and one order for every stepper the
+        // pane has: the pair, then the input column before the output one, then
+        // down the grid. Biggest first read straight down the CUT, which is not
+        // a thing on screen — it put a piece from the left grid between two from
+        // the right, and the box you were stepping bounced between the columns.
+        auto down_the_grids = [](int8_t pair, bool from_input, int8_t y, int8_t x) {
+            return tuple{ pair, !from_input, y, x };
+        };
         stable_sort(R.pieces_seen.begin(), R.pieces_seen.end(),
-                    [](const auto& a, const auto& b) {
-            if (a.pair != b.pair)   return a.pair < b.pair;
-            if (a.cells != b.cells) return a.cells > b.cells;
-            if (a.from_input != b.from_input) return a.from_input;
-            if (a.y != b.y)         return a.y < b.y;
-            return a.x < b.x;
+                    [&](const auto& a, const auto& b) {
+            return down_the_grids(a.pair, a.from_input, a.y, a.x) <
+                   down_the_grids(b.pair, b.from_input, b.y, b.x);
+        });
+        // The refused matches read the same way, off the piece each was for.
+        stable_sort(R.dropped_seen.begin(), R.dropped_seen.end(),
+                    [&](const auto& a, const auto& b) {
+            return down_the_grids(a.pair, a.from_input, a.from_y, a.from_x) <
+                   down_the_grids(b.pair, b.from_input, b.from_y, b.from_x);
         });
         task.correspondence.readings.push_back(std::move(R));
         }

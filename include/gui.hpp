@@ -418,8 +418,8 @@ inline int draw_header_rows(
   // doubles as a copy button via Ctrl+C. The value box renders the edit buffer
   // with a cursor while editing, otherwise the current ID.
   {
-    string copy_lbl = string("\xEE\x80\x82") + " [CTRL C]"; // copy glyph U+E002
-    string paste_lbl = "\xEE\x80\x83";                      // paste glyph U+E003
+    string copy_lbl = string("\xEE\x80\x82") + " [CTRL C]";  // copy glyph U+E002
+    string paste_lbl = string("\xEE\x80\x83") + " [CTRL V]"; // paste glyph U+E003
     int nw = box_w("ID");
     // A stable width so the click target doesn't jump around as the typed text
     // grows ("888..." is wider than any real 8-char ARC id).
@@ -446,8 +446,7 @@ inline int draw_header_rows(
     }
     x += vw + pad;
 
-    // Copy also answers to Ctrl+C from anywhere, so it wears that label; paste
-    // is the button alone.
+    // Both also answer to their Ctrl key from anywhere, so both wear it.
     x += button_at(copy_lbl, x, y, ui_action::copy_id, 1) + pad;
     button_at(paste_lbl, x, y, ui_action::paste_id, 1);
   }
@@ -788,12 +787,6 @@ inline void draw_line(vulkan_context *context, int color,
 // NOTHING FOUND IT is the test, carried from where the cells were — not
 // `first_line < 0`, which is credited by overlapping BOXES and so called every
 // piece sitting in a ring's hole answered by whatever answered the ring.
-// A LINE IS A FINDING. A sits-on edge found nothing, so it draws nothing and
-// steps nowhere — a line between two pieces says "this became that", and
-// drawing one for a piece nothing was found for says it falsely.
-inline bool line_is_a_finding(const puzzle::correspondence_readout::line& ln) {
-  return ln.kind != puzzle::correspondence_readout::line::sits_on;
-}
 
 // EVERY SET OF COPIES THERE ACTUALLY IS. A set is elected PER GRID, so a set
 // number on its own names one set on every grid at once — the same number
@@ -831,7 +824,7 @@ inline vector<int> unanswered_pieces(const puzzle::correspondence_readout::readi
 // about one object, and drawn on the same rectangle the later one simply paints
 // over the earlier — so only one of them was ever visible. Every outline after
 // the first steps inside the last, in the order the sliders are listed: LINE
-// outermost, then UNANSWERED, REFUSED, MOTIF. It stops stepping when the box
+// outermost, then UNANSWERED, REFUSED, MOTIF, LEFT OVER. It stops stepping when the box
 // has no middle left to step into, which is what a one-cell object runs into.
 // ONLY A DIFFERENT COLOR IS A DIFFERENT THING TO SAY. Many lines can land on
 // one piece and each asks for the same white box; nesting those would grow one
@@ -881,7 +874,7 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
   int t = max(1, lay.scale);
   int nth = -1;
   for (const auto &ln : task.correspondence.lines) {
-    if (ln.rank != rank || !line_is_a_finding(ln)) continue;
+    if (ln.rank != rank) continue;
     if (pick >= 0 && ++nth != pick) continue;
     if (ln.pair < 0 || ln.pair >= (int)task.train.size()) continue;
     const example &ex = task.train[ln.pair];
@@ -907,6 +900,15 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
     rings.add(context, to.x + ln.to_x * to.scale, to.y + ln.to_y * to.scale,
               (clipped ? ln.from_w : ln.to_w) * to.scale,
               (clipped ? ln.from_h : ln.to_h) * to.scale);
+    // WHICH BIT OF IT WAS ALREADY THERE. A sits-on line says this piece is
+    // under that one, and the box round the covering piece alone does not say
+    // where underneath. So the piece's own outline is drawn a second time, on
+    // the far grid, at its own place — a seed shows up inside the tile stamped
+    // over it. Only for sits-on: every other line MOVED its piece, and drawing
+    // it at its old place on the new grid would say it stayed.
+    if (ln.kind == puzzle::correspondence_readout::line::sits_on)
+      rings.add(context, to.x + ln.from_x * to.scale, to.y + ln.from_y * to.scale,
+                ln.from_w * to.scale, ln.from_h * to.scale);
   }
 }
 
@@ -955,7 +957,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
                                 int view, int rank, int step, int drawn,
-                                int piece_at, int dropped_at, int motif_at) {
+                                int piece_at, int dropped_at, int motif_at,
+                                int left_over_at) {
   const bool facts_face = (view == global_app_state::INFERENCE_FACTS);
   int scale = lay.scale;
   int pad = 2 * scale;
@@ -1006,14 +1009,15 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       ? total * line_h + line_h * 2 + pad * 3   // + gaps
       // WRITTEN THE WAY THE BODY BELOW SPENDS IT, term for term, so a row added
       // there is a term added here and the frame cannot end up shorter than
-      // what it holds. Five steppers, a detail line under each, two rules, the
-      // matrix (its axis title, three freedom rows, a row per cut, and the
+      // what it holds. Six steppers, a detail line under each and a second one
+      // under UNANSWERED, two rules, the matrix (its axis title, three freedom
+      // rows, a row per cut TWICE with a title over the second block, and the
       // legend), then the pair table (its head, a row per pair) and the three
       // reasons a match was refused.
       : frame_pad * 2 +
-            5 * (box_h + pad) + 6 * line_h +
+            6 * (box_h + pad) + 7 * line_h +
             2 * (block_gap * 2 + row_h - 5 * scale) +
-            (5 + (int)split_kind::split_count) * row_h +
+            (6 + 2 * (int)split_kind::split_count) * row_h +
             (1 + (int)F.pairs.size()) * row_h + 3 * line_h;
 
   // Dark backing, so the grids behind don't read through the readout.
@@ -1134,10 +1138,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
 
     // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
     // nothing above this one to part it from.
-    // Which reading of the split is on screen, and how many there are. A handful
-    // at most, so a step either way is enough to reach any of them.
+    // Which reading of the split is on screen, and how many there are. THE
+    // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
+    // along that table and never a jump off it.
     row_head("READING", fmt::format("{:>4} OF {}", rank + 1, max(1, readings)),
-             rank == 0);
+             rank == task.correspondence.chosen);
     {
       int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
       button("> [C]", x, ty, ui_action::cycle_coarseness);
@@ -1188,6 +1193,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     const vector<int> unanswered = unanswered_pieces(R);
     const int pieces_n = (int)unanswered.size();
     const int dropped_n = (int)R.dropped_seen.size();
+    const int left_over_n = (int)R.left_over_seen.size();
     track_row("LINE", "S", step, drawn, (int)arc_color::yellow,
               ui_action::step_edge_back, ui_action::step_edge, &app_state.inference_edge);
     // THE ONE LINE YOU ARE ON, said in full. All of this is invisible in the
@@ -1197,7 +1203,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       string said;
       int nth = -1;
       for (const auto& ln : task.correspondence.lines) {
-        if (ln.rank != rank || !line_is_a_finding(ln)) continue;
+        if (ln.rank != rank) continue;
         if (++nth != step) continue;
         said = fmt::format("PAIR {}  COLOR {}  {}X{} AT {},{} -> {},{}  {}",
                            ln.pair, ln.color < 0 ? string("MIXED") : to_string(ln.color),
@@ -1287,6 +1293,22 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       detail(piece_said);
       detail(blank_said);
     }
+    // A CELL, NOT A PIECE. Everything above walks things the reading made —
+    // pieces, matches, sets — and a cell it could not account for is none of
+    // them, so it was the one fact on the pane with nothing behind it to point
+    // at. The number here IS this list's length, so they cannot disagree.
+    track_row("LEFT OVER", "U", left_over_at, left_over_n, (int)arc_color::orange,
+              ui_action::step_left_over_back, ui_action::step_left_over,
+              &app_state.inference_left_over);
+    {
+      string said;
+      if (left_over_at >= 0 && left_over_at < left_over_n) {
+        const auto& cell = R.left_over_seen[left_over_at];
+        said = fmt::format("PAIR {}  {}  CELL AT {},{}", cell.pair,
+                           cell.from_input ? "INPUT" : "OUTPUT", cell.x, cell.y);
+      }
+      detail(said);
+    }
     // A CONTROL ROW IS TALLER THAN A TEXT ROW, so it leaves more behind it than
     // divide() expects, and the first rule sat lower in its gap than the rest.
     // Give back the difference and all the gaps draw the same.
@@ -1303,17 +1325,19 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // read for them without being told.
     divide();
     {
-      const int cuts = (int)split_kind::split_count, modes = match_mode::COUNT;
-      // Where each reading sits, so a cell knows which reading it stands for.
-      // One row per cut: a reading holds both readings of the pair at once, so
-      // there is nothing else for a row to be.
-      vector<int> at(cuts * modes, -1);
-      for (int i = 0; i < readings; ++i) {
-        const auto& q = task.correspondence.readings[i];
-        if (q.cut_kind >= 0 && q.cut_kind < cuts &&
-            q.match_kind >= 0 && q.match_kind < modes)
-          at[q.cut_kind * modes + q.match_kind] = i;
-      }
+      const int cuts = (int)split_kind::split_count;
+      // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
+      // edge became one of them, and sixteen columns ran off the panel and off
+      // the screen. So the table says the other three across the top, as it
+      // always did, and says this one by drawing the whole block of cuts twice:
+      // once for pieces that must stay on the grid, once for pieces that may
+      // hang off it. Same reading in the same place either way — a cell is
+      // still its reading's own cell, the block just says which half it is in.
+      const int modes = match_mode::COUNT / 2;
+      // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
+      // cut and one column per freedom, so a cell knows which reading it stands
+      // for without anything having to be looked up — and stepping the reading
+      // walks the table you are looking at.
       // A ROW IS NAMED BY WHAT IT COST TO LOOK AT, because that is what decided
       // whether it got searched at all. Said in the label, not in a column of
       // its own: it is one number per row, and a column would repeat it eight
@@ -1329,9 +1353,12 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // holds — a freedom's name, or the biggest number. Cut to its own text a
       // single digit read as a smaller thing than three, and the boxes down a
       // column no longer lined up with each other.
+      // MEASURED OVER WHAT A COLUMN ACTUALLY HOLDS. Measured over every freedom
+      // name, the one that has no column — it titles the second block instead —
+      // still set the width of all of them, and the table ran off the panel.
       int widest = text_w("9999", scale);
-      for (const char* word : match_mode::freedom_names)
-        widest = max(widest, text_w(word, scale));
+      for (int freedom = 0; freedom < match_mode::FREEDOMS - 1; ++freedom)
+        widest = max(widest, text_w(match_mode::freedom_names[freedom], scale));
       const int cell_w = widest + pad * 2;
       const int chip_w = widest + pad;
       // THE LABEL ENDS IN A NUMBER, so a one-character gap made that number read
@@ -1373,34 +1400,42 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // needed a legend under the table to be read at all, and one of them
       // could be taken for either of two freedoms. A dash where a word would
       // be says the freedom was withheld — a blank would look like a gap.
-      for (int freedom = 0; freedom < match_mode::FREEDOMS; ++freedom) {
+      // The freedoms that have a column of their own: everything but the last.
+      const int across = match_mode::FREEDOMS - 1;
+      for (int freedom = 0; freedom < across; ++freedom) {
         // On the last line, so it sits against the sentences it names.
-        if (freedom == match_mode::FREEDOMS - 1)
+        if (freedom == across - 1)
           centred(split_names_lead, tx, label_w);
         for (int m = 0; m < modes; ++m)
           column_chip(match_mode::from_index(m).may(freedom)
                           ? match_mode::freedom_names[freedom] : "-", m, true);
         ty += row_h;
       }
-      for (int c = 0; c < cuts; ++c) {
-        label_chip(split_names[c], ty);
-        for (int m = 0; m < modes; ++m) {
-          const int i = at[c * modes + m];
-          // A CELL NOBODY SEARCHED STILL HAS TO BE THERE. Left empty the table
-          // reads as broken; a dash says the true thing — the question was
-          // never asked, because the row above it lost on the looking.
-          const string s = (i < 0) ? "-"
-              : to_string(task.correspondence.readings[i].left_over);
-          // The one inference chose reads inverted; the one on screen is boxed.
-          const int chip_x = column_chip(s, m, i == 0);
-          if (i < 0) continue;
-          if (i == rank)
-            draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
-                        max(1, scale / 2));
-          app_state.pick_zones.push_back({cell_x(m), ty - (row_h - 5 * scale) / 2,
-                                          cell_w, row_h, &app_state.inference_rank, i});
+      // THE SAME ROWS, TWICE, THE SECOND TIME WITH THE LAST FREEDOM GRANTED.
+      // Its own name titles the second block, so the sentence still finishes:
+      // an object is a group of cells that touch, and it may move and turn and
+      // hang off the edge.
+      for (int half = 0; half < 2; ++half) {
+        if (half) {
+          centred(match_mode::freedom_names[across], cell_x(0), modes * cell_w);
+          ty += row_h;
         }
-        ty += row_h;
+        for (int c = 0; c < cuts; ++c) {
+          label_chip(split_names[c], ty);
+          for (int m = 0; m < modes; ++m) {
+            const int i = c * match_mode::COUNT + m + half * modes;
+            if (i >= readings) continue;
+            const string s = to_string(task.correspondence.readings[i].left_over);
+            // The one inference chose reads inverted; the one on screen is boxed.
+            const int chip_x = column_chip(s, m, i == task.correspondence.chosen);
+            if (i == rank)
+              draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
+                          max(1, scale / 2));
+            app_state.pick_zones.push_back({cell_x(m), ty - (row_h - 5 * scale) / 2,
+                                            cell_w, row_h, &app_state.inference_rank.at, i});
+          }
+          ty += row_h;
+        }
       }
       named_line("EACH CELL", fmt::format(
           "CELLS IT COULD NOT ACCOUNT FOR, OF {} ON BOTH GRIDS, EVERY PAIR",
@@ -2141,14 +2176,13 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
   // once here, for the wrap and for the pane.
   if (int view = app_state.inference_view.load(); view != global_app_state::INFERENCE_OFF) {
     const int readings = max(1, (int)task.correspondence.readings.size());
-    // STOPS AT EITHER END like every other stepper, and WRITTEN BACK, so a held
-    // button rests against the last reading instead of rolling round to the
-    // first — and the stored number cannot run off past what exists.
-    const int rank = min(max(app_state.inference_rank.load(), 0), readings - 1);
-    app_state.inference_rank.store(rank);
+    // Told which reading inference chose and how many there are, it hands back
+    // the one to show — following the chosen one until somebody steps away.
+    const int rank =
+        app_state.inference_rank.pick(task.correspondence.chosen, readings);
     int drawn = 0;
     for (const auto &ln : task.correspondence.lines)
-      if (ln.rank == rank && line_is_a_finding(ln)) drawn++;
+      if (ln.rank == rank) drawn++;
     // Each track is told how long its list is and hands back what is chosen.
     const auto &R = task.correspondence.readings;
     const vector<int> unanswered =
@@ -2161,6 +2195,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
     const vector<motif_set> sets =
         rank < (int)R.size() ? motif_sets(R[rank]) : vector<motif_set>{};
     const int motif_at = app_state.inference_motif.pick((int)sets.size());
+    const int left_over_n = rank < (int)R.size() ? (int)R[rank].left_over_seen.size() : 0;
+    const int left_over_at = app_state.inference_left_over.pick(left_over_n);
     if (view == global_app_state::INFERENCE_LINES) {
       // DRAWN IN THE ORDER THE SLIDERS ARE LISTED, because that is the order
       // the outlines nest in when several land on one object.
@@ -2208,9 +2244,19 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
                        pc.blank_x, pc.blank_y, pc.blank_w, pc.blank_h,
                        (int)arc_color::gray, rings);
       }
+      // THE CELLS NOTHING ACCOUNTED FOR, one cell each, so there is never room
+      // to step inside another outline — they are drawn last and simply sit
+      // where they are.
+      for (int i = 0; i < left_over_n; ++i) {
+        if (left_over_at != SHOW_ALL && left_over_at != i) continue;
+        const auto &cell = R[rank].left_over_seen[i];
+        draw_selection(context, task, lay, cell.pair, cell.from_input,
+                       cell.x, cell.y, 1, 1, false, 0, 0, 0, 0,
+                       (int)arc_color::orange, rings);
+      }
     }
     draw_inference_pane(context, font, app_state, task, lay, view, rank, step,
-                        drawn, piece_at, dropped_at, motif_at);
+                        drawn, piece_at, dropped_at, motif_at, left_over_at);
   }
 
   // The op palette goes last, so it is over everything. It already swallows every

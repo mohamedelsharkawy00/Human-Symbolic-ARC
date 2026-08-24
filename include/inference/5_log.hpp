@@ -176,8 +176,8 @@ inline void report_correspondence_readings(ostream& report, const correspondence
     // run for the table and never competed — see pick_split.
     report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
               " competed and are shown only so the table can be read\n";
-    for (size_t i = 0; i < correspondence.ranked.size(); ++i) {
-        const auto& reading = correspondence.ranked[i];
+    for (size_t i = 0; i < correspondence.readings.size(); ++i) {
+        const auto& reading = correspondence.readings[i];
         report << "  reading " << i
           << "  says it in " << (int)(reading.describe_cost * 100.0 + 0.5)
           << "% of plain  cut into " << reading.pieces_found;
@@ -188,7 +188,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
         if (!reading.pieces_can_fit) report << "  (no piece fits the other grid)";
         report << "   " << split_name((int)reading.cut_kind)
           << "  [" << reading.match_kind.label() << "]";
-        report << (i == 0 ? "   ELECTED\n" : "\n");
+        report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
 }
 
@@ -240,7 +240,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << "  exact " << pair.found_exact << " recolored " << pair.found_recolored
       << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
       << " turned " << pair.turned << " dropped " << pair.dropped
-      << "  left_over " << pair.left_over
+      << "  left_over " << pair.left_over.size()
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
     for (size_t i = 0; i < pair.input_objects.size(); ++i) {

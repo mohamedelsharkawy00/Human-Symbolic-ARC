@@ -55,7 +55,9 @@ Read `README.md` first, it is the home for everything about the project itself.
    2. Which port an app got is the `listening on` line in its own receipt log.
    3. ONE APP PER FOLDER. The port is the only thing an app keeps to itself, everything it writes is per folder, so a second app in the same folder overwrites the first: `solutions/<id>.txt`, `logs/<id>.txt`, `logs/inference/<id>.txt`, `logs/solver.txt`, `settings/settings.txt`, `kaggle/working/submission.json`. Solutions are the ground truth record, so this loses the most valuable thing here.
    4. The port walk is therefore for apps in DIFFERENT worktrees, not for two in one.
-2. Vocabulary: every `ui_action` name (spellings in `include/global_app_state.hpp`), plus `state` (read-only status) and `puzzle <id>` (jump by id).
+2. Vocabulary: every `ui_action` name (spellings in `include/global_app_state.hpp`), plus `state` (read-only status), `puzzle <id>` (jump by id) and `screenshot <path>` (write the frame as a PNG).
+   1. The frame is drawn into memory, never off the screen, so it answers the same whether the window is minimized, hidden or covered.
+   2. It is the only way Claude can SEE the app, everything else on this port is Claude acting blind.
 3. Look before acting: `state` returns `id idx paused benchmarking solved elapsed`.
 4. Puzzle jumps land asynchronously, poll `state` until the id changes.
 5. The solver runs only while unpaused (`toggle_pause`), and auto-pauses on solve.

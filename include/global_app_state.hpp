@@ -70,10 +70,10 @@ struct node; // Forward declaration
 enum class logging_mode { none, stream };
 // op_role lives beside the op list in cuda_dsl.cuh — it is what an op DOES. The
 // op_tab_* actions below are clicks on the drawer tab that draws each role.
-enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_timeout, dec_timeout, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine };
+enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_timeout, dec_timeout, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine };
 // The same actions as words, in the same order: the command port's vocabulary.
 // Keep in lockstep with ui_action above.
-inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_timeout", "dec_timeout", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "cycle_inference", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine" };
+inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_timeout", "dec_timeout", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "cycle_inference", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "step_left_over", "step_left_over_back", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine" };
 
 struct click_zone {
 	int x, y, w, h;
@@ -129,6 +129,35 @@ struct track {
 		const int n = count.load();
 		const int stop = to_stop(at.load(), n) + by;
 		at.store(from_stop(stop < 0 ? 0 : stop > n + 1 ? n + 1 : stop, n));
+	}
+};
+
+// WHICH READING OF THE SPLIT IS ON SCREEN. It holds a cell of the table, but
+// SITTING ON THE ELECTED ONE IS A CHOICE AND NOT A NUMBER: which cell inference
+// chose is a different one on every puzzle, so a stepper resting there follows
+// it to the next puzzle, and one somebody has moved holds its own cell instead.
+// Step back onto the elected cell and it follows again, because being on it is
+// the whole of what following means.
+struct shown_reading {
+	atomic<int> at{-1};        // -1 = nothing picked yet, show the elected one
+	atomic<int> elected{-1};   // the elected cell of the puzzle last drawn
+	atomic<int> count{0};
+	// The draw says which reading inference chose and how many there are, and
+	// reads the one to show back in one move — the same trade a track makes.
+	int pick(int chosen, int n) {
+		count.store(n);
+		const int before = elected.exchange(chosen);
+		int here = at.load();
+		if (here < 0 || here == before) here = chosen;
+		here = n > 0 ? min(max(here, 0), n - 1) : 0;
+		at.store(here);
+		return here;
+	}
+	// A step lands on the cell next door and STOPS at either end, so a held
+	// button rests against the last reading instead of rolling round.
+	void step(int by) {
+		const int n = count.load();
+		at.store(n > 0 ? min(max(at.load() + by, 0), n - 1) : 0);
 	}
 };
 
@@ -205,10 +234,10 @@ struct global_app_state {
 	// what each thing on the grids is.
 	enum : int { INFERENCE_OFF, INFERENCE_FACTS, INFERENCE_LINES, INFERENCE_STEPS };
 	atomic<int> inference_view{INFERENCE_OFF};
-	// Which reading of how the grid splits up, 0 = the one that explained
-	// most. Steps either way and may go negative; only the draw knows how many
-	// the puzzle has, so only the draw wraps it.
-	atomic<int> inference_rank{0};
+	// Which reading of how the grid splits up. The readings are kept in the
+	// order their table is drawn, so this is a cell of that table — and
+	// following the elected one is a state of its own, see shown_reading.
+	shown_reading inference_rank;
 	// Which single line is on screen, which piece of the reading to read off,
 	// and which thrown-away match. Lines that land on the same place paint over
 	// each other, so stacked ones are only visible one at a time. The other two
@@ -221,6 +250,9 @@ struct global_app_state {
 	// Which set of copies is lit. A grid can hold several motifs and one
 	// color cannot say which box belongs with which.
 	track inference_motif{SHOW_OFF};
+	// Which cell the reading could not account for. A cell belongs to no piece
+	// and no match, so it is the one thing none of the walks above can reach.
+	track inference_left_over{SHOW_OFF};
 	atomic<int> op_tab{(int)op_role::get}; // active tab in the op-palette drawer
 	atomic<int> op_drawer_bottom{0}; // y of drawer's bottom edge; clicks above it are swallowed by the drawer
 	atomic<int> op_handle_x{0}, op_handle_y{0}, op_handle_w{0}, op_handle_h{0}; // pull-handle rect (published for drag hit-test)
@@ -312,11 +344,12 @@ inline string serialize_settings(const global_app_state& app, bool muted, int pu
 	line("minimized", (int)app.gui_minimized.load());
 	line("logging", (int)(app.log_mode.load() == logging_mode::stream));
 	line("inference_view", app.inference_view.load());
-	line("inference_rank", app.inference_rank.load());
+	line("inference_rank", app.inference_rank.at.load());
 	line("inference_edge", app.inference_edge.at.load());
 	line("inference_piece", app.inference_piece.at.load());
 	line("inference_dropped", app.inference_dropped.at.load());
 	line("inference_motif", app.inference_motif.at.load());
+	line("inference_left_over", app.inference_left_over.at.load());
 	return s;
 }
 
@@ -329,7 +362,9 @@ inline void apply_settings(global_app_state& app, const unordered_map<string, st
 	app.benchmark_puzzle_limit = settings_int(kv, "benchmark_limit", app.benchmark_puzzle_limit);
 	app.inference_view.store(settings_int(kv, "inference_view", global_app_state::INFERENCE_OFF)
 	                         % global_app_state::INFERENCE_STEPS);
-	app.inference_rank.store(settings_int(kv, "inference_rank", 0));
+	// -1 says nothing was picked, so a fresh app opens on whatever each
+	// puzzle chose rather than on a cell that meant something last time.
+	app.inference_rank.at.store(settings_int(kv, "inference_rank", -1));
 	// Logging stays where it was left: a run whose log is off records nothing,
 	// and finding that out afterwards costs the run.
 	app.log_mode.store(settings_int(kv, "logging", 0) ? logging_mode::stream : logging_mode::none);
@@ -339,6 +374,7 @@ inline void apply_settings(global_app_state& app, const unordered_map<string, st
 	app.inference_piece.at.store(settings_int(kv, "inference_piece", SHOW_OFF));
 	app.inference_dropped.at.store(settings_int(kv, "inference_dropped", SHOW_OFF));
 	app.inference_motif.at.store(settings_int(kv, "inference_motif", SHOW_OFF));
+	app.inference_left_over.at.store(settings_int(kv, "inference_left_over", SHOW_OFF));
 }
 
 inline float get_elapsed(const global_app_state &app, const solver_state &state) {

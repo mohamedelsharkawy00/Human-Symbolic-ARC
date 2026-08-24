@@ -69,22 +69,34 @@ struct match_mode {
     bool translate = true;
     bool pose = true;
     bool recolor = true;
-    static constexpr int COUNT = 8;
+    // HANGING OFF THE EDGE IS A FREEDOM LIKE THE REST, not a property of the
+    // cut. Granted to everything, one blob was free to sit mostly outside the
+    // grid, recolored and flipped, and claim whatever few cells were left
+    // showing — a claim that costs nothing to make and cannot be checked.
+    // Withheld from everything, every copy a wall cut in half went unexplained.
+    // Neither is true of all puzzles, which is what makes it a freedom: it goes
+    // in the list and the judge decides it per puzzle, the way MOVE and TURN and
+    // COLOR already are.
+    bool hang_off = true;
+    static constexpr int COUNT = 16;
     static constexpr match_mode from_index(int packed) {
-        return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0 };
+        return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0,
+                 (packed & 8) != 0 };
     }
     constexpr int index() const {
-        return (translate ? 1 : 0) | (pose ? 2 : 0) | (recolor ? 4 : 0);
+        return (translate ? 1 : 0) | (pose ? 2 : 0) | (recolor ? 4 : 0) |
+               (hang_off ? 8 : 0);
     }
-    // THE THREE FREEDOMS, IN THE WORDS EVERYTHING USES. Said once here so the
-    // log and the screen cannot drift apart. Words and not initials: initials
-    // read as noise, and R could be taken for either turning or recoloring.
+    // THE FREEDOMS, IN THE WORDS EVERYTHING USES. Said once here so the log and
+    // the screen cannot drift apart. Words and not initials: initials read as
+    // noise, and R could be taken for either turning or recoloring.
     // They finish the sentence "AND IT MAY".
-    static constexpr int FREEDOMS = 3;
+    static constexpr int FREEDOMS = 4;
     static constexpr const char* const freedom_names[FREEDOMS] =
-        { "MOVE", "TURN", "COLOR" };
+        { "MOVE", "TURN", "COLOR", "HANG OFF" };
     constexpr bool may(int freedom) const {
-        return freedom == 0 ? translate : freedom == 1 ? pose : recolor;
+        return freedom == 0 ? translate : freedom == 1 ? pose
+             : freedom == 2 ? recolor   : hang_off;
     }
     string label() const {
         string words;
@@ -170,6 +182,11 @@ struct correspondence_facts {
         int16_t blank_cells = 0;
         bool blank_enclosed = false;
     };
+    // A cell no reading accounted for, named by the grid it sits on.
+    struct left_over_cell {
+        bool from_input = true;
+        int8_t row = 0, col = 0;
+    };
     // Why a match that was found did not survive.
     enum : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_piece };
     // Said the same way wherever it is said. Each one finishes "it was refused
@@ -198,10 +215,12 @@ struct correspondence_facts {
         // greedy reading was used, 2 the search ran out of steps — which is a
         // giveup, never an answer.
         int8_t verdict = 0;
-        // How many cells the pass leaves unexplained ON BOTH GRIDS, and how
-        // many pieces it used — what picks the way of cutting up. Same two
-        // numbers `reading` sums over the whole train set, same names.
-        int left_over = 0, pieces_used = 0;
+        // THE CELLS the pass leaves unexplained ON BOTH GRIDS, and how many
+        // pieces it used — what picks the way of cutting up. Kept as the cells
+        // and not as a tally, so what is counted and what can be shown are one
+        // thing: a count nobody can point at is a claim you cannot check.
+        vector<left_over_cell> left_over;
+        int pieces_used = 0;
         // What the cut saves on this pair's FROM grid, as a share of saying the
         // grid plainly — see describe_cost. Free here because the pieces already
         // exist, and it owes nothing to the matching, which is the point of it.
@@ -235,10 +254,14 @@ struct correspondence_facts {
     // grid up differently from pair to pair would be a strange puzzle, and
     // holding it fixed is the stronger claim. Revisit if a puzzle needs it.
     split_kind cut_kind = split_kind::touching_8;
-    // The RUNNERS-UP, best first, `split` being ranked[0]. Do not collapse this
-    // to the winner: a split cannot tell that it read too coarsely, and only a
-    // consumer coming up empty finds out. The cut ITSELF is recorded alongside
-    // the numbers, because two readings can tie on every number and differ.
+    // EVERY READING THERE IS, IN THE ORDER THE TABLE IS DRAWN: one row per cut,
+    // one column per freedom, so a reading's place in this list IS its cell —
+    // cut_kind * match_mode::COUNT + match_kind. Every cut is looked at and every
+    // freedom searched, so the table has no holes and a cell never has to be
+    // looked up. Do not collapse this to the winner: a cut cannot tell that it
+    // read too coarsely, and only a consumer coming up empty finds out. The cut
+    // ITSELF is recorded alongside the numbers, because two readings can tie on
+    // every number and differ.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     struct reading {
         // Which cut, and what a match was allowed to change
@@ -258,14 +281,18 @@ struct correspondence_facts {
         bool pieces_can_fit = true;
         int exact = 0, recolored = 0, sits_on = 0;
     };
-    vector<reading> ranked;
-    // THE PIECES AND EDGES OF EVERY RANKED READING, in `ranked` order, so the
-    // work is done once. Without it a consumer wanting a reading other than the
-    // winner has to run it again — and the pane wants all of them, which meant
-    // the whole election happening twice on every puzzle.
-    // `pairs` is ranked_pairs[0] said again, for the consumers that only ever
-    // want the winner.
-    vector<vector<pair_info>> ranked_pairs;
+    vector<reading> readings;
+    // WHICH ONE THE ELECTION CHOSE, as a place in `readings`. A fact of its own,
+    // because the list is in table order and the winner can sit anywhere in it —
+    // being first was the only thing that ever said so.
+    int8_t chosen = 0;
+    // THE PIECES AND EDGES OF EVERY READING, in `readings` order, so the work is
+    // done once. Without it a consumer wanting a reading other than the chosen
+    // one has to run it again — and the pane wants all of them, which meant the
+    // whole election happening twice on every puzzle.
+    // `pairs` is reading_pairs[chosen] said again, for the consumers that only
+    // ever want the one that won.
+    vector<vector<pair_info>> reading_pairs;
     bool valid = false;
 };
 
@@ -318,9 +345,13 @@ struct object_matches {
     int places = 0;
 };
 
-// PARTLY HIDDEN COUNTS AS THERE, and so does PARTLY OFF THE EDGE — but only
-// when may_hang_off says the reading is a pattern. Background showing through is
-// never hiding: it says the piece is simply not there. Shapes must not hang off.
+// PARTLY HIDDEN COUNTS AS THERE, and so does PARTLY OFF THE EDGE. A wall does
+// not undo a thing: half a shape at the edge is that shape, put where the grid
+// ran out, and refusing to look there left every copy the wall had cut in half
+// with nothing that could ever explain it. What the grid does show still has to
+// match, and how much fell off is kept on the edge, so a landing that is mostly
+// gone can be told from one that is barely clipped.
+// Background showing through is never hiding: it says the piece is not there.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3f.
 inline object_matches find_in(const grid& glyph, const grid& where, int8_t background,
                               bool may_hang_off, int fixed_row = -1, int fixed_col = -1,
@@ -925,14 +956,6 @@ inline fit_verdict collect_motif_edges(
     return edges.empty() ? fit_verdict::no_fit : fit_verdict::fitted;
 }
 
-// EVERY PIECE ACCOUNTS FOR ITSELF BEFORE ANY PIECE IS COPIED. Round one offers
-// only pieces not yet credited with a landing; round two allows a piece to be
-// used again. Both the fitting and the greedy fallback go by this, so the
-// rule lives here once. Story in notes/1 - Overall Design/Inference Master.md, 3d.
-inline bool offered_this_round(int credited_so_far, int round) {
-    return (credited_so_far > 0) == (round == 1);
-}
-
 inline int lit_cells(const grid& glyph) {
     int lit = 0;
     for (int row = 0; row < glyph.height; ++row)
@@ -969,6 +992,31 @@ struct fitting {
     vector<bool> required;
 };
 
+// DID THE MATCH LAND ON ANYTHING AT ALL. Empty space has no shape, so every
+// shape fits it in the background's own color — a match there can never fail,
+// and a claim that cannot fail is not evidence. It reads as "this was already
+// here, in nothing", when what happened is that it was made. Being made is
+// already recorded, as came-from-nothing and as created cells.
+// ONE CELL OF SOMETHING IS ENOUGH, and asking for a WHOLE object was too much:
+// several pieces making one picture is a fragment relationship too, so that
+// rule could not tell an assembly from a coincidence and refused both. Whether
+// fragments add up to the thing is the fitting's question, and it already
+// asks it — see set_up_the_fitting.
+inline bool landed_on_something(const correspondence_facts::edge& edge,
+                                const grid& glyph, const grid& into,
+                                int8_t background) {
+    const grid posed = posed_glyph(glyph, edge.pose);
+    for (int row = 0; row < posed.height; ++row)
+        for (int col = 0; col < posed.width; ++col) {
+            if (posed.data[row][col] == TRANSPARENT) continue;
+            const int into_row = edge.row + row, into_col = edge.col + col;
+            if (into_row < 0 || into_row >= into.height ||
+                into_col < 0 || into_col >= into.width) continue;
+            if (into.data[into_row][into_col] != background) return true;
+        }
+    return false;
+}
+
 // STAGE 1 — every match that could stand on its own, unjudged as a set. Two
 // sources: the glyph found at a place, and an object there with the same
 // canonical shape. Story in notes/1 - Overall Design/Inference Master.md, 3d.
@@ -983,7 +1031,6 @@ inline vector<correspondence_facts::edge> gather_matches(
     color_shares(into, share);
 
     vector<correspondence_facts::edge> found;
-    vector<bool> found_stationary(from_objects.size(), false);
 
     for (size_t from_index = 0; from_index < from_glyphs.size(); ++from_index) {
         const auto& piece = from_objects[from_index];
@@ -1035,20 +1082,25 @@ inline vector<correspondence_facts::edge> gather_matches(
                 continue;
             }
             found.push_back(edge);
-            if (stationary) found_stationary[from_index] = true;
         }
         };
 
+        // STAYING PUT AND BEING COPIED ARE NOT RIVALS. Finding a piece where it
+        // already was used to end the hunt, so a shape that stayed and was also
+        // stamped out elsewhere could never show its copies — the one thing this
+        // whole layer is for. Both questions are asked now, and the judges that
+        // already exist decide: a lucky landing dies to beats_chance, and one
+        // that explains nothing new dies in the fitting.
         const int poses = match.pose ? 8 : 1;
         keep_positional(
             find_in(glyph, into, background, false, piece.top, piece.left, false, poses), true);
-        if (!found_stationary[from_index] && match.translate)
+        if (match.translate)
             keep_positional(
                 find_in(glyph, into, background, may_hang_off, -1, -1, false, poses), false);
 
         // Source 2 — shape: objects there with the same canonical hash (count
         // equality guards hash collisions). Skip placements source 1 found.
-        if (found_stationary[from_index] || !match.translate) continue;
+        if (!match.translate) continue;
         for (size_t into_index = 0; into_index < into_objects.size(); ++into_index) {
             const auto& landing = into_objects[into_index];
             if (landing.shape != piece.shape || landing.count != piece.count) continue;
@@ -1091,7 +1143,17 @@ inline vector<correspondence_facts::edge> gather_matches(
             found.push_back(edge);
         }
     }
-    return found;
+    // Asked once, of every source, where the whole list is in one place.
+    vector<correspondence_facts::edge> on_something;
+    for (size_t i = 0; i < found.size(); ++i) {
+        if (landed_on_something(found[i], from_glyphs[found[i].from], into, background)) {
+            on_something.push_back(found[i]);
+            continue;
+        }
+        throw_away(found, i, correspondence_facts::lost_to_chance,
+                   discarded, discard_why);
+    }
+    return on_something;
 }
 
 // STAGE 2 — lay the matches out as a fitting problem: index the cells that need
@@ -1152,15 +1214,27 @@ inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& foun
     for (int piece_index = 0; piece_index < (int)laid_out.pieces.size(); ++piece_index)
         for (int id : laid_out.pieces[piece_index].cells)
             laid_out.options[id].push_back(piece_index);
-    // BIGGEST FIRST. The search takes the first fitting it reaches, so this order
-    // IS the preference, and a 1x1 piece can tile anything.
+    // SAME CELLS EXPLAINED, FEWER WORDS SPENT. The search takes the first fitting
+    // it reaches, so this order IS the preference, and a 1x1 piece can tile
+    // anything. Two tilings can cover exactly the same cells and the fitting is
+    // happy with either — what separates them is how much had to be said. One
+    // piece covering eight cells is one thing said; four pieces covering the
+    // same eight is four, and four claims that happen to agree are not better
+    // evidence than the one claim they agree with.
+    // BIGGEST FIRST, THEN AS ITSELF. Asked the other way round — exact before
+    // big — a three-cell stick that matched exactly beat an eight-cell shape
+    // that matched in another color, so the ring in 045e512c was explained four
+    // times over by the little stick lying inside its edges instead of once by
+    // the ring it is a copy of. Being the whole thing matters more than being
+    // the right color; the color question only decides a tie between equals.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
     for (auto& options : laid_out.options)
         stable_sort(options.begin(), options.end(), [&](int left, int right) {
-            const bool left_exact = found[laid_out.pieces[left].match_index].exact;
-            const bool right_exact = found[laid_out.pieces[right].match_index].exact;
-            if (left_exact != right_exact) return left_exact;
-            return laid_out.pieces[left].cells.size() > laid_out.pieces[right].cells.size();
+            const size_t left_cells = laid_out.pieces[left].cells.size();
+            const size_t right_cells = laid_out.pieces[right].cells.size();
+            if (left_cells != right_cells) return left_cells > right_cells;
+            return found[laid_out.pieces[left].match_index].exact &&
+                   !found[laid_out.pieces[right].match_index].exact;
         });
 
     // SOME CELLS ARE SIMPLY NEW. Only cells an exact piece could account for are
@@ -1180,12 +1254,11 @@ inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& foun
 // `chosen` on success. Story in notes/1 - Overall Design/Inference Master.md, 3d.
 inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
                                 const vector<correspondence_facts::edge>& found,
-                                size_t source_count, vector<int>& chosen) {
+                                vector<int>& chosen) {
     if (!ranges::any_of(laid_out.required, [](bool needed) { return needed; }))
         return fit_verdict::no_fit;
 
     vector<int> painted_by(laid_out.cells.size(), -1);
-    vector<int> credited(source_count, 0);
     long long steps = 0;
     // WHEN THE PIECES STOP COMING TOGETHER, THEY ARE NOT GOING TO. There are
     // only this many ways to commit a piece to a cell; past that the search is
@@ -1231,20 +1304,23 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
             if (target < 0 || options < fewest) { target = (int)id; fewest = options; }
         }
         if (target < 0) return true;   // every carried-over cell accounted for
-        for (int round = 0; round < 2; ++round)
+        // A PIECE WITH NO GOOD LANDING SIMPLY GOES UNANSWERED. Every piece used
+        // to be offered a first landing before any piece was offered a second,
+        // so a piece that corresponds to nothing was handed something to be
+        // wrong about — in 045e512c a three-cell stick took a whole ring,
+        // because the ring it belonged to had already landed and was skipped.
+        // Fairness is not a finding. The options are in preference order and
+        // nothing overrides it now; a piece nothing wanted says nothing, which
+        // is the truth and is what UNANSWERED and LEFT OVER are for.
         for (int piece_index : laid_out.options[target]) {
-            const int source = found[laid_out.pieces[piece_index].match_index].from;
-            if (!offered_this_round(credited[source], round)) continue;
             bool free_here = true;
             for (int id : laid_out.pieces[piece_index].cells)
                 if (painted_by[id] >= 0) { free_here = false; break; }
             if (!free_here) continue;
             for (int id : laid_out.pieces[piece_index].cells) painted_by[id] = piece_index;
-            credited[source]++;
             chosen.push_back(piece_index);
             if (!contradicts(piece_index) && self(self)) return true;
             chosen.pop_back();
-            credited[source]--;
             for (int id : laid_out.pieces[piece_index].cells) painted_by[id] = -1;
             if (out_of_budget) return false;
         }
@@ -1312,27 +1388,29 @@ inline void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
 inline void fall_back_to_greedy(const vector<correspondence_facts::edge>& found,
                                 const vector<grid>& from_glyphs,
                                 const vector<grid>& into_glyphs,
-                                const grid& into, size_t source_count,
+                                const grid& into,
                                 vector<correspondence_facts::edge>& edges,
                                 vector<correspondence_facts::edge>* discarded,
                                 vector<int8_t>* discard_why) {
     auto glyph_of = [&](const correspondence_facts::edge& edge) {
         return edge_footprint(edge, from_glyphs, into_glyphs);
     };
+    // THE SAME PREFERENCE THE FITTING USES, because this is the same question
+    // asked in a hurry: biggest first, and being the right color only separates
+    // two of a size. Said differently in the two places, a pair would disagree
+    // about which reading was better depending on whether the search finished.
     vector<size_t> strongest_first(found.size());
     iota(strongest_first.begin(), strongest_first.end(), (size_t)0);
     stable_sort(strongest_first.begin(), strongest_first.end(),
                 [&](size_t left, size_t right) {
-        if (found[left].exact != found[right].exact) return found[left].exact;
-        return lit_cells(glyph_of(found[left])) > lit_cells(glyph_of(found[right]));
+        const int left_cells = lit_cells(glyph_of(found[left]));
+        const int right_cells = lit_cells(glyph_of(found[right]));
+        if (left_cells != right_cells) return left_cells > right_cells;
+        return found[left].exact && !found[right].exact;
     });
 
     bool taken[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    vector<int> credited(source_count, 0);
-    for (int round = 0; round < 2; ++round)
     for (size_t found_index : strongest_first) {
-        const int source = found[found_index].from;
-        if (!offered_this_round(credited[source], round)) continue;
         const grid glyph = glyph_of(found[found_index]);
         const int at_row = found[found_index].row, at_col = found[found_index].col;
         bool adds = false;
@@ -1351,7 +1429,6 @@ inline void fall_back_to_greedy(const vector<correspondence_facts::edge>& found,
             for (int col = 0; col < glyph.width; ++col)
                 if (landing_shows(found[found_index], glyph, into, row, col))
                     taken[at_row + row][at_col + col] = true;
-        credited[source]++;
         edges.push_back(found[found_index]);
     }
 }
@@ -1372,28 +1449,42 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
                           vector<int8_t>* discard_why = nullptr,
                           match_mode match = {}) {
     const vector<correspondence_facts::edge> found =
-        gather_matches(from_objects, from_glyphs, into_objects, into, background,
-                       may_hang_off, discarded, discard_why, match);
+        gather_matches(from_objects, from_glyphs, into_objects, into,
+                       background, may_hang_off, discarded, discard_why, match);
 
     const fitting laid_out = set_up_the_fitting(found, from_glyphs, into_glyphs, into, background);
 
     vector<int> chosen;
     const fit_verdict searched =
-        fit_the_pieces_together(laid_out, found, from_objects.size(), chosen);
+        fit_the_pieces_together(laid_out, found, chosen);
     if (searched == fit_verdict::fitted) {
         keep_what_fitted(chosen, laid_out, found, edges, discarded, discard_why);
         return fit_verdict::fitted;
     }
 
-    fall_back_to_greedy(found, from_glyphs, into_glyphs, into, from_objects.size(),
+    fall_back_to_greedy(found, from_glyphs, into_glyphs, into,
                         edges, discarded, discard_why);
     return searched;
 }
 
-// A piece nothing found still corresponds to something: WHICH PIECE DO I SIT ON
-// TOP OF THE MOST. Correspondence without identity, and it cannot flood — one
-// edge per piece, only where pieces overlap, only for pieces nothing accounted
-// for. Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// A piece nothing found still corresponds to something: WHICH PIECE OF MY OWN
+// COLOR AND MY OWN SIZE DO I SIT ON TOP OF THE MOST. Same stuff, rearranged —
+// the freedom left when moving, turning and recoloring have all failed, and the
+// only one that can speak for a piece that was squashed, since no rigid motion
+// changes a size.
+// IT ONLY EVER POINTS ONE WAY: I AM PART OF THAT, never that is part of me. A
+// piece may be answered by the piece that covers it — a seed sitting under the
+// first tile stamped over it is answered by that tile, and neither has to rival
+// the other for the cells they share. Pointed the other way the same words let
+// an eighteen-cell blob explain itself by touching a two-cell marker, overlap
+// cashed as ownership, and a reading that grew copies out of nothing scored a
+// perfect nothing-left-over. So the piece must be no bigger than what it sits
+// on. Not bigger, rather than exactly equal: equal is the squashed case, where
+// the stuff is conserved and only its shape moved.
+// IT CANNOT FLOOD — one edge per piece, only where pieces overlap, only for
+// pieces nothing accounted for, and only between pieces of one color and one
+// weight: without those gates any two boxes that touch could be called one thing.
+// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
 inline void sit_on_top(const vector<correspondence_facts::object_info>& from_objects,
                        const vector<grid>& from_glyphs,
                        const vector<correspondence_facts::object_info>& into_objects,
@@ -1410,6 +1501,7 @@ inline void sit_on_top(const vector<correspondence_facts::object_info>& from_obj
         int best = -1, most_shared = 0;
         for (size_t into_index = 0; into_index < into_objects.size(); ++into_index) {
             const auto& landing = into_objects[into_index];
+            if (landing.color != piece.color || landing.count < piece.count) continue;
             const grid& landing_glyph = into_glyphs[into_index];
             int shared = 0;
             for (int row = 0; row < glyph.height; ++row)
@@ -1444,7 +1536,7 @@ inline void count_edges_leaving(const vector<correspondence_facts::edge>& edges,
     for (const auto& edge : edges)
         if (edge.from >= 0 && (size_t)edge.from < from_objects.size()) {
             from_objects[edge.from].edges_touching++;
-            if (edge.same_shape) from_objects[edge.from].answered = true;
+            from_objects[edge.from].answered = true;
         }
 }
 
@@ -1476,7 +1568,14 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
                 }
             if (touches) {
                 into_objects[into_index].edges_touching++;
-                if (edge.same_shape) into_objects[into_index].answered = true;
+                // AN EDGE THAT NAMES AN OBJECT SPEAKS FOR IT. Matching runs both
+                // ways and the merge keeps one of every agreeing pair, so the
+                // far end has no edge of its own to be answered by — and a
+                // landing that names a piece was always a claim about two
+                // things. Only a landing on bare ground needs the shapes to
+                // agree, because there is no piece there to have been meant.
+                if (edge.same_shape || (int16_t)into_index == edge.to)
+                    into_objects[into_index].answered = true;
             }
         }
     }
@@ -1619,10 +1718,13 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         pair.describe_cost =
             0.5 * (describe_cost(input, background, pair.input_objects) +
                    describe_cost(output, background, pair.output_objects));
-        // Only a pattern reading may hang off the edge: a block is a window onto
-        // a tiling that carries on, a shape is a thing that does not.
-        const bool may_hang_off = (cut_kind == split_kind::repeating_motif ||
-                                   cut_kind == split_kind::repeating_step);
+        // A pattern reading is read by a different collector: a block is a window
+        // onto a tiling that carries on, a shape is a thing that does not.
+        // HANGING OFF THE EDGE IS NOT WHAT SEPARATES THEM — every reading may do
+        // that now, because a wall cutting a copy in half is a fact about the
+        // grid and not about the piece.
+        const bool pattern_reading = (cut_kind == split_kind::repeating_motif ||
+                                      cut_kind == split_kind::repeating_step);
 
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
@@ -1635,13 +1737,13 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             vector<correspondence_facts::edge> edges, discarded;
             vector<int8_t> discard_why;
             fit_verdict verdict;
-            if (may_hang_off) {
+            if (pattern_reading) {
                 verdict = collect_motif_edges(from_objects, from_glyphs, into_objects,
                                               into, background, step_width, step_height,
                                               edges, match);
             } else {
                 verdict = collect_edges(from_objects, from_glyphs, into_objects,
-                                        into_glyphs, into, background, false,
+                                        into_glyphs, into, background, match.hang_off,
                                         edges, &discarded, &discard_why, match);
                 sit_on_top(from_objects, from_glyphs, into_objects, into_glyphs, edges);
             }
@@ -1694,14 +1796,20 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         }
         pair.edges.swap(kept);
 
-        // IN THE ORDER THE PIECES READ, not the search's own pose order, and the
-        // input side first so the list reads down one grid and then the other.
+        // IN THE ORDER THE SCREEN READS: the input grid first, then down it.
+        // WHERE A PIECE SITS, not its place in the cut — the cut is biggest
+        // first, so walking by place hopped up and down the grid.
         // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
         stable_sort(pair.edges.begin(), pair.edges.end(),
-                    [](const correspondence_facts::edge& left,
-                       const correspondence_facts::edge& right) {
+                    [&](const correspondence_facts::edge& left,
+                        const correspondence_facts::edge& right) {
             if (left.from_input != right.from_input) return left.from_input;
-            if (left.from != right.from) return left.from < right.from;
+            const auto& pieces = left.from_input ? pair.input_objects
+                                                 : pair.output_objects;
+            const auto& here = pieces[left.from];
+            const auto& there = pieces[right.from];
+            if (here.top != there.top)   return here.top < there.top;
+            if (here.left != there.left) return here.left < there.left;
             if (left.row != right.row)   return left.row < right.row;
             return left.col < right.col;
         });
@@ -1713,15 +1821,11 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             (edge.from_input ? forward : backward).push_back(edge);
 
         // HOW MANY EDGES TOUCH EACH PIECE, counting both ends. A piece is busy
-        // whether it went somewhere or something arrived on it.
-        for (auto& piece : pair.input_objects) piece.edges_touching = 0;
-        for (auto& piece : pair.output_objects) piece.edges_touching = 0;
-        for (const auto& edge : forward)
-            if (edge.from >= 0 && (size_t)edge.from < pair.input_objects.size())
-                pair.input_objects[edge.from].edges_touching++;
-        for (const auto& edge : backward)
-            if (edge.from >= 0 && (size_t)edge.from < pair.output_objects.size())
-                pair.output_objects[edge.from].edges_touching++;
+        // whether it went somewhere or something arrived on it, and it is
+        // answered by either one as well — asking only who arrived left a piece
+        // that plainly went somewhere reading as though nothing spoke for it.
+        count_edges_leaving(forward, pair.input_objects);
+        count_edges_leaving(backward, pair.output_objects);
         count_edges_arriving(forward, input_glyphs, pair.output_objects, output_glyphs);
         count_edges_arriving(backward, output_glyphs, pair.input_objects, input_glyphs);
         pair.pieces_used = (int)pair.edges.size();
@@ -1820,15 +1924,20 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                                const vector<grid>& their_glyphs,
                                const vector<grid>& our_glyphs,
                                const vector<correspondence_facts::object_info>& ours,
-                               const vector<correspondence_facts::edge>& leaving_here) {
+                               const vector<correspondence_facts::edge>& leaving_here,
+                               bool from_input) {
             bool by_pieces[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             mark_painted(landing_here, their_glyphs, our_glyphs, one_grid,
                          by_pieces, false, true);
-            // A piece that went somewhere has explained its own cells too.
+            // A piece explains its own cells once anything speaks for it:
+            // it went somewhere, or something arrived that named it by name.
             vector<bool> answered(ours.size(), false);
             for (const auto& edge : leaving_here)
-                if (edge.same_shape && edge.from >= 0 && (size_t)edge.from < answered.size())
+                if (edge.from >= 0 && (size_t)edge.from < answered.size())
                     answered[edge.from] = true;
+            for (const auto& edge : landing_here)
+                if (edge.to >= 0 && (size_t)edge.to < answered.size())
+                    answered[edge.to] = true;
             for (size_t i = 0; i < ours.size(); ++i) {
                 if (!answered[i]) continue;
                 const auto& piece = ours[i];
@@ -1837,19 +1946,17 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                         if (our_glyphs[i].data[row][col] != TRANSPARENT)
                             by_pieces[piece.top + row][piece.left + col] = true;
             }
-            int over = 0;
             for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
                 for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
                     const int color = one_grid.data[row][col];
-                    if (color >= 0 && color != background && !by_pieces[row][col]) over++;
+                    if (color >= 0 && color != background && !by_pieces[row][col])
+                        pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col });
                 }
-            return over;
         };
-        pair.left_over =
-            unexplained(output, forward, input_glyphs, output_glyphs,
-                        pair.output_objects, backward) +
-            unexplained(input, backward, output_glyphs, input_glyphs,
-                        pair.input_objects, forward);
+        unexplained(output, forward, input_glyphs, output_glyphs,
+                    pair.output_objects, backward, false);
+        unexplained(input, backward, output_glyphs, input_glyphs,
+                    pair.input_objects, forward, true);
 
         // Coverage ledger, output side: cells carried over by an exact edge vs
         // made from nothing. Still an output-side question — what the answer
@@ -1890,7 +1997,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
 // cut down. Only a cut that accounts for the WHOLE pair ends the walk; anything
 // short of that keeps looking and lets the matching pick between what it found.
 //
-// EVERY READING IN `ranked` WAS MATCHED AND SCORED. There is no second class
+// EVERY READING KEPT WAS MATCHED AND SCORED. There is no second class
 // of reading here and nothing in the table that never competed — the winner
 // beat all of them on the same numbers.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
@@ -1928,6 +2035,16 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             // on. One that fits somewhere is all this asks for — a cut where not
             // one piece could sit on the other grid cannot match, and no amount
             // of freedom rescues it. Asked both ways, because both are read.
+            // IT IS NOW STRICTER THAN THE MATCHING IT GUARDS, and here is what
+            // it would cost: a pair whose grids are a turn of each other, say a
+            // 10-wide 2-tall input against a 2-wide 10-tall output. Neither
+            // piece fits the other grid as it sits, so the cut is killed here —
+            // and yet a quarter turn lands it exactly, which is the whole answer
+            // to that puzzle. This asks about the piece as it sits, while the
+            // matching may turn it and may hang it off the edge.
+            // It only fires when NOTHING fits either way, so nothing seen so far
+            // has tripped it. It is wrong on the day a turn or a wall is the
+            // answer, and that is the day to delete it.
             auto any_fits = [](const vector<correspondence_facts::object_info>& pieces,
                                const grid& other) {
                 return ranges::any_of(pieces, [&](const auto& piece) {
@@ -1970,7 +2087,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             scored.pieces_can_fit = look.pieces_can_fit;
             double shares = 0.0;
             for (const auto& pair : tried.pairs) {
-                scored.left_over += pair.left_over;
+                scored.left_over += (int)pair.left_over.size();
                 scored.pieces_used += pair.pieces_used;
                 shares += pair.describe_cost;
                 scored.pieces_found +=
@@ -2003,19 +2120,38 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // competed and what was only shown.
     //
     // The pane wants every reading too, so each is READ ONCE and kept — see
-    // ranked_pairs. The looking still decides the ORDER, which is what makes
-    // the ranking mean something; it no longer decides who gets a turn.
+    // reading_pairs. The looking decides who wins; it no longer decides who
+    // gets a turn, and it does not decide the ORDER either — see below.
     vector<vector<scored_reading>> passes;
     for (const auto& look : looks) passes.push_back(search_one(look));
 
-    // AMONG EVERYTHING THAT WAS MATCHED, THE MATCHING DECIDES. Drawing an edge
-    // beats drawing none; after that the judge is the one it always was.
+    // THE GLANCE PICKS THE CUT, THE MATCHING PICKS THE FREEDOM. That is what
+    // this file has said all along, and the judge now says it too: drawing an
+    // edge beats drawing none, then SAYING IT IN THE LEAST, then explaining the
+    // most, then fewest pieces.
+    //
+    // FEWEST CELLS LEFT OVER CANNOT COME FIRST, because one contestant can never
+    // lose it: cut into single cells, every cell finds a cell, and nothing is
+    // ever left over on any puzzle. A key one player always maxes out ranks
+    // nobody. It said the grid at 271% of plain here and won against a reading
+    // that said it at 121% and missed four cells — twice the words for four
+    // cells' worth of silence.
+    // ASKED SECOND IT STILL DECIDES EVERYTHING IT SHOULD: one cut's eight
+    // freedoms all cost the same to say, so within a cut the matching alone
+    // picks, which is the one question the looking cannot answer.
+    // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
+    //
+    // A MARGIN, because these are ratios and two cuts that cost the same to say
+    // should fall through to what they explain rather than be split by rounding.
+    const double same_price = 0.001;
     size_t elected = 0;
     for (size_t i = 1; i < passes.size(); ++i) {
         const auto& best = passes[elected].front().summary;
         const auto& here = passes[i].front().summary;
         if ((here.pieces_used > 0) != (best.pieces_used > 0)) {
             if (here.pieces_used > 0) elected = i;
+        } else if (abs(here.describe_cost - best.describe_cost) > same_price) {
+            if (here.describe_cost < best.describe_cost) elected = i;
         } else if (here.left_over != best.left_over) {
             if (here.left_over < best.left_over) elected = i;
         } else if (here.pieces_used < best.pieces_used) {
@@ -2023,21 +2159,26 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         }
     }
 
-    // The winning pass first, then the rest in the order the looking put them —
-    // the order to walk if a consumer wants the next reading down. Nothing is
-    // read again: the winner's pairs are the ones the election already had.
+    // KEPT IN THE ORDER THE TABLE IS DRAWN, one row per cut and one column per
+    // freedom, so a reading's place IS its cell. Score order put the winner
+    // first and everything after it in an order nothing on screen shows, so
+    // stepping the pane hopped about a table sitting right there. Which one won
+    // is a fact of its own now, said by `chosen`. Nothing is read again: the
+    // winner's pairs are the ones the election already had.
     correspondence_facts facts;
     facts.cut_kind = passes[elected].front().summary.cut_kind;
-    auto take = [&](vector<scored_reading>& pass) {
-        for (auto& one : pass) {
-            facts.ranked.push_back(one.summary);
-            facts.ranked_pairs.push_back(std::move(one.pairs));
-        }
+    auto cell_of = [](const correspondence_facts::reading& one) {
+        return (int)one.cut_kind * match_mode::COUNT + one.match_kind.index();
     };
-    take(passes[elected]);
-    for (size_t i = 0; i < passes.size(); ++i)
-        if (i != elected) take(passes[i]);
-    if (!facts.ranked_pairs.empty()) facts.pairs = facts.ranked_pairs.front();
+    facts.readings.resize((int)split_kind::split_count * match_mode::COUNT);
+    facts.reading_pairs.resize(facts.readings.size());
+    for (auto& pass : passes)
+        for (auto& one : pass) {
+            facts.readings[cell_of(one.summary)] = one.summary;
+            facts.reading_pairs[cell_of(one.summary)] = std::move(one.pairs);
+        }
+    facts.chosen = (int8_t)cell_of(passes[elected].front().summary);
+    facts.pairs = facts.reading_pairs[facts.chosen];
     facts.valid = true;
     return facts;
 }

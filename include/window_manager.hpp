@@ -250,16 +250,11 @@ private:
         m_app_state.inference_view.store((m_app_state.inference_view.load() + 1) %
                                          global_app_state::INFERENCE_STEPS);
         break;
-      // The rank steps either way and is wrapped at draw time, the only place
-      // that knows how many readings this puzzle offers. Going back below zero
-      // is fine: the draw wraps negatives round to the top. The tracks carry
-      // their own count, so a step is a step and off and all stay put.
-      case ui_action::cycle_coarseness:
-        m_app_state.inference_rank.store(m_app_state.inference_rank.load() + 1);
-        break;
-      case ui_action::cycle_coarseness_back:
-        m_app_state.inference_rank.store(m_app_state.inference_rank.load() - 1);
-        break;
+      // Every stepper carries its own count, told to it by the draw — the only
+      // place that knows how long this puzzle's list is — so a step here is
+      // just a step and each one stops against its own end.
+      case ui_action::cycle_coarseness:      m_app_state.inference_rank.step(1); break;
+      case ui_action::cycle_coarseness_back: m_app_state.inference_rank.step(-1); break;
       case ui_action::step_edge:         m_app_state.inference_edge.step(1); break;
       case ui_action::step_edge_back:    m_app_state.inference_edge.step(-1); break;
       case ui_action::step_piece:        m_app_state.inference_piece.step(1); break;
@@ -268,6 +263,8 @@ private:
       case ui_action::step_motif_back:   m_app_state.inference_motif.step(-1); break;
       case ui_action::step_dropped:      m_app_state.inference_dropped.step(1); break;
       case ui_action::step_dropped_back: m_app_state.inference_dropped.step(-1); break;
+      case ui_action::step_left_over:      m_app_state.inference_left_over.step(1); break;
+      case ui_action::step_left_over_back: m_app_state.inference_left_over.step(-1); break;
       case ui_action::toggle_ds_test:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_TEST);
         break;
@@ -304,20 +301,33 @@ private:
       bool first_press = !(l_param & (1 << 30));
       bool ctrl = GetKeyState(VK_CONTROL) & 0x8000;
 
-      // Global copy: Ctrl+C copies the current puzzle ID regardless of edit
-      // mode. (In edit mode Ctrl+C would copy the in-progress buffer, which is
-      // rarely wanted; the live ID is the useful thing.)
-      if (ctrl && w_param == 'C') {
-        execute_action(ui_action::copy_id);
-        return 0;
-      }
-
       // While the ID editor is open, the keyboard drives the text field, not
       // the normal hotkeys.
       bool editing;
       {
         std::lock_guard<std::mutex> lk(m_app_state.id_edit_mtx);
         editing = m_app_state.id_edit.active;
+      }
+
+      // Copy and paste answer from anywhere, in any mode. Copy takes the live
+      // ID (the in-progress buffer is rarely what is wanted); paste fills the
+      // buffer while editing, and jumps straight to the id when not.
+      if (ctrl && w_param == 'C') {
+        execute_action(ui_action::copy_id);
+        return 0;
+      }
+      if (ctrl && w_param == 'V') {
+        if (!editing) {
+          execute_action(ui_action::paste_id);
+          return 0;
+        }
+        string clip = get_clipboard_text();
+        std::lock_guard<std::mutex> lk(m_app_state.id_edit_mtx);
+        for (char c : clip)
+          if (isalnum((unsigned char)c) || c == '_' || c == '-')
+            m_app_state.id_edit.buffer.push_back(c);
+        m_app_state.id_edit.error = false;
+        return 0;
       }
       if (editing) {
         if (w_param == VK_RETURN) {
@@ -331,13 +341,6 @@ private:
           std::lock_guard<std::mutex> lk(m_app_state.id_edit_mtx);
           if (!m_app_state.id_edit.buffer.empty())
             m_app_state.id_edit.buffer.pop_back();
-          m_app_state.id_edit.error = false;
-        } else if (ctrl && w_param == 'V') {
-          string clip = get_clipboard_text();
-          std::lock_guard<std::mutex> lk(m_app_state.id_edit_mtx);
-          for (char c : clip)
-            if (isalnum((unsigned char)c) || c == '_' || c == '-')
-              m_app_state.id_edit.buffer.push_back(c);
           m_app_state.id_edit.error = false;
         }
         return 0; // swallow: no hotkeys, no OS beep handling here
@@ -698,6 +701,7 @@ private:
       case 'P':       return shift ? ui_action::step_piece_back : ui_action::step_piece;
       case 'X':       return shift ? ui_action::step_dropped_back : ui_action::step_dropped;
       case 'O':       return shift ? ui_action::step_motif_back : ui_action::step_motif;
+      case 'U':       return shift ? ui_action::step_left_over_back : ui_action::step_left_over;
       case 'M':       return ui_action::toggle_mute;
       default:        return ui_action::none;
     }
@@ -711,7 +715,8 @@ private:
            a == ui_action::step_edge        || a == ui_action::step_edge_back ||
            a == ui_action::step_piece       || a == ui_action::step_piece_back ||
            a == ui_action::step_dropped     || a == ui_action::step_dropped_back ||
-           a == ui_action::step_motif       || a == ui_action::step_motif_back;
+           a == ui_action::step_motif       || a == ui_action::step_motif_back ||
+           a == ui_action::step_left_over   || a == ui_action::step_left_over_back;
   }
 
   static inline bool is_op_tab_action(ui_action a) {
