@@ -126,6 +126,10 @@ struct correspondence_facts {
         int8_t pose = 0;
         // False = same shape, different color
         bool exact = true;
+        // FOUND WHERE IT ALREADY WAS. The plainest thing a match can say, and
+        // the one thing "found exactly, somewhere" could never be told apart
+        // from before: a piece at its own place asks for no freedom at all.
+        bool stayed_put = false;
         // False = the shape itself changed, so this is not a find at all but the
         // piece it sits on top of the most (see sit_on_top).
         bool same_shape = true;
@@ -924,6 +928,8 @@ inline fit_verdict collect_motif_edges(
         edge.col = (int8_t)target.left;
         edge.pose = (int8_t)hit.pose;
         edge.exact = hit.exact;
+        edge.stayed_put = (from_objects[from_index].top == target.top &&
+                           from_objects[from_index].left == target.left);
         edge.outside = (int16_t)hit.outside;
         edge.recolored_to =
             (!hit.exact && from_objects[from_index].color >= 0)
@@ -1073,6 +1079,7 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.row = (int8_t)hit.row; edge.col = (int8_t)hit.col;
             edge.pose = (int8_t)hit.pose;
             edge.exact = hit.exact;
+            edge.stayed_put = stationary;
             edge.hidden = (int16_t)hit.hidden;
             edge.outside = (int16_t)hit.outside;
             edge.recolored_to =
@@ -1163,6 +1170,35 @@ inline vector<correspondence_facts::edge> gather_matches(
     return on_something;
 }
 
+// HOW MUCH FREEDOM A MATCH HAD TO SPEND, as one number, smallest for the
+// plainest claim. Freedom is spent, not declared: a reading says what a piece
+// MAY do, and this says what this one match actually had to do to get where it
+// went. So a match that stayed put and came as itself is preferred everywhere,
+// and one that had to move, recolor, turn or hang off the edge only takes cells
+// nothing plainer wanted. The weights are powers of two so the four questions
+// read in order — stayed put, then as itself, then upright, then wholly on the
+// grid — and never trade against one another.
+// ONE HOME because three places sort matches, and two of them disagreeing is a
+// bug nobody can see: the fitting once offered biggest-first while the pass
+// after it offered exact-first, and which order a puzzle met depended on
+// whether the search finished.
+inline int freedom_spent(const correspondence_facts::edge& edge) {
+    return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
+           (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 ? 0 : 1);
+}
+
+// WHICH OF TWO MATCHES SPEAKS FIRST. Biggest first, because being the whole
+// thing is what a claim is worth, and freedom spent only separates two of a
+// size. LED BY PLAINNESS INSTEAD, a stationary accident outranked a genuine
+// copy — every copy in 045e512c has to move, so the six tiles lost their ring
+// to whatever happened to sit still, and that reading went from explaining the
+// pair to leaving 21 cells over.
+inline bool says_more(const correspondence_facts::edge& left, size_t left_cells,
+                      const correspondence_facts::edge& right, size_t right_cells) {
+    if (left_cells != right_cells) return left_cells > right_cells;
+    return freedom_spent(left) < freedom_spent(right);
+}
+
 // STAGE 2 — lay the matches out as a fitting problem: index the cells that need
 // painting, turn each match into a piece, and list per cell which pieces could
 // paint it. Story in notes/1 - Overall Design/Inference Master.md, section 3d.
@@ -1228,20 +1264,18 @@ inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& foun
     // piece covering eight cells is one thing said; four pieces covering the
     // same eight is four, and four claims that happen to agree are not better
     // evidence than the one claim they agree with.
-    // BIGGEST FIRST, THEN AS ITSELF. Asked the other way round — exact before
-    // big — a three-cell stick that matched exactly beat an eight-cell shape
-    // that matched in another color, so the ring in 045e512c was explained four
-    // times over by the little stick lying inside its edges instead of once by
-    // the ring it is a copy of. Being the whole thing matters more than being
-    // the right color; the color question only decides a tie between equals.
+    // BIGGEST FIRST, THEN PLAINEST — says_more, the one order all three passes
+    // ask for. Asked the other way round, a three-cell stick that matched
+    // exactly beat an eight-cell shape that matched in another color, so the
+    // ring in 045e512c was explained four times over by the little stick lying
+    // inside its edges instead of once by the ring it is a copy of.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
     for (auto& options : laid_out.options)
         stable_sort(options.begin(), options.end(), [&](int left, int right) {
-            const size_t left_cells = laid_out.pieces[left].cells.size();
-            const size_t right_cells = laid_out.pieces[right].cells.size();
-            if (left_cells != right_cells) return left_cells > right_cells;
-            return found[laid_out.pieces[left].match_index].exact &&
-                   !found[laid_out.pieces[right].match_index].exact;
+            return says_more(found[laid_out.pieces[left].match_index],
+                             laid_out.pieces[left].cells.size(),
+                             found[laid_out.pieces[right].match_index],
+                             laid_out.pieces[right].cells.size());
         });
 
     // SOME CELLS ARE SIMPLY NEW. Only cells an exact piece could account for are
@@ -1368,10 +1402,10 @@ inline void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
             !laid_out.pieces[piece_index].cells.empty())
             leftovers.push_back(piece_index);
     stable_sort(leftovers.begin(), leftovers.end(), [&](int left, int right) {
-        const bool left_exact = found[laid_out.pieces[left].match_index].exact;
-        const bool right_exact = found[laid_out.pieces[right].match_index].exact;
-        if (left_exact != right_exact) return left_exact;
-        return laid_out.pieces[left].cells.size() > laid_out.pieces[right].cells.size();
+        return says_more(found[laid_out.pieces[left].match_index],
+                         laid_out.pieces[left].cells.size(),
+                         found[laid_out.pieces[right].match_index],
+                         laid_out.pieces[right].cells.size());
     });
     for (int piece_index : leftovers) {
         const size_t match_index = laid_out.pieces[piece_index].match_index;
@@ -1402,18 +1436,15 @@ inline void fall_back_to_greedy(const vector<correspondence_facts::edge>& found,
     auto glyph_of = [&](const correspondence_facts::edge& edge) {
         return edge_footprint(edge, from_glyphs, into_glyphs);
     };
-    // THE SAME PREFERENCE THE FITTING USES, because this is the same question
-    // asked in a hurry: biggest first, and being the right color only separates
-    // two of a size. Said differently in the two places, a pair would disagree
-    // about which reading was better depending on whether the search finished.
+    // THE SAME PREFERENCE THE FITTING USES — says_more, asked in a hurry. Said
+    // differently in the two places, a pair would disagree about which reading
+    // was better depending on whether the search finished.
     vector<size_t> strongest_first(found.size());
     iota(strongest_first.begin(), strongest_first.end(), (size_t)0);
     stable_sort(strongest_first.begin(), strongest_first.end(),
                 [&](size_t left, size_t right) {
-        const int left_cells = lit_cells(glyph_of(found[left]));
-        const int right_cells = lit_cells(glyph_of(found[right]));
-        if (left_cells != right_cells) return left_cells > right_cells;
-        return found[left].exact && !found[right].exact;
+        return says_more(found[left], (size_t)lit_cells(glyph_of(found[left])),
+                         found[right], (size_t)lit_cells(glyph_of(found[right])));
     });
 
     bool taken[MAX_GRID_DIM][MAX_GRID_DIM] = {};
