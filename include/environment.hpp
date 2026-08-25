@@ -538,10 +538,10 @@ namespace arc {
 					// The first line it got, an index into lines; -1 = nothing
 					// answers it, which is the whole reason this list exists.
 					int16_t first_line = -1;
-					// SOMETHING FOUND IT — see object_info::answered. Not read
+					// SOMETHING IS ITS PARTNER — see object_info::has_partner. Not read
 					// off first_line: that is credited by overlapping BOXES, and
 					// a ring's box holds its own hole.
-					bool answered = false;
+					bool has_partner = false;
 					// ANOTHER OBJECT ON THIS GRID HAS THE SAME SHAPE. Copies of
 					// one thing, not several things that resemble each other —
 					// which is the difference between a motif that repeats and

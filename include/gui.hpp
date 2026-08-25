@@ -813,10 +813,14 @@ inline bool piece_is_in(const puzzle::correspondence_readout::reading::piece_row
          pc.pair == set.pair && pc.from_input == set.from_input;
 }
 
-inline vector<int> unanswered_pieces(const puzzle::correspondence_readout::reading& R) {
+// THE PIECES THAT STAND ALONE — the ones no piece on the other grid is. Not
+// the ones nothing can be said about: deleted, inserted and covered are all
+// answers, and each one is said under the stepper. What these lack is a
+// partner, which is why the walk is named for that and not for silence.
+inline vector<int> pieces_standing_alone(const puzzle::correspondence_readout::reading& R) {
   vector<int> which;
   for (int i = 0; i < (int)R.pieces_seen.size(); ++i)
-    if (!R.pieces_seen[i].answered) which.push_back(i);
+    if (!R.pieces_seen[i].has_partner) which.push_back(i);
   return which;
 }
 
@@ -824,7 +828,7 @@ inline vector<int> unanswered_pieces(const puzzle::correspondence_readout::readi
 // about one object, and drawn on the same rectangle the later one simply paints
 // over the earlier — so only one of them was ever visible. Every outline after
 // the first steps inside the last, in the order the sliders are listed: LINE
-// outermost, then UNANSWERED, REFUSED, MOTIF, LEFT OVER. It stops stepping when the box
+// outermost, then ALONE, REFUSED, MOTIF, LEFT OVER. It stops stepping when the box
 // has no middle left to step into, which is what a one-cell object runs into.
 // ONLY A DIFFERENT COLOR IS A DIFFERENT THING TO SAY. Many lines can land on
 // one piece and each asks for the same white box; nesting those would grow one
@@ -835,23 +839,40 @@ struct nested_outlines {
   struct spot {
     int x, y, w, h, color;
     bool operator==(const spot &) const = default;
-    bool same_place(const spot &o) const {
-      return x == o.x && y == o.y && w == o.w && h == o.h;
+    // TOUCHING THE SAME GROUND IS ENOUGH TO HAVE TO STEP. Asked as "the very
+    // same rectangle", two boxes about one thing that were not the same size
+    // never stepped: a landing that hangs off the wall is drawn at its whole
+    // width while the clipped object under it is narrower, so they shared a
+    // corner and their borders merged into one smear. Any shared ground means
+    // one is drawn over the other, which is the thing stepping is for.
+    bool shares_ground(const spot &o) const {
+      return x < o.x + o.w && o.x < x + w && y < o.y + o.h && o.y < y + h;
     }
   };
-  vector<spot> drawn;
+  // Each ring remembers how far in it sat, so the next one can sit against it.
+  struct ring { spot where; int step; };
+  vector<ring> drawn;
+  // `inside_mark` is a box that marks PART of a thing rather than ringing the
+  // whole of it — the piece under a landing. It draws where it is and joins no
+  // stack: counted as a ring it would push the next real ring a step further in
+  // and leave a gap around nothing.
   void add(vulkan_context *context, int x, int y, int w, int h,
-           int color = UI_COLOR_LINE) {
+           int color = UI_COLOR_LINE, bool inside_mark = false) {
     const spot here{x, y, w, h, color};
-    int depth = 0;
-    for (const spot &s : drawn) {
-      if (s == here) return;
-      depth += s.same_place(here);
+    // ONE STEP INSIDE THE INNERMOST RING IT TOUCHES, never a step per ring
+    // touched. Counting them all, two rings over the same spot plus anything
+    // else overlapping put the third at depth two and left a black gap between
+    // rings that are meant to read as one nest.
+    int inner = -1;
+    for (const ring &r : drawn) {
+      if (r.where == here) return;
+      if (r.where.shares_ground(here)) inner = max(inner, r.step);
     }
-    drawn.push_back(here);
     const int room = (min(w, h) - thickness * 3) / (thickness * 2);
-    const int step = max(0, min(depth, room)) * thickness;
-    draw_border(context, x + step, y + step, w - step * 2, h - step * 2,
+    const int step = inside_mark ? 0 : max(0, min(inner + 1, room));
+    if (!inside_mark) drawn.push_back({ here, step });
+    const int inset = step * thickness;
+    draw_border(context, x + inset, y + inset, w - inset * 2, h - inset * 2,
                 thickness, color);
   }
 };
@@ -895,7 +916,8 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
     rings.add(context, from.x + ln.from_x * from.scale, from.y + ln.from_y * from.scale,
               ln.from_w * from.scale, ln.from_h * from.scale);
     // Hanging off the edge, the landing is the piece's own size, not the
-    // clipped one — the window is whole even where the grid stops.
+    // clipped one — the window is whole even where the grid stops, and it is
+    // drawn past the wall because that is what it says.
     const bool clipped = (ln.outside > 0);
     rings.add(context, to.x + ln.to_x * to.scale, to.y + ln.to_y * to.scale,
               (clipped ? ln.from_w : ln.to_w) * to.scale,
@@ -908,7 +930,7 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
     // it at its old place on the new grid would say it stayed.
     if (ln.kind == puzzle::correspondence_readout::line::sits_on)
       rings.add(context, to.x + ln.from_x * to.scale, to.y + ln.from_y * to.scale,
-                ln.from_w * to.scale, ln.from_h * to.scale);
+                ln.from_w * to.scale, ln.from_h * to.scale, UI_COLOR_LINE, true);
   }
 }
 
@@ -1010,7 +1032,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // WRITTEN THE WAY THE BODY BELOW SPENDS IT, term for term, so a row added
       // there is a term added here and the frame cannot end up shorter than
       // what it holds. Six steppers, a detail line under each and a second one
-      // under UNANSWERED, two rules, the matrix (its axis title, three freedom
+      // under ALONE, two rules, the matrix (its axis title, three freedom
       // rows, a row per cut TWICE with a title over the second block, and the
       // legend), then the pair table (its head, a row per pair) and the three
       // reasons a match was refused.
@@ -1060,7 +1082,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // of them. This was the width of "DROPPED" alone, and the moment a label
     // grew past it the name ran straight through its own value.
     static const char* const pane_labels[] = {
-        "READING", "LINE", "UNANSWERED", "REFUSED", "MOTIF", "EACH CELL" };
+        "READING", "LINE", "LEFT OVER", "REFUSED", "MOTIF", "EACH CELL" };
     int label_col = 0;
     for (const char* name : pane_labels) label_col = max(label_col, text_w(name, scale));
     // THREE CHARACTERS CLEAR OF THE LONGEST LABEL. At one character the widest
@@ -1190,8 +1212,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // The pieces the reading cut out, and the matches it threw away. Neither is
     // reachable through the lines: a piece with no edge draws nothing, and a
     // thrown-away match was never drawn at all.
-    const vector<int> unanswered = unanswered_pieces(R);
-    const int pieces_n = (int)unanswered.size();
+    const vector<int> alone = pieces_standing_alone(R);
+    const int pieces_n = (int)alone.size();
     const int dropped_n = (int)R.dropped_seen.size();
     const int left_over_n = (int)R.left_over_seen.size();
     track_row("LINE", "S", step, drawn, (int)arc_color::yellow,
@@ -1260,9 +1282,12 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // LAST OF THE STEPPERS, because its readout is the only one that needs two
     // lines and the pair of them sit better against the rule below than wedged
     // between two other controls.
-    track_row("UNANSWERED", "P", piece_at, pieces_n, (int)arc_color::gray,
+    track_row("ALONE", "P", piece_at, pieces_n, (int)arc_color::gray,
               ui_action::step_piece_back, ui_action::step_piece, &app_state.inference_piece);
-    // WHICH SILENCE IT IS. NOTHING FOUND IT is one fact, not two: which grid the
+    // WHICH KIND OF ALONE IT IS. Deleted, inserted and covered are ANSWERS, so
+    // the walk is not named for their absence — it is named for the one thing
+    // they share, having no piece on the other grid that is them.
+    // NOTHING FOUND IT is one fact, not two: which grid the
     // piece sits on is a property of the piece, and swapping which side is
     // called input turns either word into the other. So it is said FROM THE
     // INPUT SIDE and says so in the same breath, because a bare INSERTED leaves
@@ -1275,7 +1300,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     {
       string piece_said, blank_said;
       if (piece_at >= 0 && piece_at < pieces_n) {
-        const auto& pc = R.pieces_seen[unanswered[piece_at]];
+        const auto& pc = R.pieces_seen[alone[piece_at]];
         const char* silence = pc.edges > 0 ? "ONLY SITS ON SOMETHING"
                             : pc.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
                                             : "INSERTED, IT WAS NOT IN THE INPUT";
@@ -1617,9 +1642,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     line(fmt::format("SHAPE PICKS COLOR, {} LEARNED", task.shape_color_count));
 
   // What correspondence made of each pair, said FROM THE INPUT'S SIDE, which is
-  // the same standpoint the UNANSWERED row uses. DELETED and INSERTED are one
-  // fact read from two ends — nothing answers this piece — and which end is
-  // just which grid it sits on, so the two must not read as two different
+  // the same standpoint the ALONE row uses. DELETED and INSERTED are one fact
+  // read from two ends — no piece on the other grid is this one — and which end
+  // is just which grid it sits on, so the two must not read as two different
   // findings. CLASS is the two extremes the six counts hide: most pieces
   // meeting at one landing, most places one piece went. 1-1 is a plain swap,
   // 1-9 is one piece stamped nine times, 3-2 is both at once.
@@ -2185,9 +2210,9 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       if (ln.rank == rank) drawn++;
     // Each track is told how long its list is and hands back what is chosen.
     const auto &R = task.correspondence.readings;
-    const vector<int> unanswered =
-        rank < (int)R.size() ? unanswered_pieces(R[rank]) : vector<int>{};
-    const int pieces_n = (int)unanswered.size();
+    const vector<int> alone =
+        rank < (int)R.size() ? pieces_standing_alone(R[rank]) : vector<int>{};
+    const int pieces_n = (int)alone.size();
     const int dropped_n = rank < (int)R.size() ? (int)R[rank].dropped_seen.size() : 0;
     const int step = app_state.inference_edge.pick(drawn);
     const int piece_at = app_state.inference_piece.pick(pieces_n);
@@ -2232,13 +2257,13 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
                        (int)(pc.medoid ? arc_color::magenta : arc_color::blue),
                        rings);
       }
-      // A BOX AND NO LINE. These are the pieces nothing answers, so there is no
+      // A BOX AND NO LINE. These are the pieces nothing partners, so there is no
       // other end to join to — but there is a place: the patch of nothing they
       // cover on the other grid, drawn there so the two are seen together. That
       // patch is where a grid makes something out of nothing.
       for (int i = 0; i < pieces_n; ++i) {
         if (piece_at != SHOW_ALL && piece_at != i) continue;
-        const auto &pc = R[rank].pieces_seen[unanswered[i]];
+        const auto &pc = R[rank].pieces_seen[alone[i]];
         draw_selection(context, task, lay, pc.pair, pc.from_input,
                        pc.x, pc.y, pc.w, pc.h, pc.blank_w > 0,
                        pc.blank_x, pc.blank_y, pc.blank_w, pc.blank_h,

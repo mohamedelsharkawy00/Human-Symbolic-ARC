@@ -401,6 +401,7 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
         out.clear();
         task.correspondence.readings.clear();
         task.correspondence.chosen = inf.correspondence.chosen;
+        task.correspondence.cells = inf.correspondence.cells;
         // EVERY READING IS BRIDGED, and NONE IS READ AGAIN. The election
         // matched all of them and kept the pieces and edges, so the table is
         // the election — same numbers, same work, done once.
@@ -546,7 +547,7 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
                     R.pieces_seen.push_back({ (int8_t)pi, side == 0, o.color,
                                               o.left, o.top, o.width, o.height, o.count,
                                               (int16_t)o.edges_touching, first[oi],
-                                              o.answered,
+                                              o.has_partner,
                                               o.motif, o.medoid,
                                               o.blank_left, o.blank_top,
                                               o.blank_width, o.blank_height,

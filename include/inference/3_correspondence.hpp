@@ -159,9 +159,12 @@ struct correspondence_facts {
         // sits-on edge, which only says what a piece lies over and answers
         // nothing. Decided HERE, where the cells still exist: downstream there
         // are only boxes, and a box lies about a hollow shape — a ring's box
-        // holds its own hole, so anything sitting in the hole looked answered
-        // by whatever answered the ring.
-        bool answered = false;
+        // holds its own hole, so anything sitting in the hole looked spoken
+        // for by whatever answered the ring.
+        // NOT THE SAME AS ANSWERED. A piece nothing partners still has an
+        // answer — it was deleted, or inserted, or something covers it. What
+        // it lacks is a piece on the other grid that is IT.
+        bool has_partner = false;
         // WHICH SET OF COPIES this object belongs to on its own grid, -1 for
         // none. A grid can hold several motifs at once, and a set is the
         // thing they are copies OF.
@@ -249,6 +252,10 @@ struct correspondence_facts {
     };
     // One entry per train pair
     vector<pair_info> pairs;
+    // Non-background cells across BOTH grids of every train pair — what a
+    // reading's leftovers are a share of. A bare count of what a reading could
+    // not account for says nothing without the size of what it failed at.
+    int cells = 0;
     // The way of cutting up that explained most, judged over the WHOLE train
     // set. FOR NOW one split serves every pair: a transformation that cuts the
     // grid up differently from pair to pair would be a strange puzzle, and
@@ -1304,14 +1311,14 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
             if (target < 0 || options < fewest) { target = (int)id; fewest = options; }
         }
         if (target < 0) return true;   // every carried-over cell accounted for
-        // A PIECE WITH NO GOOD LANDING SIMPLY GOES UNANSWERED. Every piece used
+        // A PIECE WITH NO GOOD LANDING SIMPLY STANDS ALONE. Every piece used
         // to be offered a first landing before any piece was offered a second,
         // so a piece that corresponds to nothing was handed something to be
         // wrong about — in 045e512c a three-cell stick took a whole ring,
         // because the ring it belonged to had already landed and was skipped.
         // Fairness is not a finding. The options are in preference order and
         // nothing overrides it now; a piece nothing wanted says nothing, which
-        // is the truth and is what UNANSWERED and LEFT OVER are for.
+        // is the truth and is what ALONE and LEFT OVER are for.
         for (int piece_index : laid_out.options[target]) {
             bool free_here = true;
             for (int id : laid_out.pieces[piece_index].cells)
@@ -1536,7 +1543,7 @@ inline void count_edges_leaving(const vector<correspondence_facts::edge>& edges,
     for (const auto& edge : edges)
         if (edge.from >= 0 && (size_t)edge.from < from_objects.size()) {
             from_objects[edge.from].edges_touching++;
-            from_objects[edge.from].answered = true;
+            from_objects[edge.from].has_partner = true;
         }
 }
 
@@ -1575,7 +1582,7 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
                 // things. Only a landing on bare ground needs the shapes to
                 // agree, because there is no piece there to have been meant.
                 if (edge.same_shape || (int16_t)into_index == edge.to)
-                    into_objects[into_index].answered = true;
+                    into_objects[into_index].has_partner = true;
             }
         }
     }
@@ -1837,7 +1844,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         // matched is a road not taken. Asked of the PIECE and not of the match,
         // because most matches name no object on the other side at all: they
         // are a place, and two places cannot be told to mean one thing.
-        // ASKED HERE AND WITH `answered`, which is the same question the screen
+        // ASKED HERE AND WITH `has_partner`, which is the same question the screen
         // asks. Asked earlier it had to be answered a second way — is this piece
         // a named end of some edge — and that misses a piece found by a landing
         // covering it, so a piece could read as found and have refusals listed
@@ -1848,7 +1855,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             const auto& objects = thrown.from_input ? pair.input_objects
                                                     : pair.output_objects;
             if (thrown.from >= 0 && (size_t)thrown.from < objects.size() &&
-                objects[thrown.from].answered) continue;
+                objects[thrown.from].has_partner) continue;
             pair.discarded[still_refused] = thrown;
             pair.discard_why[still_refused] = pair.discard_why[gone];
             ++still_refused;
@@ -1856,7 +1863,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         pair.discarded.resize(still_refused);
         pair.discard_why.resize(still_refused);
 
-        // WHERE THE UNANSWERED ONES CAME FROM, OR WENT. An object nothing
+        // WHERE THE ONES STANDING ALONE CAME FROM, OR WENT. An object nothing
         // answers has no partner object, but it is not nowhere: it covers a
         // patch of background on the other grid. Asked only of those objects,
         // because for the rest the partner IS the answer. See object_info's
@@ -1864,13 +1871,13 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         auto note_blanks = [&](vector<correspondence_facts::object_info>& objects,
                                const vector<grid>& glyphs, const grid& other) {
             if (ranges::all_of(objects, [](const auto& one) {
-                    return one.answered; })) return;
+                    return one.has_partner; })) return;
             vector<blank_patch> patches;
             int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM];
             find_blanks(other, background, patches, patch_of);
             for (size_t i = 0; i < objects.size() && i < glyphs.size(); ++i) {
                 auto& one = objects[i];
-                if (one.answered) continue;
+                if (one.has_partner) continue;
                 for (int row = 0; row < glyphs[i].height; ++row)
                     for (int col = 0; col < glyphs[i].width; ++col) {
                         if (glyphs[i].data[row][col] == TRANSPARENT) continue;
@@ -1931,15 +1938,15 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                          by_pieces, false, true);
             // A piece explains its own cells once anything speaks for it:
             // it went somewhere, or something arrived that named it by name.
-            vector<bool> answered(ours.size(), false);
+            vector<bool> spoken_for(ours.size(), false);
             for (const auto& edge : leaving_here)
-                if (edge.from >= 0 && (size_t)edge.from < answered.size())
-                    answered[edge.from] = true;
+                if (edge.from >= 0 && (size_t)edge.from < spoken_for.size())
+                    spoken_for[edge.from] = true;
             for (const auto& edge : landing_here)
-                if (edge.to >= 0 && (size_t)edge.to < answered.size())
-                    answered[edge.to] = true;
+                if (edge.to >= 0 && (size_t)edge.to < spoken_for.size())
+                    spoken_for[edge.to] = true;
             for (size_t i = 0; i < ours.size(); ++i) {
-                if (!answered[i]) continue;
+                if (!spoken_for[i]) continue;
                 const auto& piece = ours[i];
                 for (int row = 0; row < piece.height; ++row)
                     for (int col = 0; col < piece.width; ++col)
@@ -2003,6 +2010,17 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
 inline correspondence_facts pick_split(const vector<example>& train, int8_t background) {
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
+
+    // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
+    // because every reading's leftovers are a share of it.
+    int facts_cells = 0;
+    for (const auto& train_pair : train)
+        for (const grid* one : { &train_pair.input, &train_pair.output })
+            for (int row = 0; row < one->height && row < MAX_GRID_DIM; ++row)
+                for (int col = 0; col < one->width && col < MAX_GRID_DIM; ++col) {
+                    const int color = one->data[row][col];
+                    facts_cells += (color >= 0 && color != background);
+                }
 
     // THE LOOKING. One number per cut, off the grids alone. Scored on BOTH
     // grids: the cut has to make sense of the pair, and comparing a total taken
@@ -2125,35 +2143,36 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     vector<vector<scored_reading>> passes;
     for (const auto& look : looks) passes.push_back(search_one(look));
 
-    // THE GLANCE PICKS THE CUT, THE MATCHING PICKS THE FREEDOM. That is what
-    // this file has said all along, and the judge now says it too: drawing an
-    // edge beats drawing none, then SAYING IT IN THE LEAST, then explaining the
-    // most, then fewest pieces.
+    // WHAT A READING FAILS TO EXPLAIN, IT STILL HAS TO SPELL OUT. So there is
+    // ONE number and not two keys: what the cut costs to say, plus a plain
+    // cell's price for every cell it left over.
     //
-    // FEWEST CELLS LEFT OVER CANNOT COME FIRST, because one contestant can never
-    // lose it: cut into single cells, every cell finds a cell, and nothing is
-    // ever left over on any puzzle. A key one player always maxes out ranks
-    // nobody. It said the grid at 271% of plain here and won against a reading
-    // that said it at 121% and missed four cells — twice the words for four
-    // cells' worth of silence.
-    // ASKED SECOND IT STILL DECIDES EVERYTHING IT SHOULD: one cut's eight
-    // freedoms all cost the same to say, so within a cut the matching alone
-    // picks, which is the one question the looking cannot answer.
+    // TWO KEYS ALWAYS BREAK, whichever goes first, because the winner is then
+    // whoever ignores the other one. Fewest left over first: cut into single
+    // cells and every cell finds a cell, so nothing is ever left over and a
+    // reading twice as long as the grid wins. Cheapest to say first: a cut that
+    // explains almost nothing wins by being three percent cheaper to describe --
+    // 00dbd492 elected a reading at 108% that left 103 of 388 cells unaccounted
+    // for, over one at 111% that left none.
+    // Priced together neither trick pays. The flood pays for its words; the
+    // silent cut pays for its silence, and 103 of 388 costs it 27%.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     //
-    // A MARGIN, because these are ratios and two cuts that cost the same to say
-    // should fall through to what they explain rather than be split by rounding.
+    // A MARGIN, because these are ratios and two readings that cost the same
+    // should fall through to the piece count rather than be split by rounding.
     const double same_price = 0.001;
+    const double spelling_out = facts_cells > 0 ? 1.0 / facts_cells : 0.0;
+    auto price_of = [&](const correspondence_facts::reading& one) {
+        return one.describe_cost + one.left_over * spelling_out;
+    };
     size_t elected = 0;
     for (size_t i = 1; i < passes.size(); ++i) {
         const auto& best = passes[elected].front().summary;
         const auto& here = passes[i].front().summary;
         if ((here.pieces_used > 0) != (best.pieces_used > 0)) {
             if (here.pieces_used > 0) elected = i;
-        } else if (abs(here.describe_cost - best.describe_cost) > same_price) {
-            if (here.describe_cost < best.describe_cost) elected = i;
-        } else if (here.left_over != best.left_over) {
-            if (here.left_over < best.left_over) elected = i;
+        } else if (abs(price_of(here) - price_of(best)) > same_price) {
+            if (price_of(here) < price_of(best)) elected = i;
         } else if (here.pieces_used < best.pieces_used) {
             elected = i;
         }
@@ -2166,6 +2185,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // is a fact of its own now, said by `chosen`. Nothing is read again: the
     // winner's pairs are the ones the election already had.
     correspondence_facts facts;
+    facts.cells = facts_cells;
     facts.cut_kind = passes[elected].front().summary.cut_kind;
     auto cell_of = [](const correspondence_facts::reading& one) {
         return (int)one.cut_kind * match_mode::COUNT + one.match_kind.index();
