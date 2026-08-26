@@ -192,6 +192,31 @@ inline void report_correspondence_readings(ostream& report, const correspondence
     }
 }
 
+// WHAT SEVERAL PIECES SAID AT ONCE, reading by reading and pair by pair. Read
+// in each pair's own way up, so a pair drawn a quarter turn from its
+// neighbours can be set beside them. Readings nobody agreed in are not listed:
+// a page of empty lines says nothing that their absence does not.
+inline void report_agreed_moves(ostream& report, const correspondence_facts& correspondence) {
+    for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
+        const auto& pairs = correspondence.reading_pairs[i];
+        if (ranges::all_of(pairs, [](const auto& pair) {
+                return pair.agreed_moves.empty(); })) continue;
+        report << "  reading " << i << " moved together   "
+          << split_name((int)correspondence.readings[i].cut_kind)
+          << "  [" << correspondence.readings[i].match_kind.label() << "]\n";
+        for (size_t which = 0; which < pairs.size(); ++which) {
+            report << "    pair " << which << " read pose " << (int)pairs[which].pose;
+            for (const auto& agreed : pairs[which].agreed_moves) {
+                report << "   down " << (int)agreed.down << " across " << (int)agreed.across
+                  << " said by " << agreed.pieces;
+                if (agreed.color >= 0) report << " all color " << (int)agreed.color;
+                else                   report << " mixed colors";
+            }
+            report << "\n";
+        }
+    }
+}
+
 // WHAT EACH READING ACTUALLY CUT AND WHERE EACH PIECE WENT, every reading, both
 // sides. The numbers above can agree while the cuts disagree, and only the
 // pieces say how; and a reading that leaves a cell over is only readable next
@@ -308,6 +333,7 @@ inline void log_inference(const string& id, const inference& inf, const Readout&
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
+    report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, seen);
     for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)
         report_one_pair(report, i, inf.correspondence.pairs[i]);

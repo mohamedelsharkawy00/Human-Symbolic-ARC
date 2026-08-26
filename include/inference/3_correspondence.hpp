@@ -228,6 +228,18 @@ struct correspondence_facts {
         // thing: a count nobody can point at is a claim you cannot check.
         vector<left_over_cell> left_over;
         int pieces_used = 0;
+        // THE WAY UP THIS PAIR IS READ, so a move here can be set beside a move
+        // in another pair — see best_pose.
+        int8_t pose = 0;
+        // PIECES THAT MOVED AS ONE, in that frame. A move said by several
+        // pieces at once is the only thing two pieces in this layer ever agree
+        // about; said by one it is a coincidence with nobody to back it. Kept
+        // as a fact and judged by nobody yet.
+        // `color` is what the pieces have in common, -1 when they have nothing:
+        // the one thing a cluster can be named by that survives being read in
+        // another pair, where the move itself is a different number.
+        struct moved_together { int8_t down, across, color; int16_t pieces; };
+        vector<moved_together> agreed_moves;
         // What the cut saves on this pair's FROM grid, as a share of saying the
         // grid plainly — see describe_cost. Free here because the pieces already
         // exist, and it owes nothing to the matching, which is the point of it.
@@ -329,6 +341,29 @@ struct object_match {
     int8_t color_map[10];
 };
 
+// WHERE A CELL LANDS ONCE ITS GRID IS POSED — the read posed_glyph does, run
+// the other way, so a place can be carried into the frame a pair is compared
+// in. Height and width are the grid's OWN, before posing, which is what the
+// mirrors are measured against.
+inline pair<int, int> posed_place(int pose, int row, int col, int height, int width) {
+    const int down   = (pose & 2) ? height - 1 - row : row;
+    const int across = (pose & 4) ? width  - 1 - col : col;
+    return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
+}
+
+// THE MOVE AN EDGE NAMES, in the way up its pair is read. Said once, because
+// the clusters are counted from it and the sieve then asks it again, and two
+// spellings of one question is how the two ends of a sieve come to disagree.
+inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
+                              const correspondence_facts::object_info& piece,
+                              const grid& from_grid, const grid& into_grid) {
+    const auto was = posed_place(pose, piece.top, piece.left,
+                                 from_grid.height, from_grid.width);
+    const auto now = posed_place(pose, edge.row, edge.col,
+                                 into_grid.height, into_grid.width);
+    return { now.first - was.first, now.second - was.second };
+}
+
 // One of the EIGHT ways a glyph can sit: four turns by two mirrors. Pose 0 is
 // the glyph as given. Same index walk canonical_shape_hash uses, so the two
 // agree on what "the same shape, turned" means.
@@ -345,6 +380,33 @@ inline grid posed_glyph(const grid& glyph, int pose) {
             posed.data[row][col] = glyph.data[source_row][source_col];
         }
     return posed;
+}
+
+// THE WAY UP A GRID READS SMALLEST. Two pairs of one puzzle can be drawn a
+// quarter turn apart — 05a7bcf2 pair 0 stands the whole scene on its side, its
+// line running down the grid while the other pairs' run across — and no move in
+// one frame can be compared with a move in the other until both are read the
+// same way up. So the whole grid votes: of the eight ways round, the one whose
+// cells read smallest in row order. A vote and not a shape rule, because every
+// grid here is square and a shape rule is blind to that.
+// The same eight and the same bits posed_glyph uses, so a pose means one thing.
+inline int best_pose(const grid& one_grid) {
+    auto read_out = [&](int pose) {
+        const grid view = posed_glyph(one_grid, pose);
+        vector<int8_t> stream;
+        stream.reserve((size_t)view.width * view.height);
+        for (int row = 0; row < view.height; ++row)
+            for (int col = 0; col < view.width; ++col)
+                stream.push_back(view.data[row][col]);
+        return stream;
+    };
+    int best = 0;
+    vector<int8_t> smallest = read_out(0);
+    for (int pose = 1; pose < 8; ++pose) {
+        const vector<int8_t> here = read_out(pose);
+        if (here < smallest) { best = pose; smallest = here; }
+    }
+    return best;
 }
 
 // Every place the glyph turns up, tried every way round, plus how many ways
@@ -1727,6 +1789,14 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     facts.pairs.resize(train.size());
     facts.cut_kind = cut_kind;
 
+    // The glyphs are wanted twice — once to match on, and again to read the
+    // numbers off after the pairs have been set beside one another — so they
+    // are cut once and kept.
+    vector<vector<grid>> input_glyphs_of(train.size()), output_glyphs_of(train.size());
+
+    // FIRST PASS — cut each pair, match it both ways, and note what several of
+    // its pieces said at once. Nothing is counted yet: a number read now would
+    // be read off edges the pairs have not yet had their say about.
     for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
@@ -1740,7 +1810,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         const auto [step_width, step_height] = block_of(input, output, background,
                                                         cut_kind, sizes_step_width,
                                                         sizes_step_height);
-        vector<grid> input_glyphs, output_glyphs;
+        vector<grid>& input_glyphs = input_glyphs_of[pair_index];
+        vector<grid>& output_glyphs = output_glyphs_of[pair_index];
         segment_for_correspondence(input, background, cut_kind, pair.input_objects,
                                    &input_glyphs, step_width, step_height);
         segment_for_correspondence(output, background, cut_kind, pair.output_objects,
@@ -1851,6 +1922,119 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             if (left.row != right.row)   return left.row < right.row;
             return left.col < right.col;
         });
+
+        // WHAT SEVERAL PIECES SAY AT ONCE. Read in the pair's own way up, so
+        // that a pair drawn a quarter turn from its neighbours can still be set
+        // beside them. A sits-on edge is skipped: it names no move.
+        pair.pose = (int8_t)best_pose(input);
+        vector<correspondence_facts::pair_info::moved_together> moves;
+        vector<vector<int>> who_moved;
+        for (const auto& edge : pair.edges) {
+            if (!edge.same_shape) continue;
+            const auto& objects = edge.from_input ? pair.input_objects : pair.output_objects;
+            if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
+            const auto& piece = objects[edge.from];
+            const auto went = move_of(edge, pair.pose, piece,
+                                      edge.from_input ? input : output,
+                                      edge.from_input ? output : input);
+            const int8_t down = (int8_t)went.first, across = (int8_t)went.second;
+            // A piece is named by its side and its index, so the same index on
+            // the two grids is not mistaken for one piece speaking twice.
+            const int speaker = edge.from_input ? (edge.from + 1) : -(edge.from + 1);
+            size_t at = 0;
+            while (at < moves.size() &&
+                   (moves[at].down != down || moves[at].across != across)) ++at;
+            if (at == moves.size()) {
+                moves.push_back({ down, across, piece.color, 0 });
+                who_moved.push_back({});
+            }
+            if (ranges::find(who_moved[at], speaker) == who_moved[at].end()) {
+                who_moved[at].push_back(speaker);
+                moves[at].pieces++;
+                if (moves[at].color != piece.color) moves[at].color = -1;
+            }
+        }
+        for (const auto& agreed : moves)
+            if (agreed.pieces >= 2) pair.agreed_moves.push_back(agreed);
+        ranges::sort(pair.agreed_moves, [](const auto& left, const auto& right) {
+            return left.pieces > right.pieces; });
+
+
+    }
+
+    // WHAT THE PAIRS AGREE ABOUT. A move several pieces say at once is evidence
+    // inside one pair; a move every pair says is a rule. THE NUMBER CANNOT BE
+    // WHAT REPEATS — the reds in 05a7bcf2 fall 9, then 8, then 7, because the
+    // band they fall from is a different thickness each time — so what carries
+    // from pair to pair is what the pieces have in common, which is their color.
+    // One move per color per pair, or that color is not stating anything: the
+    // yellows there split four ways in one pair and are absent from another.
+    // STAYING PUT NEEDS NO NAME. It is the same move in every frame and it is
+    // what "nothing happened here" looks like, so it is always agreed.
+    // THE SIEVE ONLY SPEAKS WHEN THE PAIRS DO. Where no color clusters in every
+    // pair the pairs have agreed about nothing, and the edges are left alone —
+    // a puzzle answered one piece to many places has no clusters at all, and a
+    // rule that cannot see it must not be allowed to empty it.
+    auto pair_was_read = [&](size_t which) {
+        return train[which].input.width > 0 && train[which].input.height > 0 &&
+               train[which].output.width > 0 && train[which].output.height > 0;
+    };
+    // The one move a color makes in a pair, or nothing when it makes none or several.
+    auto lone_move_of = [&](size_t which, int color) {
+        const correspondence_facts::pair_info::moved_together* only = nullptr;
+        for (const auto& agreed : facts.pairs[which].agreed_moves) {
+            if (agreed.color != color || (!agreed.down && !agreed.across)) continue;
+            if (only) return (const correspondence_facts::pair_info::moved_together*)nullptr;
+            only = &agreed;
+        }
+        return only;
+    };
+    bool color_agrees[10] = {};
+    bool anything_agreed = false;
+    for (int color = 0; color < 10; ++color) {
+        int read = 0, said_once = 0;
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            if (!pair_was_read(which)) continue;
+            ++read;
+            said_once += (lone_move_of(which, color) != nullptr);
+        }
+        color_agrees[color] = (read > 0 && said_once == read);
+        anything_agreed = anything_agreed || color_agrees[color];
+    }
+    if (anything_agreed)
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            if (!pair_was_read(which)) continue;
+            auto& pair = facts.pairs[which];
+            vector<correspondence_facts::edge> agreed_edges;
+            for (const auto& edge : pair.edges) {
+                // A sits-on edge names no move, so no pair can disagree with it.
+                if (!edge.same_shape) { agreed_edges.push_back(edge); continue; }
+                const auto& objects = edge.from_input ? pair.input_objects
+                                                      : pair.output_objects;
+                if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
+                const auto& piece = objects[edge.from];
+                const auto went = move_of(edge, pair.pose, piece,
+                                          edge.from_input ? train[which].input
+                                                          : train[which].output,
+                                          edge.from_input ? train[which].output
+                                                          : train[which].input);
+                if (!went.first && !went.second) { agreed_edges.push_back(edge); continue; }
+                if (piece.color < 0 || piece.color >= 10 || !color_agrees[piece.color]) continue;
+                const auto* rule = lone_move_of(which, piece.color);
+                if (rule && rule->down == went.first && rule->across == went.second)
+                    agreed_edges.push_back(edge);
+            }
+            pair.edges.swap(agreed_edges);
+        }
+
+    // SECOND PASS — every number, read off the edges the pairs let through.
+    for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
+        const grid& input = train[pair_index].input;
+        const grid& output = train[pair_index].output;
+        auto& pair = facts.pairs[pair_index];
+        if (!pair_was_read(pair_index)) continue;
+        const vector<grid>& input_glyphs = input_glyphs_of[pair_index];
+        const vector<grid>& output_glyphs = output_glyphs_of[pair_index];
 
         // The two halves of the merged list, each in its own frame, so every
         // helper below stays the one-direction function it always was.
