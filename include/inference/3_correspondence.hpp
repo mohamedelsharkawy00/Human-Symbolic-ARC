@@ -26,8 +26,14 @@ using namespace std;
 // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
 
 // The ways a grid can be cut into pieces. Every kind is a CANDIDATE, not a
-// setting — pick_split judges them. Order matters: one_cell_each sits last
-// because the finest reading explains everything and must lose on piece count.
+// setting — pick_split judges them.
+// EVERY CELL ITS OWN PIECE is gone (2026-08-26). A single cell is found
+// wherever its color is found, so that cut answered every cell of every grid
+// and left nothing over anywhere — a perfect score, said by nobody, on every
+// puzzle at once. It only ever lost on price, and it won the moment a real
+// reading was a few percent dearer to say. What it was for — a grid whose
+// cells behave one at a time — the color cuts already say, and they say it
+// without claiming the whole grid.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
 // The BIGGEST repeating patch is gone (2026-08-12). Periods behave like
 // multiples: once a grid repeats every p it repeats every multiple of p, so
@@ -36,7 +42,7 @@ using namespace std;
 // grid exactly — and what it then found was always a whole number of the
 // smallest one. A coarser view of the same fact, bought with a caveat.
 enum class split_kind : int8_t {
-    touching_8, touching_any_color, one_per_color, one_cell_each,
+    touching_8, touching_any_color, one_per_color,
     repeating_motif, repeating_step, split_count
 };
 
@@ -57,7 +63,6 @@ inline constexpr const char* const split_names[] = {
     "A GROUP OF CELLS THAT TOUCH, ALL ONE COLOR",
     "A GROUP OF CELLS THAT TOUCH, ANY COLORS",
     "EVERY CELL OF ONE COLOR, WHEREVER IT EXISTS",
-    "MADE OF ONE CELL",
     "THE SMALLEST REPEATING MOTIF",
     "A MOTIF THE SIZE OF THE SMALLER GRID" };
 // The sentence every one of them finishes.
@@ -579,30 +584,6 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
     // number below it stops a cut part way and hands back a corner of the
     // grid as though it were the whole of it.
     static constexpr int MAX_PIECES = MAX_GRID_DIM * MAX_GRID_DIM;
-
-    // Every cell its own piece. Nothing is joined to anything, so this is the
-    // one reading that never merges two things that behave differently.
-    if (cut_kind == split_kind::one_cell_each) {
-        for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-                int color = one_grid.data[row][col];
-                if (color < 0 || color == background) continue;
-                if ((int)pieces.size() >= MAX_PIECES) return;
-                correspondence_facts::object_info piece;
-                piece.color = (int8_t)color;
-                piece.left = (int8_t)col; piece.top = (int8_t)row;
-                piece.width = 1; piece.height = 1; piece.count = 1;
-                bool one_cell = true;
-                piece.shape = canonical_shape_hash(1, 1, &one_cell);
-                pieces.push_back(piece);
-                if (glyphs) {
-                    grid glyph(1, 1, 0, MAX_GRID_DIM);
-                    glyph.data[0][0] = (int8_t)color;
-                    glyphs->push_back(glyph);
-                }
-            }
-        return;
-    }
 
     // Cut on a fixed step: equal blocks, one piece each, cells of any color kept
     // together. Blocks with no colored cells at all are not pieces.
