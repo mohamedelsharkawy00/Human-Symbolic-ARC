@@ -195,13 +195,15 @@ struct correspondence_facts {
         int8_t row = 0, col = 0;
     };
     // Why a match that was found did not survive.
-    enum : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_piece };
+    enum : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_piece,
+                    the_other_examples_disagreed };
     // Said the same way wherever it is said. Each one finishes "it was refused
     // because", so it has to be a reason on its own and not a name for one.
     static constexpr const char* const refusal_names[] = {
         "IT WAS LIKELY BY LUCK",
         "ITS CELLS WERE ALREADY EXPLAINED",
-        "IT OVERLAPS A PIECE THAT WAS KEPT" };
+        "IT OVERLAPS A PIECE THAT WAS KEPT",
+        "THE OTHER EXAMPLES DID NOT AGREE" };
     struct pair_info {
         // The pieces the chosen split finds, named by the grid they sit on. Both
         // grids are cut the same way and on the same block, which is what lets
@@ -362,6 +364,33 @@ inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
     const auto now = posed_place(pose, edge.row, edge.col,
                                  into_grid.height, into_grid.width);
     return { now.first - was.first, now.second - was.second };
+}
+
+// WHAT THE PAIRS AGREED, in the form one pair's matching can be asked about.
+// Consulted only when they agreed about something: a puzzle answered one piece
+// to many places has no agreement at all, and a rule that cannot see it must
+// never be allowed to empty it.
+struct what_the_pairs_agreed {
+    int8_t pose = 0;
+    bool color_speaks[10] = {};
+    int8_t down[10] = {}, across[10] = {};
+};
+
+// Would this match be contradicted by what the pairs agreed? STAYING PUT NEVER
+// IS — it is the same move in every frame and is what "nothing happened here"
+// looks like. Anything else has to be the one move its color makes here, and a
+// color no pair could pin down speaks for nothing.
+inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
+                               const correspondence_facts::edge& edge,
+                               const correspondence_facts::object_info& piece,
+                               const grid& from_grid, const grid& into_grid) {
+    if (!edge.same_shape) return false;
+    const auto went = move_of(edge, agreed.pose, piece, from_grid, into_grid);
+    if (!went.first && !went.second) return false;
+    if (piece.color < 0 || piece.color >= 10) return true;
+    if (!agreed.color_speaks[piece.color]) return true;
+    return agreed.down[piece.color] != went.first ||
+           agreed.across[piece.color] != went.second;
 }
 
 // One of the EIGHT ways a glyph can sit: four turns by two mirrors. Pose 0 is
@@ -1543,14 +1572,30 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
                           const vector<grid>& from_glyphs,
                           const vector<correspondence_facts::object_info>& into_objects,
                           const vector<grid>& into_glyphs,
-                          const grid& into, int8_t background, bool may_hang_off,
+                          const grid& from, const grid& into,
+                          int8_t background, bool may_hang_off,
                           vector<correspondence_facts::edge>& edges,
                           vector<correspondence_facts::edge>* discarded = nullptr,
                           vector<int8_t>* discard_why = nullptr,
-                          match_mode match = {}) {
-    const vector<correspondence_facts::edge> found =
+                          match_mode match = {},
+                          const what_the_pairs_agreed* agreed = nullptr) {
+    vector<correspondence_facts::edge> found =
         gather_matches(from_objects, from_glyphs, into_objects, into,
                        background, may_hang_off, discarded, discard_why, match);
+
+    // WHAT THE OTHER EXAMPLES DISAGREE WITH IS NEVER OFFERED. It has to go
+    // BEFORE the fitting and not after: the fitting uses every candidate to
+    // knock out its rivals, so striking a winner afterwards leaves the rival it
+    // beat dead and its cells bare — one red piece of 05a7bcf2 pair 0 went
+    // missing in exactly that way.
+    if (agreed)
+        for (size_t i = found.size(); i-- > 0; ) {
+            const auto& piece = from_objects[found[i].from];
+            if (!the_pairs_disagree(*agreed, found[i], piece, from, into)) continue;
+            throw_away(found, i, correspondence_facts::the_other_examples_disagreed,
+                       discarded, discard_why);
+            found.erase(found.begin() + i);
+        }
 
     const fitting laid_out = set_up_the_fitting(found, from_glyphs, into_glyphs, into, background);
 
@@ -1794,16 +1839,27 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     // are cut once and kept.
     vector<vector<grid>> input_glyphs_of(train.size()), output_glyphs_of(train.size());
 
-    // FIRST PASS — cut each pair, match it both ways, and note what several of
-    // its pieces said at once. Nothing is counted yet: a number read now would
-    // be read off edges the pairs have not yet had their say about.
+    auto pair_was_read = [&](size_t which) {
+        return train[which].input.width > 0 && train[which].input.height > 0 &&
+               train[which].output.width > 0 && train[which].output.height > 0;
+    };
+    // A pattern reading is read by a different collector: a block is a window
+    // onto a tiling that carries on, a shape is a thing that does not.
+    // HANGING OFF THE EDGE IS NOT WHAT SEPARATES THEM — every reading may do
+    // that now, because a wall cutting a copy in half is a fact about the grid
+    // and not about the piece.
+    const bool pattern_reading = (cut_kind == split_kind::repeating_motif ||
+                                  cut_kind == split_kind::repeating_step);
+    vector<int> step_width_of(train.size(), 0), step_height_of(train.size(), 0);
+
+    // THE CUTTING, ONCE. The pieces owe nothing to what any other pair said, so
+    // they are made here and the matching may then be run over them more than
+    // once.
     for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
+        if (!pair_was_read(pair_index)) continue;
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
-        if (input.width <= 0 || input.height <= 0 ||
-            output.width <= 0 || output.height <= 0) continue;
-
         // ONE CUT, ONE BLOCK, BOTH GRIDS. Cut once here and both readings work
         // off the same pieces — measured per direction the two would disagree
         // about what a piece is, and their edges could not be put in one list.
@@ -1827,14 +1883,24 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         pair.describe_cost =
             0.5 * (describe_cost(input, background, pair.input_objects) +
                    describe_cost(output, background, pair.output_objects));
-        // A pattern reading is read by a different collector: a block is a window
-        // onto a tiling that carries on, a shape is a thing that does not.
-        // HANGING OFF THE EDGE IS NOT WHAT SEPARATES THEM — every reading may do
-        // that now, because a wall cutting a copy in half is a fact about the
-        // grid and not about the piece.
-        const bool pattern_reading = (cut_kind == split_kind::repeating_motif ||
-                                      cut_kind == split_kind::repeating_step);
+        step_width_of[pair_index] = step_width;
+        step_height_of[pair_index] = step_height;
+        pair.pose = (int8_t)best_pose(input);
+    }
 
+    // ASKED ONCE, THEN ASKED AGAIN. Once to hear what each pair says on its
+    // own, and again once the pairs have been set beside one another, because a
+    // match the others disagree with has to be gone before the fitting.
+    auto match_one_pair = [&](size_t pair_index, const what_the_pairs_agreed* agreed) {
+        const grid& input = train[pair_index].input;
+        const grid& output = train[pair_index].output;
+        auto& pair = facts.pairs[pair_index];
+        const vector<grid>& input_glyphs = input_glyphs_of[pair_index];
+        const vector<grid>& output_glyphs = output_glyphs_of[pair_index];
+        const int step_width = step_width_of[pair_index];
+        const int step_height = step_height_of[pair_index];
+        pair.edges.clear(); pair.discarded.clear(); pair.discard_why.clear();
+        pair.agreed_moves.clear(); pair.verdict = 0;
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
         auto read_one_way = [&](bool from_input) {
@@ -1852,8 +1918,9 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                                               edges, match);
             } else {
                 verdict = collect_edges(from_objects, from_glyphs, into_objects,
-                                        into_glyphs, into, background, match.hang_off,
-                                        edges, &discarded, &discard_why, match);
+                                        into_glyphs, from_input ? input : output, into,
+                                        background, match.hang_off,
+                                        edges, &discarded, &discard_why, match, agreed);
                 sit_on_top(from_objects, from_glyphs, into_objects, into_glyphs, edges);
             }
             for (auto& edge : edges) edge.from_input = from_input;
@@ -1958,9 +2025,9 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             if (agreed.pieces >= 2) pair.agreed_moves.push_back(agreed);
         ranges::sort(pair.agreed_moves, [](const auto& left, const auto& right) {
             return left.pieces > right.pieces; });
-
-
-    }
+    };
+    for (size_t pair_index = 0; pair_index < train.size(); ++pair_index)
+        if (pair_was_read(pair_index)) match_one_pair(pair_index, nullptr);
 
     // WHAT THE PAIRS AGREE ABOUT. A move several pieces say at once is evidence
     // inside one pair; a move every pair says is a rule. THE NUMBER CANNOT BE
@@ -1975,21 +2042,17 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     // pair the pairs have agreed about nothing, and the edges are left alone —
     // a puzzle answered one piece to many places has no clusters at all, and a
     // rule that cannot see it must not be allowed to empty it.
-    auto pair_was_read = [&](size_t which) {
-        return train[which].input.width > 0 && train[which].input.height > 0 &&
-               train[which].output.width > 0 && train[which].output.height > 0;
-    };
     // The one move a color makes in a pair, or nothing when it makes none or several.
     auto lone_move_of = [&](size_t which, int color) {
         const correspondence_facts::pair_info::moved_together* only = nullptr;
-        for (const auto& agreed : facts.pairs[which].agreed_moves) {
-            if (agreed.color != color || (!agreed.down && !agreed.across)) continue;
+        for (const auto& said : facts.pairs[which].agreed_moves) {
+            if (said.color != color || (!said.down && !said.across)) continue;
             if (only) return (const correspondence_facts::pair_info::moved_together*)nullptr;
-            only = &agreed;
+            only = &said;
         }
         return only;
     };
-    bool color_agrees[10] = {};
+    vector<what_the_pairs_agreed> agreed(train.size());
     bool anything_agreed = false;
     for (int color = 0; color < 10; ++color) {
         int read = 0, said_once = 0;
@@ -1998,33 +2061,38 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             ++read;
             said_once += (lone_move_of(which, color) != nullptr);
         }
-        color_agrees[color] = (read > 0 && said_once == read);
-        anything_agreed = anything_agreed || color_agrees[color];
+        if (read == 0 || said_once != read) continue;
+        anything_agreed = true;
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            if (!pair_was_read(which)) continue;
+            const auto* rule = lone_move_of(which, color);
+            agreed[which].color_speaks[color] = true;
+            agreed[which].down[color] = rule->down;
+            agreed[which].across[color] = rule->across;
+        }
     }
     if (anything_agreed)
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
             if (!pair_was_read(which)) continue;
-            auto& pair = facts.pairs[which];
-            vector<correspondence_facts::edge> agreed_edges;
+            agreed[which].pose = facts.pairs[which].pose;
+            // NOTHING TO TAKE BACK, NOTHING TO ASK AGAIN. A pair whose every
+            // match already agrees would be read a second time to the same
+            // answer, and the matching is the expensive half of this file.
+            const auto& pair = facts.pairs[which];
+            bool any_disagrees = false;
             for (const auto& edge : pair.edges) {
-                // A sits-on edge names no move, so no pair can disagree with it.
-                if (!edge.same_shape) { agreed_edges.push_back(edge); continue; }
                 const auto& objects = edge.from_input ? pair.input_objects
                                                       : pair.output_objects;
                 if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
-                const auto& piece = objects[edge.from];
-                const auto went = move_of(edge, pair.pose, piece,
-                                          edge.from_input ? train[which].input
-                                                          : train[which].output,
-                                          edge.from_input ? train[which].output
-                                                          : train[which].input);
-                if (!went.first && !went.second) { agreed_edges.push_back(edge); continue; }
-                if (piece.color < 0 || piece.color >= 10 || !color_agrees[piece.color]) continue;
-                const auto* rule = lone_move_of(which, piece.color);
-                if (rule && rule->down == went.first && rule->across == went.second)
-                    agreed_edges.push_back(edge);
+                if (!the_pairs_disagree(agreed[which], edge, objects[edge.from],
+                                        edge.from_input ? train[which].input
+                                                        : train[which].output,
+                                        edge.from_input ? train[which].output
+                                                        : train[which].input)) continue;
+                any_disagrees = true;
+                break;
             }
-            pair.edges.swap(agreed_edges);
+            if (any_disagrees) match_one_pair(which, &agreed[which]);
         }
 
     // SECOND PASS — every number, read off the edges the pairs let through.
