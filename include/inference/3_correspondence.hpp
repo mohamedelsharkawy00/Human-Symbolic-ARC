@@ -1372,7 +1372,7 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
         return fit_verdict::no_fit;
 
     vector<int> painted_by(laid_out.cells.size(), -1);
-    long long steps = 0;
+    long long work = 0;
     // WHEN THE PIECES STOP COMING TOGETHER, THEY ARE NOT GOING TO. There are
     // only this many ways to commit a piece to a cell; past that the search is
     // not making new commitments, it is re-ordering ones it already disproved.
@@ -1380,7 +1380,13 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
     // budget meant for a big one, and no number here was chosen by taste. Not a
     // proof — backtracking may legitimately revisit — but a stop that scales.
     // Running out is reported, never hidden.
-    const long long step_budget =
+    // COUNTED IN THE UNITS THE WORK IS DONE IN. It used to count commitments,
+    // and choosing ONE commitment rescans every required cell against every
+    // piece that could paint it against that piece's own cells — so a step was
+    // never a step, it was millions, and a budget of steps bounded nothing.
+    // 13f06aa5 ground a core for minutes inside a single reading. The same
+    // number, counted per cell touched, is a stop that actually stops.
+    const long long work_budget =
         (long long)(laid_out.pieces.size() + 1) * (long long)(laid_out.cells.size() + 1);
     bool out_of_budget = false;
 
@@ -1399,7 +1405,7 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
     };
 
     auto fits_together = [&](auto&& self) -> bool {
-        if (++steps > step_budget) { out_of_budget = true; return false; }
+        if (work > work_budget) { out_of_budget = true; return false; }
         // The cell with the fewest pieces still able to paint it decides next;
         // zero options means this line of choices is dead. Only required cells
         // drive the search — a made cell is answered by being left alone.
@@ -1409,12 +1415,15 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
             int options = 0;
             for (int piece_index : laid_out.options[id]) {
                 bool free_here = true;
-                for (int other : laid_out.pieces[piece_index].cells)
+                for (int other : laid_out.pieces[piece_index].cells) {
+                    ++work;
                     if (painted_by[other] >= 0) { free_here = false; break; }
+                }
                 options += free_here;
             }
             if (options == 0) return false;
             if (target < 0 || options < fewest) { target = (int)id; fewest = options; }
+            if (work > work_budget) { out_of_budget = true; return false; }
         }
         if (target < 0) return true;   // every carried-over cell accounted for
         // A PIECE WITH NO GOOD LANDING SIMPLY STANDS ALONE. Every piece used
@@ -1427,8 +1436,10 @@ inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
         // is the truth and is what ALONE and LEFT OVER are for.
         for (int piece_index : laid_out.options[target]) {
             bool free_here = true;
-            for (int id : laid_out.pieces[piece_index].cells)
+            for (int id : laid_out.pieces[piece_index].cells) {
+                ++work;
                 if (painted_by[id] >= 0) { free_here = false; break; }
+            }
             if (!free_here) continue;
             for (int id : laid_out.pieces[piece_index].cells) painted_by[id] = piece_index;
             chosen.push_back(piece_index);

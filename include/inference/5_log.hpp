@@ -246,17 +246,6 @@ inline void report_pieces_seen(ostream& report, const Readout& seen) {
             if (line.outside) report << ", " << (int)line.outside << " off grid";
             report << "\n";
         }
-        // AND WHAT IT REFUSED, beside what it drew. A missing line is only
-        // readable next to the reason it is missing, and until now that was
-        // said of the elected reading alone — so every question about a reading
-        // nobody elected had to be answered by guessing.
-        for (const auto& gone : seen.readings[i].dropped_seen)
-            report << "    pair " << (int)gone.pair
-              << "  refused " << (int)gone.from_w << 'x' << (int)gone.from_h
-              << " at " << (int)gone.from_x << ',' << (int)gone.from_y
-              << " -> " << (int)gone.to_w << 'x' << (int)gone.to_h
-              << " at " << (int)gone.to_x << ',' << (int)gone.to_y
-              << "   " << correspondence_facts::refusal_names[gone.why] << "\n";
     }
 }
 
