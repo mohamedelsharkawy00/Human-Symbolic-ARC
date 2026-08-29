@@ -1163,7 +1163,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // Which reading of the split is on screen, and how many there are. THE
     // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
     // along that table and never a jump off it.
-    row_head("READING", fmt::format("{:>4} OF {}", rank + 1, max(1, readings)),
+    // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
+    // from one it read as a different number from the same thing, and every
+    // sentence about a reading had to say which of the two it meant.
+    row_head("READING", fmt::format("{:>4} OF {}", rank, max(1, readings)),
              rank == task.correspondence.chosen);
     {
       int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
@@ -1178,9 +1181,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
                          int color, ui_action back, ui_action fwd, track* which) {
       // RIGHT-ALIGNED, because OFF is three characters and 7 is one, and a
       // wandering OF makes four rows read as four different shapes.
+      // Counted from zero, the same as READING above and the same as the log.
       row_head(name, at == SHOW_OFF ? fmt::format("{:>4} OF {}", "OFF", count)
                    : at == SHOW_ALL ? fmt::format("{:>4} OF {}", "ALL", count)
-                                    : fmt::format("{:>4} OF {}", at + 1, count));
+                                    : fmt::format("{:>4} OF {}", at, count));
       int x = control_x + button(fmt::format("< [SHIFT {}]", key), control_x, ty, back) + pad;
       x += button(fmt::format("> [{}]", key), x, ty, fwd) + pad;
       slider(x, track::to_stop(at, count), count + 2, color, which);

@@ -194,10 +194,17 @@ struct correspondence_facts {
         int16_t blank_cells = 0;
         bool blank_enclosed = false;
     };
-    // A cell no reading accounted for, named by the grid it sits on.
+    // A cell no edge carried, named by the grid it sits on. MADE OR GONE
+    // separates the two ways that happens, and it is one fact read from two
+    // ends: nothing over there is this cell's piece. On the output that means
+    // the cell was made where it stands; on the input, that it went nowhere.
+    // The other way is a piece whose partner IS known and still leaves these
+    // cells unsaid, which is the only one of the three that is the reading
+    // failing.
     struct left_over_cell {
         bool from_input = true;
         int8_t row = 0, col = 0;
+        bool made_or_gone = false;
     };
     // Why a match that was found did not survive.
     enum : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_piece,
@@ -301,6 +308,12 @@ struct correspondence_facts {
         // them as "cut into X, used Y"
         int pieces_found = 0, pieces_used = 0;
         int left_over = 0, box_cells = 0;
+        // Of the left over, how many were MADE — nothing on the other grid is
+        // that cell's piece, so it was made where it stands. The rest have a
+        // partner that still cannot say where they came from, which is the only
+        // part that is the reading failing. Kept per reading because a table
+        // that shows one number for the two cannot be argued with.
+        int made_or_gone = 0;
         // The grid-only score, AVERAGED over the pairs — it is a share of plain
         // cost, and shares add up to nothing meaningful. Owes nothing to the
         // matching, so it is had BEFORE any search — see describe_cost.
@@ -1115,6 +1128,19 @@ inline vector<correspondence_facts::edge> gather_matches(
     double share[10];
     color_shares(into, share);
 
+    // A SHAPE THE OTHER GRID HOLDS SEVERAL OF. Read off that grid's own pieces,
+    // before anything is matched, so it can license a hang-off without the
+    // matches vouching for themselves.
+    // A scan per piece, so this is pieces x landings. Small on everything seen
+    // so far and cheap enough to leave plain; if a grid ever arrives with
+    // hundreds of pieces this wants to be a set built once instead.
+    auto twins_over_there = [&](uint32_t shape) {
+        int seen = 0;
+        for (const auto& landing : into_objects)
+            if (landing.shape == shape && ++seen > 1) return true;
+        return false;
+    };
+
     vector<correspondence_facts::edge> found;
 
     for (size_t from_index = 0; from_index < from_glyphs.size(); ++from_index) {
@@ -1180,9 +1206,29 @@ inline vector<correspondence_facts::edge> gather_matches(
         const int poses = match.pose ? 8 : 1;
         keep_positional(
             find_in(glyph, into, background, false, piece.top, piece.left, false, poses), true);
+        // HANGING OFF THE EDGE IS ONLY HONEST ON A PIECE YOU ALREADY KNOW. Most
+        // of a piece sitting outside the grid is a claim about cells nobody can
+        // see, and it costs nothing to make. What makes it checkable is knowing
+        // the whole shape from somewhere else: a piece with IDENTICAL TWINS on
+        // its own grid is one of a set, the twins show what it looks like, and
+        // the wall is then the only reason this one is cut short. A piece with
+        // no twin has nothing but the wall to lean on.
+        // The twins are a fact about ONE GRID, found before anything is matched
+        // — see find_copies. Licensing a match on something read off the
+        // matches would be the matches vouching for themselves, and a wrong
+        // licence lets in the unbounded thing while a wrong refusal only costs
+        // one true match.
+        // ON EITHER GRID, because a thing stamped out many times is ONE piece
+        // where it came from and a set where it landed. 045e512c's key shape has
+        // no twin of its own — its copies are all on the other side — and asking
+        // only its own grid refused every one of them.
+        // The block cuts do not come through here: a grid of blocks says where
+        // every copy sits, so a block cut short by the wall is already placed.
         if (match.translate)
             keep_positional(
-                find_in(glyph, into, background, may_hang_off, -1, -1, false, poses), false);
+                find_in(glyph, into, background,
+                        may_hang_off && (piece.motif >= 0 || twins_over_there(piece.shape)),
+                        -1, -1, false, poses), false);
 
         // Source 2 — shape: objects there with the same canonical hash (count
         // equality guards hash collisions). Skip placements source 1 found.
@@ -2208,31 +2254,66 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                                const vector<correspondence_facts::object_info>& ours,
                                const vector<correspondence_facts::edge>& leaving_here,
                                bool from_input) {
-            bool by_pieces[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            // CARRIED — a real edge actually lands on this cell and brings it
+            // from the other grid. Nothing else counts: a piece used to be
+            // credited with its WHOLE footprint the moment anything spoke for
+            // it, so one edge on a piece of two hundred cells accounted for all
+            // two hundred, and a reading could score a perfect nothing-left-over
+            // while carrying two cells. That is why the three had to come apart
+            // before any of them could be believed.
+            bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             mark_painted(landing_here, their_glyphs, our_glyphs, one_grid,
-                         by_pieces, false, true);
-            // A piece explains its own cells once anything speaks for it:
-            // it went somewhere, or something arrived that named it by name.
-            vector<bool> spoken_for(ours.size(), false);
+                         carried, false, true);
+            // DOES ANYTHING OVER THERE CLAIM TO BE THIS PIECE — it went
+            // somewhere, or something arrived that named it by name.
+            vector<bool> has_a_partner(ours.size(), false);
             for (const auto& edge : leaving_here)
-                if (edge.from >= 0 && (size_t)edge.from < spoken_for.size())
-                    spoken_for[edge.from] = true;
+                if (edge.from >= 0 && (size_t)edge.from < has_a_partner.size())
+                    has_a_partner[edge.from] = true;
             for (const auto& edge : landing_here)
-                if (edge.to >= 0 && (size_t)edge.to < spoken_for.size())
-                    spoken_for[edge.to] = true;
-            for (size_t i = 0; i < ours.size(); ++i) {
-                if (!spoken_for[i]) continue;
-                const auto& piece = ours[i];
+                if (edge.to >= 0 && (size_t)edge.to < has_a_partner.size())
+                    has_a_partner[edge.to] = true;
+            // A PIECE THAT WENT SOMEWHERE WHOLE TOOK ITS OWN CELLS WITH IT.
+            // Nothing lands back on the side a piece leaves from, so its cells
+            // are painted by nobody however completely it was found — the input
+            // of 00576224 is one block matched to all nine blocks of the output
+            // and its own four cells still read as unaccounted for.
+            // WHOLE is the whole of it: the edge carries the piece's own shape
+            // and none of it fell off the grid. A piece credited for ANY edge
+            // touching it is the leak this file just closed — one match on a
+            // two-hundred-cell object cannot speak for two hundred cells.
+            for (const auto& edge : leaving_here) {
+                if (!edge.same_shape || edge.outside != 0) continue;
+                if (edge.from < 0 || (size_t)edge.from >= ours.size()) continue;
+                const auto& piece = ours[edge.from];
                 for (int row = 0; row < piece.height; ++row)
                     for (int col = 0; col < piece.width; ++col)
-                        if (our_glyphs[i].data[row][col] != TRANSPARENT)
-                            by_pieces[piece.top + row][piece.left + col] = true;
+                        if (our_glyphs[edge.from].data[row][col] != TRANSPARENT)
+                            carried[piece.top + row][piece.left + col] = true;
             }
+            // Which piece each cell belongs to, so a cell can be asked about
+            // the piece it is part of.
+            int16_t piece_at[MAX_GRID_DIM][MAX_GRID_DIM];
+            for (auto& row : piece_at) ranges::fill(row, (int16_t)-1);
+            for (size_t i = 0; i < ours.size() && i < our_glyphs.size(); ++i)
+                for (int row = 0; row < ours[i].height; ++row)
+                    for (int col = 0; col < ours[i].width; ++col)
+                        if (our_glyphs[i].data[row][col] != TRANSPARENT)
+                            piece_at[ours[i].top + row][ours[i].left + col] = (int16_t)i;
             for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
                 for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
                     const int color = one_grid.data[row][col];
-                    if (color >= 0 && color != background && !by_pieces[row][col])
-                        pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col });
+                    if (color < 0 || color == background || carried[row][col]) continue;
+                    // MADE, or UNEXPLAINED. Nothing over there is this piece, so
+                    // the cell was made where it stands (or, read from the input
+                    // side, it went nowhere) — a real answer, and a different
+                    // one from a piece whose partner is known and still cannot
+                    // say where these cells came from.
+                    const int16_t which = piece_at[row][col];
+                    const bool nobody_claims_the_piece =
+                        which < 0 || !has_a_partner[which];
+                    pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col,
+                                               nobody_claims_the_piece });
                 }
         };
         unexplained(output, forward, input_glyphs, output_glyphs,
@@ -2381,6 +2462,8 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             double shares = 0.0;
             for (const auto& pair : tried.pairs) {
                 scored.left_over += (int)pair.left_over.size();
+                scored.made_or_gone += (int)ranges::count_if(pair.left_over,
+                    [](const auto& cell) { return cell.made_or_gone; });
                 scored.pieces_used += pair.pieces_used;
                 shares += pair.describe_cost;
                 scored.pieces_found +=
@@ -2437,8 +2520,16 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // should fall through to the piece count rather than be split by rounding.
     const double same_price = 0.001;
     const double spelling_out = facts_cells > 0 ? 1.0 / facts_cells : 0.0;
+    // MADE IS NOT A FAILURE. A cell nothing over there is the piece of was made
+    // where it stands — a real answer, and the one a person gives for the half
+    // of a puzzle that is drawn rather than carried. Charged as though the
+    // reading had failed, it beat the honest readings with the dishonest ones:
+    // 00dbd492's two right readings leave 120 and 88 cells MADE and not one
+    // unexplained, while the reading that won leaves 88 it cannot account for
+    // at all. Only what a reading claims to know and still cannot say is a
+    // failure, so only that is priced.
     auto price_of = [&](const correspondence_facts::reading& one) {
-        return one.describe_cost + one.left_over * spelling_out;
+        return one.describe_cost + (one.left_over - one.made_or_gone) * spelling_out;
     };
     size_t elected = 0;
     for (size_t i = 1; i < passes.size(); ++i) {

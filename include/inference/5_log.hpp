@@ -183,7 +183,8 @@ inline void report_correspondence_readings(ostream& report, const correspondence
           << "% of plain  cut into " << reading.pieces_found;
         report << ", used " << reading.pieces_used
           << " (" << reading.exact << " exact, " << reading.recolored << " recolored, "
-          << reading.sits_on << " sits on), " << reading.left_over
+          << reading.sits_on << " sits on), " << reading.made_or_gone << " made or gone, "
+          << (reading.left_over - reading.made_or_gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
         if (!reading.pieces_can_fit) report << "  (no piece fits the other grid)";
         report << "   " << split_name((int)reading.cut_kind)
@@ -265,7 +266,8 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << "  exact " << pair.found_exact << " recolored " << pair.found_recolored
       << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
       << " turned " << pair.turned << " dropped " << pair.dropped
-      << "  left_over " << pair.left_over.size()
+      << "  made or gone " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone; })
+      << "  unexplained " << ranges::count_if(pair.left_over, [](const auto& c) { return !c.made_or_gone; })
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
     for (size_t i = 0; i < pair.input_objects.size(); ++i) {
