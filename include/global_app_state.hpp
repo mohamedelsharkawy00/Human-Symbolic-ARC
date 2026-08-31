@@ -261,10 +261,14 @@ struct global_app_state {
 	atomic<int> op_drawer_h_max{0};  // max height (grid-label row), published for drag clamp
 	atomic<bool> gui_minimized{false};
 	// Pin color-literal ops (AddColor/Recolor/RemoveColor/InteriorColor) to the
-	// puzzle's allowed_colors (union of all train colors) during candidate
+	// colors that side of the puzzle actually shows, during candidate
 	// generation — collapses the 10x literal fan-out. Behavioral change, so it's
 	// a toggle: off = try all 10 colors (original behavior) for A/B + safe revert.
 	atomic<bool> pin_color_literals{true};
+	// Search a SENTENCE at a time instead of an op at a time: every candidate is
+	// a whole (GET SELECT ACT COMBINE), so every candidate has painted and can be
+	// scored honestly. Off = the op-at-a-time beam, for A/B.
+	atomic<bool> sentence_search{true};
 	// Layer locking: commit all-pairs-verified layers as an immutable prefix and
 	// search only continuations. Off = original whole-program search for A/B.
 	atomic<bool> layer_locking{true};

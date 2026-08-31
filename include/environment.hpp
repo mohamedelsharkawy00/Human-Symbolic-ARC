@@ -220,26 +220,22 @@ namespace arc {
 	// first op. One home for the five role rules the generator steers by.
 	inline bool legal_next(node* arg, node_type type) {
 		bool sel_waiting = arg ? arg->sel_waiting : false;
-		// The chain starts from the input whether or not anyone says so, so a
-		// null arg already HAS a source.
-		bool has_get = true;
 		// Rule 0: an op that does nothing without a pick is never worth offering
 		// before one. It would only respell the chain it wraps, one op longer.
 		// `SelectAll` is how a chain says "all of them", so nothing is lost.
 		if (needs_a_pick(type) && !(arg && arg->something_picked)) return false;
-		if (is_get_op(type)) {
-			// Rule 1: first op, or right after a combine. A leading Input is
-			// barred: it is a second spelling of the start every chain already
-			// has, and two spellings of one program is fan for nothing.
-			if (arg == nullptr) return type != node_type::Input;
-			return is_combine_op(arg->type);
-		}
-		if (is_select_op(type)) return has_get;          // Rule 2
-		if (is_act_op(type))    return has_get;          // Rule 3
+		// Rule 1: NOTHING IS IMPLICIT. A program names its own source, so the
+		// first op is a GET and only a GET; later a GET is a refetch, legal right
+		// after a COMBINE. Every op past the first therefore HAS a source by
+		// induction, which is why no rule below has to ask.
+		if (arg == nullptr) return is_get_op(type);
+		if (is_get_op(type)) return is_combine_op(arg->type);
+		if (is_select_op(type)) return true;              // Rule 2
+		if (is_act_op(type))    return true;              // Rule 3
 		if (is_combine_op(type)) {                        // Rule 4
 			// same-type-repeat barred; cross-type combine chains stay legal.
-			bool same_repeat = arg && is_combine_op(arg->type) && arg->type == type;
-			return has_get && !sel_waiting && !same_repeat;
+			bool same_repeat = is_combine_op(arg->type) && arg->type == type;
+			return !sel_waiting && !same_repeat;
 		}
 		return false;
 	}
@@ -419,13 +415,15 @@ namespace arc {
 		vector<example> train, test;
 		output_dimension_rule rule;
 		bool invariant_colors[10] = {}; // one bit: the elected input background
-		// Allowed colors for color-LITERAL ops (AddColor/Recolor/RemoveColor/
-		// InteriorColor): the union of every color in any train input or output.
-		// Bridged from inference (inf.colors.allowed_color). Used to pin the literal
-		// fan-out in candidate generation. allowed_colors_count==0 means "not set
+		// Allowed colors for color-LITERAL ops, one set per SIDE: a literal the
+		// chain READS by can only name a color some train input has, one it
+		// WRITES can only name a color some train output has. Bridged from
+		// inference (in_any_input / in_any_output). A count of 0 means "not set
 		// / don't pin" (e.g. empty puzzle) so generation falls back to all 10.
-		bool allowed_colors[10] = {};
-		int  allowed_colors_count = 0;
+		bool colors_in_any_input[10] = {};
+		int  colors_in_any_input_count = 0;
+		bool colors_in_any_output[10] = {};
+		int  colors_in_any_output_count = 0;
 		// Ops inference declared dead for this puzzle: their backing fact is
 		// absent, so they can only no-op. Verdict filled once, right after
 		// infer(); generation never offers a dead op.
@@ -686,6 +684,82 @@ namespace arc {
 			return true;
 		}
 	};
+
+	// A SENTENCE is one beat of the grammar: fetch a list, mark part of it, change
+	// what is marked, land it on the canvas. The rules the four roles obey live
+	// with legal_next above; this is the shape they make.
+	struct sentence {
+		flat_program_op get{}, select{}, act{}, combine{};
+	};
+
+	// A program read as sentences. A program IS sentences and nothing else —
+	// (GET SELECT ACT COMBINE)* — so one that does not divide into whole beats is
+	// not a program this reading can name. broke_at is the op that did not fit, so
+	// a caller can say where rather than only that it failed.
+	struct program_sentences {
+		static constexpr int MAX_SENTENCES = flat_program::MAX_OPS / 4;
+		array<sentence, MAX_SENTENCES> sentences{};
+		int count = 0;
+		bool ok = false;
+		int broke_at = -1;
+	};
+
+	// Does each slot hold the role its beat calls for?
+	inline bool well_formed(const sentence& one) {
+		return is_get_op(one.get.type) && is_select_op(one.select.type) &&
+		       is_act_op(one.act.type) && is_combine_op(one.combine.type);
+	}
+
+	// Read a flat program as four-beat sentences. Every op must carry the role its
+	// beat calls for, and the last op must close a sentence — a beat left open is a
+	// sentence stopped mid-word.
+	inline program_sentences read_sentences(const flat_program& program) {
+		program_sentences out;
+		sentence building{};
+		for (int i = 0; i < program.count; ++i) {
+			const flat_program_op& op = program.ops[i];
+			const int beat = i % 4;
+			const bool fits = beat == 0 ? is_get_op(op.type)
+			                : beat == 1 ? is_select_op(op.type)
+			                : beat == 2 ? is_act_op(op.type)
+			                            : is_combine_op(op.type);
+			if (!fits) {
+				out.broke_at = i;
+				return out;
+			}
+			if (beat == 0) building.get = op;
+			else if (beat == 1) building.select = op;
+			else if (beat == 2) building.act = op;
+			else {
+				building.combine = op;
+				if (out.count >= program_sentences::MAX_SENTENCES) {
+					out.broke_at = i;
+					return out;
+				}
+				out.sentences[out.count++] = building;
+				building = sentence{};
+			}
+		}
+		if (program.count == 0 || program.count % 4 != 0) {
+			out.broke_at = program.count;
+			return out;
+		}
+		out.ok = true;
+		return out;
+	}
+
+	// Write a sentence onto the end of a program, in beat order. Refused when a
+	// slot holds the wrong role or the program has no room for all four — half a
+	// sentence is not a sentence, so nothing is written unless all of it can be.
+	inline bool write_sentence(const sentence& one, flat_program& program) {
+		if (!well_formed(one)) return false;
+		if (program.count + 4 > flat_program::MAX_OPS) return false;
+		program.push(one.get.type, one.get.value);
+		program.push(one.select.type, one.select.value);
+		program.push(one.act.type, one.act.value);
+		program.push(one.combine.type, one.combine.value);
+		return true;
+	}
 
 	struct flat_program_batch {
 		// Caps the accumulated chunk (so it also caps job_count at active=1). Heap-

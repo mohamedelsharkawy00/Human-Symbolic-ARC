@@ -612,12 +612,16 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
     for (int k = 0; k < 45; ++k)                      // color_swap · across_input_output
         task.color_swap_variants[k] = inf.color_swaps.variant[k];
     task.color_swap_variants_count = inf.color_swaps.count;
-    task.allowed_colors_count = 0;                    // color-literal pin set:
-    for (int i = 0; i < 10; ++i)                      // union of all train colors
-        if (inf.colors.allowed_color(i)) {
-            task.allowed_colors[i] = true;
-            task.allowed_colors_count++;
+    for (int i = 0; i < 10; ++i) {                    // color-literal pin sets,
+        if (inf.colors.in_any_input[i]) {             // one per side
+            task.colors_in_any_input[i] = true;
+            task.colors_in_any_input_count++;
         }
+        if (inf.colors.in_any_output[i]) {
+            task.colors_in_any_output[i] = true;
+            task.colors_in_any_output_count++;
+        }
+    }
     task.inferred = true;
 }
 

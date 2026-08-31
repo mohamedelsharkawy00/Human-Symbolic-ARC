@@ -160,8 +160,8 @@ struct color_facts {
     // figure — and segmentation then excludes nothing.
     int8_t background_color = -1;
 
-    // Safe for LITERAL pinning only — never a global whitelist (lethal, measured).
-    bool allowed_color(int color) const { return in_any_grid[color]; }
+    // in_any_input and in_any_output are safe for LITERAL pinning only, and one
+    // set per side — never a global whitelist (lethal, measured).
 };
 
 // One pass over the train pairs fills every presence set in color_facts.

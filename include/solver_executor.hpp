@@ -134,10 +134,97 @@ namespace arc {
     ns_fetch = ns_analyze = ns_best = 0;
   }
 
+  // One batch of whole sentences. Level 1 has an empty beam, so a sentence IS
+  // the program; later levels hang one onto each beam member. Returns true when
+  // the level has nothing left to give.
+  inline bool beam_solver::generate_sentence_batch() {
+    if (!sweep_ready) {
+      enumerate_sentences(sweep);
+      sweep_ready = true;
+      sweep_beam_idx = 0;
+      sweep_idx = 0;
+      log_debug(fmt::format("[SENTENCES] level sweep = {} (beam {})",
+                            sweep.size(), (int)beam.size()));
+    }
+    if (sweep.empty()) return true;
+
+    int made = 0;
+    // The base changes once per beam member, not once per sentence, so it is
+    // flattened once and the sentence is appended in place and taken back off.
+    flat_program program;
+    int flattened_for = -1;
+    while (made < MAX_BATCH_SIZE) {
+      if (!beam.empty()) {
+        if (sweep_beam_idx >= (int)beam.size()) return true;
+        if (sweep_idx >= (int)sweep.size()) {
+          sweep_idx = 0;
+          sweep_beam_idx++;
+          continue;
+        }
+        node *base = beam[sweep_beam_idx].n;
+        if (!base) { sweep_idx = 0; sweep_beam_idx++; continue; }
+        if (flattened_for != sweep_beam_idx) {
+          program.clear();
+          if (!environment::flatten_unary_program(base, program)) {
+            sweep_idx = 0;
+            sweep_beam_idx++;
+            continue;
+          }
+          // A sentence is four ops, so the depth cap bounds how many fit.
+          if (program.count + 4 > MAX_SEARCH_DEPTH) {
+            sweep_idx = 0;
+            sweep_beam_idx++;
+            continue;
+          }
+          flattened_for = sweep_beam_idx;
+        }
+      } else if (sweep_idx >= (int)sweep.size()) {
+        return true;
+      }
+
+      const int base_count = program.count;
+      if (!write_sentence(sweep[sweep_idx++], program)) {
+        program.count = base_count;
+        continue;
+      }
+
+      node *candidate = environment::build_chain_from_flat(program);
+      program.count = base_count;
+      if (!candidate) continue;
+      if (!visited.insert_if_new(candidate->hash)) {
+        environment::remove(candidate);
+        continue;
+      }
+      // Same ownership contract as add_candidate_if_new: the slot list owns the
+      // ref, pending_evaluation only borrows it.
+      current_slot_candidates.push_back({candidate, 0.0f, 0});
+      pending_evaluation.push(candidate);
+      made++;
+    }
+    return false;
+  }
+
+  // Close a sentence level: keep the beam as a floor, distil, start the next
+  // sweep. No slots and no history pool — a sentence needs neither.
+  inline void beam_solver::commit_sentence_level() {
+    merge_slot_candidates();
+    for (auto &cand : beam)
+      if (cand.n)
+        level_candidates.push_back({environment::copy(cand.n), cand.score, cand.grid_hash});
+    commit_level_champion();
+    visited.clear();
+    visited_grids.clear();
+    sweep_ready = false;
+    sweep_beam_idx = 0;
+    sweep_idx = 0;
+  }
+
   inline bool beam_solver::pump_generate(const puzzle &p,
              atomic<long long> *global_attempts) {
     m_global_attempts = global_attempts;
-    if (!initialized) {
+    // Sentence mode never seeds starters: it has no history pool and no slots,
+    // because a sentence is built whole rather than grown an op at a time.
+    if (!initialized && !m_app_state.sentence_search) {
       seed_starter_nodes();
       initialized = true;
       log_debug("Top-Down Solver (Zero Memory) Initialized.");
@@ -147,6 +234,15 @@ namespace arc {
       return true;
 
     is_generating_layer = true;
+
+    if (m_app_state.sentence_search) {
+      // Commit only once the batch just made has been drained: level_candidates
+      // is released on commit, and pending_evaluation only BORROWS those nodes.
+      // Committing with any still queued hands the worker freed memory.
+      if (generate_sentence_batch() && pending_evaluation.empty())
+        commit_sentence_level();
+      return !pending_evaluation.empty();
+    }
 
     for (int i = 0; i < 1024; ++i) {
       bool slot_done = generate_branch();
@@ -236,6 +332,41 @@ namespace arc {
     return n;
   }
 
+  inline void beam_solver::beat_choices(op_role want, vector<flat_program_op> &out) const {
+    out.clear();
+    for (node_type t : primitive_types) {
+      if (role_of(t) != want) continue;
+      if (m_puzzle.dead_ops[(int)t]) continue;
+      int variants = is_annotated(t) ? get_variant_count(t) : 1;
+      for (int v = 0; v < variants; ++v) {
+        int16_t value = is_annotated(t) ? get_variant_value(t, v) : (int16_t)0;
+        if (!color_literal_allowed(t, value)) continue;
+        out.push_back({t, value});
+      }
+    }
+  }
+
+  inline void beam_solver::enumerate_sentences(vector<sentence> &out) const {
+    out.clear();
+    vector<flat_program_op> gets, selects, acts, combines;
+    beat_choices(op_role::get, gets);
+    beat_choices(op_role::select, selects);
+    beat_choices(op_role::combine, combines);
+    // ACT is the four middle roles folded together, so it is gathered by role.
+    acts.clear();
+    for (op_role r : {op_role::reduce, op_role::translate, op_role::map, op_role::generate}) {
+      vector<flat_program_op> part;
+      beat_choices(r, part);
+      acts.insert(acts.end(), part.begin(), part.end());
+    }
+    out.reserve(gets.size() * selects.size() * acts.size() * combines.size());
+    for (const flat_program_op &g : gets)
+      for (const flat_program_op &s : selects)
+        for (const flat_program_op &a : acts)
+          for (const flat_program_op &c : combines)
+            out.push_back({g, s, a, c});
+  }
+
   inline void beam_solver::seed_starter_nodes() {
     // The chain starts from the input, so depth 1 is every op legal with no
     // predecessor — not just the sources. Input itself is barred there
@@ -248,6 +379,9 @@ namespace arc {
       // search can explore each color choice independently from depth 0.
       int variants = is_annotated(t) ? get_variant_count(t) : 1;
       for (int v = 0; v < variants; ++v) {
+        // The same pin the other two generators apply: a starter may not name a
+        // color the side it speaks about never shows.
+        if (!color_literal_allowed(t, (int16_t)v)) continue;
         node *n = new node();
         n->type = t;
         n->value = (int16_t)v;
@@ -924,13 +1058,21 @@ namespace arc {
     m_last_cand_at_yield = total_candidates_this_slot;
   }
 
-  // Bucket by (outermost type, second-outermost type) so that e.g.
-  // `RemoveColor[0] -> Fractal` and plain `Input -> Fractal`
-  // do not crowd each other out of the Fractal bucket.
-  static inline uint16_t bucket_key(const node* n) {
-    uint8_t outer = (uint8_t)n->type;
-    uint8_t inner = n->arg ? (uint8_t)n->arg->type : 0xff;
-    return (uint16_t)outer << 8 | inner;
+  // Bucket by the WHOLE last sentence — its four ops and their literals. The old
+  // key was the outermost two ops, which on a sentence is (COMBINE, ACT): it
+  // threw away every GET and SELECT choice, so a 107,520-sentence sweep
+  // collapsed to 196 survivors picked on half the slots.
+  // A short chain keys on what it has; 0xff pads the beats it does not.
+  static inline uint64_t bucket_key(const node* n) {
+    uint64_t key = 0;
+    const node* cur = n;
+    for (int beat = 0; beat < 4; ++beat) {
+      const uint64_t type = cur ? (uint8_t)cur->type : 0xff;
+      const uint64_t value = cur ? (uint8_t)(cur->value & 0xff) : 0xff;
+      key = (key << 16) | (type << 8) | value;
+      if (cur) cur = cur->arg;
+    }
+    return key;
   }
 
   inline void beam_solver::merge_slot_candidates() {
@@ -977,17 +1119,17 @@ namespace arc {
 
     // Per-slot scratch. All three reused across slots (no per-slot realloc).
     // Bounds are structural, not heuristic, so no eviction policy is needed:
-    //   best_idx_by_type: keyed by uint16_t  -> hard max 65,536 entries
+    //   best_idx_by_type: one per distinct last sentence -> bounded by the sweep
     //   kept:             one per bucket      -> bounded by best_idx_by_type
     //   keep_mask:        one per candidate   -> bounded by level cap (200k)
     // clear()/assign() at the TOP so no stale state from a prior slot leaks
     // (best_idx_by_type holds indices into the *current* level_candidates).
-    static thread_local unordered_map<uint16_t, size_t> best_idx_by_type;
+    static thread_local unordered_map<uint64_t, size_t> best_idx_by_type;
     best_idx_by_type.clear();
     for (size_t i = 0; i < level_candidates.size(); ++i) {
       auto &cand = level_candidates[i];
       if (!cand.n) continue;
-      uint16_t k = bucket_key(cand.n);
+      uint64_t k = bucket_key(cand.n);
       auto it = best_idx_by_type.find(k);
       if (it == best_idx_by_type.end() || ranks_higher(cand, level_candidates[it->second])) {
         best_idx_by_type[k] = i;
@@ -1047,17 +1189,17 @@ namespace arc {
     }
 
     // Per-level scratch, reused (no per-level realloc). Structurally bounded:
-    // best_by_type keyed by uint16_t -> hard max 65,536 entries, and it
-    // already evicts within-bucket (lower score removed below). clear() at
+    // best_by_type holds one entry per distinct last sentence, so the sweep
+    // bounds it, and it already evicts within-bucket (lower score removed below). clear() at
     // top: the owned copies it held were transferred into beam last call, so
     // clearing only drops now-stale pointers (no remove -> no double free).
     // clear() keeps the grown bucket table, and bucket count sets iteration
     // order — safe only because ranks_higher leaves no tie for order to break.
-    static thread_local unordered_map<uint16_t, champion> best_by_type;
+    static thread_local unordered_map<uint64_t, champion> best_by_type;
     best_by_type.clear();
     for (auto &cand : level_candidates) {
       if (!cand.n) continue;
-      uint16_t k = bucket_key(cand.n);
+      uint64_t k = bucket_key(cand.n);
       auto it = best_by_type.find(k);
       if (it == best_by_type.end() || ranks_higher(cand, it->second)) {
         if (it != best_by_type.end() && it->second.n) {

@@ -284,6 +284,13 @@ struct search_state {
 
   int total_candidates_this_slot = 0;
 
+  // Sentence sweep: the sentences this level may use, and how far through them
+  // the generator has got. sweep_beam_idx walks the beam, sweep_idx the sweep.
+  vector<sentence> sweep;
+  int sweep_beam_idx = 0;
+  int sweep_idx = 0;
+  bool sweep_ready = false;
+
   // Where a worker iteration's time actually goes, reported once per level.
   // Counters, not log lines — logging the hot path is what distorted the
   // first measurement.
@@ -418,11 +425,12 @@ public:
   bool check_candidate_compatibility(node_type type, node* arg);
 
   // True if a color-literal op of `type` with literal `value` is allowed for the
-  // current puzzle. When pinning is on, AddColor/Recolor/RemoveColor literals are
-  // restricted to the puzzle's allowed_colors (union of all train colors), and
-  // BidiColorMap variants to the swap pairs learned from the train diffs —
-  // collapsing the 10x/45x fan-outs. Anything else (non-color ops, pinning
-  // off, no learned set, InteriorColor's -1 "auto") is always allowed.
+  // current puzzle. When pinning is on, a literal is pinned to the side it
+  // speaks about — read literals to the colors some train INPUT has, written
+  // ones to the colors some train OUTPUT has — and BidiColorMap variants to the
+  // swap pairs learned from the train diffs, collapsing the 10x/45x fan-outs.
+  // Anything else (non-color ops, pinning off, no learned set, InteriorColor's
+  // -1 "auto") is always allowed.
   inline bool color_literal_allowed(node_type type, int16_t value) const {
     if (!m_app_state.pin_color_literals) return true;
     if (type == node_type::BidiColorMap) {
@@ -430,18 +438,24 @@ public:
       if (value < 0 || value >= 45) return true;   // out-of-range guard
       return m_puzzle.color_swap_variants[value];
     }
-    const bool is_color_literal =
-        type == node_type::AddColor || type == node_type::Recolor ||
-        type == node_type::SelectObjectsContainingColor ||
-        type == node_type::SelectColor;
-    if (!is_color_literal) return true;          // InteriorColor (-1 auto) left alone
+    const bool reads_color = type == node_type::SelectObjectsContainingColor ||
+                             type == node_type::SelectColor;
+    const bool writes_color = type == node_type::AddColor ||
+                              type == node_type::Recolor;
+    if (!reads_color && !writes_color) return true;  // InteriorColor (-1 auto) left alone
     if (value < 0 || value >= 10) return true;   // out-of-range guard
     // NOTE: hard bg pruning was tried here (2026-07-20) and REJECTED —
     // completeness beats speed in ARC. The background steers by RANKING only
     // (ranked_variant_value); fan-out reduction beyond pinning comes later
     // via candidate-side checks (see Background Per-Side Split note).
-    if (m_puzzle.allowed_colors_count == 0) return true;  // no set -> don't pin
-    return m_puzzle.allowed_colors[value];
+    // A color a chain asks about has to be one the input can answer with, and a
+    // color it lays down has to be one an output actually shows.
+    const bool *side = reads_color ? m_puzzle.colors_in_any_input
+                                   : m_puzzle.colors_in_any_output;
+    const int side_count = reads_color ? m_puzzle.colors_in_any_input_count
+                                       : m_puzzle.colors_in_any_output_count;
+    if (side_count == 0) return true;            // no set -> don't pin
+    return side[value];
   }
   // RANKING (Background Per-Side Split note, level 1): iterate color-literal
   // fans through a permutation that tries the elected canvas FIRST — reading
@@ -478,6 +492,13 @@ private:
   node *create_unary_node(node_type type, node *arg0);
 
   void seed_starter_nodes();
+  // Every (op, literal) this puzzle allows in one beat of the four-beat grammar.
+  void beat_choices(op_role want, vector<flat_program_op> &out) const;
+  // Every sentence the grammar allows here. The beat order satisfies legal_next
+  // by construction — a GET starts, a SELECT marks, an ACT spends the mark, a
+  // COMBINE lands it — so only the puzzle's own gates take anything out. One set,
+  // not two: a sentence names its own source wherever it sits.
+  void enumerate_sentences(vector<sentence> &out) const;
   void update_history_from_beam();
   void collect_subtrees(node *n, unordered_set<uint64_t> &existing, int &added);
   void rebuild_skeleton_beam();
@@ -501,6 +522,9 @@ private:
   phase_result execute_current_phase(const slot_t &slot, node* target, int &batch_count, node *&candidate_sub, bool &created_new);
 
   bool generate_branch();
+  // One batch of whole sentences. True when the level has no more to give.
+  bool generate_sentence_batch();
+  void commit_sentence_level();
   void commit_and_advance_level();
   void advance_beam_idx();
   bool process_current_phase(const slot_t &slot, node* base, node* target, int& batch_count);
