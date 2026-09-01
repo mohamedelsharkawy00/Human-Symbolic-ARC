@@ -87,10 +87,10 @@ __device__ gpu_object_list& gpu_acquire(gpu_exec_context& ctx) {
     return slot;
 }
 
-// Resolve last_pool_idx to actual object list pointer (readable by any lane)
-__device__ gpu_object_list* gpu_resolve_last(gpu_exec_context& ctx) {
-    int idx = ctx.last_pool_idx;
-    if (idx == gpu_exec_context::LAST_IDX_SEEDS)         return &ctx.seed_objs;
+// Resolve current_objects_idx to actual object list pointer (readable by any lane)
+__device__ gpu_object_list* gpu_current_objects(gpu_exec_context& ctx) {
+    int idx = ctx.current_objects_idx;
+    if (idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS)         return &ctx.seed_objs;
     if (idx >= 0 && idx < GPU_KERNEL_POOL_SIZE)           return &ctx.pool[idx];
     return nullptr;
 }
@@ -98,7 +98,7 @@ __device__ gpu_object_list* gpu_resolve_last(gpu_exec_context& ctx) {
 // Lane-0 helper: acquire a slot and publish its index
 __device__ gpu_object_list& gpu_acquire_and_publish(gpu_exec_context& ctx) {
     auto& slot = gpu_acquire(ctx);
-    ctx.last_pool_idx = ctx.pool_head - 1;
+    ctx.current_objects_idx = ctx.pool_head - 1;
     return slot;
 }
 
@@ -246,14 +246,38 @@ __device__ inline int8_t gpu_obj_resolve_color(const gpu_fixed_object& o, int8_t
     return (int8_t)best;
 }
 
+// A source has no frame to inherit, so it takes the one its own content makes:
+// the box around every cell that is not transparent. This is not the tightening
+// the frame law reserves for Trim — there is no earlier box being discarded,
+// only a box being chosen for the first time. A grid with nothing on it makes no
+// object at all, because nothing painted is nothing to hand on.
+template <typename grid_type>
+__device__ inline void gpu_frame_to_content(gpu_object_list& res, const grid_type& g) {
+    int min_x = g.width, min_y = g.height, max_x = -1, max_y = -1;
+    for (int row = 0; row < g.height; ++row)
+        for (int col = 0; col < g.width; ++col) {
+            if (g.data[row][col] == GPU_TRANSPARENT) continue;
+            if (col < min_x) min_x = col;
+            if (col > max_x) max_x = col;
+            if (row < min_y) min_y = row;
+            if (row > max_y) max_y = row;
+        }
+    if (max_x < 0) { res.count = 0; return; }
+    gpu_fixed_object& obj = res.objects[0];
+    obj.x0 = (int16_t)min_x; obj.y0 = (int16_t)min_y;
+    obj.x1 = (int16_t)max_x; obj.y1 = (int16_t)max_y;
+    obj.width  = (int16_t)(max_x - min_x + 1);
+    obj.height = (int16_t)(max_y - min_y + 1);
+    obj.mask.clear();
+    for (int row = min_y; row <= max_y; ++row)
+        for (int col = min_x; col <= max_x; ++col)
+            obj.mask[row - min_y][col - min_x] = g.data[row][col];
+    res.count = 1;
+}
+
 __device__ gpu_object_list& gpu_exec_input(gpu_exec_context& ctx) {
     auto& res = gpu_acquire(ctx);
-    gpu_fixed_object& obj = res.objects[0];
-    obj.x0 = 0; obj.y0 = 0;
-    obj.x1 = ctx.input.width - 1; obj.y1 = ctx.input.height - 1;
-    obj.width = ctx.input.width; obj.height = ctx.input.height;
-    gpu_mask_from_grid(obj.mask, ctx.input.data);
-    res.count = 1;
+    gpu_frame_to_content(res, ctx.input);
     return res;
 }
 
@@ -269,12 +293,7 @@ __device__ gpu_object_list& gpu_exec_output(gpu_exec_context& ctx) {
     // source now — the old Target[c] color-fill is written explicitly as
     // `Target AddColor[c]`, so Target carries no annotation.
     auto& res = gpu_acquire(ctx);
-    gpu_fixed_object& obj = res.objects[0];
-    obj.x0 = 0; obj.y0 = 0;
-    obj.x1 = ctx.output.width - 1; obj.y1 = ctx.output.height - 1;
-    obj.width = ctx.output.width; obj.height = ctx.output.height;
-    gpu_mask_from_grid(obj.mask, ctx.output.data);
-    res.count = 1;
+    gpu_frame_to_content(res, ctx.output);
     return res;
 }
 
@@ -655,8 +674,8 @@ __device__ gpu_object_list& gpu_exec_intersection(gpu_exec_context& ctx, const g
 // and the clear phase (output cells). output.data is plain int8 (not packed),
 // so per-cell parallel writes are race-free. Mirrors gpu_exec_union_warp.
 __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     int oh = ctx.output.height, ow = ctx.output.width;
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
 
@@ -704,8 +723,8 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
 // must NOT collapse src into one object (that's UnionList); keeping src intact lets
 // a downstream per-object op still see each object. Mirrors gpu_exec_*_warp.
 __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     int oh = ctx.output.height, ow = ctx.output.width;
@@ -743,8 +762,8 @@ __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
 // gpu_exec_union_warp is the per-cell guard: store iff the canvas cell is still
 // transparent. src is passed through unchanged, same as Union.
 __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     int oh = ctx.output.height, ow = ctx.output.width;
@@ -870,8 +889,8 @@ __device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fi
 }
 
 __device__ void gpu_exec_interior_color_warp(gpu_exec_context& ctx, int8_t color, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     int outc = 0;
@@ -976,8 +995,8 @@ __device__ inline void gpu_warp_remap_object(const gpu_fixed_object& sobj, gpu_f
 // warning). Object metadata (x0/y0/dims) is unchanged, so we deep-copy each src
 // object then overwrite only its mask bytes in parallel.
 __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     constexpr int mask_bytes = sizeof(gpu_packed_mask);
@@ -1209,8 +1228,8 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 // the hole, e.g. a marker) is a wall to the flood, so it keeps its color -- the
 // trailing Union re-stamping the separate marker object reproduces it either way.
 __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     int outc = 0;
@@ -1557,8 +1576,8 @@ __device__ gpu_object_list& gpu_exec_layout(gpu_exec_context& ctx, const gpu_obj
 // whole object instead. Lane 0 owns the compaction (res->count); the copy is a
 // whole gpu_fixed_object, cheap enough to keep single-threaded and race-free.
 __device__ void gpu_exec_delete_selection_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);  // gpu_acquire zeroed count
     __syncwarp();
 
@@ -1600,12 +1619,12 @@ __device__ gpu_object_list& gpu_exec_shift(gpu_exec_context& ctx, const gpu_obje
 
 // Warp-parallel transform: all 32 lanes cooperate on pixel remapping
 __device__ void gpu_exec_transform_warp(gpu_exec_context& ctx, node_type type, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
+    gpu_object_list* src = gpu_current_objects(ctx);
     // NULL-src publishes sentinel rather than burning a pool slot.
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     // All 32 lanes call the deterministic acquire — they all compute the same
-    // slot index and write the same pool_head/last_pool_idx values. No sync needed.
+    // slot index and write the same pool_head/current_objects_idx values. No sync needed.
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
 
     int obj_count = src->count;
@@ -1668,8 +1687,8 @@ __device__ gpu_object_list& gpu_exec_move(gpu_exec_context& ctx, const gpu_objec
 // serially; here the 32 lanes stripe the object bytes (the mask is the bulk), then
 // lane 0 tweaks the 2 shifted metadata fields. Mirrors gpu_exec_*_warp.
 __device__ void gpu_exec_move_warp(gpu_exec_context& ctx, int16_t delta, bool horizontal, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     gpu_warp_copy_objects(res, src, n, lane);
@@ -1773,8 +1792,8 @@ __device__ gpu_object_list& gpu_exec_slam_column(gpu_exec_context& ctx, const gp
 // Pattern mirrors gpu_exec_transform_warp: all-lane acquire, stripe copy with
 // selective mask clear, pixel loop striped by lane, divide-free pixel advance.
 __device__ void gpu_exec_scale_up_warp(gpu_exec_context& ctx, int8_t factor, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int obj_count = src->count;
@@ -1816,8 +1835,8 @@ __device__ void gpu_exec_scale_up_warp(gpu_exec_context& ctx, int8_t factor, int
 
 // Warp-parallel scale down: each lane handles one output pixel's majority vote.
 __device__ void gpu_exec_scale_down_warp(gpu_exec_context& ctx, int8_t factor, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int obj_count = src->count;
@@ -2220,8 +2239,8 @@ __device__ gpu_object_list& gpu_exec_trim(gpu_exec_context& ctx, const gpu_objec
 // Warp-parallel tile. All 32 lanes cooperate; lane 0 handles scattered merged-build
 // (races unsafe to parallelize), rest is striped.
 __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool horizontal, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     constexpr int obj_bytes = sizeof(gpu_fixed_object);
@@ -2696,7 +2715,7 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
     return res;
 }
 
-// MaskBy[c]: keep each cell of `last` only where the live canvas (ctx.output) is
+// MaskBy[c]: keep each cell of the current objects only where the live canvas (ctx.output) is
 // currently color c; drop the rest. Non-destructive — it filters the object list
 // and never writes the canvas, so `…layer…, MaskBy[c], Union` paints the layer
 // ONLY over cells that already hold color c (the missing per-layer mask that
@@ -2869,8 +2888,8 @@ __device__ void gpu_pose_canvas(gpu_exec_context& ctx, int p, bool undo) {
 // Objects always re-posed; the canvas only once per program (flag-gated) and
 // only while its dims live in the input's frame (Identity-rule assumption).
 __device__ void gpu_exec_canonical(gpu_exec_context& ctx, bool normalize) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     // pose cached in the flag while active — recompute only on first Normalize
     int p = normalize
         ? ((ctx.orientation_flipped & 8) ? (ctx.orientation_flipped & 7) : gpu_best_pose(ctx.input))
@@ -2922,8 +2941,8 @@ __device__ void gpu_exec_canonical(gpu_exec_context& ctx, bool normalize) {
 }
 
 __device__ void gpu_exec_rotate_warp(gpu_exec_context& ctx, bool normalize, int lane) {
-    gpu_object_list* src = gpu_resolve_last(ctx);
-    if (!src) { ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE; return; }
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     bool transpose_objs, transpose_canvas;
     if (normalize) {
@@ -3251,32 +3270,32 @@ __device__ static const int8_t GPU_DEV_MOVE_DELTAS[] = GPU_MOVE_DELTAS_INIT;
 
 // Warp-wide interpreter: called by ALL 32 lanes.
 // Most ops run on lane 0 only; warp-parallel ops use all lanes.
-// ctx.last_pool_idx is kept in sync so all lanes can resolve the current result.
+// ctx.current_objects_idx is kept in sync so all lanes can resolve the current result.
 __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const gpu_flat_op* ops, int op_count, int lane) {
     if (lane == 0) {
-        ctx.last_pool_idx = gpu_exec_context::LAST_IDX_NONE;
+        ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE;
     }
     if (op_count <= 0) {
         if (lane == 0) gpu_acquire_and_publish(ctx);
         __syncwarp();
-        return ctx.pool[ctx.last_pool_idx];
+        return ctx.pool[ctx.current_objects_idx];
     }
 
     for (int i = 0; i < op_count; ++i) {
         // All lanes read the op (same memory, no divergence)
         node_type type = ops[i].type;
         int8_t value = ops[i].value;
-        bool has_last = (ctx.last_pool_idx != gpu_exec_context::LAST_IDX_NONE);
+        bool has_current_objects = (ctx.current_objects_idx != gpu_exec_context::CURRENT_OBJECTS_NONE);
 
         // The chain starts from the input: the FIRST op sees the input rather
         // than an empty list, so no program needs a leading Input. Done here,
-        // before the warp-wide op branches, because they gate on has_last too.
-        // Only the first op: after a combine `last` is null as well, and there
+        // before the warp-wide op branches, because they gate on has_current_objects too.
+        // Only the first op: after a combine there are no current objects either, and there
         // it means "the list was landed", not "start again from the input".
-        if (i == 0 && !has_last && !is_get_op(type)) {
-            if (lane == 0) { gpu_exec_input(ctx); ctx.last_pool_idx = ctx.pool_head - 1; }
+        if (i == 0 && !has_current_objects && !is_get_op(type)) {
+            if (lane == 0) { gpu_exec_input(ctx); ctx.current_objects_idx = ctx.pool_head - 1; }
             __syncwarp();
-            has_last = true;
+            has_current_objects = true;
         }
 
         // Auto-pose: while a NormalizeOrientation is active, anything the
@@ -3294,85 +3313,85 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
         bool is_transform = (type == node_type::TurnRight || type == node_type::TurnLeft ||
                              type == node_type::FlipHorizontal || type == node_type::FlipVertical);
 
-        if (is_transform && has_last) {
+        if (is_transform && has_current_objects) {
             gpu_exec_transform_warp(ctx, type, lane);
             continue;  // transform_warp ends with __syncwarp(), safe for all lanes
         }
-        if (type == node_type::ScaleUp && has_last) {
+        if (type == node_type::ScaleUp && has_current_objects) {
             gpu_exec_scale_up_warp(ctx, value, lane);
             continue;
         }
-        if (type == node_type::ScaleDown && has_last) {
+        if (type == node_type::ScaleDown && has_current_objects) {
             gpu_exec_scale_down_warp(ctx, value, lane);
             continue;
         }
-        if (type == node_type::TileX && has_last) {
+        if (type == node_type::TileX && has_current_objects) {
             gpu_exec_tile_warp(ctx, value, true, lane);
             continue;
         }
-        if (type == node_type::TileY && has_last) {
+        if (type == node_type::TileY && has_current_objects) {
             gpu_exec_tile_warp(ctx, value, false, lane);
             continue;
         }
-        if (type == node_type::NormalizeOrientation && has_last) {
+        if (type == node_type::NormalizeOrientation && has_current_objects) {
             // variant 0: by grid shape (legacy portrait). variant 1: canonical
             // pose — whole grid votes, works on square grids.
             if (value == 1) { if (lane == 0) gpu_exec_canonical(ctx, true); __syncwarp(); }
             else gpu_exec_rotate_warp(ctx, true, lane);
             continue;
         }
-        if (type == node_type::RestoreOrientation && has_last) {
+        if (type == node_type::RestoreOrientation && has_current_objects) {
             if (ctx.orientation_flipped & 8) { if (lane == 0) gpu_exec_canonical(ctx, false); __syncwarp(); }
             else gpu_exec_rotate_warp(ctx, false, lane);
             continue;
         }
-        if (type == node_type::DeleteSelection && has_last) {
+        if (type == node_type::DeleteSelection && has_current_objects) {
             gpu_exec_delete_selection_warp(ctx, lane);
             continue;
         }
-        if (type == node_type::Union && has_last) {
+        if (type == node_type::Union && has_current_objects) {
             gpu_exec_union_warp(ctx, lane);
             continue;
         }
-        if (type == node_type::Underlay && has_last) {
+        if (type == node_type::Underlay && has_current_objects) {
             gpu_exec_underlay_warp(ctx, lane);
             continue;
         }
-        if (type == node_type::InteriorColor && has_last) {
+        if (type == node_type::InteriorColor && has_current_objects) {
             gpu_exec_interior_color_warp(ctx, value, lane);
             continue;
         }
-        if (type == node_type::ShapeToInteriorColorMap && has_last) {
+        if (type == node_type::ShapeToInteriorColorMap && has_current_objects) {
             gpu_exec_shape_to_interior_color_map_warp(ctx, lane);
             continue;
         }
-        if (type == node_type::Recolor && has_last) {
+        if (type == node_type::Recolor && has_current_objects) {
             gpu_exec_recolor_warp(ctx, value, lane);
             continue;
         }
-        if (type == node_type::Intersection && has_last) {
+        if (type == node_type::Intersection && has_current_objects) {
             gpu_exec_intersection_warp(ctx, lane);
             continue;
         }
-        if (type == node_type::MoveRow && has_last) {
+        if (type == node_type::MoveRow && has_current_objects) {
             gpu_exec_move_warp(ctx, GPU_DEV_MOVE_DELTAS[value], true, lane);
             continue;
         }
-        if (type == node_type::MoveColumn && has_last) {
+        if (type == node_type::MoveColumn && has_current_objects) {
             gpu_exec_move_warp(ctx, GPU_DEV_MOVE_DELTAS[value], false, lane);
             continue;
         }
 
         // --- Seeds: no work, just update index (all lanes agree to skip) ---
         if (type == node_type::Seeds) {
-            if (lane == 0) ctx.last_pool_idx = gpu_exec_context::LAST_IDX_SEEDS;
+            if (lane == 0) ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_SEEDS;
             __syncwarp();
             continue;
         }
 
         // --- All other ops: lane 0 only ---
         if (lane == 0) {
-            gpu_object_list* last = gpu_resolve_last(ctx);
+            gpu_object_list* last = gpu_current_objects(ctx);
             gpu_object_list* result = nullptr;
             switch (type) {
             case node_type::Input:          result = &gpu_exec_input(ctx); break;
@@ -3386,14 +3405,14 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SizeRankColorMap: result = last ? &gpu_exec_size_rank_color_map(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Bridge:         result = last ? &gpu_exec_bridge(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Partition:      result = last ? &gpu_exec_partition(ctx, *last) : &gpu_acquire(ctx); break;
-            // Union handled in the warp-parallel branch above; here means !has_last.
+            // Union handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Union:          result = &gpu_acquire(ctx); break;
             case node_type::Difference:     result = last ? &gpu_exec_difference(ctx, *last) : &gpu_acquire(ctx); break;
-            // Intersection handled in the warp-parallel branch above; here means !has_last.
+            // Intersection handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Intersection:   result = &gpu_acquire(ctx); break;
-            // InteriorColor handled in the warp-parallel branch above; here means !has_last.
+            // InteriorColor handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::InteriorColor:  result = &gpu_acquire(ctx); break;
-            // Recolor handled in the warp-parallel branch above; here means !has_last.
+            // Recolor handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Recolor:        result = &gpu_acquire(ctx); break;
             case node_type::BidiColorMap:   result = last ? &gpu_exec_bidi_color_map(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;
@@ -3401,10 +3420,10 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SelectAll:      result = last ? &gpu_exec_select_all(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::InvertSelection: result = last ? &gpu_exec_invert_selection(ctx, *last) : &gpu_acquire(ctx); break;
             // DeleteSelection handled in the warp-parallel branch above; reaching
-            // here means has_last was false -> empty result.
+            // here means has_current_objects was false -> empty result.
             case node_type::DeleteSelection: result = &gpu_acquire(ctx); break;
             case node_type::Shift:          result = last ? &gpu_exec_shift(ctx, *last, value) : &gpu_acquire(ctx); break;
-            // MoveRow/MoveColumn handled in the warp-parallel branch above; here means !has_last.
+            // MoveRow/MoveColumn handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::MoveRow:
             case node_type::MoveColumn:     result = &gpu_acquire(ctx); break;
             case node_type::SlamRow:        result = last ? &gpu_exec_slam_row(ctx, *last, GPU_DEV_MOVE_DELTAS[value]) : &gpu_acquire(ctx); break;
@@ -3426,7 +3445,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::OverlapCorner:  result = last ? &gpu_exec_overlap_corner(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SnapToAnchors:  result = last ? &gpu_exec_snap_to_anchors(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::ShapeColorMap:  result = last ? &gpu_exec_shape_color_map(ctx, *last) : &gpu_acquire(ctx); break;
-            // ShapeToInteriorColorMap is handled in the warp-parallel branch above; here means !has_last.
+            // ShapeToInteriorColorMap is handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::ShapeToInteriorColorMap: result = &gpu_acquire(ctx); break;
             case node_type::ExtendOrthogonal:   result = last ? &gpu_exec_extend_orthogonal(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::ExtendDiagonal:     result = last ? &gpu_exec_extend_diagonal(ctx, *last, value) : &gpu_acquire(ctx); break;
@@ -3439,22 +3458,22 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Outline:             result = last ? &gpu_exec_outline(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsContainingColor: result = last ? &gpu_exec_select_objects_containing_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
-            // branch above; reaching here means has_last was false -> empty result.
+            // branch above; reaching here means has_current_objects was false -> empty result.
             case node_type::NormalizeOrientation:
             case node_type::RestoreOrientation: result = &gpu_acquire(ctx); break;
             default: result = &gpu_acquire(ctx); break;
             }
             // Publish the result location for other lanes
-            ctx.last_pool_idx = (int)(result - ctx.pool);
+            ctx.current_objects_idx = (int)(result - ctx.pool);
         }
         __syncwarp();
     }
 
-    gpu_object_list* final_result = gpu_resolve_last(ctx);
+    gpu_object_list* final_result = gpu_current_objects(ctx);
     if (!final_result) {
         if (lane == 0) gpu_acquire_and_publish(ctx);
         __syncwarp();
-        return ctx.pool[ctx.last_pool_idx];
+        return ctx.pool[ctx.current_objects_idx];
     }
     return *final_result;
 }
@@ -3501,6 +3520,7 @@ static float*            d_scratch_scores = nullptr;
 static int8_t*           d_scratch_solved = nullptr;
 static int8_t*           d_scratch_output_grids = nullptr;
 static int8_t*           d_scratch_output_dims = nullptr;
+static uint64_t*         d_scratch_output_hashes = nullptr;
 static int               d_scratch_capacity = 0;
 // Rule is per-puzzle, cache on device
 static int8_t*  d_cached_rule_type = nullptr;
@@ -3522,13 +3542,15 @@ static float*            d_exec_scores[2] = {nullptr, nullptr};
 static int8_t*           d_exec_solved[2] = {nullptr, nullptr};
 static int8_t*           d_exec_output_grids[2] = {nullptr, nullptr};
 static int8_t*           d_exec_output_dims[2] = {nullptr, nullptr};
+static uint64_t*         d_exec_output_hashes[2] = {nullptr, nullptr};
 static int               d_exec_capacity[2] = {0, 0};
 
 static void resize_exec_buffers(int job_count, int& capacity,
                                 gpu_exec_context*& ctxs, gpu_flat_op*& progs,
                                 int8_t*& prog_lens, int8_t*& node_cnts,
                                 float*& scores, int8_t*& solved,
-                                int8_t*& out_grids, int8_t*& out_dims) {
+                                int8_t*& out_grids, int8_t*& out_dims,
+                                uint64_t*& out_hashes) {
     if (job_count <= capacity) return;
 
     cudaFree(ctxs);
@@ -3539,6 +3561,7 @@ static void resize_exec_buffers(int job_count, int& capacity,
     cudaFree(solved);
     cudaFree(out_grids);
     cudaFree(out_dims);
+    cudaFree(out_hashes);
 
     capacity = job_count;
     // Check every cudaMalloc. An unchecked device-OOM here leaves null device
@@ -3563,6 +3586,7 @@ static void resize_exec_buffers(int job_count, int& capacity,
     chk(cudaMalloc(&solved,    (size_t)job_count * sizeof(int8_t)), "solved", (size_t)job_count);
     chk(cudaMalloc(&out_grids, (size_t)job_count * GPU_GRID_CELLS * sizeof(int8_t)), "out_grids", (size_t)job_count * GPU_GRID_CELLS);
     chk(cudaMalloc(&out_dims,  (size_t)job_count * 2 * sizeof(int8_t)), "out_dims", (size_t)job_count * 2);
+    chk(cudaMalloc(&out_hashes, (size_t)job_count * sizeof(uint64_t)), "out_hashes", (size_t)job_count * sizeof(uint64_t));
     if (e != cudaSuccess) std::abort();
 }
 
@@ -3571,7 +3595,8 @@ static void ensure_exec_capacity(int job_count, int slot) {
                         d_exec_contexts[slot], d_exec_programs[slot],
                         d_exec_prog_lengths[slot], d_exec_node_counts[slot],
                         d_exec_scores[slot], d_exec_solved[slot],
-                        d_exec_output_grids[slot], d_exec_output_dims[slot]);
+                        d_exec_output_grids[slot], d_exec_output_dims[slot],
+                        d_exec_output_hashes[slot]);
 }
 
 // Build host-side templates from cuda_dsl_example_data. Shared by main + scratch paths.
@@ -3861,6 +3886,7 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
     float* __restrict__ scores,
     int8_t* __restrict__ solved_out,
     int8_t* __restrict__ output_dims,
+    uint64_t* __restrict__ output_hashes,
     int active_examples,
     int job_count)
 {
@@ -3984,7 +4010,7 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
     int my_look_gain = 0, my_look_spoil = 0, my_look_focus = 0;
     const int fc = g_focus_color;
     {
-        gpu_object_list* last = gpu_resolve_last(ctx);
+        gpu_object_list* last = gpu_current_objects(ctx);
         if (last && last->count > 0) {
             // Hypothetical canvas in op_scratch (idle during scoring): copy the
             // real canvas, paint the list over it, later-wins.
@@ -4172,6 +4198,16 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
 
         output_dims[idx * 2 + 0] = (int8_t)ctx.output.width;
         output_dims[idx * 2 + 1] = (int8_t)ctx.output.height;
+        // What this job painted, as one number (FNV-1a over the canvas).
+        {
+            uint64_t painted = 1469598103934665603ULL;
+            painted = (painted ^ (uint64_t)(uint8_t)ctx.output.width)  * 1099511628211ULL;
+            painted = (painted ^ (uint64_t)(uint8_t)ctx.output.height) * 1099511628211ULL;
+            for (int row = 0; row < ctx.output.height; ++row)
+                for (int col = 0; col < ctx.output.width; ++col)
+                    painted = (painted ^ (uint64_t)(uint8_t)ctx.output.data[row][col]) * 1099511628211ULL;
+            output_hashes[idx] = painted;
+        }
         scores[idx] = total;
         solved_out[idx] = (dims_match && my_mismatches == 0) ? 1 : 0;
     }
@@ -4313,11 +4349,13 @@ void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch, int slot) {
     dsl_score_kernel<<<n, 32, 0, s>>>(
         d_exec_contexts[slot], d_example_templates, d_exec_node_counts[slot],
         d_exec_scores[slot], d_exec_solved[slot], d_exec_output_dims[slot],
+        d_exec_output_hashes[slot],
         active, n);
     capture_cuda_err("score-launch", cudaGetLastError(), slot, n);
 
     cudaMemcpyAsync(batch.scores.data(), d_exec_scores[slot], n * sizeof(float),  cudaMemcpyDeviceToHost, s);
     cudaMemcpyAsync(batch.solved.data(), d_exec_solved[slot], n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.output_hashes.data(), d_exec_output_hashes[slot], n * sizeof(uint64_t), cudaMemcpyDeviceToHost, s);
     // No sync here — caller does CPU work then calls cuda_dsl_wait_for_exec(slot).
 }
 
@@ -4360,7 +4398,8 @@ static void ensure_scratch_capacity(int job_count) {
                         d_scratch_contexts, d_scratch_programs,
                         d_scratch_prog_lengths, d_scratch_node_counts,
                         d_scratch_scores, d_scratch_solved,
-                        d_scratch_output_grids, d_scratch_output_dims);
+                        d_scratch_output_grids, d_scratch_output_dims,
+                        d_scratch_output_hashes);
 }
 
 void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
@@ -4390,6 +4429,7 @@ void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
     dsl_score_kernel<<<n, 32, 0, s>>>(
         d_scratch_contexts, d_scratch_templates, d_scratch_node_counts,
         d_scratch_scores, d_scratch_solved, d_scratch_output_dims,
+        d_scratch_output_hashes,
         active, n);
     capture_cuda_err("scratch-score-launch", cudaGetLastError(), -1, n);
 
@@ -4432,19 +4472,19 @@ bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
         if (out_canvas_h) *out_canvas_h = wh[1];
     }
 
-    int last_idx = gpu_exec_context::LAST_IDX_NONE;
-    cudaMemcpyAsync(&last_idx,
-                    reinterpret_cast<char*>(d_ctx) + offsetof(gpu_exec_context, last_pool_idx),
+    int current_idx = gpu_exec_context::CURRENT_OBJECTS_NONE;
+    cudaMemcpyAsync(&current_idx,
+                    reinterpret_cast<char*>(d_ctx) + offsetof(gpu_exec_context, current_objects_idx),
                     sizeof(int), cudaMemcpyDeviceToHost, s);
     cudaStreamSynchronize(s);
 
-    if (last_idx == gpu_exec_context::LAST_IDX_NONE) return false;
+    if (current_idx == gpu_exec_context::CURRENT_OBJECTS_NONE) return false;
 
     size_t src_off = 0;
-    if (last_idx == gpu_exec_context::LAST_IDX_SEEDS) {
+    if (current_idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS) {
         src_off = offsetof(gpu_exec_context, seed_objs);
-    } else if (last_idx >= 0 && last_idx < GPU_KERNEL_POOL_SIZE) {
-        src_off = offsetof(gpu_exec_context, pool) + last_idx * sizeof(gpu_object_list);
+    } else if (current_idx >= 0 && current_idx < GPU_KERNEL_POOL_SIZE) {
+        src_off = offsetof(gpu_exec_context, pool) + current_idx * sizeof(gpu_object_list);
     } else {
         return false;
     }

@@ -492,10 +492,10 @@ struct gpu_exec_context {
 
     gpu_object_list pool[GPU_KERNEL_POOL_SIZE];
     int pool_head;
-    int last_pool_idx;  // warp-visible: which pool slot (or sentinel) holds current result
+    int current_objects_idx;  // warp-visible: which pool slot (or sentinel) holds current result
     // Sentinels for results outside the pool:
-    static constexpr int LAST_IDX_NONE    = -1;
-    static constexpr int LAST_IDX_SEEDS   = -2;
+    static constexpr int CURRENT_OBJECTS_NONE    = -1;
+    static constexpr int CURRENT_OBJECTS_SEEDS   = -2;
 
     // Per-cell label store for the CC-match scorer's warp-parallel connected-
     // component labeling (monotonic min-label propagation). Lives here in global
@@ -575,6 +575,10 @@ struct cuda_dsl_exec_batch {
     pinned_vector<int8_t> solved;
     pinned_vector<int8_t> output_grids;     // [job_count * GRID_CELLS]
     pinned_vector<int8_t> output_dims_result; // [job_count * 2]
+    // What each job PAINTED, as one number. Two candidates that paint the same
+    // canvas are the same answer however differently they were spelled, and the
+    // grid itself is far too wide to bring back for every job.
+    pinned_vector<uint64_t> output_hashes;  // [job_count]
 
     void resize(int count) {
         job_count = count;
@@ -586,6 +590,7 @@ struct cuda_dsl_exec_batch {
         solved.resize(count);
         output_grids.resize(count * GPU_GRID_CELLS);
         output_dims_result.resize(count * 2);
+        output_hashes.resize(count);
     }
 };
 
@@ -628,8 +633,8 @@ void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch);
 void cuda_dsl_fetch_output_grids_scratch(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples);
 
 // Fetch the object list produced by the last op of a single scratch job
-// (i.e. the list pointed to by ctx.last_pool_idx). Used by the GUI hover
-// preview. Returns false if the job produced no object list (LAST_IDX_NONE).
+// (i.e. the list pointed to by ctx.current_objects_idx). Used by the GUI hover
+// preview. Returns false if the job produced no object list (CURRENT_OBJECTS_NONE).
 // out_canvas_w/h (optional) receive the job's working output-canvas dims after
 // execution, which reflect any rotate ops (e.g. NormalizeOrientation makes the
 // canvas portrait) so the preview can size the tile background to match.

@@ -2103,6 +2103,15 @@ namespace arc {
 
         for (int i = 0; i < node_count; ++i) {
           float score = program_totals[i];
+          // What this candidate PAINTED, on the first active pair. Recorded for
+          // every candidate, not just the winner, so the grid dedup below can
+          // see two spellings of one answer and keep only one.
+          {
+            int first_job = i * active;
+            if (first_job >= 0 && first_job < prev_batch.job_count)
+              report_score(prev_original_nodes[wait_slot][i], score,
+                           prev_batch.output_hashes[first_job]);
+          }
           log_tree_record(prev_original_nodes[wait_slot][i], score,
                           m_global_attempts ? m_global_attempts->load() : 0);
           bool solved = program_all_solved[i];

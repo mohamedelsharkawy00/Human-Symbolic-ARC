@@ -1,9 +1,1 @@
-Colors UnionList SelectAll TileY[4] Fractal Underlay Input SelectAll FlipHorizontal Fractal Underlay
-Puzzle: 00576224
-Train: Solved
-Test: Solved
-Elapsed: 00:00:08.5967
-Attempts: 4376390
-Nodes: 8
-Best Score: 6094.0000
-Max Depth: 8
+Input SelectAll TileY[4] Underlay Output SelectAll Fractal Underlay Input SelectAll FlipHorizontal Underlay Output SelectAll Fractal Underlay
