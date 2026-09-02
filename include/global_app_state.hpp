@@ -269,9 +269,6 @@ struct global_app_state {
 	// a whole (GET SELECT ACT COMBINE), so every candidate has painted and can be
 	// scored honestly. Off = the op-at-a-time beam, for A/B.
 	atomic<bool> sentence_search{true};
-	// Layer locking: commit all-pairs-verified layers as an immutable prefix and
-	// search only continuations. Off = original whole-program search for A/B.
-	atomic<bool> layer_locking{true};
 	atomic<bool> needs_resize{false};
 	atomic<bool> stop_threads{false};
 	atomic<logging_mode> log_mode{logging_mode::none};

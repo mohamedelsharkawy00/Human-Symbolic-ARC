@@ -3687,23 +3687,6 @@ bool cuda_dsl_examples_uploaded() {
     return d_examples_uploaded;
 }
 
-// Focus color (layered solving, the human way): the host picks one unfinished
-// color to work on; scoring gives its target cells a strong bonus so chains
-// building that color's layer survive the beam. -1 = no focus.
-__device__ int g_focus_color = -1;
-
-void cuda_dsl_set_focus_color(int color) {
-    cudaMemcpyToSymbol(g_focus_color, &color, sizeof(int));
-}
-
-// Colors already locked as complete (bitmask). Wrong paint on their cells can
-// never be repaired by a later layer — the scorer treats it like vandalism.
-__device__ int g_done_colors = 0;
-
-void cuda_dsl_set_done_colors(int mask) {
-    cudaMemcpyToSymbol(g_done_colors, &mask, sizeof(int));
-}
-
 // New kernel that reads from cached example templates.
 // Occupancy cap (2026-06-04): the kernel otherwise uses 255 regs (8 blocks/SM, 16.7%)
 // because gpu_eval_program_warp inlines the union of all DSL ops. Once the grid was
@@ -3925,7 +3908,6 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
     // vandalism = wrong paint no later layer can repair: on a KEPT cell
     // (input == target, only meaningful same-dims) or on a DONE color's cell.
     const bool same_dims_as_input = (ctx.input.width == tw && ctx.input.height == th);
-    const int done_mask = g_done_colors;
 
     for (int i = lane; i < total_target_pixels; i += 32) {
         int r = i / tw;
@@ -3936,9 +3918,9 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
             my_mismatches++;
             if (a != GPU_TRANSPARENT) {
                 my_exact_err += GPU_SCORE_W_EXACT_MATCH;
-                bool kept = same_dims_as_input && ctx.input.data[r][c] == t;
-                bool done = (t >= 0 && t < 10) && ((done_mask >> t) & 1);
-                if (kept || done) my_vandal++;
+                // A kept cell is one the answer leaves alone, so painting it
+                // wrong is damage nothing later repairs.
+                if (same_dims_as_input && ctx.input.data[r][c] == t) my_vandal++;
             }
         } else if (t >= 0 && t < 10) {
             my_match_by_color[t]++;
@@ -4008,62 +3990,6 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
             iterate = __any_sync(0xffffffffu, my_changed);
         }
         __syncwarp();
-    }
-
-    // Lookahead: score the canvas AS IF the pending object list were Union'd
-    // right now. Transform-only chains never touch the canvas, so without this
-    // they are invisible to the gradient and a half-built layer dies before its
-    // deposit. Delta form: only cells the hypothetical paint CHANGES count —
-    // painting a cell right (vs target) is a gain, wrong is a spoil. Precision-
-    // biased (spoil weighs like gain), so a small correct fetch (Seeds) outranks
-    // a big mixed one (Input).
-    int my_look_gain = 0, my_look_spoil = 0, my_look_focus = 0;
-    const int fc = g_focus_color;
-    {
-        gpu_object_list* last = gpu_current_objects(ctx);
-        if (last && last->count > 0) {
-            // Hypothetical canvas in op_scratch (idle during scoring): copy the
-            // real canvas, paint the list over it, later-wins.
-            int8_t* hypo = ctx.op_scratch;
-            for (int i = lane; i < GPU_GRID_CELLS; i += 32) {
-                int r = i / GPU_MAX_GRID, c = i - r * GPU_MAX_GRID;
-                hypo[i] = (r < ah && c < aw) ? ctx.output.data[r][c] : GPU_TRANSPARENT;
-            }
-            __syncwarp();
-            int n_obj = min((int)last->count, GPU_KERNEL_MAX_OBJECTS);
-            for (int i = 0; i < n_obj; ++i) {
-                const gpu_fixed_object& obj = last->objects[i];
-                int pw = obj.width, ph = obj.height;
-                int total_px = pw * ph;
-                for (int p = lane; p < total_px; p += 32) {
-                    int r = p / pw, c = p - r * pw;
-                    int8_t v = obj.mask[r][c];
-                    if (v != GPU_TRANSPARENT) {
-                        int gr = obj.y0 + r, gc = obj.x0 + c;
-                        if (gr >= 0 && gr < ah && gc >= 0 && gc < aw)
-                            hypo[gr * GPU_MAX_GRID + gc] = v;
-                    }
-                }
-                __syncwarp();  // later-wins between overlapping objects
-            }
-            for (int i = lane; i < total_target_pixels; i += 32) {
-                int r = i / tw, c = i - r * tw;
-                if (r >= ah || c >= aw) continue;  // hypo spans attempt dims only
-                int8_t h = hypo[r * GPU_MAX_GRID + c];
-                if (h == ctx.output.data[r][c]) continue;  // paint changed nothing
-                int8_t tv = tmpl.target_grid[r * GPU_MAX_GRID + c];
-                if (h == tv) {
-                    my_look_gain++;
-                    if (tv == fc) my_look_focus++;  // pending paint lands on the focus color
-                } else my_look_spoil++;
-            }
-            #pragma unroll
-            for (int off = 16; off > 0; off >>= 1) {
-                my_look_gain  += __shfl_xor_sync(0xffffffffu, my_look_gain,  off);
-                my_look_spoil += __shfl_xor_sync(0xffffffffu, my_look_spoil, off);
-                my_look_focus += __shfl_xor_sync(0xffffffffu, my_look_focus, off);
-            }
-        }
     }
 
     if (lane == 0) {
@@ -4189,13 +4115,9 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
         // color — already painted or pending — count extra. Deliberately
         // DOMINANT, not a nudge: the machine solves one color at a time, so
         // progress on the focus color outweighs everything else it could do.
-        constexpr float W_FOCUS = 16.0f;
-        float focus_term = (fc >= 0 && fc < 10)
-            ? (my_match_by_color[fc] + my_look_focus) * W_FOCUS : 0.0f;
         // Unrepairable wrong paint outweighs everything a chain could gain.
         constexpr float W_VANDAL = 8.0f;
-        float total = focus_term
-                    - my_vandal * W_VANDAL
+        float total = -my_vandal * W_VANDAL
                     - my_exact_err
                     - hist_err * GPU_SCORE_W_HISTOGRAM
                     - my_dist_err * GPU_SCORE_W_DISTANCE_MAP
@@ -4229,7 +4151,6 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
         solved_out[idx] = (dims_match && my_mismatches == 0) ? 1 : 0;
         // Say what that was made of, so nothing has to mirror the formula.
         gpu_score_terms& terms = score_terms[idx];
-        terms.focus             = focus_term;
         terms.vandal            = -my_vandal * W_VANDAL;
         terms.exact             = -my_exact_err;
         terms.histogram         = -hist_err * GPU_SCORE_W_HISTOGRAM;
@@ -4238,7 +4159,6 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
         terms.shape             = shape_matches * GPU_SCORE_W_SHAPE_MATCH;
         terms.color             = color_matches * GPU_SCORE_W_COLOR_MATCH;
         terms.position          = position_score * GPU_SCORE_W_POSITION_MATCH;
-        terms.lookahead         = 0.0f;  // see above
         terms.node_penalty      = -(nc * GPU_SCORE_W_NODE_PENALTY);
         terms.dimension_penalty = -dim_pen;
         terms.total             = total;

@@ -78,11 +78,6 @@ namespace arc {
     if (stagnant_levels >= MAX_STAGNANT_LEVELS) {
       log_debug(fmt::format("Level stagnation: {} levels at {:.2f}. Diversifying beam.",
                        stagnant_levels, (double)prev_beam_top));
-      // Flat search has stalled — decomposition earns its turn.
-      if (!locking_armed && !locking_suspended) {
-        locking_armed = true;
-        log_debug("==== LOCKING ARMED: flat search stalled ====");
-      }
       if (beam.size() > 4) {
         sort(beam.begin(), beam.end(), ranks_higher);
         size_t keep = beam.size() / 2;
@@ -95,8 +90,6 @@ namespace arc {
       for (size_t i = 0; i < history_pool.size() && (int)beam.size() < BEAM_WIDTH; ++i) {
         node *h = history_pool[i];
         if (!h) continue;
-        // Layer lock: lock-less injectees only feed admission rejections.
-        if (locked_prefix && !contains_locked(h)) continue;
         if (!present_types.insert(h->type).second) continue;
         beam.push_back({environment::copy(h), -1.0f, 0});
       }
@@ -524,14 +517,6 @@ namespace arc {
   inline void beam_solver::rebuild_skeleton_beam() {
     release_candidates(beam);
 
-    // Layer lock: bare starters can't contain the lock — every candidate they
-    // spawn would be admission-rejected (the false-Idle drain). Reseed from
-    // the lock itself instead.
-    if (locked_prefix) {
-      beam.push_back({environment::copy(locked_prefix), 10.0f, 0});
-      return;
-    }
-
     node *inp = new node();
     inp->type = node_type::Input;
     environment::update_hash(inp);
@@ -605,103 +590,6 @@ namespace arc {
   }
 
   inline void beam_solver::prepare_next_level_slots() {
-    // Color-layer commit sweep: a layer that FINISHES a color deserves to lock
-    // even when its beam score never beat the global best (the scorer is a
-    // misleading doorman). Scan the level's survivors best-first, root-Union
-    // only, capped — first commit wins and triggers the restart below.
-    // Depth saturation: once the beam carries trees at the depth cap, the
-    // whole-glance phase is over by construction — flat cannot go deeper,
-    // only layering refocuses the budget. (05a7bcf2: flat crawled 16 min
-    // with cells still improving, so no stall signal could ever fire —
-    // progressing is not converging.)
-    if (!locking_armed && !locking_suspended) {
-      for (auto &cand : beam) {
-        if (cand.n && cand.n->max_depth >= MAX_SEARCH_DEPTH) {
-          locking_armed = true;
-          log_debug("==== LOCKING ARMED: depth saturated ====");
-          break;
-        }
-      }
-    }
-    if (m_app_state.layer_locking && locking_armed && !locking_suspended && !lock_commit_pending && m_puzzle_loaded) {
-      // Solve one color at a time from the very start: before any lock exists,
-      // residuals are simply the target color counts — pick a focus from them.
-      if (focus_color == -1 && !locked_prefix && !m_focus_initialized) {
-        m_focus_initialized = true;
-        for (auto &ex : m_puzzle.train)
-          for (int r = 0; r < ex.output.height; ++r)
-            for (int c = 0; c < ex.output.width; ++c) {
-              int v = ex.output.data[r][c];
-              if (v >= 0 && v < 10) { locked_color_total[v]++; locked_color_residual[v]++; }
-            }
-        pick_focus_color();
-      }
-      const int scan_cap = 64;
-      int scanned = 0;
-      int active = min(active_example_count, (int)m_puzzle.train.size());
-      // Coverage-ranked commit: probe every qualifying survivor, freeze only
-      // the one explaining the most cells (ties: more new colors, fewer
-      // nodes). The human prior: prefer the layer with the least unexplained
-      // remainder, not the first that finishes something.
-      node *best_cand = nullptr;
-      int best_nc = 0, best_corr = -1, best_new = -1;
-      for (auto &cand : beam) {
-        if (scanned >= scan_cap) break;
-        if (!cand.n || !modifies_canvas(cand.n->type)) continue;
-        ++scanned;
-        if (probe_failed.count(cand.n->hash)) continue;
-        int nc = environment::count_nodes(cand.n);
-        int corr = 0, nnew = 0;
-        if (!try_lock_layer(cand.n, nc, m_puzzle, active, &corr, &nnew, false)) {
-          probe_failed.insert(cand.n->hash);
-          continue;
-        }
-        if (corr > best_corr ||
-            (corr == best_corr && (nnew > best_new || (nnew == best_new && nc < best_nc)))) {
-          best_cand = cand.n; best_nc = nc; best_corr = corr; best_new = nnew;
-        }
-      }
-      if (best_cand)
-        try_lock_layer(best_cand, best_nc, m_puzzle, active);
-      // Focus rotation: a focus color that stalls for FOCUS_ROTATE_LEVELS
-      // boundaries likely depends on a color not yet painted — mark it tried
-      // and move on. A full circle of tried colors drops the focus entirely.
-      if (focus_color >= 0 && !lock_commit_pending) {
-        if (focus_progress_this_level) {
-          focus_levels_no_progress = 0;
-        } else if (++focus_levels_no_progress >= FOCUS_ROTATE_LEVELS) {
-          focus_tried[focus_color] = true;
-          focus_levels_no_progress = 0;
-          // Rotation may only hand focus to another UNFINISHED color — never
-          // to nothing. A stalled color keeps its focus when it's all there is.
-          int prev = focus_color;
-          pick_focus_color(prev);
-          if (focus_color == -1) {
-            // Every unfinished color has had its turn — one full circle.
-            if (++focus_circles_no_lock >= 2 && locked_prefix) {
-              drop_ladder();
-            } else {
-              for (int v = 0; v < 10; ++v) focus_tried[v] = false;
-              focus_color = prev;
-              focus_best_correct = locked_color_total[prev] - locked_color_residual[prev];
-              cuda_dsl_set_focus_color(prev);
-              log_debug(fmt::format("==== FOCUS KEPT: color {} (full circle {}) ====", prev, focus_circles_no_lock));
-            }
-          } else {
-            log_debug(fmt::format("==== FOCUS ROTATED: color {} stalled ====", prev));
-          }
-        }
-        focus_progress_this_level = false;
-      }
-    }
-    if (lock_commit_pending) {
-      // Restart from the committed layer: the lock is the only beam member and
-      // continuations grow from it. History pool is kept — fragments stay useful.
-      release_candidates(beam);
-      beam.push_back({environment::copy(locked_prefix), 10.0f, 0});
-      lock_commit_pending = false;
-      log_debug("==== BEAM RESTARTED FROM LOCKED PREFIX ====");
-    }
     vector<slot_t> next_slots;
     set<int> visited_depths;
     for (auto &cand : beam) {
@@ -732,17 +620,10 @@ namespace arc {
                             set<int> &visited) {
     if (!n)
       return;
-    // Layer lock: the committed prefix is opaque — never recurse inside it.
-    // (Slots inside it would only generate candidates that admission rejects,
-    // draining the generator dry -> false Idle.)
-    if (locked_prefix && n->hash == locked_hash)
-      return;
     if (depth >= MAX_SEARCH_DEPTH) return;
     node *child = n->arg;
     if (!child) return;
     int child_depth = depth + 1;
-    // Layer lock: the committed prefix is atomic — no slot at or inside it.
-    if (locked_prefix && child->hash == locked_hash) return;
     if (visited.find(child_depth) == visited.end()) {
       out.push_back({child_depth});
       visited.insert(child_depth);
@@ -799,56 +680,6 @@ namespace arc {
       m_gen_outer_idx = 0;
       m_gen_inner_idx = 0;
       return phase_result::break_loop;
-    }
-
-    // Locked mode, root slot: the history bucket is almost entirely lock-less
-    // fragments that admission rejects (drains the generator dry -> false
-    // Idle). Grow the chain instead: wrap the beam member ITSELF with each
-    // primitive — one outer item, all variants.
-    if (locked_prefix && slot.depth == 0) {
-      if (m_gen_outer_idx > 0 ||
-          !m_current_base || m_current_base->max_depth + 1 > MAX_SEARCH_DEPTH) {
-        m_gen_primitive_idx++;
-        m_gen_outer_idx = 0;
-        m_gen_inner_idx = 0;
-        return phase_result::break_loop;
-      }
-      node *t0 = m_current_base;
-      if (!legal_next(t0, type)) {
-        m_gen_primitive_idx++;
-        m_gen_outer_idx = 0;
-        m_gen_inner_idx = 0;
-        return phase_result::break_loop;
-      }
-      candidate_sub = create_unary_node(type, t0);
-      if (is_parameterized(type)) {
-        int variants = get_variant_count(type);
-        while (m_gen_inner_idx < variants &&
-               !color_literal_allowed(type, ranked_variant_value(type, m_gen_inner_idx)))
-          m_gen_inner_idx++;
-        if (m_gen_inner_idx >= variants) {
-          environment::remove(candidate_sub);
-          candidate_sub = nullptr;
-          m_gen_outer_idx++;
-          m_gen_inner_idx = 0;
-          return phase_result::retry;
-        }
-        candidate_sub->value = ranked_variant_value(type, m_gen_inner_idx);
-        environment::update_hash(candidate_sub);
-        m_gen_inner_idx++;
-        if (m_gen_inner_idx >= variants) { m_gen_outer_idx++; m_gen_inner_idx = 0; }
-      } else {
-        m_gen_outer_idx++;
-        m_gen_inner_idx = 0;
-      }
-      created_new = true;
-      if (check_yield(batch_count)) {
-        environment::remove(candidate_sub);
-        candidate_sub = nullptr;
-        created_new = false;
-        return phase_result::yield;
-      }
-      return phase_result::candidate_ready;
     }
 
     // Bound iteration by the depth headroom for this slot; depth-overflow
@@ -1036,17 +867,6 @@ namespace arc {
     if (visited.contains(predicted)) {
       if (created_new) environment::remove(candidate_sub);
       return false;
-    }
-
-    // Layer lock: every candidate must build on the committed prefix. Checked
-    // BEFORE materializing — on a unary spine the lock survives the replacement
-    // unless the replaced subtree held it and the replacement doesn't.
-    if (locked_prefix && !contains_locked(candidate_sub)) {
-      node *replaced = get_node_at_path(base, depth);
-      if (!replaced || contains_locked(replaced)) {
-        if (created_new) environment::remove(candidate_sub);
-        return false;
-      }
     }
 
     node *candidate = copy_and_replace(base, depth, candidate_sub);
@@ -1293,31 +1113,6 @@ namespace arc {
     auto cmp = ranks_higher;
     if ((int)next_beam.size() > BEAM_WIDTH) {
       sort(next_beam.begin(), next_beam.end(), cmp);
-      // Focus keep-alive: the focus color's staging chains score in a valley
-      // (worse before the deposit), so pure rank-eviction kills them. Reserve
-      // seats for the best chains that FETCH the focus color — bias, not
-      // seeding: the search still writes every op itself.
-      if (focus_color >= 0) {
-        constexpr int FOCUS_SEATS = 64;
-        auto fetches_focus = [&](node *root) {
-          for (node *n = root; n; n = n->arg)
-            if (n->type == node_type::SelectColor && n->value == focus_color)
-              return true;
-          return false;
-        };
-        int have = 0;
-        for (int i = 0; i < (int)BEAM_WIDTH; ++i)
-          if (fetches_focus(next_beam[i].n)) ++have;
-        int evict_pos = (int)BEAM_WIDTH - 1;
-        for (size_t i = BEAM_WIDTH; i < next_beam.size() && have < FOCUS_SEATS; ++i) {
-          if (!fetches_focus(next_beam[i].n)) continue;
-          while (evict_pos >= 0 && fetches_focus(next_beam[evict_pos].n)) --evict_pos;
-          if (evict_pos < 0) break;
-          swap(next_beam[evict_pos], next_beam[i]);
-          ++have;
-          --evict_pos;
-        }
-      }
       for (size_t i = BEAM_WIDTH; i < next_beam.size(); ++i)
         if (next_beam[i].n) environment::remove(next_beam[i].n);
       next_beam.resize(BEAM_WIDTH);
@@ -1423,13 +1218,13 @@ namespace arc {
     for (int i = 0; i < (int)terms.size(); ++i) {
       const gpu_score_terms &t = terms[i];
       log_debug(fmt::format(
-          "[SCORE] tree=\"{}\" ex={} focus={:.4f} vandal={:.4f} exact={:.4f} histogram={:.4f} "
+          "[SCORE] tree=\"{}\" ex={} vandal={:.4f} exact={:.4f} histogram={:.4f} "
           "distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} position={:.4f} "
-          "lookahead={:.4f} node_penalty={:.4f} dim_penalty={:.4f} sum={:.4f} total={:.4f}",
-          tree_str, i, t.focus, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
-          t.shape, t.color, t.position, t.lookahead, t.node_penalty, t.dimension_penalty,
-          t.focus + t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
-              t.color + t.position + t.lookahead + t.node_penalty + t.dimension_penalty,
+          "node_penalty={:.4f} dim_penalty={:.4f} sum={:.4f} total={:.4f}",
+          tree_str, i, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
+          t.shape, t.color, t.position, t.node_penalty, t.dimension_penalty,
+          t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
+              t.color + t.position + t.node_penalty + t.dimension_penalty,
           t.total));
     }
   }
@@ -1552,11 +1347,6 @@ namespace arc {
       environment::remove(m_solver_state.current_tree);
       m_solver_state.current_tree = environment::copy(reduced);
 
-      // Layer-lock commit: a tree that ends at a canvas op and
-      // paints zero wrong cells on kept cells may freeze as the immutable
-      // prefix (see try_lock_layer for the full criteria).
-      try_lock_layer(reduced, reduced_node_count, p, active);
-
       // Free the reduced tree if reduce_best_tree allocated a new one (the two
       // copy() calls above took their own refs; this drops our local owner).
       if (was_reduced) environment::remove(reduced);
@@ -1603,219 +1393,10 @@ namespace arc {
     }
   }
 
-  // CPU re-eval of a root-Union tree against the given pairs; commits it as
-  // the locked prefix if it qualifies. Two commit paths, both requiring zero
-  // wrong paint on KEPT cells (input == output there — wrong paint on a
-  // changed cell is fine, a later layer overwrites it; the underlayer case.
-  // Without a kept map — non-Identity — falls back to strict zero-wrong):
-  //  1. explains more total cells than the current lock, or
-  //  2. FINISHES a color the lock hadn't (every target cell of that color
-  //     correct, all pairs) — layered solving is one color at a time.
-  // Either way it must not un-finish an already-done color.
-  // Purity against the SCHEDULE: wrong paint is allowed only on cells whose
-  // target color hasn't had its layer yet — that color can only lock by
-  // repainting them correctly, so the repair is mandatory. (Fully strict
-  // purity was tried 2026-07-03 and vetoes real solutions: the wall layer
-  // paints cells the towers cover later.) When the last color locks, no
-  // un-laid colors remain — the final tree is fully correct.
-  inline bool beam_solver::layer_fit(node *tree, int node_count, puzzle &p, int pairs,
-                                     int color_total[10], int color_correct[10], int &correct) {
-    correct = 0;
-    for (int v = 0; v < 10; ++v) color_total[v] = color_correct[v] = 0;
-    for (int i = 0; i < pairs; ++i) {
-      grid temp = {};
-      environment::score_tree_output(tree, p.train[i], temp, p, node_count);
-      const grid &t = p.train[i].output;
-      if (temp.width != t.width || temp.height != t.height) return false;
-      for (int r = 0; r < t.height; ++r)
-        for (int c = 0; c < t.width; ++c) {
-          int a = temp.data[r][c];
-          int tv = t.data[r][c];
-          if (tv >= 0 && tv < 10) {
-            color_total[tv]++;
-            if (a == tv) color_correct[tv]++;
-          }
-          if (a == t.data[r][c]) correct++;
-          else if (a != -1 && (tv < 0 || tv > 9 || locked_color_done[tv]))
-            return false;
-        }
-    }
-    return true;
-  }
-
-  inline bool beam_solver::try_lock_layer(node *tree, int node_count, puzzle &p, int active,
-                                          int *out_correct, int *out_new_colors, bool commit) {
-    if (!m_app_state.layer_locking || !locking_armed || locking_suspended || !tree || !modifies_canvas(tree->type))
-      return false;
-    if (locked_prefix && tree->hash == locked_hash)
-      return false;
-    // A lock is permanent — it must hold on EVERY train pair, not just the
-    // active set (2026-07-11, 007bbfb7: a layer perfect on the 2 actives by
-    // coincidence froze, and no extension could ever solve example 3).
-    int full = (int)p.train.size();
-    int correct = 0;
-    int color_total[10], color_correct[10];
-    if (!layer_fit(tree, node_count, p, full, color_total, color_correct, correct))
-      return false;
-    // Focus progress: did any clean survivor push the focus color forward?
-    if (focus_color >= 0 && color_correct[focus_color] > focus_best_correct) {
-      focus_best_correct = color_correct[focus_color];
-      focus_progress_this_level = true;
-      for (int v = 0; v < 10; ++v) focus_tried[v] = false;
-    }
-    bool color_done[10] = {};
-    bool finishes_new_color = false, breaks_done_color = false;
-    for (int v = 0; v < 10; ++v) {
-      color_done[v] = color_total[v] > 0 && color_correct[v] == color_total[v];
-      if (color_done[v] && !locked_color_done[v]) finishes_new_color = true;
-      if (!color_done[v] && locked_color_done[v]) breaks_done_color = true;
-      // Hollowing note (2026-07-03): losing correct cells of an UNDONE color
-      // is legal — that color is provisional until its own layer completes it,
-      // same logic that allows wrong paint there. Done colors are already
-      // hollow-proof: losing a cell un-finishes them -> breaks_done_color.
-    }
-    // A layer must FINISH its color before the next begins: completing a new
-    // color is the only commit trigger. (Partial "+N cells" locks were tried
-    // 2026-07-03 — greedy micro-locks burned the depth budget dry.)
-    if (breaks_done_color || !finishes_new_color)
-      return false;
-    // Probe: qualified — report coverage, freeze nothing.
-    if (!commit) {
-      if (out_correct) *out_correct = correct;
-      if (out_new_colors) {
-        int n = 0;
-        for (int v = 0; v < 10; ++v)
-          if (color_done[v] && !locked_color_done[v]) ++n;
-        *out_new_colors = n;
-      }
-      return true;
-    }
-    // Lean locks: this tree qualifies — strip no-ops before freezing, since
-    // every junk op in a lock is stolen from all later layers' depth budget.
-    // If the reduced form no longer qualifies (reduction optimizes beam score,
-    // not layer criteria), fall back to committing the raw tree.
-    if (!m_reducing_for_lock) {
-      int rc = node_count;
-      // Full depth, vetted on the full train set — same authority as the lock itself.
-      node *red = reduce_best_tree(tree, p, full, rc, true);
-      log_debug(fmt::format("[LOCK-REDUCE] {} -> {} nodes | in=\"{}\" out=\"{}\"",
-                            node_count, rc, environment::stringify_tree_via_flat(tree),
-                            environment::stringify_tree_via_flat(red)));
-      if (red != tree) {
-        m_reducing_for_lock = true;
-        bool committed = try_lock_layer(red, rc, p, active);
-        m_reducing_for_lock = false;
-        environment::remove(red);
-        if (committed) return true;
-      }
-    }
-    if (locked_prefix) environment::remove(locked_prefix);
-    locked_prefix = environment::copy(tree);
-    locked_hash = tree->hash;
-    focus_circles_no_lock = 0;
-    probe_failed.clear();
-    locked_correct_cells = std::max(locked_correct_cells, correct);
-    string done_str;
-    for (int v = 0; v < 10; ++v) {
-      locked_color_done[v] = color_done[v];
-      if (color_done[v]) done_str += std::to_string(v) + " ";
-    }
-    lock_commit_pending = true;
-    log_debug(fmt::format("==== LAYER LOCKED: {} cells explained, colors done: [{}], prefix frozen ====",
-                          correct, done_str));
-    log_debug(fmt::format("[LOCK-PREFIX] \"{}\"", environment::stringify_tree_via_flat(locked_prefix)));
-    // A lock explaining EVERY cell of the active set is a full solution for
-    // it — hand it to promotion directly (the best channel may never rank it
-    // first, and promotion's re-verify is the overfit gauntlet anyway).
-    {
-      int total_cells = 0;
-      for (int v = 0; v < 10; ++v) total_cells += color_total[v];
-      // If this promotion fills the train set, try_promote_examples parks the
-      // prefix as the found solve; the worker loop marks the task solved.
-      if (correct == total_cells && active < (int)p.train.size())
-        try_promote_examples(locked_prefix, p, active_example_count, environment::count_nodes(locked_prefix));
-    }
-    // A lock is progress by definition: refresh residuals and re-pick focus.
-    for (int v = 0; v < 10; ++v) {
-      locked_color_residual[v] = color_total[v] - color_correct[v];
-      locked_color_total[v] = color_total[v];
-      focus_tried[v] = false;
-    }
-    focus_levels_no_progress = 0;
-    pick_focus_color();
-    return true;
-  }
-
-  // Uncommit the whole ladder and ban its opener: the rebuilt ladder must
-  // start from a different decomposition. Called on the second completed
-  // focus circle without a lock commit (see solver_beam.hpp).
-  inline void beam_solver::drop_ladder() {
-    if (!locked_prefix) return;
-    environment::remove(locked_prefix);
-    locked_prefix = nullptr;
-    locked_hash = 0;
-    locked_correct_cells = 0;
-    for (int v = 0; v < 10; ++v) {
-      locked_color_done[v] = false;
-      locked_color_residual[v] = 0;
-      locked_color_total[v] = 0;
-      focus_tried[v] = false;
-    }
-    focus_color = -1;
-    m_focus_initialized = false;
-    focus_levels_no_progress = 0;
-    focus_progress_this_level = false;
-    focus_circles_no_lock = 0;
-    lock_commit_pending = false;
-    cuda_dsl_set_focus_color(-1);
-    cuda_dsl_set_done_colors(0);
-    // Cold restart: the whole search state is descended from the dropped
-    // prefix — beam, history pool, dedup, cache — and the prefix family
-    // outscores every fresh starter, so anything kept recolonizes the trap
-    // (observed 2026-07-12: 25 min of "flat" search still rooted in the
-    // dropped prefix). The strike means: as if the puzzle just loaded,
-    // locking off.
-    release_candidates(beam);
-    release_nodes(history_pool);
-    history_by_depth.clear();
-    for (int d = 0; d <= MAX_SEARCH_DEPTH; ++d) bucket_cutoff[d] = 0;
-    visited_grids.reset();
-    { unordered_map<uint64_t, cache_entry> tmp; global_cache.swap(tmp); }
-    seed_starter_nodes();
-    probe_failed.clear();
-    locking_suspended = true;
-    log_debug("==== LADDER DROPPED: cold restart, locking off for this puzzle ====");
-  }
-
-  inline void beam_solver::pick_focus_color(int exclude) {
-    focus_color = -1;
-    for (int v = 0; v < 10; ++v) {
-      if (v == exclude || focus_tried[v] || locked_color_done[v]) continue;
-      if (locked_color_residual[v] <= 0) continue;
-      if (focus_color == -1 || locked_color_residual[v] > locked_color_residual[focus_color])
-        focus_color = v;
-    }
-    // The bar to beat is what the lock already explains of this color.
-    focus_best_correct = focus_color >= 0
-        ? locked_color_total[focus_color] - locked_color_residual[focus_color] : 0;
-    cuda_dsl_set_focus_color(focus_color);
-    {
-      int mask = 0;
-      for (int v = 0; v < 10; ++v)
-        if (locked_color_done[v]) mask |= 1 << v;
-      cuda_dsl_set_done_colors(mask);
-    }
-    log_debug(focus_color >= 0
-        ? fmt::format("==== FOCUS COLOR: {} ({} residual cells) ====", focus_color, locked_color_residual[focus_color])
-        : "==== FOCUS COLOR: none (free search) ====");
-  }
-
   inline void beam_solver::reload_current_puzzle() {
     sound_manager::get().clear_queue();
     clear_logs();
     cuda_dsl_invalidate_examples();
-    cuda_dsl_set_focus_color(-1);
-    cuda_dsl_set_done_colors(0);
 
     int puzzle_idx = m_solver_state.puzzle_idx;
 
@@ -2420,30 +2001,6 @@ namespace arc {
       return by_sentence ? by_sentence : tree;
     }
 
-    // Lock-bound (deep) acceptance judges deletions by what the lock will
-    // certify — cells explained and colors finished — never by beam score.
-    // Unpainted cells score leniently (provisional paint), so score-judged
-    // cleaning happily deletes the deposit op itself ("blank canvas scores
-    // fine"), the gutted tree then fails lock qualification, and the
-    // all-or-nothing fallback freezes the RAW tree, junk included (the
-    // cliff — observed on 007bbfb7: "Output AddColor[0] FlipVertical Union"
-    // reduced to "Output AddColor[0]", rejected, raw committed with the no-op
-    // flip frozen).
-    auto cert_flat = [&](const flat_program &f, int &correct, int &done_mask) -> bool {
-      node *t = environment::build_chain_from_flat(f);
-      if (!t) return false;
-      int ct[10], cc[10];
-      bool ok = layer_fit(t, f.count, p, active, ct, cc, correct);
-      environment::remove(t);
-      if (!ok) return false;
-      done_mask = 0;
-      for (int v = 0; v < 10; ++v)
-        if (ct[v] > 0 && cc[v] == ct[v]) done_mask |= 1 << v;
-      return true;
-    };
-    int base_correct = 0, base_done = 0;
-    bool cert_mode = deep && cert_flat(flat, base_correct, base_done);
-
     // Greedy leave-k-out: drop the k ops (never the leaf at index 0) whose
     // removal most improves the summed score, as long as it strictly improves
     // AND keeps every solved example solved. A true no-op wins automatically:
@@ -2461,7 +2018,6 @@ namespace arc {
       int best_found = 0;
       float best_sum = base_sum;
       uint32_t best_mask = base_mask;
-      int best_correct = base_correct;
       // Standard k-combination walk over droppable positions 1..count-1.
       for (int i = 0; i < k; ++i) idx[i] = i + 1;
       while (idx[k - 1] < flat.count) {
@@ -2470,22 +2026,11 @@ namespace arc {
           if (j < k && i == idx[j]) { ++j; continue; }
           reduced.push(flat.ops[i].type, flat.ops[i].value);
         }
-        if (cert_mode) {
-          // Accept when certification is preserved: no explained cell lost, no
-          // finished color un-finished — fewer nodes is the win, ties included.
-          int c = 0, dm = 0;
-          if (cert_flat(reduced, c, dm) && c >= base_correct &&
-              (dm & base_done) == base_done && (best_found == 0 || c > best_correct)) {
-            best_correct = c; best_found = k;
-            for (int i = 0; i < k; ++i) best_drop[i] = idx[i];
-          }
-        } else {
-          uint32_t m = 0;
-          float s = score_flat(reduced, m);
-          if ((m & base_mask) == base_mask && s > best_sum + 0.0001f) {
-            best_sum = s; best_mask = m; best_found = k;
-            for (int i = 0; i < k; ++i) best_drop[i] = idx[i];
-          }
+        uint32_t m = 0;
+        float s = score_flat(reduced, m);
+        if ((m & base_mask) == base_mask && s > best_sum + 0.0001f) {
+          best_sum = s; best_mask = m; best_found = k;
+          for (int i = 0; i < k; ++i) best_drop[i] = idx[i];
         }
         // Advance: bump the rightmost index that still has room, reset the rest.
         int pos = k - 1;
@@ -2503,7 +2048,6 @@ namespace arc {
       flat = next;
       base_sum = best_sum;
       base_mask = best_mask;
-      base_correct = best_correct;
       return true;
     };
     bool changed = false;
@@ -2565,10 +2109,6 @@ namespace arc {
       log_debug(fmt::format("==== PROMOTED: now solving {}/{} examples ====",
                        active_example_count, p.train.size()));
     }
-
-    // No overfit re-verify needed here: locks are vetted against the FULL
-    // train set at commit time (try_lock_layer), so widening the active set
-    // cannot invalidate one.
 
     // Filling the train set is the solve verdict — `tree` just verified on
     // every promoted example. Park it; the worker loop marks the task solved.

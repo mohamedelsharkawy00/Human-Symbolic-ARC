@@ -142,15 +142,15 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
     // Straight from the kernel that scored it, so the printed sum IS the score.
     auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
       log.debug(fmt::format(
-          "[SCORE] phase={} tree=\"{}\" ex={} focus={:.4f} vandal={:.4f} exact={:.4f} "
+          "[SCORE] phase={} tree=\"{}\" ex={} vandal={:.4f} exact={:.4f} "
           "histogram={:.4f} distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} "
-          "position={:.4f} lookahead={:.4f} node_penalty={:.4f} dim_penalty={:.4f} "
+          "position={:.4f} node_penalty={:.4f} dim_penalty={:.4f} "
           "sum={:.4f} total={:.4f}",
-          phase, tree_str, ei, t.focus, t.vandal, t.exact, t.histogram, t.distance,
-          t.rarity, t.shape, t.color, t.position, t.lookahead, t.node_penalty,
+          phase, tree_str, ei, t.vandal, t.exact, t.histogram, t.distance,
+          t.rarity, t.shape, t.color, t.position, t.node_penalty,
           t.dimension_penalty,
-          t.focus + t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
-              t.color + t.position + t.lookahead + t.node_penalty + t.dimension_penalty,
+          t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
+              t.color + t.position + t.node_penalty + t.dimension_penalty,
           t.total));
     };
 

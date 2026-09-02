@@ -564,8 +564,8 @@ struct cuda_dsl_example_data {
 // ever printed was a partial sum that could not equal the number the beam ranks
 // by. One home: the kernel computes these, so the kernel reports them.
 struct gpu_score_terms {
-    float focus = 0, vandal = 0, exact = 0, histogram = 0, distance = 0;
-    float rarity = 0, shape = 0, color = 0, position = 0, lookahead = 0;
+    float vandal = 0, exact = 0, histogram = 0, distance = 0;
+    float rarity = 0, shape = 0, color = 0, position = 0;
     float node_penalty = 0, dimension_penalty = 0;
     float total = 0;
 };
@@ -641,9 +641,7 @@ void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns);
 void cuda_dsl_invalidate_examples();
 
 // Layered solving: the one unfinished color the scorer should favor (-1 = none).
-void cuda_dsl_set_focus_color(int color);
 // Colors locked as complete (bitmask); wrong paint on them scores as vandalism.
-void cuda_dsl_set_done_colors(int mask);
 
 // Returns true if per-example data is already cached on device.
 bool cuda_dsl_examples_uploaded();

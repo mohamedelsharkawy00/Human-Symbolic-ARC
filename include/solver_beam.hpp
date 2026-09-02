@@ -230,58 +230,6 @@ struct search_state {
 
   bool is_generating_layer = false;
 
-  // Layer locking (toggle: app_state.layer_locking). The locked prefix is a
-  // committed layer chain every candidate must build on. It is created ONLY by
-  // a verified commit — the candidate painted zero wrong cells on every active
-  // pair — never by filtering the running beam. Candidates lacking it are
-  // rejected at admission; slots never point inside it.
-  node *locked_prefix = nullptr;
-  uint64_t locked_hash = 0;
-  // cells the locked prefix already explains (its correct paint, all pairs)
-  int locked_correct_cells = 0;
-  // colors the locked prefix already explains COMPLETELY (every target cell of
-  // that color correct, all pairs). "Finishing a color" is a commit trigger of
-  // its own — layered solving is one color at a time — and no later lock may
-  // un-finish one.
-  bool locked_color_done[10] = {};
-  // Focus color — the human way: work on ONE unfinished color at a time.
-  // Picked at each lock commit: the unfinished color with the largest residual
-  // (big areas are the substrate — walls/backgrounds first). Scoring gets a
-  // strong bonus on the focus color's target cells. If the focus makes no
-  // progress for FOCUS_ROTATE_LEVELS level boundaries, rotate to the next
-  // unfinished color (a stalled color often depends on one not yet painted —
-  // stalling discovers the right order). A full circle of rotations with no
-  // progress anywhere drops the focus (-1 = free search, current behavior).
-  int focus_color = -1;
-  int focus_best_correct = 0;        // best correct count seen for the focus color
-  bool focus_progress_this_level = false;
-  int focus_levels_no_progress = 0;  // rotation counter
-  bool focus_tried[10] = {};         // colors already focused since the last progress
-  int locked_color_residual[10] = {}; // target cells of color v the lock leaves unexplained
-  int locked_color_total[10] = {};    // target cells of color v, all pairs
-  // set on commit; the beam restarts from the lock at the next level boundary
-  bool lock_commit_pending = false;
-  // Ladder exit — one strike: a correct lock can still be the wrong
-  // decomposition (009d5c81: "paint every shape 7" froze at 0.4s, before the
-  // real shape->color layer could exist in the beam). Two full focus circles
-  // without a single lock commit = both the focused and free strategies
-  // failed on this prefix — drop the ladder and turn locking OFF for the
-  // rest of the puzzle. Layering gets one honest attempt; when it proves
-  // confused, flat search (which solves depth-8 puzzles on its own) takes
-  // over for good. Retry machinery (opener bans, failure memory, re-arming)
-  // was tried 2026-07-11 and never once paid off — every rebuilt ladder was
-  // another cheap trap.
-  int focus_circles_no_lock = 0;     // completed focus circles since last commit
-  bool locking_suspended = false;    // set by drop_ladder, permanent per puzzle
-  // The human order: grasp the whole first, decompose when stuck. Flat search
-  // runs alone from t=0; locking arms at the first level-stagnation event.
-  // This deletes the opener race — by the time locks may commit, the beam is
-  // deep enough that substantive layers exist to out-cover cheap ones.
-  bool locking_armed = false;
-  // Probe verdicts depend only on (tree hash, lock state): remember the
-  // failures and skip them until the lock state changes (commit or drop) —
-  // beam survivors otherwise re-pay the full-train eval at every boundary.
-  set<uint64_t> probe_failed;
   // the beam member being refined (phase_1 wraps it directly in locked mode)
   node *m_current_base = nullptr;
 
@@ -315,9 +263,6 @@ struct search_state {
   int stagnant_levels = 0;
   float prev_beam_top = SCORE_MIN;
 
-  bool m_reducing_for_lock = false; // re-entry guard for the lean-lock reduction
-  bool m_focus_initialized = false; // pre-lock focus picked from raw target counts
-
   // A promotion that fills the train set IS the solve, but marking the task
   // solved can't happen at that moment (it can happen mid-update_best_solution,
   // whose own solved/pause writes would collide). The verified tree waits here;
@@ -348,7 +293,6 @@ struct search_state {
     while (!pending_evaluation.empty())
       pending_evaluation.pop();
     release_candidates(current_slot_candidates);
-    if (locked_prefix) environment::remove(locked_prefix);
     if (solve_found_by_promotion) environment::remove(solve_found_by_promotion);
   }
 };
@@ -392,16 +336,6 @@ private:
   };
 
 public:
-  static constexpr int FOCUS_ROTATE_LEVELS = 8;
-  void drop_ladder();
-
-  // Is the locked chain on n's arg spine? (unary DSL: one spine, hash = identity)
-  bool contains_locked(const node *n) const {
-    for (const node *cur = n; cur; cur = cur->arg)
-      if (cur->hash == locked_hash) return true;
-    return false;
-  }
-
   void log_debug(const string &msg) { m_log.debug(msg); }
   void log_timing(const string &msg) { m_log.timing(msg); }
   void clear_logs() { m_log.clear(); }
@@ -999,29 +933,6 @@ private:
   bool pump_generate(const puzzle &p, std::atomic<long long> *global_attempts);
   void log_tree_record(node *tree, float score, long long attempts);
   void update_best_solution(int target_idx, puzzle &p, node *tree, int node_count, candidate_batch &res);
-  // Layer-lock commit check: CPU re-eval of a root-Union tree against the
-  // FULL train set (a lock is permanent, the active set has no authority to
-  // certify permanence); commits it as the locked prefix if it qualifies. Called from
-  // update_best_solution AND on beam survivors at each level boundary — a
-  // color-finishing layer must not need to beat the global best score to lock.
-  // Commits ONLY when the tree finishes a new color — each layer must complete
-  // before the next begins. ("+N total cells" locking was tried 2026-07-03:
-  // greedy micro-locks one op deeper each burned the depth budget dry.)
-  // Probe mode (commit=false): report qualification + coverage (cells
-  // explained, newly finished colors) without freezing — the boundary sweep
-  // ranks all qualifiers by coverage and commits only the best. First-
-  // qualifier-wins froze cheap layers that strand the remainder (009d5c81:
-  // "paint every shape 7" beat "color each shape by its shape").
-  bool try_lock_layer(node *tree, int node_count, puzzle &p, int active,
-                      int *out_correct = nullptr, int *out_new_colors = nullptr,
-                      bool commit = true);
-  // Shared evaluator: per-color totals/correct + schedule-purity (wrong paint
-  // only under undone colors). Evaluates the first `pairs` train examples.
-  bool layer_fit(node *tree, int node_count, puzzle &p, int pairs,
-                 int color_total[10], int color_correct[10], int &correct);
-  // Pick the focus color: the unfinished color with the largest residual.
-  // exclude: when rotating, skip the stalled current focus.
-  void pick_focus_color(int exclude = -1);
   void worker();
   void update_example_results(vector<example> &examples, const vector<candidate_result> &results, int limit = -1);
   void clear_test_current_views(puzzle &p);
