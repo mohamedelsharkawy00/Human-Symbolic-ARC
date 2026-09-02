@@ -410,7 +410,7 @@ public:
   void finish_benchmark_report() { m_log.finish_benchmark_report(); }
   void benchmark_begin() { m_log.benchmark_begin(); }
   void benchmark_record(const puzzle &p, long long attempts, float elapsed) { m_log.benchmark_record(p, attempts, elapsed); }
-  void log_score_formula(const node *tree, const vector<score_breakdown> &breakdowns);
+  void log_score_formula(const node *tree, const vector<gpu_score_terms> &terms);
 
 private:
   atomic<long long> *m_global_attempts = nullptr;

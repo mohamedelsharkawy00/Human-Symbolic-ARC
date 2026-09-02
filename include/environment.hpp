@@ -395,32 +395,6 @@ namespace arc {
 		return r;
 	}
 
-	struct score_breakdown {
-		int mismatches = 0;
-		float exact_term = 0.0f;
-		float histogram_error = 0.0f;
-		float histogram_term = 0.0f;
-		float distance_error = 0.0f;
-		float distance_term = 0.0f;
-		float rarity_score = 0.0f;
-		float rarity_term = 0.0f;
-		float node_penalty = 0.0f;
-		float dimension_penalty = 0.0f;
-		// CC-match: independent shape, color, and position rewards.
-		// shape_matches: attempt CCs whose (w,h,count) matches some unused target.
-		// color_matches: same plus matching color.
-		// position_score: sum of per-pair continuous (1 - chebyshev/max_dim) values
-		// over the same matched pairs, in [0, shape_matches].
-		int shape_matches = 0;
-		int color_matches = 0;
-		float position_score = 0.0f;
-		float shape_term = 0.0f;
-		float color_term = 0.0f;
-		float position_term = 0.0f;
-		float total = 0.0f;
-		bool dims_match = false;
-		bool solved = false;
-	};
 
 	struct puzzle {
 		string id;
@@ -1003,13 +977,15 @@ namespace arc {
 		// `p`, so a new learned fact needs no new parameter here.
 		static bool execute_flat_program(
 			const flat_program& program, const example& ex, grid& output,
-			const puzzle& p, int node_count, float& out_score, bool& out_solved);
+			const puzzle& p, int node_count, float& out_score, bool& out_solved,
+			gpu_score_terms* out_terms = nullptr);
 
 		static inline bool execute_tree_via_flat(
 			const node* tree, const example& ex, grid& output,
-			const puzzle& p, int node_count, float& out_score, bool& out_solved) {
+			const puzzle& p, int node_count, float& out_score, bool& out_solved,
+			gpu_score_terms* out_terms = nullptr) {
 			return with_flattened_unary_program(tree, [&](const flat_program& flat) {
-				return execute_flat_program(flat, ex, output, p, node_count, out_score, out_solved);
+				return execute_flat_program(flat, ex, output, p, node_count, out_score, out_solved, out_terms);
 			});
 		}
 
@@ -1017,87 +993,12 @@ namespace arc {
 		// GPU kernel already applies the node-count penalty.
 		static inline pair<float, bool> score_tree_output(
 			const node* tree, const example& ex, grid& output,
-			const puzzle& p, int node_count) {
+			const puzzle& p, int node_count, gpu_score_terms* out_terms = nullptr) {
 			float s = 0; bool slv = false;
-			execute_tree_via_flat(tree, ex, output, p, node_count, s, slv);
+			execute_tree_via_flat(tree, ex, output, p, node_count, s, slv, out_terms);
 			return { s, slv };
 		}
 
-		static inline score_breakdown analyze_output_score(
-			const grid& output, const example& ex, int node_count,
-			const object_summary* target_objs = nullptr, int target_obj_count = 0) {
-			score_breakdown b;
-			b.dims_match = (output.width == ex.output.width && output.height == ex.output.height);
-
-			int target_hist[10] = {};
-			int attempt_hist[10] = {};
-			int match_by_color[10] = {};
-
-			const int tw = ex.output.width;
-			const int th = ex.output.height;
-			const int total_target_pixels = tw * th;
-
-			float exact_error = 0.0f;
-			for (int r = 0; r < th; ++r) {
-				for (int c = 0; c < tw; ++c) {
-					int t = ex.output.data[r][c];
-					int a = (r < output.height && c < output.width) ? output.data[r][c] : TRANSPARENT;
-					if (t != a) {
-						b.mismatches++;
-						if (a != TRANSPARENT) exact_error += GPU_SCORE_W_EXACT_MATCH;
-					} else if (t >= 0 && t < 10) {
-						match_by_color[t]++;
-					}
-					if (t >= 0 && t < 10) target_hist[t]++;
-					if (a >= 0 && a < 10) {
-						attempt_hist[a]++;
-						b.distance_error += (float)ex.distance_maps[a][r][c];
-					}
-				}
-			}
-
-			for (int i = 0; i < 10; ++i) {
-				if (target_hist[i] > 0)
-					b.rarity_score += match_by_color[i] * ((float)total_target_pixels / target_hist[i]);
-				int d = target_hist[i] - attempt_hist[i];
-				b.histogram_error += (float)abs(d);
-			}
-
-			b.exact_term = -exact_error;
-			b.histogram_term = -b.histogram_error * GPU_SCORE_W_HISTOGRAM;
-			b.distance_term = -b.distance_error * GPU_SCORE_W_DISTANCE_MAP;
-			b.rarity_term = b.rarity_score * GPU_SCORE_W_RARITY_MATCH;
-			b.node_penalty = node_count * GPU_SCORE_W_NODE_PENALTY;
-			b.dimension_penalty = (float)(abs(ex.output.width - output.width) + abs(ex.output.height - output.height));
-
-			// CC-match terms: segment the attempt grid the same way the target
-			// was segmented at puzzle-load, then multiset-match. Skipped when
-			// the caller didn't supply target summaries (legacy paths).
-			if (target_objs && target_obj_count > 0) {
-				object_summary attempt_objs[MAX_TARGET_OBJECTS];
-				int an = segment_objects_by_color_cpu(output, attempt_objs, MAX_TARGET_OBJECTS);
-				int max_dim = max(ex.output.width, ex.output.height);
-				auto m = match_object_summaries(attempt_objs, an, target_objs, target_obj_count, max_dim);
-				b.shape_matches = m.shape_matches;
-				b.color_matches = m.color_matches;
-				b.position_score = m.position_score;
-				b.shape_term = m.shape_matches * GPU_SCORE_W_SHAPE_MATCH;
-				b.color_term = m.color_matches * GPU_SCORE_W_COLOR_MATCH;
-				b.position_term = m.position_score * GPU_SCORE_W_POSITION_MATCH;
-			}
-
-			b.total = b.exact_term
-				+ b.histogram_term
-				+ b.distance_term
-				+ b.rarity_term
-				+ b.shape_term
-				+ b.color_term
-				+ b.position_term
-				- b.node_penalty
-				- b.dimension_penalty;
-			b.solved = b.dims_match && (b.mismatches == 0);
-			return b;
-		}
 
 		// Parse pipeline format: "A -> B[v] -> C" (deepest leaf first, root last).
 		// All ops must be unary except the leaf (arity 0). Returns nullptr on failure.

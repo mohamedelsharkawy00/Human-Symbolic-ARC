@@ -139,42 +139,19 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
     task.best_node_count = environment::count_nodes(task.best_tree);
 
     string tree_str = environment::stringify_tree_via_flat(task.best_tree);
-    auto log_score = [&](int ei, const grid &out, const example &ex, const char *phase) {
-      // For train examples, use the cached per-target CC summaries; tests
-      // aren't precomputed so the CC term is omitted there (it would only
-      // affect diagnostic output, not search behaviour).
-      const object_summary* tobjs = nullptr;
-      int tobj_count = 0;
-      if (ei >= 0 && ei < (int)task.target_objects.size() && strcmp(phase, "import_train") == 0) {
-        tobjs = task.target_objects[ei].objs;
-        tobj_count = task.target_objects[ei].count;
-      }
-      score_breakdown b = environment::analyze_output_score(
-          out, ex, task.best_node_count, tobjs, tobj_count);
+    // Straight from the kernel that scored it, so the printed sum IS the score.
+    auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
       log.debug(fmt::format(
-          "[SCORE] phase={} tree=\"{}\" ex={} mismatches={} exact_term={:.6f} histogram_error={:.6f} histogram_term={:.6f} "
-          "distance_error={:.6f} distance_term={:.6f} rarity_score={:.6f} rarity_term={:.6f} "
-          "shape_matches={} shape_term={:.6f} color_matches={} color_term={:.6f} "
-          "position_score={:.4f} position_term={:.6f} "
-          "node_penalty={:.6f} dim_penalty={:.6f} "
-          "dims_match={} solved={} "
-          "formula=({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})-({:.6f})-({:.6f})={:.6f} "
-          "total={:.6f}",
-          phase, tree_str, ei,
-          b.mismatches, b.exact_term,
-          b.histogram_error, b.histogram_term,
-          b.distance_error, b.distance_term,
-          b.rarity_score, b.rarity_term,
-          b.shape_matches, b.shape_term, b.color_matches, b.color_term,
-          b.position_score, b.position_term,
-          b.node_penalty,
-          b.dimension_penalty,
-          b.dims_match ? "true" : "false",
-          b.solved ? "true" : "false",
-          b.exact_term, b.histogram_term, b.distance_term, b.rarity_term,
-          b.shape_term, b.color_term, b.position_term,
-          b.node_penalty, b.dimension_penalty, b.total,
-          b.total));
+          "[SCORE] phase={} tree=\"{}\" ex={} focus={:.4f} vandal={:.4f} exact={:.4f} "
+          "histogram={:.4f} distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} "
+          "position={:.4f} lookahead={:.4f} node_penalty={:.4f} dim_penalty={:.4f} "
+          "sum={:.4f} total={:.4f}",
+          phase, tree_str, ei, t.focus, t.vandal, t.exact, t.histogram, t.distance,
+          t.rarity, t.shape, t.color, t.position, t.lookahead, t.node_penalty,
+          t.dimension_penalty,
+          t.focus + t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
+              t.color + t.position + t.lookahead + t.node_penalty + t.dimension_penalty,
+          t.total));
     };
 
     // Evaluate and update GPU buffers
@@ -182,11 +159,12 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
     bool all_solved = true;
     for (int i = 0; i < (int)task.train.size(); ++i) {
       auto &ex = task.train[i];
+      gpu_score_terms terms;
       auto [s, solved] = environment::score_tree_output(
-          task.best_tree, ex, temp, task, task.best_node_count);
+          task.best_tree, ex, temp, task, task.best_node_count, &terms);
 
       log.debug(fmt::format("Example score: {} (Solved: {})", s, solved ? "YES" : "NO"));
-      log_score(i, temp, ex, "import_train");
+      log_score(i, terms, "import_train");
 
       ex.best_score = s;
       update_display_buffer(ex.best, temp, gpu_buffer);
@@ -199,9 +177,10 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
       bool test_all_solved = true;
       for (int i = 0; i < (int)task.test.size(); ++i) {
         auto &ex = task.test[i];
+        gpu_score_terms terms;
         auto [s, solved] = environment::score_tree_output(
-            task.best_tree, ex, temp, task, task.best_node_count);
-        log_score(i, temp, ex, "import_test");
+            task.best_tree, ex, temp, task, task.best_node_count, &terms);
+        log_score(i, terms, "import_test");
         ex.best_score = s;
         update_display_buffer(ex.best, temp, gpu_buffer);
         ex.output.visible = true;

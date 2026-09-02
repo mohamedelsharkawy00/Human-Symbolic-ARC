@@ -558,6 +558,18 @@ struct cuda_dsl_example_data {
 // Host-side batch for combined exec+score.
 // One job = one (program, example) pair.
 // Only contains per-batch data (programs + results). No per-example data.
+// What the score was made of, straight from the kernel that made it. A host
+// mirror of the formula drifted the moment a term was added on one side only,
+// and it did: focus, vandal and lookahead were GPU-only, so every [SCORE] line
+// ever printed was a partial sum that could not equal the number the beam ranks
+// by. One home: the kernel computes these, so the kernel reports them.
+struct gpu_score_terms {
+    float focus = 0, vandal = 0, exact = 0, histogram = 0, distance = 0;
+    float rarity = 0, shape = 0, color = 0, position = 0, lookahead = 0;
+    float node_penalty = 0, dimension_penalty = 0;
+    float total = 0;
+};
+
 struct cuda_dsl_exec_batch {
     int job_count = 0;
     int active_examples = 0;
@@ -579,6 +591,7 @@ struct cuda_dsl_exec_batch {
     // canvas are the same answer however differently they were spelled, and the
     // grid itself is far too wide to bring back for every job.
     pinned_vector<uint64_t> output_hashes;  // [job_count]
+    pinned_vector<gpu_score_terms> score_terms;  // [job_count]
 
     void resize(int count) {
         job_count = count;
@@ -591,6 +604,7 @@ struct cuda_dsl_exec_batch {
         output_grids.resize(count * GPU_GRID_CELLS);
         output_dims_result.resize(count * 2);
         output_hashes.resize(count);
+        score_terms.resize(count);
     }
 };
 

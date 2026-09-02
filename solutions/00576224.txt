@@ -1,1 +1,9 @@
 Input SelectAll Tile[1] Union CurrentObjects SelectAll AlignToCanvas Union CurrentObjects SelectAll FlipHorizontal Union Input SelectAll Fractal Underlay
+Puzzle:       00576224
+Train:        Solved
+Test:         Solved
+Elapsed:      00:02:14.4250
+Attempts:     47823984
+Nodes:        16
+Best Score:   6126.0000
+Max Depth:    16

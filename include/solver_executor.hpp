@@ -1416,38 +1416,21 @@ namespace arc {
     m_log.tree_record(tree, score, attempts);
   }
 
-  inline void beam_solver::log_score_formula(const node *tree, const vector<score_breakdown> &breakdowns) {
-    if (breakdowns.empty())
+  inline void beam_solver::log_score_formula(const node *tree, const vector<gpu_score_terms> &terms) {
+    if (terms.empty())
       return;
-
     string tree_str = environment::stringify_tree_via_flat(tree);
-    for (int i = 0; i < (int)breakdowns.size(); ++i) {
-      const auto &b = breakdowns[i];
+    for (int i = 0; i < (int)terms.size(); ++i) {
+      const gpu_score_terms &t = terms[i];
       log_debug(fmt::format(
-          "[SCORE] tree=\"{}\" ex={} mismatches={} exact_term={:.6f} histogram_error={:.6f} histogram_term={:.6f} "
-          "distance_error={:.6f} distance_term={:.6f} rarity_score={:.6f} rarity_term={:.6f} "
-          "shape_matches={} shape_term={:.6f} color_matches={} color_term={:.6f} "
-          "position_score={:.4f} position_term={:.6f} "
-          "node_penalty={:.6f} dim_penalty={:.6f} "
-          "dims_match={} solved={} "
-          "formula=({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})+({:.6f})-({:.6f})-({:.6f})={:.6f} "
-          "total={:.6f}",
-          tree_str,
-          i,
-          b.mismatches, b.exact_term,
-          b.histogram_error, b.histogram_term,
-          b.distance_error, b.distance_term,
-          b.rarity_score, b.rarity_term,
-          b.shape_matches, b.shape_term, b.color_matches, b.color_term,
-          b.position_score, b.position_term,
-          b.node_penalty,
-          b.dimension_penalty,
-          b.dims_match ? "true" : "false",
-          b.solved ? "true" : "false",
-          b.exact_term, b.histogram_term, b.distance_term, b.rarity_term,
-          b.shape_term, b.color_term, b.position_term,
-          b.node_penalty, b.dimension_penalty, b.total,
-          b.total));
+          "[SCORE] tree=\"{}\" ex={} focus={:.4f} vandal={:.4f} exact={:.4f} histogram={:.4f} "
+          "distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} position={:.4f} "
+          "lookahead={:.4f} node_penalty={:.4f} dim_penalty={:.4f} sum={:.4f} total={:.4f}",
+          tree_str, i, t.focus, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
+          t.shape, t.color, t.position, t.lookahead, t.node_penalty, t.dimension_penalty,
+          t.focus + t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
+              t.color + t.position + t.lookahead + t.node_penalty + t.dimension_penalty,
+          t.total));
     }
   }
 
@@ -1908,6 +1891,7 @@ namespace arc {
         int node_count = 0, active = 0, target_idx = -1;
         float score[16] = {};
         bool solved[16] = {};
+        gpu_score_terms terms[16] = {};
         bool valid = false;
       };
       static thread_local deferred_winner tl_deferred[2];
@@ -2239,7 +2223,7 @@ namespace arc {
           winner_res.train.assign(p.train.size(), candidate_result{});
           winner_res.total_train_score = 0.0f;
           winner_res.all_train_solved = true;
-          static thread_local vector<score_breakdown> winner_breakdowns;
+          static thread_local vector<gpu_score_terms> winner_breakdowns;
           winner_breakdowns.clear();
           winner_breakdowns.reserve(done.active);
 
@@ -2259,14 +2243,7 @@ namespace arc {
             winner_res.total_train_score += done.score[i];
             if (!done.solved[i]) winner_res.all_train_solved = false;
 
-            const object_summary* tobjs = nullptr;
-            int tobj_count = 0;
-            if (i < (int)p.target_objects.size()) {
-              tobjs = p.target_objects[i].objs;
-              tobj_count = p.target_objects[i].count;
-            }
-            winner_breakdowns.push_back(environment::analyze_output_score(
-                winner_res.train[i].state, p.train[i], done.node_count, tobjs, tobj_count));
+            winner_breakdowns.push_back(done.terms[i]);
           }
           }
 
@@ -2298,6 +2275,7 @@ namespace arc {
             if (j < 0 || j >= prev_batch.job_count) { next.active = i; break; }
             next.score[i] = prev_batch.scores[j];
             next.solved[i] = (prev_batch.solved[j] != 0);
+            next.terms[i] = prev_batch.score_terms[j];
           }
           next.valid = (next.tree != nullptr);
         }

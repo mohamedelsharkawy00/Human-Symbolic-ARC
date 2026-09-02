@@ -15,7 +15,8 @@ namespace arc {
 
 	inline bool environment::execute_flat_program(
 		const flat_program& program, const example& ex, grid& output,
-		const puzzle& p, int node_count, float& out_score, bool& out_solved) {
+		const puzzle& p, int node_count, float& out_score, bool& out_solved,
+		gpu_score_terms* out_terms) {
 
 		out_score = SCORE_MIN;
 		out_solved = false;
@@ -92,6 +93,7 @@ namespace arc {
 		// Read GPU score + solved flag directly — no CPU re-scoring.
 		out_score = batch.scores[0];
 		out_solved = (batch.solved[0] != 0);
+		if (out_terms) *out_terms = batch.score_terms[0];
 
 		// Copy output grid back
 		const int8_t* og = batch.output_grids.data();

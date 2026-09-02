@@ -3526,6 +3526,7 @@ static int8_t*           d_scratch_solved = nullptr;
 static int8_t*           d_scratch_output_grids = nullptr;
 static int8_t*           d_scratch_output_dims = nullptr;
 static uint64_t*         d_scratch_output_hashes = nullptr;
+static gpu_score_terms*  d_scratch_score_terms = nullptr;
 static int               d_scratch_capacity = 0;
 // Rule is per-puzzle, cache on device
 static int8_t*  d_cached_rule_type = nullptr;
@@ -3548,6 +3549,7 @@ static int8_t*           d_exec_solved[2] = {nullptr, nullptr};
 static int8_t*           d_exec_output_grids[2] = {nullptr, nullptr};
 static int8_t*           d_exec_output_dims[2] = {nullptr, nullptr};
 static uint64_t*         d_exec_output_hashes[2] = {nullptr, nullptr};
+static gpu_score_terms*  d_exec_score_terms[2] = {nullptr, nullptr};
 static int               d_exec_capacity[2] = {0, 0};
 
 static void resize_exec_buffers(int job_count, int& capacity,
@@ -3555,7 +3557,7 @@ static void resize_exec_buffers(int job_count, int& capacity,
                                 int8_t*& prog_lens, int8_t*& node_cnts,
                                 float*& scores, int8_t*& solved,
                                 int8_t*& out_grids, int8_t*& out_dims,
-                                uint64_t*& out_hashes) {
+                                uint64_t*& out_hashes, gpu_score_terms*& out_terms) {
     if (job_count <= capacity) return;
 
     cudaFree(ctxs);
@@ -3567,6 +3569,7 @@ static void resize_exec_buffers(int job_count, int& capacity,
     cudaFree(out_grids);
     cudaFree(out_dims);
     cudaFree(out_hashes);
+    cudaFree(out_terms);
 
     capacity = job_count;
     // Check every cudaMalloc. An unchecked device-OOM here leaves null device
@@ -3592,6 +3595,7 @@ static void resize_exec_buffers(int job_count, int& capacity,
     chk(cudaMalloc(&out_grids, (size_t)job_count * GPU_GRID_CELLS * sizeof(int8_t)), "out_grids", (size_t)job_count * GPU_GRID_CELLS);
     chk(cudaMalloc(&out_dims,  (size_t)job_count * 2 * sizeof(int8_t)), "out_dims", (size_t)job_count * 2);
     chk(cudaMalloc(&out_hashes, (size_t)job_count * sizeof(uint64_t)), "out_hashes", (size_t)job_count * sizeof(uint64_t));
+    chk(cudaMalloc(&out_terms, (size_t)job_count * sizeof(gpu_score_terms)), "out_terms", (size_t)job_count * sizeof(gpu_score_terms));
     if (e != cudaSuccess) std::abort();
 }
 
@@ -3601,7 +3605,7 @@ static void ensure_exec_capacity(int job_count, int slot) {
                         d_exec_prog_lengths[slot], d_exec_node_counts[slot],
                         d_exec_scores[slot], d_exec_solved[slot],
                         d_exec_output_grids[slot], d_exec_output_dims[slot],
-                        d_exec_output_hashes[slot]);
+                        d_exec_output_hashes[slot], d_exec_score_terms[slot]);
 }
 
 // Build host-side templates from cuda_dsl_example_data. Shared by main + scratch paths.
@@ -3892,6 +3896,7 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
     int8_t* __restrict__ solved_out,
     int8_t* __restrict__ output_dims,
     uint64_t* __restrict__ output_hashes,
+    gpu_score_terms* __restrict__ score_terms,
     int active_examples,
     int job_count)
 {
@@ -4175,9 +4180,10 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
             }
         }
 
-        // Lookahead term is GPU-only (beam ranking); the host mirror
-        // analyze_output_score does not include it — [SCORE] log totals will
-        // differ from live beam totals by exactly this term.
+        // Lookahead: beam ranking only. It used to be GPU-only against a host
+        // mirror that did not have it, so every [SCORE] line was short by
+        // exactly this. The kernel reports its own terms now, so there is
+        // nothing left to drift from.
         constexpr float W_LOOKAHEAD = 2.0f;
         // Focus term (GPU-only, like lookahead): correct cells of the focus
         // color — already painted or pending — count extra. Deliberately
@@ -4197,7 +4203,13 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
                     + shape_matches * GPU_SCORE_W_SHAPE_MATCH
                     + color_matches * GPU_SCORE_W_COLOR_MATCH
                     + position_score * GPU_SCORE_W_POSITION_MATCH
-                    + (my_look_gain - my_look_spoil) * W_LOOKAHEAD
+                    // EXPERIMENT: lookahead removed. It scores what a chain is
+                    // still HOLDING as if it were about to paint it -- the answer
+                    // to an unfinished chain, which the four-beat cannot produce:
+                    // every program ends in a COMBINE. What is left in hand after
+                    // the last paint is a leftover, not an intention, and scoring
+                    // it made a solved program lose 24 to 48 points for having a
+                    // non-empty hand.
                     - (nc * GPU_SCORE_W_NODE_PENALTY)
                     - dim_pen;
 
@@ -4215,6 +4227,21 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
         }
         scores[idx] = total;
         solved_out[idx] = (dims_match && my_mismatches == 0) ? 1 : 0;
+        // Say what that was made of, so nothing has to mirror the formula.
+        gpu_score_terms& terms = score_terms[idx];
+        terms.focus             = focus_term;
+        terms.vandal            = -my_vandal * W_VANDAL;
+        terms.exact             = -my_exact_err;
+        terms.histogram         = -hist_err * GPU_SCORE_W_HISTOGRAM;
+        terms.distance          = -my_dist_err * GPU_SCORE_W_DISTANCE_MAP;
+        terms.rarity            = rarity_score * GPU_SCORE_W_RARITY_MATCH;
+        terms.shape             = shape_matches * GPU_SCORE_W_SHAPE_MATCH;
+        terms.color             = color_matches * GPU_SCORE_W_COLOR_MATCH;
+        terms.position          = position_score * GPU_SCORE_W_POSITION_MATCH;
+        terms.lookahead         = 0.0f;  // see above
+        terms.node_penalty      = -(nc * GPU_SCORE_W_NODE_PENALTY);
+        terms.dimension_penalty = -dim_pen;
+        terms.total             = total;
     }
 }
 
@@ -4354,13 +4381,14 @@ void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch, int slot) {
     dsl_score_kernel<<<n, 32, 0, s>>>(
         d_exec_contexts[slot], d_example_templates, d_exec_node_counts[slot],
         d_exec_scores[slot], d_exec_solved[slot], d_exec_output_dims[slot],
-        d_exec_output_hashes[slot],
+        d_exec_output_hashes[slot], d_exec_score_terms[slot],
         active, n);
     capture_cuda_err("score-launch", cudaGetLastError(), slot, n);
 
     cudaMemcpyAsync(batch.scores.data(), d_exec_scores[slot], n * sizeof(float),  cudaMemcpyDeviceToHost, s);
     cudaMemcpyAsync(batch.solved.data(), d_exec_solved[slot], n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
     cudaMemcpyAsync(batch.output_hashes.data(), d_exec_output_hashes[slot], n * sizeof(uint64_t), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.score_terms.data(), d_exec_score_terms[slot], n * sizeof(gpu_score_terms), cudaMemcpyDeviceToHost, s);
     // No sync here — caller does CPU work then calls cuda_dsl_wait_for_exec(slot).
 }
 
@@ -4440,7 +4468,7 @@ static void ensure_scratch_capacity(int job_count) {
                         d_scratch_prog_lengths, d_scratch_node_counts,
                         d_scratch_scores, d_scratch_solved,
                         d_scratch_output_grids, d_scratch_output_dims,
-                        d_scratch_output_hashes);
+                        d_scratch_output_hashes, d_scratch_score_terms);
 }
 
 void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
@@ -4470,12 +4498,13 @@ void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
     dsl_score_kernel<<<n, 32, 0, s>>>(
         d_scratch_contexts, d_scratch_templates, d_scratch_node_counts,
         d_scratch_scores, d_scratch_solved, d_scratch_output_dims,
-        d_scratch_output_hashes,
+        d_scratch_output_hashes, d_scratch_score_terms,
         active, n);
     capture_cuda_err("scratch-score-launch", cudaGetLastError(), -1, n);
 
     cudaMemcpyAsync(batch.scores.data(), d_scratch_scores, n * sizeof(float),  cudaMemcpyDeviceToHost, s);
     cudaMemcpyAsync(batch.solved.data(), d_scratch_solved, n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.score_terms.data(), d_scratch_score_terms, n * sizeof(gpu_score_terms), cudaMemcpyDeviceToHost, s);
 
     cudaStreamSynchronize(s);
 }
