@@ -171,16 +171,24 @@ struct search_state {
   };
   struct cache_entry { float score; uint64_t grid_hash; };
 
-  // Total order on candidates: score first, then tree hash. Arrival order
-  // carries no information, so no tie may be broken by it — untied ranking is
-  // what makes a fresh run and a switched run the same search.
-  // Proven 2026-07-14 on 007bbfb7: score-only ties let container iteration
-  // order pick the beam, and fresh (50s, 11M attempts) vs switched (10s,
-  // 2.8M) diverged repeatably from one 8-candidate ripple in level 2.
+  // Total order on candidates: score first, then the OP LIST'S OWN ORDER. Ties
+  // are common — every additive selector is inert once the marks are already
+  // there — and a tie broken by hash picks a spelling at random, so the beam
+  // fills with whichever nonsense hashed highest. The ops are declared in an
+  // order that means something, so the earlier word wins, and a shorter program
+  // beats a longer one that starts the same.
+  // Arrival order still breaks nothing, which is the point. Proven 2026-07-14 on
+  // 007bbfb7: score-only ties let container iteration order pick the beam, and
+  // fresh (50s, 11M attempts) vs switched (10s, 2.8M) diverged repeatably from
+  // one 8-candidate ripple in level 2.
   static bool ranks_higher(const champion &a, const champion &b) {
     if (a.score != b.score) return a.score > b.score;
-    uint64_t ha = a.n ? a.n->hash : 0, hb = b.n ? b.n->hash : 0;
-    return ha > hb;
+    const node *x = a.n, *y = b.n;
+    for (; x && y; x = x->arg, y = y->arg) {
+      if (x->type != y->type) return to_underlying(x->type) < to_underlying(y->type);
+      if (x->value != y->value) return x->value < y->value;
+    }
+    return x == nullptr && y != nullptr;
   }
 
   vector<node *> history_pool;

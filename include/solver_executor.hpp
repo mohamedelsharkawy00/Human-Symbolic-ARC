@@ -203,6 +203,12 @@ namespace arc {
       if (cand.n)
         level_candidates.push_back({environment::copy(cand.n), cand.score, cand.grid_hash});
     commit_level_champion();
+    // The beam's own order, so a tie decided later can be traced to where it
+    // actually sat rather than guessed at.
+    for (int i = 0; i < (int)beam.size() && i < 8; ++i)
+      if (beam[i].n)
+        log_debug(fmt::format("[BEAM {}] {:.2f}  \"{}\"", i, (double)beam[i].score,
+                              environment::stringify_tree_via_flat(beam[i].n)));
     log_debug(fmt::format(
         "[GEN] walked={} kept={} already_seen={} members_skipped={} beam={} sweep={}",
         pairs_walked, pairs_kept, pairs_already_seen, members_skipped,
@@ -256,6 +262,13 @@ namespace arc {
     is_generating_layer = true;
 
     if (m_app_state.sentence_search) {
+      // Every candidate of a level stays live until it is merged, and a level is
+      // beam x sweep -- 23.8M chains at beam 128, which fills the process memory
+      // limit and stops dead. Distil whenever the pile gets big, the same cap the
+      // op-at-a-time path applies per slot. Safe here and only here: pending
+      // BORROWS these nodes and the guard above proved it empty.
+      if ((int)current_slot_candidates.size() >= MAX_CANDIDATES_PER_SLOT)
+        merge_slot_candidates();
       // Commit only once the batch just made has been drained: level_candidates
       // is released on commit, and pending_evaluation only BORROWS those nodes.
       // Committing with any still queued hands the worker freed memory.
@@ -1132,6 +1145,13 @@ namespace arc {
     // but that phase isn't on the critical path. Kept because it's correct
     // and cheap (one hash probe per candidate), not because it's a big win.
     // The real bottleneck is the L2 cand=1M cap, not grid redundancy.
+    // Two candidates that paint the same canvas are one answer, so keep the one
+    // that RANKS higher rather than the one that happened to arrive first.
+    // Arrival carries no information -- and whether a candidate even has a grid
+    // hash by now depends on whether its batch came back, so letting arrival
+    // choose lets GPU timing pick the spelling that reaches the beam.
+    static thread_local unordered_map<uint64_t, size_t> best_by_grid;
+    best_by_grid.clear();
     int dropped = 0;
     for (auto &cand : current_slot_candidates) {
       if (!cand.n) continue;
@@ -1139,13 +1159,29 @@ namespace arc {
         level_candidates.push_back(cand);
         continue;
       }
-      if (visited_grids.insert_if_new(cand.grid_hash)) {
+      auto seat = best_by_grid.find(cand.grid_hash);
+      if (seat == best_by_grid.end()) {
+        // A canvas first seen in an EARLIER merge of this level has no
+        // contender left to compare against; its winner is already downstream.
+        if (!visited_grids.insert_if_new(cand.grid_hash)) {
+          environment::remove(cand.n);
+          cand.n = nullptr;
+          dropped++;
+          continue;
+        }
+        best_by_grid[cand.grid_hash] = level_candidates.size();
         level_candidates.push_back(cand);
+        continue;
+      }
+      champion &held = level_candidates[seat->second];
+      if (ranks_higher(cand, held)) {
+        environment::remove(held.n);
+        held = cand;
       } else {
         environment::remove(cand.n);
         cand.n = nullptr;
-        dropped++;
       }
+      dropped++;
     }
     if (dropped > 0) {
       log_debug(fmt::format("[GRID-DEDUP] dropped={} kept={} grids_seen={}",
@@ -2347,6 +2383,44 @@ namespace arc {
 
     uint32_t base_mask = 0;
     float base_sum = score_flat(flat, base_mask);
+
+    // A sentence is the unit, so a sentence is what may be dropped. Taking
+    // single ops out writes a program the generator could never have written,
+    // and this search could never find again -- a solution in a language the
+    // solver does not speak. Four tries on a four-sentence program, against
+    // C(n,k) subsets, and it asks the better question: is this sentence
+    // pulling its weight?
+    if (m_app_state.sentence_search && flat.count >= 8 && flat.count % 4 == 0) {
+      bool dropped_any = false;
+      for (bool again = true; again;) {
+        again = false;
+        int sentences = flat.count / 4;
+        for (int drop = 0; drop < sentences; ++drop) {
+          flat_program without;
+          for (int i = 0; i < flat.count; ++i)
+            if (i / 4 != drop) without.push(flat.ops[i].type, flat.ops[i].value);
+          uint32_t mask = 0;
+          float sum = score_flat(without, mask);
+          // Keep every example that was solved, and be strictly better: a
+          // sentence that changes nothing sheds its node penalty and so wins.
+          if ((mask & base_mask) == base_mask && sum > base_sum + 0.0001f) {
+            flat = without;
+            base_sum = sum;
+            base_mask = mask;
+            dropped_any = true;
+            again = true;
+            break;
+          }
+        }
+      }
+      if (!dropped_any) {
+        out_node_count = flat.count;
+        return tree;
+      }
+      node *by_sentence = environment::build_chain_from_flat(flat);
+      out_node_count = flat.count;
+      return by_sentence ? by_sentence : tree;
+    }
 
     // Lock-bound (deep) acceptance judges deletions by what the lock will
     // certify — cells explained and colors finished — never by beam score.

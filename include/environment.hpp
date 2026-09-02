@@ -30,7 +30,7 @@ namespace arc {
 	// --- Search Sentinels ---
 	constexpr int NODE_COUNT_MAX = 1000000;
 	constexpr int DISTANCE_MAX = 100;
-	constexpr size_t BEAM_WIDTH = 1024;
+	constexpr size_t BEAM_WIDTH = 128;
 	const int MAX_BATCH_SIZE = 5000;
 	constexpr int MAX_SEARCH_DEPTH = 32;
 
@@ -194,8 +194,12 @@ namespace arc {
 		if (is_get_op(t)) {
 			// A fresh source: nothing selected, but the new list owes a landing.
 			n->sel_waiting = false; n->work_unlanded = true; n->last_combine = prev_combine;
-			// A fetch hands back a brand new list, and new objects carry no marks.
-			n->something_picked = false;
+			// A fetch hands back a brand new list, and new objects carry no marks --
+			// except CurrentObjects, which hands back the SAME objects it was given,
+			// marks and all. Saying otherwise made the grammar demand a selection
+			// the kernel had already made, and every additive selector in that slot
+			// was then a different spelling of one program.
+			n->something_picked = (t == node_type::CurrentObjects) ? prev_picked : false;
 		} else if (is_select_op(t)) {
 			// A selection now waits to be acted on; touched the list.
 			n->sel_waiting = true; n->work_unlanded = true; n->last_combine = prev_combine;

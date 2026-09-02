@@ -1,1 +1,1 @@
-Input SelectAll TileY[4] Underlay CurrentObjects SelectAll Fractal Underlay Input SelectAll FlipHorizontal Underlay CurrentObjects SelectAll Fractal Underlay
+Input SelectAll Tile[1] Union CurrentObjects SelectAll AlignToCanvas Union CurrentObjects SelectAll FlipHorizontal Union Input SelectAll Fractal Underlay
