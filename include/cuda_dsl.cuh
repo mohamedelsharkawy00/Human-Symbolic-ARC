@@ -168,7 +168,7 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
   X(FlipHorizontal, "FlipHorizontal", 0, 1, translate)                           \
   X(FlipVertical, "FlipVertical", 0, 1, translate)                               \
   X(Input, "Input", 0, 1, get)                                                   \
-  X(Output, "Output", 0, 1, get)                                                 \
+  X(Output, "Output", 0, 1, get)                                                   X(CurrentObjects, "CurrentObjects", 0, 1, get)                                 \
   X(Origin, "Origin", 0, 1, translate)                                           \
   X(Union, "Union", 0, 1, combine)                                               \
   /* DeleteSelection consumes the marks, it does not make them: an act. */       \

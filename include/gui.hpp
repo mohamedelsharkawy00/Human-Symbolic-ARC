@@ -226,18 +226,16 @@ inline void collect_pipeline_ops(node *root, vector<node *> &ops) {
   reverse(ops.begin(), ops.end());
 }
 
-// Number of wrapped lines a pipeline needs for a given horizontal budget. MUST
-// mirror draw_pipeline's token advance exactly so reflow and draw agree.
-inline int count_pipeline_lines(node *root, int start_x, int max_x, int scale, int pad) {
+// A program is sentences, so it reads as sentences: one to a line, four beats to
+// a sentence, and each beat in a column as wide as the widest word that lands in
+// it. The columns are what make GET under GET and ACT under ACT.
+// One line per sentence. MUST agree with draw_pipeline or reflow and draw
+// disagree about where the block ends.
+inline int count_pipeline_lines(node *root) {
   vector<node *> ops;
   collect_pipeline_ops(root, ops);
-  int gap = pad, x = start_x, lines = 1;
-  for (size_t i = 0; i < ops.size(); ++i) {
-    int bw = text_w(get_node_label(ops[i]->type, ops[i]->value), scale) + pad * 2;
-    if (i > 0 && x + bw > max_x) { x = start_x; ++lines; }
-    x += bw + gap;
-  }
-  return lines;
+  if (ops.empty()) return 1;
+  return (int)((ops.size() + 3) / 4);
 }
 
 // Draws the header: every control and stat, in reading order. Returns the
@@ -528,25 +526,26 @@ inline void draw_footer_rows(
     int line_h = 9 * scale + lay.v_gap; // matches frame_layout row_h
     vector<node *> ops;
     collect_pipeline_ops(root, ops);
+    (void)max_x;  // sentences decide the wrap now, not the right edge
 
     uint64_t hh = app_state.hovered_hash.load();
     int hs = app_state.hovered_source.load();
-    int x = start_x, y = top_y;
+    int x = start_x, y = top_y, end_x = start_x;
     for (size_t i = 0; i < ops.size(); ++i) {
       node *n = ops[i];
+      // A new sentence starts a new line; inside one, words just follow on.
+      if (i > 0 && i % 4 == 0) { x = start_x; y += line_h; }
       string label = get_node_label(n->type, n->value);
       int bw = text_w(label, scale) + pad * 2;
-      if (i > 0 && x + bw > max_x) {
-        x = start_x; y += line_h;
-      }
       int color_idx = 1;
       if (n->hash != 0 && hh == n->hash && hs == source)
         color_idx = 4;
       draw_boxed_text(context, font, label, x, y, scale, bw, box_h, color_idx);
       app_state.node_zones.push_back({x, y, bw, box_h, n->hash, source});
       x += bw + gap;
+      if (x > end_x) end_x = x;
     }
-    return x;
+    return end_x;
   };
 
   // Footer 1: CURRENT program pipeline
@@ -1919,12 +1918,10 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       int best_lw = text_w("BEST", fscale) + fpad * 2;
       int cur_lw = text_w("CURRENT", fscale) + fpad * 2;
       // Always reserve at least 3 lines each so the layout doesn't jump on wrap.
-      int best_lines = max(3, task.best_tree
-          ? count_pipeline_lines(task.best_tree, lay.base_margin + best_lw + fpad, max_x, fscale, fpad)
-          : 1);
-      int cur_lines = max(3, state.current_tree
-          ? count_pipeline_lines(state.current_tree, lay.base_margin + cur_lw + fpad, max_x, fscale, fpad)
-          : 1);
+      // Four sentences of room, always, so the footer does not walk up and down
+      // the screen as a program grows a sentence.
+      int best_lines = max(4, task.best_tree ? count_pipeline_lines(task.best_tree) : 1);
+      int cur_lines = max(4, state.current_tree ? count_pipeline_lines(state.current_tree) : 1);
       lay.footer2_y = lay.footer3_y - best_lines * line_h;
       lay.footer1_y = lay.footer2_y - cur_lines * line_h;
       // Safety: never let footers climb into the grid-label band (absurdly deep

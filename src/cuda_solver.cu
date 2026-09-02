@@ -3290,8 +3290,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
         // The chain starts from the input: the FIRST op sees the input rather
         // than an empty list, so no program needs a leading Input. Done here,
         // before the warp-wide op branches, because they gate on has_current_objects too.
-        // Only the first op: after a combine there are no current objects either, and there
-        // it means "the list was landed", not "start again from the input".
+        // Only the first op. A combine does NOT end the list -- all four pass it
+        // through unchanged -- so this cannot fire later in a chain.
         if (i == 0 && !has_current_objects && !is_get_op(type)) {
             if (lane == 0) { gpu_exec_input(ctx); ctx.current_objects_idx = ctx.pool_head - 1; }
             __syncwarp();
@@ -3381,6 +3381,11 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             gpu_exec_move_warp(ctx, GPU_DEV_MOVE_DELTAS[value], false, lane);
             continue;
         }
+
+        // --- CurrentObjects: the objects in hand are already the ones in hand,
+        // so there is nothing to fetch. It exists so a sentence can name its
+        // source as "the ones I have" instead of throwing them away. ---
+        if (type == node_type::CurrentObjects) continue;
 
         // --- Seeds: no work, just update index (all lanes agree to skip) ---
         if (type == node_type::Seeds) {

@@ -78,14 +78,9 @@ struct flat_hash_set_u64 {
                 insert(v);
     }
 
-    // Boost-style hash combining leaves weak low bits, which clustered hard
-    // under linear probing. splitmix64 finalizer mixes them in ~2 cycles.
-    static uint64_t mix(uint64_t x) {
-        x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
-        x ^= x >> 27; x *= 0x94d049bb133111ebULL;
-        x ^= x >> 31; return x;
-    }
-    size_t probe(uint64_t h) const { return mix(h) & mask; }
+    // Hashes arrive finalized (environment::mix64), but probing mixes again so
+    // this table stays correct for any caller's numbering.
+    size_t probe(uint64_t h) const { return mix64(h) & mask; }
 
     bool contains(uint64_t v) const {
         if (v == EMPTY) v = 2;
@@ -290,6 +285,12 @@ struct search_state {
   int sweep_beam_idx = 0;
   int sweep_idx = 0;
   bool sweep_ready = false;
+  // What the generator actually did this level. Generate-and-reject has no place
+  // here, so anything walked and not kept is a number that should be zero.
+  long long pairs_walked = 0;
+  long long pairs_kept = 0;
+  long long pairs_already_seen = 0;
+  long long members_skipped = 0;
 
   // Where a worker iteration's time actually goes, reported once per level.
   // Counters, not log lines — logging the hot path is what distorted the
@@ -498,7 +499,7 @@ private:
   // by construction — a GET starts, a SELECT marks, an ACT spends the mark, a
   // COMBINE lands it — so only the puzzle's own gates take anything out. One set,
   // not two: a sentence names its own source wherever it sits.
-  void enumerate_sentences(vector<sentence> &out) const;
+  void enumerate_sentences(bool sentence_opens_program, vector<sentence> &out) const;
   void update_history_from_beam();
   void collect_subtrees(node *n, unordered_set<uint64_t> &existing, int &added);
   void rebuild_skeleton_beam();
@@ -525,6 +526,7 @@ private:
   // One batch of whole sentences. True when the level has no more to give.
   bool generate_sentence_batch();
   void commit_sentence_level();
+  void log_level_timing();
   void commit_and_advance_level();
   void advance_beam_idx();
   bool process_current_phase(const slot_t &slot, node* base, node* target, int& batch_count);

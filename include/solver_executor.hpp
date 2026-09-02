@@ -114,24 +114,7 @@ namespace arc {
     update_history_from_beam();
     m_consec_dry_beam_entries = 0;
 
-    long long fetch_copy_ns = 0, fetch_sync_ns = 0;
-    cuda_dsl_take_fetch_ns(&fetch_copy_ns, &fetch_sync_ns);
-    long long wait_total = m_solver_state.gpu_wait_ns.load();
-    long long ns_wait = wait_total - ns_wait_at_last_level;
-    ns_wait_at_last_level = wait_total;
-    log_timing(fmt::format(
-      "gen={}ms launch={}ms wait={}ms idle={}ms | harvest={}ms = tally={}ms winner={}ms free={}ms rest={}ms"
-      " | winner = fetch={}ms analyze={}ms best={}ms rest={}ms"
-      " | fetch = copy={}ms sync={}ms",
-      ns_generate / 1000000, ns_launch / 1000000, ns_wait / 1000000, ns_idle / 1000000,
-      ns_harvest / 1000000, ns_tally / 1000000, ns_winner / 1000000, ns_free / 1000000,
-      (ns_harvest - ns_tally - ns_winner - ns_free) / 1000000,
-      ns_fetch / 1000000, ns_analyze / 1000000, ns_best / 1000000,
-      (ns_winner - ns_fetch - ns_analyze - ns_best) / 1000000,
-      fetch_copy_ns / 1000000, fetch_sync_ns / 1000000));
-    ns_generate = ns_launch = ns_harvest = ns_idle = 0;
-    ns_tally = ns_winner = ns_free = 0;
-    ns_fetch = ns_analyze = ns_best = 0;
+    log_level_timing();
   }
 
   // One batch of whole sentences. Level 1 has an empty beam, so a sentence IS
@@ -139,7 +122,7 @@ namespace arc {
   // the level has nothing left to give.
   inline bool beam_solver::generate_sentence_batch() {
     if (!sweep_ready) {
-      enumerate_sentences(sweep);
+      enumerate_sentences(beam.empty(), sweep);
       sweep_ready = true;
       sweep_beam_idx = 0;
       sweep_idx = 0;
@@ -162,16 +145,18 @@ namespace arc {
           continue;
         }
         node *base = beam[sweep_beam_idx].n;
-        if (!base) { sweep_idx = 0; sweep_beam_idx++; continue; }
+        if (!base) { members_skipped++; sweep_idx = 0; sweep_beam_idx++; continue; }
         if (flattened_for != sweep_beam_idx) {
           program.clear();
           if (!environment::flatten_unary_program(base, program)) {
+            members_skipped++;
             sweep_idx = 0;
             sweep_beam_idx++;
             continue;
           }
           // A sentence is four ops, so the depth cap bounds how many fit.
           if (program.count + 4 > MAX_SEARCH_DEPTH) {
+            members_skipped++;
             sweep_idx = 0;
             sweep_beam_idx++;
             continue;
@@ -183,6 +168,7 @@ namespace arc {
       }
 
       const int base_count = program.count;
+      pairs_walked++;
       if (!write_sentence(sweep[sweep_idx++], program)) {
         program.count = base_count;
         continue;
@@ -192,6 +178,10 @@ namespace arc {
       program.count = base_count;
       if (!candidate) continue;
       if (!visited.insert_if_new(candidate->hash)) {
+        if (pairs_already_seen < 5)
+          log_debug(fmt::format("[GEN-DUP] \"{}\"",
+                                environment::stringify_tree_via_flat(candidate)));
+        pairs_already_seen++;
         environment::remove(candidate);
         continue;
       }
@@ -199,6 +189,7 @@ namespace arc {
       // ref, pending_evaluation only borrows it.
       current_slot_candidates.push_back({candidate, 0.0f, 0});
       pending_evaluation.push(candidate);
+      pairs_kept++;
       made++;
     }
     return false;
@@ -212,11 +203,40 @@ namespace arc {
       if (cand.n)
         level_candidates.push_back({environment::copy(cand.n), cand.score, cand.grid_hash});
     commit_level_champion();
+    log_debug(fmt::format(
+        "[GEN] walked={} kept={} already_seen={} members_skipped={} beam={} sweep={}",
+        pairs_walked, pairs_kept, pairs_already_seen, members_skipped,
+        (int)beam.size(), (int)sweep.size()));
+    pairs_walked = pairs_kept = pairs_already_seen = members_skipped = 0;
+    log_level_timing();
     visited.clear();
     visited_grids.clear();
     sweep_ready = false;
     sweep_beam_idx = 0;
     sweep_idx = 0;
+  }
+
+  // Where a level's time actually went, said once when it closes. Both level
+  // commits report through here so the two searches read the same way.
+  inline void beam_solver::log_level_timing() {
+    long long fetch_copy_ns = 0, fetch_sync_ns = 0;
+    cuda_dsl_take_fetch_ns(&fetch_copy_ns, &fetch_sync_ns);
+    long long wait_total = m_solver_state.gpu_wait_ns.load();
+    long long ns_wait = wait_total - ns_wait_at_last_level;
+    ns_wait_at_last_level = wait_total;
+    log_timing(fmt::format(
+      "gen={}ms launch={}ms wait={}ms idle={}ms | harvest={}ms = tally={}ms winner={}ms free={}ms rest={}ms"
+      " | winner = fetch={}ms analyze={}ms best={}ms rest={}ms"
+      " | fetch = copy={}ms sync={}ms",
+      ns_generate / 1000000, ns_launch / 1000000, ns_wait / 1000000, ns_idle / 1000000,
+      ns_harvest / 1000000, ns_tally / 1000000, ns_winner / 1000000, ns_free / 1000000,
+      (ns_harvest - ns_tally - ns_winner - ns_free) / 1000000,
+      ns_fetch / 1000000, ns_analyze / 1000000, ns_best / 1000000,
+      (ns_winner - ns_fetch - ns_analyze - ns_best) / 1000000,
+      fetch_copy_ns / 1000000, fetch_sync_ns / 1000000));
+    ns_generate = ns_launch = ns_harvest = ns_idle = 0;
+    ns_tally = ns_winner = ns_free = 0;
+    ns_fetch = ns_analyze = ns_best = 0;
   }
 
   inline bool beam_solver::pump_generate(const puzzle &p,
@@ -341,15 +361,31 @@ namespace arc {
       for (int v = 0; v < variants; ++v) {
         int16_t value = is_annotated(t) ? get_variant_value(t, v) : (int16_t)0;
         if (!color_literal_allowed(t, value)) continue;
+        // An op's variant COUNT is not its number of distinct values: Skew has
+        // 47 indices and two answers. Enumerating indices puts the same word in
+        // the sweep many times, and every sentence built from it is built to be
+        // thrown away. Each (op, value) belongs here once.
+        bool already = false;
+        for (const flat_program_op &seen : out)
+          if (seen.type == t && seen.value == value) { already = true; break; }
+        if (already) continue;
         out.push_back({t, value});
       }
     }
   }
 
-  inline void beam_solver::enumerate_sentences(vector<sentence> &out) const {
+  inline void beam_solver::enumerate_sentences(bool sentence_opens_program,
+                                               vector<sentence> &out) const {
     out.clear();
     vector<flat_program_op> gets, selects, acts, combines;
     beat_choices(op_role::get, gets);
+    // A sweep must not hold a sentence the grammar forbids. Asking legal_next
+    // keeps that rule in its one home, and keeps the forbidden ones from being
+    // built and thrown away.
+    if (sentence_opens_program)
+      gets.erase(std::remove_if(gets.begin(), gets.end(),
+                     [](const flat_program_op &op) { return !legal_next(nullptr, op.type); }),
+                 gets.end());
     beat_choices(op_role::select, selects);
     beat_choices(op_role::combine, combines);
     // ACT is the four middle roles folded together, so it is gathered by role.

@@ -228,7 +228,7 @@ namespace arc {
 		// first op is a GET and only a GET; later a GET is a refetch, legal right
 		// after a COMBINE. Every op past the first therefore HAS a source by
 		// induction, which is why no rule below has to ask.
-		if (arg == nullptr) return is_get_op(type);
+		if (arg == nullptr) return is_get_op(type) && type != node_type::CurrentObjects;
 		if (is_get_op(type)) return is_combine_op(arg->type);
 		if (is_select_op(type)) return true;              // Rule 2
 		if (is_act_op(type))    return true;              // Rule 3
@@ -249,6 +249,14 @@ namespace arc {
 
 	// Compact summary of one connected component in a grid: color, bbox size,
 	// position, pixel count. This is all the CC-match score needs — no per-cell mask.
+	// splitmix64 finalizer. Turns a weakly-folded value into one whose bits are
+	// all doing work, in about two cycles.
+	inline uint64_t mix64(uint64_t x) {
+		x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
+		x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+		x ^= x >> 31; return x;
+	}
+
 	struct object_summary {
 		int8_t color = -1;
 		int8_t w = 0;
@@ -879,7 +887,11 @@ namespace arc {
 			h ^= (uint64_t)n->value + 0x9e3779b9 + (h << 6) + (h >> 2);
 			if (n->arg)
 				h ^= n->arg->hash + 0x9e3779b9 + (h << 6) + (h >> 2);
-			n->hash = h;
+			// The fold above is boost's 32-bit hash_combine doing a 64-bit job, and
+			// the search compares these numbers for EQUALITY -- two programs that
+			// land on one number are one program as far as it can tell, and the
+			// second is never tried. Finalize so distinct programs stay distinct.
+			n->hash = mix64(h);
 		}
 
 
