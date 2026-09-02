@@ -610,6 +610,15 @@ bool cuda_dsl_take_error(char* out, int outsz);
 
 // Fetch output grids for a specific winner from GPU. Call after picking winner.
 void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples, int slot);
+// The same copy, issued and left to travel: the caller reads it one harvest
+// later, after the wait_for_exec on that slot has ordered it, and so never
+// stands still for a picture. It lands in its OWN buffer rather than the
+// batch's, because the batch is repacked in between and can reallocate under a
+// DMA. cuda_dsl_winner_grids/dims hand back where it landed: `active` grids laid
+// end to end, first example first.
+void cuda_dsl_fetch_output_grids_async(int winner_idx, int active_examples, int slot);
+const int8_t* cuda_dsl_winner_grids(int slot);
+const int8_t* cuda_dsl_winner_dims(int slot);
 // Reads and zeroes the fetch's own split: nanoseconds in the copies, and in
 // the stream sync that follows them.
 void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns);

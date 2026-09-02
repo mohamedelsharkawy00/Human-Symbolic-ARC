@@ -1899,6 +1899,18 @@ namespace arc {
     while (!m_app_state.stop_threads) {
       static thread_local vector<node*> tl_prev_nodes[2];
       static thread_local bool tl_slot_pending[2] = {false, false};
+      // A winner's picture is wanted for the screen, not for the decision, so it
+      // is asked for now and read one harvest later. Everything the read still
+      // needs is kept here, because the batch's own scores are overwritten by
+      // then.
+      struct deferred_winner {
+        node *tree = nullptr;
+        int node_count = 0, active = 0, target_idx = -1;
+        float score[16] = {};
+        bool solved[16] = {};
+        bool valid = false;
+      };
+      static thread_local deferred_winner tl_deferred[2];
 
       // Worker-side tail of the one reset: drain the GPU pipeline slots this
       // thread owns, then return the node pool to its opening state.
@@ -1907,6 +1919,11 @@ namespace arc {
           if (tl_slot_pending[s]) cuda_dsl_wait_for_exec(s);
           for (node *n : tl_prev_nodes[s]) environment::remove(n);
           tl_prev_nodes[s].clear();
+          // The deferred winner holds a tree too, and node_pool.release() below
+          // frees the pool out from under it.
+          if (tl_deferred[s].tree) environment::remove(tl_deferred[s].tree);
+          tl_deferred[s].tree = nullptr;
+          tl_deferred[s].valid = false;
           tl_slot_pending[s] = false;
         }
         node_pool.release();
@@ -2208,52 +2225,39 @@ namespace arc {
         // new active). Bigger batches stay in flight longer, so this fired routinely
         // at high TARGET_JOBS and confounded scoring/promotion (the "madness").
         bool batch_stale = (prev_batch.active_examples != active);
-        if (winner_idx >= 0 && !batch_stale) {
-          scope_ns t{ns_winner};
-          const int winner_node_count = prev_batch.node_counts[winner_idx];
-          // Also a GPU block: its stream sync waits on the running kernel, so
-          // it belongs in gpu_wait_ns or the busy readout under-reports.
-          { scope_ns tf{ns_fetch};
-            gpu_wait_scope tg{m_solver_state};
-            cuda_dsl_fetch_output_grids(prev_batch, winner_idx, active, wait_slot); }
 
-          // Reused across iterations. Bounded by p.train.size() / active,
-          // both <= MAX_TRAIN_EXAMPLES (~10). assign() (not resize) so the
-          // trailing [active, train.size()) slots are freshly defaulted
-          // rather than carrying stale data from a prior pass; clear()+
-          // reserve keeps capacity so neither reallocates after warmup.
+        // The picture asked for last time round this slot has landed: the copy
+        // rides that slot's stream, so the wait above ordered it. Read it BEFORE
+        // asking for the next one.
+        if (tl_deferred[wait_slot].valid) {
+          scope_ns t{ns_winner};
+          deferred_winner &done = tl_deferred[wait_slot];
+          const int8_t *grids = cuda_dsl_winner_grids(wait_slot);
+          const int8_t *dims  = cuda_dsl_winner_dims(wait_slot);
+
           static thread_local candidate_batch winner_res;
           winner_res.train.assign(p.train.size(), candidate_result{});
           winner_res.total_train_score = 0.0f;
           winner_res.all_train_solved = true;
           static thread_local vector<score_breakdown> winner_breakdowns;
           winner_breakdowns.clear();
-          winner_breakdowns.reserve(active);
+          winner_breakdowns.reserve(done.active);
 
           { scope_ns ta{ns_analyze};
-          for (int i = 0; i < active; ++i) {
-            int j = winner_idx * active + i;
-            if (j < 0 || j >= prev_batch.job_count)
-              diag_log(fmt::format("[ASSERT j-OOB] puz={} winner={} active={} batch_active={} i={} j={} job_count={}",
-                                   p.id, winner_idx, active, prev_batch.active_examples, i, j, prev_batch.job_count));
-            float gpu_score = prev_batch.scores[j];
-            bool gpu_solved = (prev_batch.solved[j] != 0);
-
-            const int8_t* og = prev_batch.output_grids.data() + j * GPU_GRID_CELLS;
-            int ow = prev_batch.output_dims_result[j * 2 + 0];
-            int oh = prev_batch.output_dims_result[j * 2 + 1];
-            if (ow < 0 || ow > GPU_MAX_GRID || oh < 0 || oh > GPU_MAX_GRID)
-              diag_log(fmt::format("[ASSERT dims-OOB] puz={} ex={} j={} ow={} oh={} winner={} active={} batch_active={}",
-                                   p.id, i, j, ow, oh, winner_idx, active, prev_batch.active_examples));
+          for (int i = 0; i < done.active && grids && dims; ++i) {
+            const int8_t *og = grids + (size_t)i * GPU_GRID_CELLS;
+            int ow = dims[i * 2 + 0];
+            int oh = dims[i * 2 + 1];
+            if (ow < 0 || ow > GPU_MAX_GRID || oh < 0 || oh > GPU_MAX_GRID) { ow = 0; oh = 0; }
             winner_res.train[i].state.width = ow;
             winner_res.train[i].state.height = oh;
             for (int r = 0; r < oh; ++r)
               for (int c = 0; c < ow; ++c)
                 winner_res.train[i].state.data[r][c] = (int)og[r * GPU_MAX_GRID + c];
             winner_res.train[i].valid = true;
-            winner_res.train[i].score = gpu_score;
-            winner_res.total_train_score += gpu_score;
-            if (!gpu_solved) winner_res.all_train_solved = false;
+            winner_res.train[i].score = done.score[i];
+            winner_res.total_train_score += done.score[i];
+            if (!done.solved[i]) winner_res.all_train_solved = false;
 
             const object_summary* tobjs = nullptr;
             int tobj_count = 0;
@@ -2261,25 +2265,41 @@ namespace arc {
               tobjs = p.target_objects[i].objs;
               tobj_count = p.target_objects[i].count;
             }
-            score_breakdown breakdown = environment::analyze_output_score(
-                winner_res.train[i].state, p.train[i], winner_node_count,
-                tobjs, tobj_count);
-            winner_breakdowns.push_back(breakdown);
+            winner_breakdowns.push_back(environment::analyze_output_score(
+                winner_res.train[i].state, p.train[i], done.node_count, tobjs, tobj_count));
           }
           }
 
           uint64_t g_hash = (!winner_res.train.empty() && winner_res.train[0].valid)
               ? winner_res.train[0].state.hash() : 0;
-
-          node *winner_tree = environment::copy(prev_original_nodes[wait_slot][winner_idx]);
-          if (winner_tree) {
-            log_score_formula(winner_tree, winner_breakdowns);
-            report_score(winner_tree, winner_res.total_train_score, g_hash);
+          if (done.tree) {
+            log_score_formula(done.tree, winner_breakdowns);
+            report_score(done.tree, winner_res.total_train_score, g_hash);
             { scope_ns tb{ns_best};
-              update_best_solution(target_idx, p, winner_tree,
-                                   winner_node_count, winner_res); }
-            environment::remove(winner_tree);
+              update_best_solution(done.target_idx, p, done.tree,
+                                   done.node_count, winner_res); }
+            environment::remove(done.tree);
+            done.tree = nullptr;
           }
+          done.valid = false;
+        }
+
+        // Ask for this batch's picture and leave it to travel.
+        if (winner_idx >= 0 && !batch_stale) {
+          deferred_winner &next = tl_deferred[wait_slot];
+          { scope_ns tf{ns_fetch};
+            cuda_dsl_fetch_output_grids_async(winner_idx, active, wait_slot); }
+          next.tree = environment::copy(prev_original_nodes[wait_slot][winner_idx]);
+          next.node_count = prev_batch.node_counts[winner_idx];
+          next.active = min(active, 16);
+          next.target_idx = target_idx;
+          for (int i = 0; i < next.active; ++i) {
+            int j = winner_idx * active + i;
+            if (j < 0 || j >= prev_batch.job_count) { next.active = i; break; }
+            next.score[i] = prev_batch.scores[j];
+            next.solved[i] = (prev_batch.solved[j] != 0);
+          }
+          next.valid = (next.tree != nullptr);
         }
         { scope_ns t{ns_free};
           for (node *n : prev_original_nodes[wait_slot]) environment::remove(n);

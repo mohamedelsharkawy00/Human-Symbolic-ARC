@@ -4378,6 +4378,42 @@ void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns) {
     g_fetch_sync_ns = 0;
 }
 
+// Where a winner's picture lands. Its own pinned buffer, allocated once and
+// never resized, so nothing can free it while a copy is still in flight.
+static int8_t* h_winner_grids[2] = {nullptr, nullptr};
+static int8_t* h_winner_dims[2]  = {nullptr, nullptr};
+
+static inline void ensure_winner_landing(int slot) {
+    if (h_winner_grids[slot]) return;
+    cudaHostAlloc((void**)&h_winner_grids[slot],
+                  (size_t)MAX_CACHED_EXAMPLES * GPU_GRID_CELLS, cudaHostAllocDefault);
+    cudaHostAlloc((void**)&h_winner_dims[slot],
+                  (size_t)MAX_CACHED_EXAMPLES * 2, cudaHostAllocDefault);
+}
+
+const int8_t* cuda_dsl_winner_grids(int slot) { return h_winner_grids[slot]; }
+const int8_t* cuda_dsl_winner_dims(int slot)  { return h_winner_dims[slot]; }
+
+void cuda_dsl_fetch_output_grids_async(int winner_idx, int active_examples, int slot) {
+    int active = std::min(active_examples, MAX_CACHED_EXAMPLES);
+    if (active <= 0 || winner_idx < 0) return;
+    ensure_winner_landing(slot);
+    if (!h_winner_grids[slot] || !h_winner_dims[slot]) return;
+    int base = winner_idx * active;
+    cudaStream_t s = get_exec_stream(slot);
+    auto t0 = std::chrono::steady_clock::now();
+    cudaMemcpyAsync(h_winner_grids[slot],
+                    d_exec_output_grids[slot] + (size_t)base * GPU_GRID_CELLS,
+                    (size_t)active * GPU_GRID_CELLS * sizeof(int8_t),
+                    cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(h_winner_dims[slot],
+                    d_exec_output_dims[slot] + (size_t)base * 2,
+                    (size_t)active * 2 * sizeof(int8_t),
+                    cudaMemcpyDeviceToHost, s);
+    g_fetch_copy_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+}
+
 void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples, int slot) {
     int active = std::min(active_examples, MAX_CACHED_EXAMPLES);
     int base = winner_idx * active;
