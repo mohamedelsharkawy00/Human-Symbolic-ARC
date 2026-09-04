@@ -159,6 +159,11 @@ private:
   inline void execute_action(ui_action action) {
     switch (action) {
       case ui_action::toggle_pause:   m_solver_threading.toggle_pause(); break;
+      // The drawer opens by dragging its handle, which nothing but a mouse can
+      // do -- so the port could not see the one panel that lists the ops.
+      case ui_action::toggle_op_list:
+        m_app_state.show_op_list.store(!m_app_state.show_op_list.load());
+        break;
       case ui_action::op_tab_get:       m_app_state.op_tab = (int)op_role::get; break;
       case ui_action::op_tab_reduce:    m_app_state.op_tab = (int)op_role::reduce; break;
       case ui_action::op_tab_select:    m_app_state.op_tab = (int)op_role::select; break;

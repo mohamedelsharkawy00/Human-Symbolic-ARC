@@ -291,6 +291,17 @@ inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }
 
+// Ops that lean on a fact inference elected. Each one quietly does nothing, or
+// does less, when that fact is absent -- so this is the list dead-op guards are
+// drawn from, and the one the palette paints yellow.
+inline constexpr bool reads_inference(node_type t) {
+    return t == node_type::InputWithoutBackground || t == node_type::Colors ||
+           t == node_type::Split || t == node_type::VoteDenoise ||
+           t == node_type::Seeds || t == node_type::ProjectOnSeeds ||
+           t == node_type::SizeRankColorMap || t == node_type::ShapeColorMap ||
+           t == node_type::ShapeToInteriorColorMap;
+}
+
 // Ops that hand back objects OTHER than the ones they were given, so no mark
 // can cross them. A mark is attached to an object's identity: a carve turns one
 // object into several, and the several are new; DeleteSelection keeps exactly

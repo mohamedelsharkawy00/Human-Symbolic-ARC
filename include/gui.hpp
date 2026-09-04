@@ -1725,7 +1725,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
 
   // One tab's ops, alphabetical, labelled exactly the way they draw.
   int n = (int)node_type::type_count;
-  auto labels_for = [&](int tab) {
+  auto labels_for = [&](int tab, vector<int> *out_ids = nullptr) {
     vector<int> ids;
     for (int i = 0; i < n; ++i)
       if ((int)role_of((node_type)i) == tab) ids.push_back(i);
@@ -1738,6 +1738,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
       if (is_annotated((node_type)i)) s += fmt::format("[{}-{}]", type_var_low[i], type_var_high[i]);
       labels.push_back(s);
     }
+    if (out_ids) *out_ids = ids;
     return labels;
   };
 
@@ -1747,7 +1748,8 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   bool has_subrow = sentence[active_part].kinds.size() > 1;
   vector<string> sub_labels;
   if (has_subrow) for (op_role k : sentence[active_part].kinds) sub_labels.push_back(tab_names[(int)k]);
-  vector<string> op_labels = labels_for(active);
+  vector<int> op_ids;
+  vector<string> op_labels = labels_for(active, &op_ids);
 
   // The drawer is as deep as its deepest tab, and always reserves the sub-kind
   // row. Its size belongs to the ops it holds -- it used to be floored on where
@@ -1850,25 +1852,29 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   int list_top = sep_y + vgap;
   int avail = lay.screen_w - 2 * hmargin;
   // Group ops into rows first, so each row can be horizontally centered.
-  vector<vector<pair<string,int>>> rows(1); // (label, box_w)
+  struct op_box { string label; int box_w; int id; };
+  vector<vector<op_box>> rows(1);
   int row_w = 0;
-  for (const string &label : op_labels) {
-    int bw = text_w(label, scale) + pad * 2;
+  for (size_t i = 0; i < op_labels.size(); ++i) {
+    int bw = text_w(op_labels[i], scale) + pad * 2;
     int add = bw + (rows.back().empty() ? 0 : pad);
     if (row_w + add > avail && !rows.back().empty()) { rows.emplace_back(); row_w = 0; add = bw; }
-    rows.back().push_back({label, bw});
+    rows.back().push_back({op_labels[i], bw, op_ids[i]});
     row_w += add;
   }
   int y = list_top;
   for (auto &row : rows) {
     int total = 0;
-    for (auto &c : row) total += c.second;
+    for (auto &c : row) total += c.box_w;
     total += (int)(row.size() - 1) * pad;
     int x = max(hmargin, (lay.screen_w - total) / 2);
     for (auto &c : row) {
+      // An op that leans on an inferred fact says so, because it goes quiet
+      // when inference abstains.
+      int col = reads_inference((node_type)c.id) ? (int)arc_color::yellow : 1;
       if (y >= 0)
-        draw_boxed_text(context, font, c.first, x, y, scale, c.second, box_h, 1);
-      x += c.second + pad;
+        draw_boxed_text(context, font, c.label, x, y, scale, c.box_w, box_h, col);
+      x += c.box_w + pad;
     }
     y += line_h;
   }
