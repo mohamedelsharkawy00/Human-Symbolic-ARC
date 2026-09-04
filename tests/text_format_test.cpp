@@ -40,6 +40,13 @@ int main() {
   same(shortest(12.5f), "12.5", "shortest exact float");
   same(shortest(1.0f / 3.0f), "0.33333334", "shortest awkward float");
   same(shortest(1234567.0f), "1234567", "shortest big float stays plain");
+  // Real scores off a solver log: an exponent here is the same number said worse.
+  same(shortest(2530.0f), "2530", "round score stays plain");
+  same(shortest(-40.0f), "-40", "round negative stays plain");
+  same(shortest(2746.8f), "2746.8", "score keeps its tail");
+  same(shortest(-44.0f), "-44", "small negative stays plain");
+  // Too small for plain digits, so an exponent is the honest answer.
+  same(shortest(1e-7f), "1e-07", "tiny float takes an exponent");
   same(shortest(0.1), "0.1", "shortest simple double");
   same(shortest(1.0 / 3.0), "0.3333333333333333", "shortest awkward double");
   if (strtof(shortest(1.0f / 3.0f).c_str(), nullptr) != 1.0f / 3.0f) {

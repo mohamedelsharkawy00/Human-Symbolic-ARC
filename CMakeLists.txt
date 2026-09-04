@@ -11,8 +11,9 @@ set(CMAKE_CUDA_ARCHITECTURES "89") # RTX 4050
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32)
 
 # MSVC flags (CXX only â€” exclude CUDA). /analyze is Release-only (slow in dev).
-# Disabled while fmtlib was vendored; fmtlib is gone, so this can come back, and
-# with it the check that every to_text format string matches its arguments.
+# Off by choice, not by breakage: it is the only thing that checks a to_text
+# format string against its arguments, and the fmtlib false positives that
+# forced it off left with fmtlib.
 # add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
 
 if(MSVC)
