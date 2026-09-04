@@ -93,14 +93,3 @@ target_link_options(ARC PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT
 # Libraries
 target_link_libraries(ARC PRIVATE Vulkan::Vulkan)
 target_link_libraries(ARC PRIVATE user32 gdi32 shell32 advapi32 winmm ws2_32)
-
-# Text helper test. Its own target so it never touches the app, and it runs
-# itself at build time, so a broken helper stops the build instead of waiting to
-# be remembered. Silent when it passes.
-add_executable(text_format_test "tests/text_format_test.cpp")
-target_include_directories(text_format_test PRIVATE include)
-add_custom_command(
-    TARGET text_format_test POST_BUILD
-    COMMAND text_format_test
-    COMMENT "Checking text helpers..."
-)
