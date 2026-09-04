@@ -134,6 +134,9 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
   // Re-import (or import onto a puzzle that loaded with a solved tree) would
   // otherwise leak the whole prior node subtree.
   if (task.best_tree) environment::remove(task.best_tree);
+  // A failed import must not read as solved, so the old verdict goes with the old tree.
+  task.is_solved = false;
+  task.is_test_solved = false;
   task.best_tree = environment::parse(sol_str);
   if (task.best_tree) {
     task.best_node_count = environment::count_nodes(task.best_tree);
@@ -579,6 +582,11 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
     // Dead-op verdicts: an op whose backing inferred fact is absent can only
     // no-op here, so it leaves the generating pool now, once, not per candidate.
     task.dead_ops[(int)node_type::SizeRankColorMap]       = (task.output_colors_by_size_count == 0);
+    // No elected ground means this op is Input spelled longer. Read the same
+    // invariant_colors the kernel reads, so the verdict cannot drift from it.
+    bool ground_elected = false;
+    for (int i = 0; i < 10; ++i) ground_elected |= task.invariant_colors[i];
+    task.dead_ops[(int)node_type::InputWithoutBackground] = !ground_elected;
     // The two shape->color ops SHARE one learned table and mean different things
     // by it: one repaints a body, the other fills a hole. Whichever detector
     // claimed it, the other op would be reading the wrong semantics, so an

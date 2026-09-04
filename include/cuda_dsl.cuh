@@ -168,6 +168,7 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
   X(FlipHorizontal, "FlipHorizontal", 0, 0, translate)                           \
   X(FlipVertical, "FlipVertical", 0, 0, translate)                               \
   X(Input, "Input", 0, 0, get)                                                   \
+  X(InputWithoutBackground, "InputWithoutBackground", 0, 0, get)                 \
   X(Output, "Output", 0, 0, get)                                                 \
   X(CurrentObjects, "CurrentObjects", 0, 0, get)                                 \
   X(Origin, "Origin", 0, 0, translate)                                           \

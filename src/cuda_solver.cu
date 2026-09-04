@@ -287,6 +287,20 @@ __device__ gpu_object_list& gpu_exec_input(gpu_exec_context& ctx) {
     return res;
 }
 
+// InputWithoutBackground: the input with the elected ground punched out, frame
+// kept. The ground is not a figure, so the source says it once instead of every
+// beat deciding for itself.
+__device__ gpu_object_list& gpu_exec_input_without_background(gpu_exec_context& ctx) {
+    auto& res = gpu_acquire(ctx);
+    gpu_frame_to_content(res, ctx.input);
+    if (ctx.background_color < 0 || res.count == 0) return res;
+    gpu_fixed_object& obj = res.objects[0];
+    for (int r = 0; r < obj.height; ++r)
+        for (int c = 0; c < obj.width; ++c)
+            if (obj.mask[r][c] == ctx.background_color) obj.mask[r][c] = GPU_TRANSPARENT;
+    return res;
+}
+
 // Color-argument sentinel meaning "any non-transparent color" (value 10, one past
 // the 0..9 real colors). Used by MaskBy[10]/MaskOut[10] to match on the canvas
 // being painted at all, regardless of which color.
@@ -3324,7 +3338,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
         // by itself — one Normalize per chain instead of one per fetch.
         if ((ctx.orientation_flipped & 8) && i > 0) {
             node_type prev = ops[i - 1].type;
-            if (prev == node_type::Input || prev == node_type::Seeds) {
+            if (prev == node_type::Input || prev == node_type::Seeds ||
+                prev == node_type::InputWithoutBackground) {
                 if (lane == 0) gpu_exec_canonical(ctx, true);
                 __syncwarp();
             }
@@ -3421,6 +3436,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             gpu_object_list* result = nullptr;
             switch (type) {
             case node_type::Input:          result = &gpu_exec_input(ctx); break;
+            case node_type::InputWithoutBackground:
+                                result = &gpu_exec_input_without_background(ctx); break;
             case node_type::Output:         result = &gpu_exec_output(ctx); break;
             case node_type::Split:          result = last ? &gpu_exec_split(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Colors:         result = last ? &gpu_exec_colors(ctx, *last) : &gpu_acquire(ctx); break;
