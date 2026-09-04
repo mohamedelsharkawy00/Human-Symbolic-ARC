@@ -43,16 +43,20 @@ DATASET_METADATA = {
 # The complete set of files the headless Kaggle build needs. Keep this in sync
 # with what the nvcc command compiles (see HANDOFF_KAGGLE_PORT.txt section 4).
 SRC_FILES = ["main.cpp", "cuda_solver.cu"]
+# Every header main.cpp and cuda_solver.cu can reach WITHOUT the _MSC_VER guard.
+# The Windows-only ones (gui, command_server, window_manager, vulkan_context,
+# screenshot, os_utilities) are excluded because gcc never sees them.
 INC_FILES = [
     "core_types.hpp",
     "cuda_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
-    "fixed_dsl.hpp", "global_app_state.hpp", "gui_stub.hpp",
-    "inference/1_readings.hpp", "inference/3_correspondence.hpp",
-    "inference/2_background.hpp", "inference/4_infer.hpp", "inference/5_log.hpp",
-    "logger.hpp", "os_utilities.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
+    "fixed_dsl.hpp", "global_app_state.hpp", "grid_buffer.hpp", "gui_stub.hpp",
+    "inference/1_readings.hpp", "inference/2_background.hpp",
+    "inference/3_correspondence.hpp", "inference/4_infer.hpp",
+    "inference/5_sentences.hpp", "inference/6_log.hpp",
+    "logger.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
     "solver_executor.hpp", "sound_manager.hpp", "submission.hpp",
+    "text_format.hpp",
 ]
-# third_party/fmt is copied wholesale (vendored, rarely changes).
 
 def sync():
     os.makedirs(PKG, exist_ok=True)
@@ -68,13 +72,11 @@ def sync():
         # a listed header may sit in a subfolder (inference/), so make its home first
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(ROOT, "include", f), dst)
-    # vendored fmt
-    tp_src = os.path.join(ROOT, "include", "third_party")
+    # A leftover third_party from an earlier push would still be uploaded.
     tp_dst = os.path.join(PKG, "include", "third_party")
     if os.path.exists(tp_dst):
         shutil.rmtree(tp_dst)
-    shutil.copytree(tp_src, tp_dst)
-    print(f"synced {len(SRC_FILES)} src + {len(INC_FILES)} headers + third_party/fmt -> {os.path.relpath(PKG, ROOT)}")
+    print(f"synced {len(SRC_FILES)} src + {len(INC_FILES)} headers -> {os.path.relpath(PKG, ROOT)}")
 
 def remote_version():
     """Newest version number Kaggle reports for the dataset, or None."""

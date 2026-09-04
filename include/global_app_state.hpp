@@ -4,10 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-// Always use fmtlib so both builds format identically. Call sites qualify
-// fmt::format explicitly to avoid clashing with std::format (visible via the
-// transitive <format> include + `using namespace std`).
-#include "fmt/format.h"
+#include "text_format.hpp"
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -62,7 +59,7 @@ inline string format_elapsed(double t) {
 	int h = (int)t / 3600;
 	int m = ((int)t % 3600) / 60;
 	double s = t - h * 3600 - m * 60;
-	return fmt::format("{:02d}:{:02d}:{:07.4f}", h, m, s);
+	return to_text("%02d:%02d:%07.4f", h, m, s);
 }
 
 struct node; // Forward declaration
@@ -335,7 +332,14 @@ struct global_app_state {
 // the caller passes those in.
 inline string serialize_settings(const global_app_state& app, bool muted, int puzzle_idx) {
 	string s;
-	auto line = [&](const char* key, auto value) { s += fmt::format("{} {}\n", key, value); };
+	// One line whatever the value is: a timeout is a fraction of a second, every
+	// other setting is a whole number.
+	auto line = [&](const char* key, auto value) {
+		if constexpr (is_floating_point_v<decltype(value)>)
+			s += to_text("%s %s\n", key, shortest(value).c_str());
+		else
+			s += to_text("%s %lld\n", key, (long long)value);
+	};
 	line("puzzle", puzzle_idx);
 	line("paused", (int)app.is_paused.load());
 	line("muted", (int)muted);

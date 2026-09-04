@@ -177,7 +177,7 @@ inline string format_sci(float val) {
   int eng_exp = (exp >= 0) ? (exp / 3) * 3 : ((exp - 2) / 3) * 3;
   float eng_base = val / pow(10.0f, (float)eng_exp);
 
-  return fmt::format("{:07.2f} e{}", eng_base, eng_exp);
+  return to_text("%07.2f e%d", eng_base, eng_exp);
 }
 
 struct frame_layout {
@@ -258,11 +258,11 @@ inline int draw_header_rows(
   // to overflow the fixed 3-digit reservation and shove the >/>| buttons onto
   // the number).
   int puz_digits = (int)to_string(puzzle_count > 0 ? puzzle_count : 1).size();
-  string puz_str = fmt::format("{:0{}d}/{:0{}d}", puzzle_idx + 1, puz_digits, puzzle_count, puz_digits);
+  string puz_str = to_text("%0*d/%0*d", puz_digits, puzzle_idx + 1, puz_digits, puzzle_count);
   string attempts_str = format_sci((float)current_attempts);
   string aps_str = format_sci(aps);
-  string gpu_str = fmt::format("{:.0f}ms", gpu_ms);
-  string fps_str = fmt::format("{:06.1f}", fps);
+  string gpu_str = to_text("%.0fms", gpu_ms);
+  string fps_str = to_text("%06.1f", fps);
   string status_str = string(app_state.is_paused ? "PAUSED" : "RUNNING");
   string log_state_str = (app_state.log_mode == logging_mode::stream) ? "ON" : "OFF";
 
@@ -360,24 +360,24 @@ inline int draw_header_rows(
   {
     static const char *view_names[] = { "OFF", "FACTS", "LINES" };
     int view = app_state.inference_view.load() % global_app_state::INFERENCE_STEPS;
-    button_piece("INFERENCE", fmt::format("{:<5} [I]", view_names[view]),
+    button_piece("INFERENCE", to_text("%-5s [I]", view_names[view]),
                  ui_action::cycle_inference, view ? 4 : 1);
   }
 
   button_piece("RESET [R]", "", ui_action::reset_solver, 1);
-  button_piece("LOGGING", fmt::format("{:<3} [L]", log_state_str), ui_action::toggle_log, 1);
-  button_piece(fmt::format("{:<7} [SPACE]", status_str), "", ui_action::toggle_pause, 1);
+  button_piece("LOGGING", to_text("%-3s [L]", log_state_str.c_str()), ui_action::toggle_log, 1);
+  button_piece(to_text("%-7s [SPACE]", status_str.c_str()), "", ui_action::toggle_pause, 1);
   button_piece("IMPORT [N]", "", ui_action::import_sol, 1);
   button_piece("EXPORT [E]", "", ui_action::export_sol, 1);
-  button_piece(fmt::format("BENCHMARK {:<2} [B]", app_state.is_benchmarking ? "ON" : ""), "",
+  button_piece(to_text("BENCHMARK %-2s [B]", app_state.is_benchmarking ? "ON" : ""), "",
                ui_action::toggle_benchmark, app_state.is_benchmarking ? 4 : 1);
 
   {
     int ts = (int)app_state.benchmark_timeout_seconds;
-    stepper_piece("TIMEOUT", fmt::format("{:02d}:{:02d}:{:02d}", ts / 3600, (ts % 3600) / 60, ts % 60),
+    stepper_piece("TIMEOUT", to_text("%02d:%02d:%02d", ts / 3600, (ts % 3600) / 60, ts % 60),
                   text_w("88:88:88", scale), ui_action::dec_timeout, ui_action::inc_timeout);
   }
-  stepper_piece("LIMIT", fmt::format("{:03d}", app_state.benchmark_puzzle_limit),
+  stepper_piece("LIMIT", to_text("%03d", app_state.benchmark_puzzle_limit),
                 text_w("888", scale), ui_action::dec_limit, ui_action::inc_limit);
 
   // PUZZLE [|<] [<] 001/600 [>] [>|], one piece for the same reason as a stepper.
@@ -449,16 +449,16 @@ inline int draw_header_rows(
     button_at(paste_lbl, x, y, ui_action::paste_id, 1);
   }
 
-  pair_piece("FPS", fmt::format("{:<7}", fps_str));
-  pair_piece("ATTEMPTS", fmt::format("{:<12}", attempts_str));
-  pair_piece("APS", fmt::format("{:<12}", aps_str));
+  pair_piece("FPS", to_text("%-7s", fps_str.c_str()));
+  pair_piece("ATTEMPTS", to_text("%-12s", attempts_str.c_str()));
+  pair_piece("APS", to_text("%-12s", aps_str.c_str()));
   // How long one GPU batch takes. It sits beside APS on purpose: a frame spent
   // inside a running kernel scores no attempts, so APS alone cannot say busy
   // from stalled, and this is what tells them apart.
-  pair_piece("GPU BATCH", fmt::format("{:<8}", gpu_str));
-  pair_piece("BEST DEPTH", fmt::format("{:<3}", best_depth));
-  pair_piece("CURRENT DEPTH", fmt::format("{:<3}", cur_depth));
-  pair_piece("MAX DEPTH", fmt::format("{:<3}", search_depth_limit));
+  pair_piece("GPU BATCH", to_text("%-8s", gpu_str.c_str()));
+  pair_piece("BEST DEPTH", to_text("%-3d", best_depth));
+  pair_piece("CURRENT DEPTH", to_text("%-3d", cur_depth));
+  pair_piece("MAX DEPTH", to_text("%-3d", search_depth_limit));
 
   // ARC palette reference -- a flush strip of square swatches, each with its
   // index drawn with a black outline.
@@ -481,7 +481,7 @@ inline int draw_header_rows(
         context->draw(sw.offset, sw_side, sw_side, cx, cy, 1, sw.stride);
       }
       // Index digit: white with a black outline, centered on the swatch.
-      string num = fmt::format("{}", i);
+      string num = to_text("%d", i);
       int nx = cx + (sw_side - text_w(num, scale)) / 2;
       int ny = cy + (sw_side - 5 * scale) / 2;
       // Stamp the digit in black at the 8 neighbor offsets, then white on top.
@@ -652,7 +652,7 @@ inline bool draw_grid_view(
 
     int outline = lay.scale;
     int info_h = 5 * lay.scale;
-    string dim = fmt::format("{:02d}x{:02d}", m.width, m.height);
+    string dim = to_text("%02dx%02d", m.width, m.height);
     grid_place p = place_grid_cell(m, col_idx, row_y, lay, col_w, slot_h);
     if (!p.fits) return; // grid band too small (e.g. footers ate the space) — skip
     int scale = p.scale;
@@ -667,7 +667,7 @@ inline bool draw_grid_view(
     draw_text(context, font, dim, info_x, y, lay.scale);
 
     if (has_score) {
-      string s = fmt::format("{:07.2f}", abs(score_val));
+      string s = to_text("%07.2f", abs(score_val));
       draw_text(context, font, s, info_x, y + grid_h - info_h, lay.scale);
     }
   };
@@ -1165,7 +1165,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
     // from one it read as a different number from the same thing, and every
     // sentence about a reading had to say which of the two it meant.
-    row_head("READING", fmt::format("{:>4} OF {}", rank, max(1, readings)),
+    row_head("READING", to_text("%4d OF %d", rank, max(1, readings)),
              rank == task.correspondence.chosen);
     {
       int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
@@ -1181,11 +1181,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // RIGHT-ALIGNED, because OFF is three characters and 7 is one, and a
       // wandering OF makes four rows read as four different shapes.
       // Counted from zero, the same as READING above and the same as the log.
-      row_head(name, at == SHOW_OFF ? fmt::format("{:>4} OF {}", "OFF", count)
-                   : at == SHOW_ALL ? fmt::format("{:>4} OF {}", "ALL", count)
-                                    : fmt::format("{:>4} OF {}", at, count));
-      int x = control_x + button(fmt::format("< [SHIFT {}]", key), control_x, ty, back) + pad;
-      x += button(fmt::format("> [{}]", key), x, ty, fwd) + pad;
+      row_head(name, at == SHOW_OFF ? to_text("%4s OF %d", "OFF", count)
+                   : at == SHOW_ALL ? to_text("%4s OF %d", "ALL", count)
+                                    : to_text("%4d OF %d", at, count));
+      int x = control_x + button(to_text("< [SHIFT %s]", key.c_str()), control_x, ty, back) + pad;
+      x += button(to_text("> [%s]", key.c_str()), x, ty, fwd) + pad;
       slider(x, track::to_stop(at, count), count + 2, color, which);
       ty += box_h + pad;
     };
@@ -1207,10 +1207,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // WHICH READING THIS IS, in words. The table below says it too, but only by
     // where the boxed cell sits, and hunting for it is work the reader should
     // not have to do to know what is on screen.
-    detail(fmt::format("{} {}  ---  {}", split_names_lead,
-                       split_names[clamp((int)R.cut_kind, 0,
-                                         (int)split_kind::split_count - 1)],
-                       match_mode::from_index(R.match_kind).label()));
+    detail(to_text("%s %s  ---  %s", split_names_lead,
+                   split_names[clamp((int)R.cut_kind, 0,
+                                     (int)split_kind::split_count - 1)],
+                   match_mode::from_index(R.match_kind).label().c_str()));
     static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
     // The pieces the reading cut out, and the matches it threw away. Neither is
     // reachable through the lines: a piece with no edge draws nothing, and a
@@ -1230,14 +1230,14 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       for (const auto& ln : task.correspondence.lines) {
         if (ln.rank != rank) continue;
         if (++nth != step) continue;
-        said = fmt::format("PAIR {}  COLOR {}  {}X{} AT {},{} -> {},{}  {}",
-                           ln.pair, ln.color < 0 ? string("MIXED") : to_string(ln.color),
-                           ln.from_w, ln.from_h, ln.from_x, ln.from_y,
-                           ln.to_x, ln.to_y, kind_name[clamp((int)ln.kind, 0, 2)]);
+        said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
+                       (int)ln.pair, (ln.color < 0 ? string("MIXED") : to_string(ln.color)).c_str(),
+                       (int)ln.from_w, (int)ln.from_h, (int)ln.from_x, (int)ln.from_y,
+                       (int)ln.to_x, (int)ln.to_y, kind_name[clamp((int)ln.kind, 0, 2)]);
         if (ln.pose & 1) said += ", TURNED";
         if (ln.pose & 2) said += ", FLIPPED ROWS";
         if (ln.pose & 4) said += ", FLIPPED COLS";
-        if (ln.hidden)   said += fmt::format(", {} HIDDEN", ln.hidden);
+        if (ln.hidden)   said += to_text(", %d HIDDEN", (int)ln.hidden);
         break;
       }
       detail(said);
@@ -1250,11 +1250,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       string said;
       if (dropped_at >= 0 && dropped_at < dropped_n) {
         const auto& dr = R.dropped_seen[dropped_at];
-        said = fmt::format("PAIR {}  PIECE {}  WANTED {},{}  {}  {}",
-                           dr.pair, dr.piece, dr.to_x, dr.to_y,
-                           kind_name[clamp((int)dr.kind, 0, 2)],
-                           correspondence_facts::refusal_names[clamp((int)dr.why, 0, 2)]);
-        if (dr.hidden) said += fmt::format(", {} HIDDEN", dr.hidden);
+        said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
+                       (int)dr.pair, (int)dr.piece, (int)dr.to_x, (int)dr.to_y,
+                       kind_name[clamp((int)dr.kind, 0, 2)],
+                       correspondence_facts::refusal_names[clamp((int)dr.why, 0, 2)]);
+        if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
       }
       detail(said);
     }
@@ -1276,9 +1276,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
           if (!pc.medoid) continue;
           leader_w = pc.w; leader_h = pc.h; leader_x = pc.x; leader_y = pc.y;
         }
-        said = fmt::format("PAIR {} {}, {} COPIES OF {}X{}, LEADER AT {},{}",
-                           set.pair, set.from_input ? "INPUT" : "OUTPUT",
-                           members, leader_w, leader_h, leader_x, leader_y);
+        said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
+                       (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
+                       members, leader_w, leader_h, leader_x, leader_y);
       }
       detail(said);
     }
@@ -1307,16 +1307,16 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
         const char* silence = pc.edges > 0 ? "ONLY SITS ON SOMETHING"
                             : pc.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
                                             : "INSERTED, IT WAS NOT IN THE INPUT";
-        piece_said = fmt::format("{}  PAIR {}  COLOR {}  {}X{} AT {},{}  {} CELLS",
-                                 silence, pc.pair,
-                                 pc.color < 0 ? string("MIXED") : to_string(pc.color),
-                                 pc.w, pc.h, pc.x, pc.y, pc.cells);
+        piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
+                             silence, (int)pc.pair,
+                             (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
+                             (int)pc.w, (int)pc.h, (int)pc.x, (int)pc.y, (int)pc.cells);
         if (pc.blank_w > 0)
-          blank_said = fmt::format("{} {}X{} AT {},{}  {} CELLS",
-                                   pc.blank_enclosed ? "FILLS A HOLE"
-                                                     : "OVER OPEN SPACE",
-                                   pc.blank_w, pc.blank_h, pc.blank_x, pc.blank_y,
-                                   pc.blank_cells);
+          blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
+                               pc.blank_enclosed ? "FILLS A HOLE"
+                                                 : "OVER OPEN SPACE",
+                               (int)pc.blank_w, (int)pc.blank_h, (int)pc.blank_x,
+                               (int)pc.blank_y, (int)pc.blank_cells);
       }
       detail(piece_said);
       detail(blank_said);
@@ -1332,8 +1332,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       string said;
       if (left_over_at >= 0 && left_over_at < left_over_n) {
         const auto& cell = R.left_over_seen[left_over_at];
-        said = fmt::format("PAIR {}  {}  CELL AT {},{}", cell.pair,
-                           cell.from_input ? "INPUT" : "OUTPUT", cell.x, cell.y);
+        said = to_text("PAIR %d  %s  CELL AT %d,%d", (int)cell.pair,
+                       cell.from_input ? "INPUT" : "OUTPUT", (int)cell.x, (int)cell.y);
       }
       detail(said);
     }
@@ -1465,9 +1465,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
           ty += row_h;
         }
       }
-      named_line("EACH CELL", fmt::format(
-          "CELLS IT COULD NOT ACCOUNT FOR, OF {} ON BOTH GRIDS, EVERY PAIR",
-          task.correspondence.cells));
+      named_line("EACH CELL", to_text(
+          "CELLS IT COULD NOT ACCOUNT FOR, OF %d ON BOTH GRIDS, EVERY PAIR",
+          (int)task.correspondence.cells));
     }
 
     // The same questions asked of every line of the reading, pair by pair, plus
@@ -1523,7 +1523,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       }
       const auto& pr = R.pairs[i];
       pair_row(to_string(i), how_name[clamp((int)pr.how, 0, 2)],
-               fmt::format("{}-{}", most_sources, most_landings),
+               to_text("%d-%d", most_sources, most_landings),
                to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
                to_string(hidden), to_string(turned),
                to_string(pr.dropped), to_string(pr.left_over));
@@ -1541,8 +1541,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       for (int reason = 0; reason < 3; ++reason) {
         if (reason == 0) label_chip("REFUSED", ty);
         draw_text(context, font,
-                  fmt::format("{} {}", by_reason[reason],
-                              correspondence_facts::refusal_names[reason]),
+                  to_text("%d %s", by_reason[reason],
+                          correspondence_facts::refusal_names[reason]),
                   value_x, ty, scale);
         ty += line_h;
       }
@@ -1554,47 +1554,48 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // Size · what decides how big the output is.
     static const char* rule_name[] = { "NOT INFERRED", "SAME AS INPUT", "FIXED",
                                        "SCALED", "WHAT IT DRAWS" };
-    string s = fmt::format("OUTPUT SIZE  {}", rule_name[(int)task.rule.Chosen]);
+    string s = to_text("OUTPUT SIZE  %s", rule_name[(int)task.rule.Chosen]);
     if (task.rule.Chosen == output_dimension_rule::Fixed)
-      s += fmt::format("  {}X{}", task.rule.width, task.rule.height);
+      s += to_text("  %dX%d", (int)task.rule.width, (int)task.rule.height);
     if (task.rule.Chosen == output_dimension_rule::Scale)
-      s += fmt::format("  {}/{} BY {}/{}", task.rule.width_numerator, task.rule.width_denominator,
-                       task.rule.height_numerator, task.rule.height_denominator);
+      s += to_text("  %d/%d BY %d/%d", (int)task.rule.width_numerator, (int)task.rule.width_denominator,
+                   (int)task.rule.height_numerator, (int)task.rule.height_denominator);
     line(s);
   }
-  line(fmt::format("COLORS GONE {}   NEW {}   KEPT {}",
-                   color_list(F.consumed), color_list(F.introduced), color_list(F.preserved)));
-  line(fmt::format("IN EVERY INPUT {}   IN EVERY OUTPUT {}",
-                   color_list(F.every_input), color_list(F.every_output)));
-  line(fmt::format("IN EVERY GRID {}   ANYWHERE {}",
-                   color_list(F.every_grid), color_list(F.any_grid)));
+  line(to_text("COLORS GONE %s   NEW %s   KEPT %s",
+               color_list(F.consumed).c_str(), color_list(F.introduced).c_str(),
+               color_list(F.preserved).c_str()));
+  line(to_text("IN EVERY INPUT %s   IN EVERY OUTPUT %s",
+               color_list(F.every_input).c_str(), color_list(F.every_output).c_str()));
+  line(to_text("IN EVERY GRID %s   ANYWHERE %s",
+               color_list(F.every_grid).c_str(), color_list(F.any_grid).c_str()));
   {
     string s = "OUTPUT COLORS ";
     for (int i = 0; i < task.output_colors_count; ++i)
-      s += fmt::format("{}", (int)task.output_colors[i]);
+      s += to_text("%d", (int)task.output_colors[i]);
     if (task.output_colors_by_size_count) {
       s += "   BY SIZE ";
       for (int i = 0; i < task.output_colors_by_size_count; ++i)
-        s += fmt::format("{}", (int)task.output_colors_by_size[i]);
+        s += to_text("%d", (int)task.output_colors_by_size[i]);
     }
     line(s);
   }
   ty += line_h;
   {
-    string head = fmt::format("BG INPUT {}  OUTPUT {}",
-                              (int)bg.input_elected, (int)bg.output_elected);
+    string head = to_text("BG INPUT %d  OUTPUT %d",
+                          (int)bg.input_elected, (int)bg.output_elected);
     if (bg.per_pair_mode) head += "  MODE PER-PAIR";
     draw_text(context, font, head, tx, ty, scale);
   }
   ty += line_h;
   {
-    string tier = fmt::format("VETOED {}", bg.input_vetoed ? "YES" : "NO");
+    string tier = to_text("VETOED %s", bg.input_vetoed ? "YES" : "NO");
     draw_text(context, font, tier, tx, ty, scale);
     ty += line_h;
   }
   {
     string pp = "PER PAIR";
-    for (int8_t c : bg.per_pair) pp += fmt::format(" {}", (int)c);
+    for (int8_t c : bg.per_pair) pp += to_text(" %d", (int)c);
     draw_text(context, font, pp, tx, ty, scale);
     ty += line_h + line_h;  // blank line after
   }
@@ -1602,16 +1603,20 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   auto draw_dir = [&](const char* name, const vector<puzzle::background_readout::cand>& d) {
     draw_text(context, font, name, tx, ty, scale); ty += line_h;
     // column header, aligned with the rows below
-    draw_text(context, font, fmt::format("{:>7} {:>10} {:>10} {:>8} {:>7} {:>6} {:>6} {:>6}",
+    // Every cell is text in a width, so heads and rows share one shape.
+    static const char* bg_columns = "%7s %10s %10s %8s %7s %6s %6s %6s";
+    draw_text(context, font, to_text(bg_columns,
               "COLOR", "EMBEDS", "DOMINANCE", "PERSISTS", "SCORE", "SPAN", "GAPS", "UNDER"),
               tx + sw + scale, ty, scale);
     ty += line_h;
     for (const auto& c : d) {
       swatch(c.color, tx, ty);
-      string label = (c.color < 0) ? "NONE" : fmt::format("{}", (int)c.color);
-      string row = fmt::format("{:>7} {:>10} {:>10} {:>8} {:>7} {:>6} {:>6} {:>6}",
-                               label, c.embeds, c.dominance, c.persists ? "YES" : "NO", c.score, c.span, c.gaps,
-                               c.underneath ? "YES" : "NO");
+      string label = (c.color < 0) ? "NONE" : to_string((int)c.color);
+      string row = to_text(bg_columns,
+                           label.c_str(), to_string(c.embeds).c_str(), to_string(c.dominance).c_str(),
+                           c.persists ? "YES" : "NO", to_string(c.score).c_str(),
+                           to_string(c.span).c_str(), to_string(c.gaps).c_str(),
+                           c.underneath ? "YES" : "NO");
       draw_text(context, font, row, tx + sw + scale, ty, scale);
       ty += line_h;
     }
@@ -1624,13 +1629,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   // What changed between the two sides.
   ty += line_h / 2;
   if (F.unchanged_valid)
-    line(fmt::format("INPUT ALREADY RIGHT ON {:.0f} PCT OF CELLS, WORST PAIR",
-                     F.min_kept * 100.0f));
+    line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
+                 F.min_kept * 100.0f));
   if (F.diff_valid) {
     string s = "CELLS WON/LOST ";
     for (int c = 0; c < 10; ++c)
       if (F.gained[c] || F.lost[c])
-        s += fmt::format(" {}:{}/{}", c, F.gained[c], F.lost[c]);
+        s += to_text(" %d:%d/%d", c, (int)F.gained[c], (int)F.lost[c]);
     line(s);
   }
   if (task.color_swap_variants_count) {
@@ -1638,11 +1643,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     int k = 0;
     for (int a = 0; a < 10; ++a)
       for (int b = a + 1; b < 10; ++b, ++k)
-        if (task.color_swap_variants[k]) s += fmt::format(" {}<>{}", a, b);
+        if (task.color_swap_variants[k]) s += to_text(" %d<>%d", a, b);
     line(s);
   }
   if (task.shape_color_count)
-    line(fmt::format("SHAPE PICKS COLOR, {} LEARNED", task.shape_color_count));
+    line(to_text("SHAPE PICKS COLOR, %d LEARNED", (int)task.shape_color_count));
 
   // What correspondence made of each pair, said FROM THE INPUT'S SIDE, which is
   // the same standpoint the ALONE row uses. DELETED and INSERTED are one fact
@@ -1652,26 +1657,30 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   // meeting at one landing, most places one piece went. 1-1 is a plain swap,
   // 1-9 is one piece stamped nine times, 3-2 is both at once.
   ty += line_h / 2;
+  // Every cell is text in a width, so the head and the rows share one shape.
   const char* pair_columns_wide =
-      "{:>4} {:>9} {:>5} {:>6} {:>9} {:>8} {:>6} {:>8} {:>8} {:>5}";
+      "%4s %9s %5s %6s %9s %8s %6s %8s %8s %5s";
   draw_text(context, font,
-            fmt::format("{:>4} {:^22} {:^25} {:>8} {:>6}",
-                        "", "EACH INPUT PIECE", "EACH OUTPUT PIECE", "", ""),
+            to_text("%4s %s %s %8s %6s",
+                    "", align_centre("EACH INPUT PIECE", 22).c_str(),
+                    align_centre("EACH OUTPUT PIECE", 25).c_str(), "", ""),
             tx, ty, scale);
   ty += line_h;
   draw_text(context, font,
-            fmt::format(fmt::runtime(pair_columns_wide),
-                        "PAIR", "DELETED", "KEPT", "COPIED",
-                        "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
+            to_text(pair_columns_wide,
+                    "PAIR", "DELETED", "KEPT", "COPIED",
+                    "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
             tx, ty, scale);
   ty += line_h;
   for (size_t i = 0; i < F.pairs.size(); ++i) {
     const auto& p = F.pairs[i];
-    line(fmt::format(fmt::runtime(pair_columns_wide),
-                     i, p.deleted, p.persisted, p.copied,
-                     p.invented, p.from_one, p.from_many,
-                     fmt::format("{}-{}", p.most_sources, p.most_landings),
-                     p.carried_cells, p.created_cells));
+    line(to_text(pair_columns_wide,
+                 to_string(i).c_str(), to_string(p.deleted).c_str(),
+                 to_string(p.persisted).c_str(), to_string(p.copied).c_str(),
+                 to_string(p.invented).c_str(), to_string(p.from_one).c_str(),
+                 to_string(p.from_many).c_str(),
+                 to_text("%d-%d", (int)p.most_sources, (int)p.most_landings).c_str(),
+                 to_string(p.carried_cells).c_str(), to_string(p.created_cells).c_str()));
   }
 
 }
@@ -1735,7 +1744,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
     vector<string> labels;
     for (int i : ids) {
       string s = type_name[i];
-      if (is_annotated((node_type)i)) s += fmt::format("[{}-{}]", type_var_low[i], type_var_high[i]);
+      if (is_annotated((node_type)i)) s += to_text("[%d-%d]", type_var_low[i], type_var_high[i]);
       labels.push_back(s);
     }
     if (out_ids) *out_ids = ids;
@@ -2128,7 +2137,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
           // 1) Accumulator preview on top of the backdrop, with the same grey
           // outline frame the regular grid cells use.
           if (m.width > 0 && m.height > 0) {
-            string dim = fmt::format("{:02d}x{:02d}", m.width, m.height);
+            string dim = to_text("%02dx%02d", m.width, m.height);
             int dim_w = text_w(dim, lay.scale) + outline * 2;
             int half_h = (back_h - outline * 2) / 2;
             int cell_scale = min((inner_w - dim_w) / m.width, half_h / m.height);

@@ -64,7 +64,6 @@ src_cands = glob.glob("/kaggle/input/**/src/main.cpp", recursive=True)
 assert src_cands, "could not find src/main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
 INC = SRC_ROOT + "/include"
-TP  = INC + "/third_party"
 print("source root:", SRC_ROOT)
 
 # This notebook is the SUBMISSION path: always solve the competition test set and
@@ -93,8 +92,7 @@ cmd = [
     "-gencode", "arch=compute_89,code=sm_89",
     "-gencode", "arch=compute_89,code=compute_89",
     "-O2",
-    "-DFMT_HEADER_ONLY",   # fmtlib header-only: pulls in vformat definition (no separate .cc to link)
-    "-I", INC, "-I", TP,
+    "-I", INC,
     SRC_ROOT + "/src/main.cpp", SRC_ROOT + "/src/cuda_solver.cu",
     "-o", BIN,
 ]

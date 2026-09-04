@@ -16,7 +16,7 @@
 #include "global_app_state.hpp"
 #include "solver_beam.hpp"
 #include "submission.hpp"
-#include "third_party/fmt/format.h"
+#include "text_format.hpp"
 
 // Windows-only GUI/Vulkan/Win32 headers. The headless (Kaggle/gcc) build skips
 // these entirely; it runs the solver without a window or renderer.
@@ -217,12 +217,15 @@ int main() {
 			// gpu_used says whether the card is shared right now, so nobody reads
 			// a contended run as a regression.
 			gpu_memory gpu = read_gpu_memory();
-			return fmt::format(
-				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}% build={}",
-				solver.current_puzzle_id(), idx, solver.get_puzzle_count(),
-				(bool)app_state.is_paused, (bool)app_state.is_benchmarking,
-				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent,
-				exe_build_time());
+			// The three flags read as words, not as 1 and 0: that is the reply
+			// every caller of this port already parses.
+			auto yes_no = [](bool b) { return b ? "true" : "false"; };
+			return to_text(
+				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s gpu_used=%d%% build=%s",
+				solver.current_puzzle_id().c_str(), idx, solver.get_puzzle_count(),
+				yes_no((bool)app_state.is_paused), yes_no((bool)app_state.is_benchmarking),
+				yes_no(solved), format_elapsed(get_elapsed(app_state, st)).c_str(), gpu.used_percent,
+				exe_build_time().c_str());
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);
@@ -242,10 +245,10 @@ int main() {
 	{
 		// Which binary is answering. An app that started before the build after
 		// it gives old answers to new questions, and nothing else here says so.
-		cmd_server.note(fmt::format("running the binary built {}", exe_build_time()));
+		cmd_server.note(to_text("running the binary built %s", exe_build_time().c_str()));
 		gpu_memory gpu = read_gpu_memory();
-		cmd_server.note(fmt::format(
-			"gpu {} MB of {} MB in use ({}%){}", gpu.used_mb, gpu.total_mb,
+		cmd_server.note(to_text(
+			"gpu %llu MB of %llu MB in use (%d%%)%s", gpu.used_mb, gpu.total_mb,
 			gpu.used_percent,
 			cmd_server.port() != 2026 ? ", another app already holds 2026" : ""));
 	}
@@ -304,7 +307,7 @@ int main() {
 				localtime_s(&local_tm, &now_t);
 				char ts[32];
 				strftime(ts, sizeof(ts), "%Y-%m-%d_%I-%M-%S_%p", &local_tm);
-				string benchmark_file = fmt::format("benchmarks/benchmark_{}.txt", ts);
+				string benchmark_file = to_text("benchmarks/benchmark_%s.txt", ts);
 				solver.start_benchmark_report(benchmark_file);
 #endif
 			}
@@ -353,9 +356,9 @@ int main() {
 						// without having to exit the app.
 						filesystem::create_directories("kaggle/working");
 						bool sub_ok = submission.write("kaggle/working/submission.json");
-						solver.log_debug(fmt::format(
-							"submission.json: {} ({} tasks)",
-							sub_ok ? "written" : "WRITE FAILED", submission.count()));
+						solver.log_debug(to_text(
+							"submission.json: %s (%d tasks)",
+							sub_ok ? "written" : "WRITE FAILED", (int)submission.count()));
 #endif
 						app_state.is_benchmarking = false;
 						if (!app_state.is_paused) solver.toggle_pause();
@@ -410,7 +413,7 @@ int main() {
 			last_gpu_count = current_gpu_count;
 		}
 
-		solver.log_debug(fmt::format("[APS] {:.2f}  (Attempts: {}) gpu={:.0f}ms",
+		solver.log_debug(to_text("[APS] %.2f  (Attempts: %lld) gpu=%.0fms",
 			aps, current_attempts, gpu_ms));
 
 		if (minimized) {

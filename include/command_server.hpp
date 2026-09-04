@@ -16,7 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
-#include "fmt/format.h"
+#include "text_format.hpp"
 
 namespace arc {
 using namespace std;
@@ -64,13 +64,13 @@ public:
       u_long nonblock = 1;
       ioctlsocket(m_listen, FIONBIO, &nonblock);
       open_log(m_port);
-      log_line(fmt::format("listening on 127.0.0.1:{}", m_port));
+      log_line(to_text("listening on 127.0.0.1:%d", m_port));
       return true;
     }
 
     open_log(first_port);
-    return fail(fmt::format("no free port in {}..{}", first_port,
-                            first_port + port_scan - 1));
+    return fail(to_text("no free port in %d..%d", first_port,
+                        first_port + port_scan - 1));
   }
 
   // Which port this app actually got, so callers can report it.
@@ -99,7 +99,7 @@ public:
     closesocket(client);
 
     reply.pop_back();
-    log_line(fmt::format("{} -> {}", cmd.empty() ? "(empty)" : cmd, reply));
+    log_line(to_text("%s -> %s", cmd.empty() ? "(empty)" : cmd.c_str(), reply.c_str()));
   }
 
   inline void shutdown() {
@@ -124,7 +124,7 @@ private:
   // record. Fresh each launch, so the log is this session, not history.
   inline void open_log(unsigned short port) {
     if (m_log.is_open()) return;
-    m_log.open(fmt::format("logs/commands_{}.txt", port), ios::trunc);
+    m_log.open(to_text("logs/commands_%d.txt", port), ios::trunc);
   }
 
   // Read up to the first newline (or timeout/limit); trims trailing \r\n.

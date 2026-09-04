@@ -8,18 +8,17 @@ set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES "89") # RTX 4050
 
-# Definitions. FMT_HEADER_ONLY: no fmt .cc is compiled, so pull fmt's
-# implementation inline from the headers (avoids unresolved-symbol link errors).
-add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32 FMT_HEADER_ONLY)
+add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32)
 
 # MSVC flags (CXX only â€” exclude CUDA). /analyze is Release-only (slow in dev).
-# Temporarily disabled (noisy fmtlib /analyze false positives); re-enable later.
+# Disabled while fmtlib was vendored; fmtlib is gone, so this can come back, and
+# with it the check that every to_text format string matches its arguments.
 # add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
 
 if(MSVC)
     string(REGEX REPLACE "/Ob[0-9]" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/MP>")
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # fmt requires UTF-8 source/exec charset
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # source and exec charset agree
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2;/Oi;/Ot;/GS-;/GL;/fp:fast;/Qpar;/favor:blend>")
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RelWithDebInfo>>:/O2;/Ob2;/Oi;/Ot;/Zi>")
 endif()
@@ -82,7 +81,6 @@ add_custom_command(
 
 # Include Directories
 target_include_directories(ARC PRIVATE include)
-target_include_directories(ARC PRIVATE include/third_party)
 target_include_directories(ARC PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Linker options. WIN32 target => /subsystem:windows (no console), but the entry
@@ -94,3 +92,14 @@ target_link_options(ARC PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT
 # Libraries
 target_link_libraries(ARC PRIVATE Vulkan::Vulkan)
 target_link_libraries(ARC PRIVATE user32 gdi32 shell32 advapi32 winmm ws2_32)
+
+# Text helper test. Its own target so it never touches the app, and it runs
+# itself at build time, so a broken helper stops the build instead of waiting to
+# be remembered. Silent when it passes.
+add_executable(text_format_test "tests/text_format_test.cpp")
+target_include_directories(text_format_test PRIVATE include)
+add_custom_command(
+    TARGET text_format_test POST_BUILD
+    COMMAND text_format_test
+    COMMENT "Checking text helpers..."
+)

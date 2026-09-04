@@ -3,9 +3,7 @@
 #include "global_app_state.hpp"
 #include <fstream>
 #include <filesystem>
-// Always use fmtlib so both builds format identically. Call sites qualify
-// fmt::format explicitly (std::format leaks in via <format> + `using namespace std`).
-#include "fmt/format.h"
+#include "text_format.hpp"
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -56,8 +54,8 @@ struct logger {
   void tree_record(const node *tree, float score, long long attempts) {
     if (app_state.log_mode == logging_mode::none) return;
     lock_guard lock(mtx);
-    buffer += fmt::format("{} [TREE] {} | {} | {}\n", format_elapsed(elapsed()), attempts, score,
-                     environment::stringify_tree_via_flat(tree));
+    buffer += to_text("%s [TREE] %lld | %s | %s\n", format_elapsed(elapsed()).c_str(), attempts,
+                      shortest(score).c_str(), environment::stringify_tree_via_flat(tree).c_str());
   }
 
   void start_benchmark_report(const string &path) {
@@ -117,11 +115,11 @@ struct logger {
 
     string summary;
     summary += "========== BENCHMARK SUMMARY ==========\n";
-    summary += fmt::format("Puzzles Run:    {}\n", puzzles_run);
-    summary += fmt::format("Train Solved:   {} / {} ({:.1f}%)\n", train_solved, puzzles_run, train_pct);
-    summary += fmt::format("Test Solved:    {} / {} ({:.1f}%)\n", test_solved, puzzles_run, test_pct);
-    summary += fmt::format("Bench Time:     {}\n", format_elapsed(wall_time));
-    summary += fmt::format("Avg APS:        {:.2f}\n", avg_aps);
+    summary += to_text("Puzzles Run:    %d\n", puzzles_run);
+    summary += to_text("Train Solved:   %d / %d (%.1f%%)\n", train_solved, puzzles_run, train_pct);
+    summary += to_text("Test Solved:    %d / %d (%.1f%%)\n", test_solved, puzzles_run, test_pct);
+    summary += to_text("Bench Time:     %s\n", format_elapsed(wall_time).c_str());
+    summary += to_text("Avg APS:        %.2f\n", avg_aps);
     summary += "========================================\n\n";
 
     string existing;

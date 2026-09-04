@@ -76,7 +76,7 @@ namespace arc {
     }
 
     if (stagnant_levels >= MAX_STAGNANT_LEVELS) {
-      log_debug(fmt::format("Level stagnation: {} levels at {:.2f}. Diversifying beam.",
+      log_debug(to_text("Level stagnation: %d levels at %.2f. Diversifying beam.",
                        stagnant_levels, (double)prev_beam_top));
       if (beam.size() > 4) {
         sort(beam.begin(), beam.end(), ranks_higher);
@@ -119,7 +119,7 @@ namespace arc {
       sweep_ready = true;
       sweep_beam_idx = 0;
       sweep_idx = 0;
-      log_debug(fmt::format("[SENTENCES] level sweep = {} (beam {})",
+      log_debug(to_text("[SENTENCES] level sweep = %zu (beam %d)",
                             sweep.size(), (int)beam.size()));
     }
     if (sweep.empty()) return true;
@@ -172,8 +172,8 @@ namespace arc {
       if (!candidate) continue;
       if (!visited.insert_if_new(candidate->hash)) {
         if (pairs_already_seen < 5)
-          log_debug(fmt::format("[GEN-DUP] \"{}\"",
-                                environment::stringify_tree_via_flat(candidate)));
+          log_debug(to_text("[GEN-DUP] \"%s\"",
+                                environment::stringify_tree_via_flat(candidate).c_str()));
         pairs_already_seen++;
         environment::remove(candidate);
         continue;
@@ -200,10 +200,10 @@ namespace arc {
     // actually sat rather than guessed at.
     for (int i = 0; i < (int)beam.size() && i < 8; ++i)
       if (beam[i].n)
-        log_debug(fmt::format("[BEAM {}] {:.2f}  \"{}\"", i, (double)beam[i].score,
-                              environment::stringify_tree_via_flat(beam[i].n)));
-    log_debug(fmt::format(
-        "[GEN] walked={} kept={} already_seen={} members_skipped={} beam={} sweep={}",
+        log_debug(to_text("[BEAM %d] %.2f  \"%s\"", i, (double)beam[i].score,
+                              environment::stringify_tree_via_flat(beam[i].n).c_str()));
+    log_debug(to_text(
+        "[GEN] walked=%lld kept=%lld already_seen=%lld members_skipped=%lld beam=%d sweep=%d",
         pairs_walked, pairs_kept, pairs_already_seen, members_skipped,
         (int)beam.size(), (int)sweep.size()));
     pairs_walked = pairs_kept = pairs_already_seen = members_skipped = 0;
@@ -223,10 +223,10 @@ namespace arc {
     long long wait_total = m_solver_state.gpu_wait_ns.load();
     long long ns_wait = wait_total - ns_wait_at_last_level;
     ns_wait_at_last_level = wait_total;
-    log_timing(fmt::format(
-      "gen={}ms launch={}ms wait={}ms idle={}ms | harvest={}ms = tally={}ms winner={}ms free={}ms rest={}ms"
-      " | winner = fetch={}ms analyze={}ms best={}ms rest={}ms"
-      " | fetch = copy={}ms sync={}ms",
+    log_timing(to_text(
+      "gen=%lldms launch=%lldms wait=%lldms idle=%lldms | harvest=%lldms = tally=%lldms winner=%lldms free=%lldms rest=%lldms"
+      " | winner = fetch=%lldms analyze=%lldms best=%lldms rest=%lldms"
+      " | fetch = copy=%lldms sync=%lldms",
       ns_generate / 1000000, ns_launch / 1000000, ns_wait / 1000000, ns_idle / 1000000,
       ns_harvest / 1000000, ns_tally / 1000000, ns_winner / 1000000, ns_free / 1000000,
       (ns_harvest - ns_tally - ns_winner - ns_free) / 1000000,
@@ -277,7 +277,7 @@ namespace arc {
       if (!slot_done)
         return false;
 
-      log_debug(fmt::format("[GEN] slot={}/{} done cand={} lc={} vis={}",
+      log_debug(to_text("[GEN] slot=%d/%d done cand=%d lc=%d vis=%zu",
         current_slot_idx, (int)slots_to_refine.size(),
         total_candidates_this_slot, (int)level_candidates.size(),
         visited.size()));
@@ -491,7 +491,7 @@ namespace arc {
       }
     }
 
-    log_debug(fmt::format("Updated History Pool: {} items (+{})",
+    log_debug(to_text("Updated History Pool: %zu items (+%d)",
                      history_pool.size(), added));
   }
 
@@ -606,7 +606,7 @@ namespace arc {
         is_generating_layer = false;
       }
     }
-    log_debug(fmt::format("New level: {} slots to refine.", slots_to_refine.size()));
+    log_debug(to_text("New level: %zu slots to refine.", slots_to_refine.size()));
   }
 
   inline void beam_solver::find_slots_recursive(node *n, int depth, vector<beam_solver::slot_t> &out,
@@ -684,7 +684,7 @@ namespace arc {
     int bucket_end = bucket_cutoff[max_depth_allowed];
 
     if (m_gen_outer_idx >= bucket_end) {
-      log_debug(fmt::format("[PRIM] prim={} done: bucket_end={} beam={} cand={} vis={} dry_streak={}",
+      log_debug(to_text("[PRIM] prim=%d done: bucket_end=%d beam=%d cand=%d vis=%zu dry_streak=%d",
         m_gen_primitive_idx, bucket_end, beam_idx,
         total_candidates_this_slot, visited.size(), m_dry_yields));
       m_gen_primitive_idx++;
@@ -778,7 +778,7 @@ namespace arc {
         if (dry) m_dry_yields++;
         else { m_dry_yields = 0; m_last_cand_at_yield = total_candidates_this_slot; }
         if (m_dry_yields >= 50) {
-          log_debug(fmt::format("[GEN] dry yield exit: dry_yields={} beam={} cand={} vis={}",
+          log_debug(to_text("[GEN] dry yield exit: dry_yields=%d beam=%d cand=%d vis=%zu",
             m_dry_yields, beam_idx, total_candidates_this_slot, visited.size()));
           return true;
         }
@@ -788,10 +788,10 @@ namespace arc {
       // Full beam entry just completed — check if it contributed anything
       if (total_candidates_this_slot == cand_before) {
         m_consec_dry_beam_entries++;
-        log_debug(fmt::format("[GEN] dry beam entry={} consec={} cand={} vis={}",
+        log_debug(to_text("[GEN] dry beam entry=%d consec=%d cand=%d vis=%zu",
           beam_idx, m_consec_dry_beam_entries, total_candidates_this_slot, visited.size()));
         if (m_consec_dry_beam_entries >= 2) {
-          log_debug(fmt::format("[GEN] early slot exit after {} dry entries at beam={} cand={} vis={}",
+          log_debug(to_text("[GEN] early slot exit after %d dry entries at beam=%d cand=%d vis=%zu",
             m_consec_dry_beam_entries, beam_idx, total_candidates_this_slot, visited.size()));
           return true;
         }
@@ -801,7 +801,7 @@ namespace arc {
 
       advance_beam_idx();
     }
-    log_debug(fmt::format("[GEN] beam exhausted: beam={} cand={} vis={}",
+    log_debug(to_text("[GEN] beam exhausted: beam=%d cand=%d vis=%zu",
       beam_idx, total_candidates_this_slot, visited.size()));
     return true;
   }
@@ -991,7 +991,7 @@ namespace arc {
       dropped++;
     }
     if (dropped > 0) {
-      log_debug(fmt::format("[STATE-DEDUP] dropped={} kept={} grids_seen={}",
+      log_debug(to_text("[STATE-DEDUP] dropped=%d kept=%d grids_seen=%zu",
         dropped, (int)level_candidates.size(), visited_states.size()));
     }
     current_slot_candidates.clear();
@@ -1115,7 +1115,7 @@ namespace arc {
     release_candidates(level_candidates);
 
     log_debug(
-        fmt::format("Level committed. Beam top: {:.2f}  All-time best: {:.2f}",
+        to_text("Level committed. Beam top: %.2f  All-time best: %.2f",
                (double)top_score, (double)all_time_best_score));
   }
 
@@ -1204,11 +1204,11 @@ namespace arc {
     string tree_str = environment::stringify_tree_via_flat(tree);
     for (int i = 0; i < (int)terms.size(); ++i) {
       const gpu_score_terms &t = terms[i];
-      log_debug(fmt::format(
-          "[SCORE] tree=\"{}\" ex={} vandal={:.4f} exact={:.4f} histogram={:.4f} "
-          "distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} position={:.4f} "
-          "node_penalty={:.4f} dim_penalty={:.4f} sum={:.4f} total={:.4f}",
-          tree_str, i, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
+      log_debug(to_text(
+          "[SCORE] tree=\"%s\" ex=%d vandal=%.4f exact=%.4f histogram=%.4f "
+          "distance=%.4f rarity=%.4f shape=%.4f color=%.4f position=%.4f "
+          "node_penalty=%.4f dim_penalty=%.4f sum=%.4f total=%.4f",
+          tree_str.c_str(), i, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
           t.shape, t.color, t.position, t.node_penalty, t.dimension_penalty,
           t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
               t.color + t.position + t.node_penalty + t.dimension_penalty,
@@ -1318,7 +1318,7 @@ namespace arc {
       node *reduced = reduce_best_tree(tree, p, active, reduced_node_count, deep);
       bool was_reduced = (reduced != tree);
       if (was_reduced)
-        log_debug(fmt::format("!!!! REDUCED: {} -> {} nodes (leave-one-out) !!!!",
+        log_debug(to_text("!!!! REDUCED: %d -> %d nodes (leave-one-out) !!!!",
                               node_count, reduced_node_count));
 
       environment::remove(p.best_tree);
@@ -1347,11 +1347,11 @@ namespace arc {
           p.best_node_count = node_count;
           for (auto &ex : p.test) ex.output.visible = true;
         } else {
-          log_debug(fmt::format("!!!! SIMPLIFIED SOLUTION FOUND: {} nodes (was {}) !!!!", node_count, p.best_node_count));
+          log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", node_count, p.best_node_count));
         }
         if (!m_app_state.is_benchmarking) toggle_pause();
       } else if (promotion_count == 0 && !is_test_solve) {
-        log_debug(fmt::format("!!!! SIMPLIFIED SOLUTION FOUND: {} nodes (was {}) !!!!", node_count, p.best_node_count));
+        log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", node_count, p.best_node_count));
       }
 
       if (is_test_solve) {
@@ -1711,7 +1711,7 @@ namespace arc {
         // grids, score spam), grep the puzzle log for "!!! GPU ERROR" — it names the
         // CUDA error + which launch. (The real fix is the bug; this makes it loud.)
         { char _ce[512]; if (cuda_dsl_take_error(_ce, sizeof(_ce))) {
-            log_debug(fmt::format("!!! GPU ERROR (results now garbage until restart): {}", _ce)); } }
+            log_debug(to_text("!!! GPU ERROR (results now garbage until restart): %s", _ce)); } }
         slot_pending[wait_slot] = false;
         // Results from previous batch are ready. Process them.
         cuda_dsl_exec_batch& prev_batch = exec_batch[wait_slot];
@@ -1734,8 +1734,8 @@ namespace arc {
         for (int j = 0; j < prev_batch.job_count; ++j) {
           int pidx = prev_batch.program_indices[j];
           if (pidx < 0 || pidx >= program_count) {
-            diag_log(fmt::format("[ASSERT pidx-OOB] puz={} j={} pidx={} program_count={} active={} batch_active={} job_count={}",
-                                 p.id, j, pidx, program_count, active, prev_batch.active_examples, prev_batch.job_count));
+            diag_log(to_text("[ASSERT pidx-OOB] puz=%s j=%d pidx=%d program_count=%d active=%d batch_active=%d job_count=%d",
+                                 p.id.c_str(), j, pidx, program_count, active, prev_batch.active_examples, prev_batch.job_count));
             continue;
           }
           program_totals[pidx] += prev_batch.scores[j];
@@ -2093,7 +2093,7 @@ namespace arc {
       active++;
       promotion_count++;
       active_example_count = active;
-      log_debug(fmt::format("==== PROMOTED: now solving {}/{} examples ====",
+      log_debug(to_text("==== PROMOTED: now solving %d/%zu examples ====",
                        active_example_count, p.train.size()));
     }
 

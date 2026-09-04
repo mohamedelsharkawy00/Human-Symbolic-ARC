@@ -144,12 +144,12 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
     string tree_str = environment::stringify_tree_via_flat(task.best_tree);
     // Straight from the kernel that scored it, so the printed sum IS the score.
     auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
-      log.debug(fmt::format(
-          "[SCORE] phase={} tree=\"{}\" ex={} vandal={:.4f} exact={:.4f} "
-          "histogram={:.4f} distance={:.4f} rarity={:.4f} shape={:.4f} color={:.4f} "
-          "position={:.4f} node_penalty={:.4f} dim_penalty={:.4f} "
-          "sum={:.4f} total={:.4f}",
-          phase, tree_str, ei, t.vandal, t.exact, t.histogram, t.distance,
+      log.debug(to_text(
+          "[SCORE] phase=%s tree=\"%s\" ex=%d vandal=%.4f exact=%.4f "
+          "histogram=%.4f distance=%.4f rarity=%.4f shape=%.4f color=%.4f "
+          "position=%.4f node_penalty=%.4f dim_penalty=%.4f "
+          "sum=%.4f total=%.4f",
+          phase, tree_str.c_str(), ei, t.vandal, t.exact, t.histogram, t.distance,
           t.rarity, t.shape, t.color, t.position, t.node_penalty,
           t.dimension_penalty,
           t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
@@ -166,7 +166,7 @@ inline void apply_solution(puzzle &task, solver_state &solver_state,
       auto [s, solved] = environment::score_tree_output(
           task.best_tree, ex, temp, task, task.best_node_count, &terms);
 
-      log.debug(fmt::format("Example score: {} (Solved: {})", s, solved ? "YES" : "NO"));
+      log.debug(to_text("Example score: %s (Solved: %s)", shortest(s).c_str(), solved ? "YES" : "NO"));
       log_score(i, terms, "import_train");
 
       ex.best_score = s;

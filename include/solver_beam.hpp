@@ -19,9 +19,7 @@
 #include <cstdlib>   // std::getenv (ARC_CHALLENGES_JSON)
 #include <cstring>
 #include <filesystem>
-// Always use fmtlib so both builds format identically. Call sites qualify
-// fmt::format explicitly (std::format leaks in via <format> + `using namespace std`).
-#include "fmt/format.h"
+#include "text_format.hpp"
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -860,10 +858,10 @@ public:
     out += "Train:        " + train_status + "\n";
     out += "Test:         " + test_status + "\n";
     out += "Elapsed:      " + time_str + "\n";
-    out += fmt::format("Attempts:     {}\n", attempts);
-    out += fmt::format("Nodes:        {}\n", node_count);
-    out += fmt::format("Best Score:   {:.4f}\n", best_score);
-    out += fmt::format("Max Depth:    {}\n", max_depth);
+    out += to_text("Attempts:     %lld\n", attempts);
+    out += to_text("Nodes:        %d\n", node_count);
+    out += to_text("Best Score:   %.4f\n", best_score);
+    out += to_text("Max Depth:    %d\n", max_depth);
     return out;
   }
 
