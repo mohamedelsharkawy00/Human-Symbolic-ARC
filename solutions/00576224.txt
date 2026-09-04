@@ -1,9 +1,9 @@
-Input SelectAll Tile[1] Union CurrentObjects SelectAll AlignToCanvas Union CurrentObjects SelectAll FlipHorizontal Union Input SelectAll Fractal Underlay
+Input SelectObjectsWithHoles[3] Tile[0] Union CurrentObjects SelectRow[1] FlipHorizontal Union
 Puzzle:       00576224
 Train:        Solved
 Test:         Solved
-Elapsed:      00:02:14.4250
-Attempts:     47823984
-Nodes:        16
-Best Score:   6126.0000
-Max Depth:    16
+Elapsed:      00:00:06.8472
+Attempts:     2633496
+Nodes:        8
+Best Score:   6190.0000
+Max Depth:    8
