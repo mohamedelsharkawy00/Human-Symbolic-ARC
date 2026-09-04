@@ -291,17 +291,28 @@ inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }
 
-// Ops that read a fact inference elected, so what they do depends on what it
-// found. How much they depend varies -- some can only no-op without it, others
-// lose a refinement or fall back to a local answer -- so a dead-op guard is a
-// per-op verdict and those guards are a strict subset of this list, never all
-// of it. This is what the palette paints yellow.
-inline constexpr bool reads_inference(node_type t) {
-    return t == node_type::InputWithoutBackground || t == node_type::Colors ||
-           t == node_type::Split || t == node_type::VoteDenoise ||
-           t == node_type::Seeds || t == node_type::ProjectOnSeeds ||
-           t == node_type::SizeRankColorMap || t == node_type::ShapeColorMap ||
-           t == node_type::ShapeToInteriorColorMap;
+// How much of what an op does comes from a fact inference elected. ALL means the
+// op is nothing without that fact, which is exactly when a dead-op guard is an
+// honest verdict -- so the ALL ops are the ops that carry one, and that is the
+// whole guard list. SOME means it reads the fact and still does real work with
+// no fact to read: Split still segments, Colors still layers with the ground
+// included, VoteDenoise falls back to a local background, and the seed pool just
+// keeps the objects the ground would have taken out.
+// The palette paints ALL yellow and SOME orange.
+enum class inferred_amount { none, some, all };
+inline constexpr inferred_amount how_much_is_inferred(node_type t) {
+    switch (t) {
+    case node_type::InputWithoutBackground:
+    case node_type::SizeRankColorMap:
+    case node_type::ShapeColorMap:
+    case node_type::ShapeToInteriorColorMap:  return inferred_amount::all;
+    case node_type::Colors:
+    case node_type::Split:
+    case node_type::VoteDenoise:
+    case node_type::Seeds:
+    case node_type::ProjectOnSeeds:           return inferred_amount::some;
+    default:                                  return inferred_amount::none;
+    }
 }
 
 // Ops that hand back objects OTHER than the ones they were given, so no mark

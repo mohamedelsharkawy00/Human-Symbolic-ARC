@@ -1869,9 +1869,11 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
     total += (int)(row.size() - 1) * pad;
     int x = max(hmargin, (lay.screen_w - total) / 2);
     for (auto &c : row) {
-      // An op that leans on an inferred fact says so, because it goes quiet
-      // when inference abstains.
-      int col = reads_inference((node_type)c.id) ? (int)arc_color::yellow : 1;
+      // What inference decided, the palette says: all of an op yellow, some of
+      // it orange, none of it the ordinary blue.
+      inferred_amount inferred = how_much_is_inferred((node_type)c.id);
+      int col = inferred == inferred_amount::all  ? (int)arc_color::yellow
+              : inferred == inferred_amount::some ? (int)arc_color::orange : 1;
       if (y >= 0)
         draw_boxed_text(context, font, c.label, x, y, scale, c.box_w, box_h, col);
       x += c.box_w + pad;
