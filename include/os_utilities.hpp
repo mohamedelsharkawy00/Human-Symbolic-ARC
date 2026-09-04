@@ -1,6 +1,8 @@
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>  // getenv_s / strtoul for ARC_WS_MAX_GB / ARC_COMMIT_GB
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <windows.h>
@@ -8,6 +10,32 @@
 // OS specific window and power management helpers
 
 namespace arc {
+
+// When the binary this app is running was built. It ASKS THE FILE, because a
+// __DATE__ macro is only as fresh as the last time its own translation unit
+// recompiled, and the whole point is to catch an app that is older than the code.
+// A stale app answers every question exactly like a current one.
+inline std::string exe_build_time() {
+  // Read ONCE, at startup. A later build replaces the file on disk while this
+  // app keeps running the image it already loaded, so asking the file again
+  // later would report the binary that superseded this one as if it were this
+  // one -- the very confusion this exists to end.
+  static const std::string first_answer = []() -> std::string {
+    wchar_t exe_path[MAX_PATH];
+    if (!GetModuleFileNameW(nullptr, exe_path, MAX_PATH)) return "unknown";
+    std::error_code ec;
+    auto written = std::filesystem::last_write_time(exe_path, ec);
+    if (ec) return "unknown";
+    std::time_t when = std::chrono::system_clock::to_time_t(
+        std::chrono::clock_cast<std::chrono::system_clock>(written));
+    std::tm parts{};
+    if (localtime_s(&parts, &when) != 0) return "unknown";
+    char text[32];
+    if (!std::strftime(text, sizeof text, "%Y-%m-%d %H:%M:%S", &parts)) return "unknown";
+    return text;
+  }();
+  return first_answer;
+}
 
 // One app per folder. The port is the only thing an app keeps to itself, so a
 // second app here would overwrite this one's solutions, settings and logs.

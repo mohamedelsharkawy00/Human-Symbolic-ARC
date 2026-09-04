@@ -218,10 +218,11 @@ int main() {
 			// a contended run as a regression.
 			gpu_memory gpu = read_gpu_memory();
 			return fmt::format(
-				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}%",
+				"ok id={} idx={}/{} paused={} benchmarking={} solved={} elapsed={} gpu_used={}% build={}",
 				solver.current_puzzle_id(), idx, solver.get_puzzle_count(),
 				(bool)app_state.is_paused, (bool)app_state.is_benchmarking,
-				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent);
+				solved, format_elapsed(get_elapsed(app_state, st)), gpu.used_percent,
+				exe_build_time());
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);
@@ -239,6 +240,9 @@ int main() {
 	// app took 2026 before us. Both mean this run shares the GPU, and a shared
 	// run is not comparable to one that had the card to itself.
 	{
+		// Which binary is answering. An app that started before the build after
+		// it gives old answers to new questions, and nothing else here says so.
+		cmd_server.note(fmt::format("running the binary built {}", exe_build_time()));
 		gpu_memory gpu = read_gpu_memory();
 		cmd_server.note(fmt::format(
 			"gpu {} MB of {} MB in use ({}%){}", gpu.used_mb, gpu.total_mb,
