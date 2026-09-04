@@ -101,7 +101,7 @@ namespace arc {
     // Cross-level repeats slip through to the GPU's global_cache, which
     // skips re-scoring. Keeps visited cache-resident.
     visited.clear();
-    visited_grids.clear();
+    visited_states.clear();
 
     prepare_next_level_slots();
     update_history_from_beam();
@@ -194,7 +194,7 @@ namespace arc {
     merge_slot_candidates();
     for (auto &cand : beam)
       if (cand.n)
-        level_candidates.push_back({environment::copy(cand.n), cand.score, cand.grid_hash});
+        level_candidates.push_back({environment::copy(cand.n), cand.score, cand.state_hash});
     commit_level_champion();
     // The beam's own order, so a tie decided later can be traced to where it
     // actually sat rather than guessed at.
@@ -209,7 +209,7 @@ namespace arc {
     pairs_walked = pairs_kept = pairs_already_seen = members_skipped = 0;
     log_level_timing();
     visited.clear();
-    visited_grids.clear();
+    visited_states.clear();
     sweep_ready = false;
     sweep_beam_idx = 0;
     sweep_idx = 0;
@@ -363,18 +363,10 @@ namespace arc {
     for (node_type t : primitive_types) {
       if (role_of(t) != want) continue;
       if (m_puzzle.dead_ops[(int)t]) continue;
-      int variants = is_annotated(t) ? get_variant_count(t) : 1;
+      int variants = get_variant_count(t);
       for (int v = 0; v < variants; ++v) {
-        int16_t value = is_annotated(t) ? get_variant_value(t, v) : (int16_t)0;
+        int16_t value = get_variant_value(t, v);
         if (!color_literal_allowed(t, value)) continue;
-        // An op's variant COUNT is not its number of distinct values: Skew has
-        // 47 indices and two answers. Enumerating indices puts the same word in
-        // the sweep many times, and every sentence built from it is built to be
-        // thrown away. Each (op, value) belongs here once.
-        bool already = false;
-        for (const flat_program_op &seen : out)
-          if (seen.type == t && seen.value == value) { already = true; break; }
-        if (already) continue;
         out.push_back({t, value});
       }
     }
@@ -419,14 +411,15 @@ namespace arc {
       if (!legal_next(nullptr, t)) continue;
       // Annotated starters (e.g. InputFiltered[c]) seed one node per variant so the
       // search can explore each color choice independently from depth 0.
-      int variants = is_annotated(t) ? get_variant_count(t) : 1;
+      int variants = get_variant_count(t);
       for (int v = 0; v < variants; ++v) {
         // The same pin the other two generators apply: a starter may not name a
         // color the side it speaks about never shows.
-        if (!color_literal_allowed(t, (int16_t)v)) continue;
+        int16_t value = get_variant_value(t, v);
+        if (!color_literal_allowed(t, value)) continue;
         node *n = new node();
         n->type = t;
-        n->value = (int16_t)v;
+        n->value = value;
         environment::update_hash(n);  // finalizes depth + generation debt
         starter_nodes.push_back(n);
       }
@@ -949,47 +942,41 @@ namespace arc {
       auto it = global_cache.find(cand.n->hash);
       if (it != global_cache.end()) {
         cand.score = it->second.score;
-        cand.grid_hash = it->second.grid_hash;
+        cand.state_hash = it->second.state_hash;
       }
     }
 
-    // Grid-output dedup: two ASTs that produce the same output grid on the
-    // first training pair are evidence-equivalent for the beam. Drop the
-    // duplicate so its children don't get expanded next level. grid_hash==0
-    // means no valid output was produced yet — keep those, the existing
-    // score-based pruning handles them.
-    //
-    // Measured impact: marginal during real search (<1% of candidates are
-    // grid-duplicates pre-first-solve — AST-hash dedup already catches almost
-    // everything). Massive during post-solve simplification (~99% duplicates)
-    // but that phase isn't on the critical path. Kept because it's correct
-    // and cheap (one hash probe per candidate), not because it's a big win.
-    // The real bottleneck is the L2 cand=1M cap, not grid redundancy.
-    // Two candidates that paint the same canvas are one answer, so keep the one
-    // that RANKS higher rather than the one that happened to arrive first.
-    // Arrival carries no information -- and whether a candidate even has a grid
-    // hash by now depends on whether its batch came back, so letting arrival
-    // choose lets GPU timing pick the spelling that reaches the beam.
-    static thread_local unordered_map<uint64_t, size_t> best_by_grid;
-    best_by_grid.clear();
+    // STATE DEDUP: two chains in the same state are one chain, and a chain's
+    // state is the canvas it painted AND the objects it still holds. The hash
+    // covers both (see dsl_score_kernel) -- covering the canvas alone made a
+    // sentence that only rearranges the hand look like a sentence that did
+    // nothing, and this deleted it. state_hash==0 means no output came back
+    // yet, so those are kept and the score-based pruning handles them.
+    // Two chains in one state are one answer, so keep the one that RANKS
+    // higher rather than the one that happened to arrive first. Arrival
+    // carries no information -- and whether a candidate even has a hash by now
+    // depends on whether its batch came back, so letting arrival choose lets
+    // GPU timing pick the spelling that reaches the beam.
+    static thread_local unordered_map<uint64_t, size_t> best_by_state;
+    best_by_state.clear();
     int dropped = 0;
     for (auto &cand : current_slot_candidates) {
       if (!cand.n) continue;
-      if (cand.grid_hash == 0) {
+      if (cand.state_hash == 0) {
         level_candidates.push_back(cand);
         continue;
       }
-      auto seat = best_by_grid.find(cand.grid_hash);
-      if (seat == best_by_grid.end()) {
+      auto seat = best_by_state.find(cand.state_hash);
+      if (seat == best_by_state.end()) {
         // A canvas first seen in an EARLIER merge of this level has no
         // contender left to compare against; its winner is already downstream.
-        if (!visited_grids.insert_if_new(cand.grid_hash)) {
+        if (!visited_states.insert_if_new(cand.state_hash)) {
           environment::remove(cand.n);
           cand.n = nullptr;
           dropped++;
           continue;
         }
-        best_by_grid[cand.grid_hash] = level_candidates.size();
+        best_by_state[cand.state_hash] = level_candidates.size();
         level_candidates.push_back(cand);
         continue;
       }
@@ -1004,8 +991,8 @@ namespace arc {
       dropped++;
     }
     if (dropped > 0) {
-      log_debug(fmt::format("[GRID-DEDUP] dropped={} kept={} grids_seen={}",
-        dropped, (int)level_candidates.size(), visited_grids.size()));
+      log_debug(fmt::format("[STATE-DEDUP] dropped={} kept={} grids_seen={}",
+        dropped, (int)level_candidates.size(), visited_states.size()));
     }
     current_slot_candidates.clear();
 
@@ -1097,7 +1084,7 @@ namespace arc {
         if (it != best_by_type.end() && it->second.n) {
           environment::remove(it->second.n);
         }
-        best_by_type[k] = {environment::copy(cand.n), cand.score, cand.grid_hash};
+        best_by_type[k] = {environment::copy(cand.n), cand.score, cand.state_hash};
       }
     }
 

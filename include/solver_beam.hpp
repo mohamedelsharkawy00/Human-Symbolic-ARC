@@ -162,14 +162,14 @@ struct search_state {
   struct champion {
     node *n;
     float score;
-    uint64_t grid_hash = 0;
+    uint64_t state_hash = 0;
   };
   // A refinement slot on the unary chain is just how many steps down from the
   // root the replacement happens.
   struct slot_t {
     int depth = 0;
   };
-  struct cache_entry { float score; uint64_t grid_hash; };
+  struct cache_entry { float score; uint64_t state_hash; };
 
   // Total order on candidates: score first, then the OP LIST'S OWN ORDER. Ties
   // are common — every additive selector is inert once the marks are already
@@ -217,7 +217,7 @@ struct search_state {
   bool initialized = false;
 
   flat_hash_set_u64 visited;
-  flat_hash_set_u64 visited_grids;
+  flat_hash_set_u64 visited_states;
   queue<node *> pending_evaluation;
 
   unordered_map<uint64_t, cache_entry> global_cache;

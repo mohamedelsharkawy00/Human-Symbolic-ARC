@@ -67,6 +67,8 @@ inline constexpr const char* const split_names[] = {
     "A MOTIF THE SIZE OF THE SMALLER GRID" };
 // The sentence every one of them finishes.
 inline constexpr const char* split_names_lead = "AN OBJECT IS";
+// Beside the list it reads from, so everyone who names a cut names it once.
+inline const char* split_name(int cut_kind) { return split_names[cut_kind]; }
 static_assert(sizeof(split_names) / sizeof(char*) ==
               (size_t)split_kind::split_count);
 

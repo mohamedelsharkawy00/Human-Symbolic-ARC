@@ -43,20 +43,16 @@ namespace arc {
 	// Max distinct (color,w,h,count) tuples we track per target example.
 	constexpr int MAX_TARGET_OBJECTS = 16;
 
-	// Values live in cuda_dsl.cuh (GPU_MOVE_DELTAS_INIT, single home).
-	inline constexpr int move_deltas[] = GPU_MOVE_DELTAS_INIT;
-	inline constexpr int move_variant_count = (int)size(move_deltas);
-
 	// node_type and the NODE_PRIMITIVES op list live in cuda_dsl.cuh (single home).
 
 	inline constexpr const char* type_name[] = {
-	#define X(id, name, is_ann, var, role) name,
+	#define X(id, name, low, high, role) name,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
 	inline constexpr node_type primitive_types[] = {
-	#define X(id, n, is_ann, var, role) node_type::id,
+	#define X(id, n, low, high, role) node_type::id,
 		NODE_PRIMITIVES
 	#undef X
 	};
@@ -64,44 +60,29 @@ namespace arc {
 
 	// --- Shared node-type metadata helpers (used by serializer, GUI, solver) ---
 
-	inline constexpr bool type_is_annotated[] = {
-	#define X(id, n, is_ann, var, role) (bool)is_ann,
+	inline constexpr int type_var_low[] = {
+	#define X(id, n, low, high, role) low,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
-	inline constexpr int type_var_count[] = {
-	#define X(id, n, is_ann, var, role) var,
+	inline constexpr int type_var_high[] = {
+	#define X(id, n, low, high, role) high,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
+	// An op takes an argument only when its range holds more than one value.
 	inline bool is_annotated(node_type type) {
-		return type_is_annotated[to_underlying(type)];
+		return type_var_low[to_underlying(type)] != type_var_high[to_underlying(type)];
 	}
 
-	// Inverse of the printed annotation: maps the rendered annotation number
-	// back to the raw node::value index. Slam/Move types print move_deltas[value]
-	// instead of value directly, so parsing must invert that mapping.
-	inline int16_t parse_annotation_value(node_type type, int parsed) {
-		if (type == node_type::MoveRow || type == node_type::MoveColumn ||
-			type == node_type::SlamRow || type == node_type::SlamColumn) {
-			for (int i = 0; i < (int)size(move_deltas); ++i)
-				if (move_deltas[i] == parsed) return (int16_t)i;
-			return 0;
-		}
-		return (int16_t)parsed;
-	}
-
+	// The printed annotation IS the value, so reading one back is reading a
+	// number: no op translates its own argument, so nothing has to be undone.
 	inline void append_annotation(node_type type, int16_t value, string& out) {
 		if (is_annotated(type)) {
 			out += '[';
-			if (type == node_type::MoveRow || type == node_type::MoveColumn ||
-				type == node_type::SlamRow || type == node_type::SlamColumn) {
-				out += to_string((int)move_deltas[value]);
-			} else {
-				out += to_string((int)value);
-			}
+			out += to_string((int)value);
 			out += ']';
 		}
 	}
@@ -111,17 +92,11 @@ namespace arc {
 	}
 
 	inline int get_variant_count(node_type type) {
-		return type_var_count[to_underlying(type)];
+		return type_var_high[to_underlying(type)] - type_var_low[to_underlying(type)] + 1;
 	}
 
 	inline int16_t get_variant_value(node_type t, int idx) {
-		if (t == node_type::ScaleUp || t == node_type::ScaleDown || t == node_type::Layout) return (int16_t)(idx + 2);
-		if (t == node_type::ExtendOrthogonal || t == node_type::ExtendDiagonal) return (int16_t)(idx + 2);
-		if (t == node_type::Skew) return (idx == 0) ? -1 : 1;
-		if (t == node_type::DiagTile) return (int16_t)idx;
-		if (t == node_type::TileX || t == node_type::TileY) return (int16_t)(idx + 1);
-		if (t == node_type::InteriorColor) return (int16_t)(idx - 1); // -1..9
-		return (int16_t)idx;
+		return (int16_t)(type_var_low[to_underlying(t)] + idx);
 	}
 
 	// Not thread-safe: all node alloc/free must happen on the solver worker thread,
@@ -1035,7 +1010,7 @@ namespace arc {
 					while (pos < str.size() && str[pos] != ']') pos++;
 					int parsed = 0;
 					try { parsed = stoi(str.substr(vs, pos - vs)); } catch (...) { parsed = 0; }
-					value = parse_annotation_value((node_type)match, parsed);
+					value = (int16_t)parsed;
 					if (pos < str.size() && str[pos] == ']') pos++;
 				}
 				tokens.push_back({(node_type)match, value});

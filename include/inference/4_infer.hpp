@@ -24,7 +24,8 @@
 //   inference/1_readings.hpp        the shared base: count it, box it, walk it
 //   inference/2_background.hpp      elect_background
 //   inference/3_correspondence.hpp  pick_split
-//   inference/5_log.hpp             the per-puzzle readout
+//   inference/5_sentences.hpp       say_the_reading
+//   inference/6_log.hpp             the per-puzzle readout
 //
 // Facts, not verdicts: consumers fold and gate downstream. One exception —
 // background_hypotheses keeps its runners-up ranked, because something later

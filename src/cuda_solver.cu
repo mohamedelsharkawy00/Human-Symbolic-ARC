@@ -246,6 +246,12 @@ __device__ inline int8_t gpu_obj_resolve_color(const gpu_fixed_object& o, int8_t
     return (int8_t)best;
 }
 
+// One folding step of FNV-1a, so the canvas and the hand are stirred into the
+// same number the same way.
+__device__ inline uint64_t gpu_fold(uint64_t hash, uint64_t value) {
+    return (hash ^ value) * 1099511628211ULL;
+}
+
 // A source has no frame to inherit, so it takes the one its own content makes:
 // the box around every cell that is not transparent. This is not the tightening
 // the frame law reserves for Trim — there is no earlier box being discarded,
@@ -1533,6 +1539,26 @@ __device__ static int gpu_layout_bands(const gpu_object_list& src, int n, bool r
 // UNRESIZED into its own k x k cell (cell origin = (col*k, row*k)), clipped to
 // the cell. Result is one (cols*k) x (rows*k) object at the origin — grid-
 // aligned by construction, so ScaleDown[k] reads exactly one object per cell.
+// WHICH BAND A PIECE SITS IN, not what the piece is. Every other selector names
+// something the piece carries -- its color, its holes, its size -- so none of
+// them can say "the middle row of them". This one names where a piece sits among
+// the others, which is a question about the arrangement and not about the piece.
+// Bands come from gpu_layout_bands, the same grouping Layout reads, so a row
+// means one thing wherever it is asked about. Selectors ADD, so a band past the
+// last one marks nothing rather than clearing what is already picked.
+__device__ gpu_object_list& gpu_exec_select_band(gpu_exec_context& ctx, const gpu_object_list& src,
+                                                 int8_t which, bool rows) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    int n = min((int)res.count, GPU_KERNEL_MAX_OBJECTS);
+    if (n <= 0) return res;
+    int8_t band_of[GPU_KERNEL_MAX_OBJECTS];
+    gpu_layout_bands(res, n, rows, band_of);
+    for (int i = 0; i < n; ++i)
+        if (band_of[i] == which) res.objects[i].selected = true;
+    return res;
+}
+
 __device__ gpu_object_list& gpu_exec_layout(gpu_exec_context& ctx, const gpu_object_list& src, int k) {
     auto& res = gpu_acquire(ctx);
     int n = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
@@ -2494,36 +2520,33 @@ __device__ gpu_object_list& gpu_exec_tile(gpu_exec_context& ctx, const gpu_objec
         return res;
     }
 
+    // A COPY IS A PIECE. Handing back one sheet with the pattern baked into it
+    // said the tiling made one thing, and then nothing downstream could speak
+    // about the copies -- no pick could reach the middle row of them, because
+    // there was no middle row to reach. Want the sheet? Say UnionList after.
+    // Copies past the object ceiling are dropped, the same way Split[2] drops
+    // cells past it: a tiny motif over a big canvas makes more pieces than the
+    // kernel can hold.
     bool tile_x = (variant == 0 || variant == 1);
     bool tile_y = (variant == 0 || variant == 2);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& s = src.objects[i];
         if (s.width <= 0 || s.height <= 0) continue;
-        gpu_fixed_object& out = res.objects[res.count];
-        out.x0 = 0; out.y0 = 0;
-        out.x1 = (int16_t)(w - 1); out.y1 = (int16_t)(h - 1);
-        out.width = (int16_t)w; out.height = (int16_t)h;
-        out.mask.clear();
-        bool any = false;
-        // Replace the per-cell modulo (c % s.width, r % s.height) with wrapping
-        // counters: c increments by 1 so c%width just cycles 0..width-1. Modulo
-        // is a ~20-instruction GPU divide and this loop is lane-0 serial over
-        // h*w cells (the measured ~10% hotspot on line `sc = c % s.width`).
-        int sr = 0;
-        for (int r = 0; r < h; ++r) {
-            int srr = tile_y ? sr : r;
-            int sc = 0;
-            for (int c = 0; c < w; ++c) {
-                int scc = tile_x ? sc : c;
-                if (srr < s.height && scc < s.width) {
-                    int8_t v = s.mask[srr][scc];
-                    if (v != GPU_TRANSPARENT) { out.mask[r][c] = v; any = true; }
-                }
-                if (tile_x && ++sc >= s.width) sc = 0;
+        const int across = tile_x ? (w + s.width  - 1) / s.width  : 1;
+        const int down   = tile_y ? (h + s.height - 1) / s.height : 1;
+        for (int down_copy = 0; down_copy < down && res.count < GPU_KERNEL_MAX_OBJECTS; ++down_copy)
+            for (int across_copy = 0; across_copy < across && res.count < GPU_KERNEL_MAX_OBJECTS; ++across_copy) {
+                const int top = down_copy * s.height, left = across_copy * s.width;
+                // The copy is the same object moved, so it keeps its mask and
+                // its mark; the combine clips whatever hangs off the canvas.
+                gpu_fixed_object& out = res.objects[res.count];
+                out = s;
+                out.x0 = (int16_t)left;
+                out.y0 = (int16_t)top;
+                out.x1 = (int16_t)(left + s.width  - 1);
+                out.y1 = (int16_t)(top  + s.height - 1);
+                ++res.count;
             }
-            if (tile_y && ++sr >= s.height) sr = 0;
-        }
-        if (any) ++res.count;
     }
     return res;
 }
@@ -3266,8 +3289,6 @@ __device__ gpu_object_list& gpu_exec_snap_to_anchors(gpu_exec_context& ctx, cons
 // GPU DSL Interpreter
 // =====================================================================
 
-__device__ static const int8_t GPU_DEV_MOVE_DELTAS[] = GPU_MOVE_DELTAS_INIT;
-
 // Warp-wide interpreter: called by ALL 32 lanes.
 // Most ops run on lane 0 only; warp-parallel ops use all lanes.
 // ctx.current_objects_idx is kept in sync so all lanes can resolve the current result.
@@ -3374,11 +3395,11 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             continue;
         }
         if (type == node_type::MoveRow && has_current_objects) {
-            gpu_exec_move_warp(ctx, GPU_DEV_MOVE_DELTAS[value], true, lane);
+            gpu_exec_move_warp(ctx, value, true, lane);
             continue;
         }
         if (type == node_type::MoveColumn && has_current_objects) {
-            gpu_exec_move_warp(ctx, GPU_DEV_MOVE_DELTAS[value], false, lane);
+            gpu_exec_move_warp(ctx, value, false, lane);
             continue;
         }
 
@@ -3431,8 +3452,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             // MoveRow/MoveColumn handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::MoveRow:
             case node_type::MoveColumn:     result = &gpu_acquire(ctx); break;
-            case node_type::SlamRow:        result = last ? &gpu_exec_slam_row(ctx, *last, GPU_DEV_MOVE_DELTAS[value]) : &gpu_acquire(ctx); break;
-            case node_type::SlamColumn:     result = last ? &gpu_exec_slam_column(ctx, *last, GPU_DEV_MOVE_DELTAS[value]) : &gpu_acquire(ctx); break;
+            case node_type::SlamRow:        result = last ? &gpu_exec_slam_row(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SlamColumn:     result = last ? &gpu_exec_slam_column(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::AddColor:       result = last ? &gpu_exec_add_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Fit:            result = last ? &gpu_exec_fit(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Skew:           result = last ? &gpu_exec_skew(ctx, *last, value) : &gpu_acquire(ctx); break;
@@ -3462,6 +3483,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::VoteDenoise:         result = last ? &gpu_exec_vote_denoise(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Outline:             result = last ? &gpu_exec_outline(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsContainingColor: result = last ? &gpu_exec_select_objects_containing_color(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SelectRow:      result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, true) : &gpu_acquire(ctx); break;
+            case node_type::SelectColumn:   result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
             // branch above; reaching here means has_current_objects was false -> empty result.
             case node_type::NormalizeOrientation:
@@ -4106,11 +4129,6 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
             }
         }
 
-        // Lookahead: beam ranking only. It used to be GPU-only against a host
-        // mirror that did not have it, so every [SCORE] line was short by
-        // exactly this. The kernel reports its own terms now, so there is
-        // nothing left to drift from.
-        constexpr float W_LOOKAHEAD = 2.0f;
         // Focus term (GPU-only, like lookahead): correct cells of the focus
         // color — already painted or pending — count extra. Deliberately
         // DOMINANT, not a nudge: the machine solves one color at a time, so
@@ -4137,15 +4155,41 @@ __global__ void __launch_bounds__(32, 32) dsl_score_kernel(
 
         output_dims[idx * 2 + 0] = (int8_t)ctx.output.width;
         output_dims[idx * 2 + 1] = (int8_t)ctx.output.height;
-        // What this job painted, as one number (FNV-1a over the canvas).
+        // WHAT THIS JOB IS, as one number: the canvas it painted AND the objects
+        // it still holds. Two chains that painted the same picture but hold
+        // different objects are two different chains, because the next sentence
+        // acts on the hand and not on the paint -- hashing the paint alone made
+        // a sentence that only rearranges the hand look like a sentence that did
+        // nothing, and the dedup deleted it.
         {
-            uint64_t painted = 1469598103934665603ULL;
-            painted = (painted ^ (uint64_t)(uint8_t)ctx.output.width)  * 1099511628211ULL;
-            painted = (painted ^ (uint64_t)(uint8_t)ctx.output.height) * 1099511628211ULL;
+            uint64_t state = 1469598103934665603ULL;
+            state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.width);
+            state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.height);
             for (int row = 0; row < ctx.output.height; ++row)
                 for (int col = 0; col < ctx.output.width; ++col)
-                    painted = (painted ^ (uint64_t)(uint8_t)ctx.output.data[row][col]) * 1099511628211ULL;
-            output_hashes[idx] = painted;
+                    state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.data[row][col]);
+            const gpu_object_list* hand =
+                (ctx.current_objects_idx >= 0) ? &ctx.pool[ctx.current_objects_idx] :
+                (ctx.current_objects_idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS) ? &ctx.seed_objs :
+                nullptr;
+            state = gpu_fold(state, (uint64_t)(hand ? hand->count : 0));
+            if (hand) {
+                for (int i = 0; i < hand->count; ++i) {
+                    const gpu_fixed_object& obj = hand->objects[i];
+                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.x0);
+                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.y0);
+                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.width);
+                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.height);
+                    state = gpu_fold(state, (uint64_t)(obj.selected ? 1 : 0));
+                    // Only the object's own box, never the unused rest of the mask.
+                    int w = min((int)obj.width, GPU_MAX_GRID);
+                    int h = min((int)obj.height, GPU_MAX_GRID);
+                    for (int row = 0; row < h; ++row)
+                        for (int col = 0; col < w; ++col)
+                            state = gpu_fold(state, (uint64_t)(uint8_t)obj.mask[row][col]);
+                }
+            }
+            output_hashes[idx] = state;
         }
         scores[idx] = total;
         solved_out[idx] = (dims_match && my_mismatches == 0) ? 1 : 0;

@@ -1735,7 +1735,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
     vector<string> labels;
     for (int i : ids) {
       string s = type_name[i];
-      if (is_annotated((node_type)i)) s += fmt::format("[0-{}]", type_var_count[i] - 1);
+      if (is_annotated((node_type)i)) s += fmt::format("[{}-{}]", type_var_low[i], type_var_high[i]);
       labels.push_back(s);
     }
     return labels;

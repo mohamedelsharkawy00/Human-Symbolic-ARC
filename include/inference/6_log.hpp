@@ -1,10 +1,10 @@
-// 5_log.hpp — the per-puzzle readout.
+// 6_log.hpp — the per-puzzle readout.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // Last in the family: it reads every fact and writes none.
 
 #pragma once
-#include "inference/4_infer.hpp"
+#include "inference/5_sentences.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -36,10 +36,6 @@ inline string colorset(const bool member[10]) {
         }
     return listed.empty() ? string("-") : listed;
 }
-
-// Say what the cut DOES, not what it is called. The words live once, in
-// correspondence.hpp beside the cuts themselves — see split_names.
-inline const char* split_name(int cut_kind) { return split_names[cut_kind]; }
 
 // Which grid an edge starts on. A reading holds both, so this is per edge.
 inline const char* edge_side(const correspondence_facts::edge& edge) {
@@ -193,6 +189,17 @@ inline void report_correspondence_readings(ostream& report, const correspondence
     }
 }
 
+// WHAT THE READING COMES TO, in the solver's own words. The second list is the
+// one to read: it names the word the language is missing, at the moment the
+// looking wanted it.
+inline void report_said_reading(ostream& report, const correspondence_facts& correspondence) {
+    const said_reading said = say_the_reading(correspondence);
+    report << "[sentences] " << said.sentences.size() << " said, "
+           << said.no_word_for.size() << " with no word\n";
+    for (const string& sentence : said.sentences) report << "  " << sentence << "\n";
+    for (const string& missing : said.no_word_for) report << "  NO WORD FOR " << missing << "\n";
+}
+
 // WHAT SEVERAL PIECES SAID AT ONCE, reading by reading and pair by pair. Read
 // in each pair's own way up, so a pair drawn a quarter turn from its
 // neighbours can be set beside them. Readings nobody agreed in are not listed:
@@ -335,6 +342,7 @@ inline void log_inference(const string& id, const inference& inf, const Readout&
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
+    report_said_reading(report, inf.correspondence);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, seen);
     for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)

@@ -109,11 +109,6 @@ static constexpr float GPU_SCORE_W_COLOR_MATCH = 50.0f;
 // correct cell, no threshold cliff.
 static constexpr float GPU_SCORE_W_POSITION_MATCH = 80.0f;
 
-// Balanced ternary basis for MoveRow/MoveColumn/Slam variants: covers [-30,30] in ≤4 chains.
-// Single home of the values: environment.hpp (CPU array) and cuda_solver.cu
-// (device array) both initialize from this, so they cannot drift.
-#define GPU_MOVE_DELTAS_INIT { 1, -1, 3, -3, 9, -9, 27, -27 }
-
 // --- Fixed-size object representation (CPU + GPU compatible) ---
 // No heap, no pointers, trivially copyable. Mirrors environment.hpp object/object_list
 // but with inline mask and fixed-size arrays.
@@ -157,83 +152,96 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
 // without saying what it does — the macro will not compile without it.
+// AN OP'S ARGUMENT IS A RANGE, LOW AND HIGH, AND THAT IS THE ONLY PLACE IT IS
+// SAID. How many values is HIGH - LOW + 1, which value is LOW + index, and
+// whether the op takes an argument at all is LOW != HIGH -- three facts read
+// off two numbers, so none of them can disagree with the others, and no index
+// is interpreted anywhere. An op that takes nothing writes 0, 0.
 // THE ORDER IS THE SEARCH ORDER, simplest first: fewest variants, then fewest
 // lines of code. Ties: turns before flips, rights before lefts, inputs before
 // outputs, canvas as Union/Underlay/Intersection/Difference, then fewer letters.
-#define NODE_PRIMITIVES /* Schema: X(ID, NAME, IS_ANNOTATED, VAR_COUNT, ROLE) */ \
-  X(SelectAll, "SelectAll", 0, 1, select)                                        \
-  X(InvertSelection, "InvertSelection", 0, 1, select)                            \
-  X(TurnRight, "TurnRight", 0, 1, translate)                                     \
-  X(TurnLeft, "TurnLeft", 0, 1, translate)                                       \
-  X(FlipHorizontal, "FlipHorizontal", 0, 1, translate)                           \
-  X(FlipVertical, "FlipVertical", 0, 1, translate)                               \
-  X(Input, "Input", 0, 1, get)                                                   \
-  X(Output, "Output", 0, 1, get)                                                   X(CurrentObjects, "CurrentObjects", 0, 1, get)                                 \
-  X(Origin, "Origin", 0, 1, translate)                                           \
-  X(Union, "Union", 0, 1, combine)                                               \
+#define NODE_PRIMITIVES /* Schema: X(ID, NAME, LOW, HIGH, ROLE) */               \
+  X(SelectAll, "SelectAll", 0, 0, select)                                        \
+  X(InvertSelection, "InvertSelection", 0, 0, select)                            \
+  X(TurnRight, "TurnRight", 0, 0, translate)                                     \
+  X(TurnLeft, "TurnLeft", 0, 0, translate)                                       \
+  X(FlipHorizontal, "FlipHorizontal", 0, 0, translate)                           \
+  X(FlipVertical, "FlipVertical", 0, 0, translate)                               \
+  X(Input, "Input", 0, 0, get)                                                   \
+  X(Output, "Output", 0, 0, get)                                                 \
+  X(CurrentObjects, "CurrentObjects", 0, 0, get)                                 \
+  X(Origin, "Origin", 0, 0, translate)                                           \
+  X(Union, "Union", 0, 0, combine)                                               \
   /* DeleteSelection consumes the marks, it does not make them: an act. */       \
-  X(DeleteSelection, "DeleteSelection", 0, 1, reduce)                            \
+  X(DeleteSelection, "DeleteSelection", 0, 0, reduce)                            \
   /* The canvas-readers judge by what lies beneath, not by the object: acts. */  \
-  X(ReadUnder, "ReadUnder", 0, 1, map)                                           \
-  X(Outline, "Outline", 0, 1, reduce)                                            \
-  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 1, select)                \
+  X(ReadUnder, "ReadUnder", 0, 0, map)                                           \
+  X(Outline, "Outline", 0, 0, reduce)                                            \
+  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 0, select)                \
   /* Colors extracts the palette as objects — a producing act, not a source. */  \
-  X(Colors, "Colors", 0, 1, map)                                                 \
-  X(Trim, "Trim", 0, 1, reduce)                                                  \
-  X(OverlapCorner, "OverlapCorner", 0, 1, map)                                   \
-  X(Underlay, "Underlay", 0, 1, combine)                                         \
-  X(Fit, "Fit", 0, 1, reduce)                                                    \
-  X(Intersection, "Intersection", 0, 1, combine)                                 \
-  X(Fractal, "Fractal", 0, 1, generate)                                          \
-  X(Difference, "Difference", 0, 1, combine)                                     \
-  X(UnionList, "UnionList", 0, 1, reduce)                                        \
-  X(AlignToCanvas, "AlignToCanvas", 0, 1, translate)                             \
-  X(IntersectionList, "IntersectionList", 0, 1, reduce)                          \
-  X(SizeRankColorMap, "SizeRankColorMap", 0, 1, map)                             \
-  X(Pattern, "Pattern", 0, 1, generate)                                          \
-  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 1, map)                                 \
-  X(Bridge, "Bridge", 0, 1, generate)                                            \
-  X(Partition, "Partition", 0, 1, generate)                                      \
-  X(RestoreOrientation, "RestoreOrientation", 0, 1, translate)                   \
-  X(ShapeColorMap, "ShapeColorMap", 0, 1, map)                                   \
-  X(Seeds, "Seeds", 0, 1, get)                                                   \
-  X(VoteDenoise, "VoteDenoise", 0, 1, map)                                       \
-  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 1, map)               \
-  X(SnapToAnchors, "SnapToAnchors", 0, 1, map)                                   \
-  X(SortBySize, "SortBySize", 1, 2, map)                                         \
-  X(DiagTile, "DiagTile", 1, 2, generate)                                        \
-  X(NormalizeOrientation, "NormalizeOrientation", 1, 2, translate)               \
-  X(Split, "Split", 1, 3, generate)                                              \
-  X(Tile, "Tile", 1, 4, generate)                                                \
-  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 1, 5, select)              \
-  X(MoveRow, "MoveRow", 1, 8, translate)                                         \
-  X(MoveColumn, "MoveColumn", 1, 8, translate)                                   \
-  X(Shift, "Shift", 1, 8, translate)                                             \
-  X(MoveToEdge, "MoveToEdge", 1, 8, translate)                                   \
-  X(SlamRow, "SlamRow", 1, 8, translate)                                         \
-  X(SlamColumn, "SlamColumn", 1, 8, translate)                                   \
-  X(ExtendTo, "ExtendTo", 1, 8, generate)                                        \
-  X(ExtendDiagonal, "ExtendDiagonal", 1, 9, generate)                            \
-  X(ExtendOrthogonal, "ExtendOrthogonal", 1, 9, generate)                        \
-  X(ScaleUp, "ScaleUp", 1, 9, translate)                                         \
-  X(ScaleDown, "ScaleDown", 1, 9, translate)                                     \
-  X(Layout, "Layout", 1, 9, translate)                                           \
-  X(SelectColor, "SelectColor", 1, 10, select)                                   \
-  X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 1, 10, select) \
-  X(SelectLargestObject, "SelectLargestObject", 1, 10, select)                   \
-  X(SelectSmallestObject, "SelectSmallestObject", 1, 10, select)                 \
-  X(AddColor, "AddColor", 1, 10, generate)                                       \
-  X(MaskBy, "MaskBy", 1, 11, map)                                                \
-  X(MaskOut, "MaskOut", 1, 11, map)                                              \
-  X(InteriorColor, "InteriorColor", 1, 11, map)                                  \
-  X(Recolor, "Recolor", 1, 12, map)                                              \
+  X(Colors, "Colors", 0, 0, map)                                                 \
+  X(Trim, "Trim", 0, 0, reduce)                                                  \
+  X(OverlapCorner, "OverlapCorner", 0, 0, map)                                   \
+  X(Underlay, "Underlay", 0, 0, combine)                                         \
+  X(Fit, "Fit", 0, 0, reduce)                                                    \
+  X(Intersection, "Intersection", 0, 0, combine)                                 \
+  X(Fractal, "Fractal", 0, 0, generate)                                          \
+  X(Difference, "Difference", 0, 0, combine)                                     \
+  X(UnionList, "UnionList", 0, 0, reduce)                                        \
+  X(AlignToCanvas, "AlignToCanvas", 0, 0, translate)                             \
+  X(IntersectionList, "IntersectionList", 0, 0, reduce)                          \
+  X(SizeRankColorMap, "SizeRankColorMap", 0, 0, map)                             \
+  X(Pattern, "Pattern", 0, 0, generate)                                          \
+  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 0, map)                                 \
+  X(Bridge, "Bridge", 0, 0, generate)                                            \
+  X(Partition, "Partition", 0, 0, generate)                                      \
+  X(RestoreOrientation, "RestoreOrientation", 0, 0, translate)                   \
+  X(ShapeColorMap, "ShapeColorMap", 0, 0, map)                                   \
+  X(Seeds, "Seeds", 0, 0, get)                                                   \
+  X(VoteDenoise, "VoteDenoise", 0, 0, map)                                       \
+  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 0, map)               \
+  X(SnapToAnchors, "SnapToAnchors", 0, 0, map)                                   \
+  X(SortBySize, "SortBySize", 0, 1, map)                                         \
+  X(DiagTile, "DiagTile", 0, 1, generate)                                        \
+  X(NormalizeOrientation, "NormalizeOrientation", 0, 1, translate)               \
+  /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
+  X(Skew, "Skew", -1, 1, translate)                                              \
+  X(Split, "Split", 0, 2, generate)                                              \
+  /* Cells slide a step and pile at the wall, so a step past the wall says */    \
+  X(SlamColumn, "SlamColumn", -1, 1, translate)                                  \
+  /* nothing new: the answers run out at the object, not at the grid. */         \
+  X(SlamRow, "SlamRow", -1, 1, translate)                                        \
+  X(Tile, "Tile", 0, 3, generate)                                                \
+  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 0, 4, select)              \
+  X(Shift, "Shift", 0, 7, translate)                                             \
+  X(MoveToEdge, "MoveToEdge", 0, 7, translate)                                   \
+  X(ExtendTo, "ExtendTo", 0, 7, generate)                                        \
+  X(ExtendDiagonal, "ExtendDiagonal", 2, 10, generate)                           \
+  X(ExtendOrthogonal, "ExtendOrthogonal", 2, 10, generate)                       \
+  X(ScaleUp, "ScaleUp", 2, 10, translate)                                        \
+  X(ScaleDown, "ScaleDown", 2, 10, translate)                                    \
+  X(Layout, "Layout", 2, 10, translate)                                          \
+  X(SelectColor, "SelectColor", 0, 9, select)                                    \
+  X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 0, 9, select)  \
+  X(SelectLargestObject, "SelectLargestObject", 0, 9, select)                    \
+  X(SelectSmallestObject, "SelectSmallestObject", 0, 9, select)                  \
+  X(AddColor, "AddColor", 0, 9, generate)                                        \
+  X(MaskBy, "MaskBy", 0, 10, map)                                                \
+  X(MaskOut, "MaskOut", 0, 10, map)                                              \
+  X(InteriorColor, "InteriorColor", -1, 9, map)                                  \
+  X(Recolor, "Recolor", 0, 11, map)                                              \
   X(TileX, "TileX", 1, 30, generate)                                             \
   X(TileY, "TileY", 1, 30, generate)                                             \
-  X(BidiColorMap, "BidiColorMap", 1, 45, map)                                    \
-  X(Skew, "Skew", 1, 47, translate)
+  /* Where a piece sits among the others, the one thing no other pick says. */   \
+  X(SelectRow, "SelectRow", 0, 29, select)                                       \
+  X(SelectColumn, "SelectColumn", 0, 29, select)                                             \
+  X(BidiColorMap, "BidiColorMap", 0, 44, map)                                    \
+  /* The move IS the number of cells, so the whole grid is sayable in one. */    \
+  X(MoveRow, "MoveRow", -30, 30, translate)                                      \
+  X(MoveColumn, "MoveColumn", -30, 30, translate)
 
 enum class node_type : uint8_t {
-#define X(id, n, is_ann, var, role) id,
+#define X(id, n, low, high, role) id,
     NODE_PRIMITIVES
 #undef X
     type_count
@@ -247,7 +255,7 @@ enum class node_type : uint8_t {
 // this must stay pure comparison with nothing to dereference.
 inline constexpr op_role role_of(node_type t) {
     switch (t) {
-#define X(id, n, is_ann, var, role) case node_type::id: return op_role::role;
+#define X(id, n, low, high, role) case node_type::id: return op_role::role;
     NODE_PRIMITIVES
 #undef X
     default: return op_role::map;

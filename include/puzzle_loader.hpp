@@ -1,6 +1,6 @@
 #pragma once
 #include "environment.hpp"   // pulls in inference/4_infer.hpp: arc::infer(train) -> inference
-#include "inference/5_log.hpp" // the per-puzzle readout, written after infer()
+#include "inference/6_log.hpp" // the per-puzzle readout, written after infer()
 #include "global_app_state.hpp"
 #ifdef _MSC_VER
 #include "gui.hpp"        // full GUI/Vulkan rendering
