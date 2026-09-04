@@ -291,9 +291,11 @@ inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }
 
-// Ops that lean on a fact inference elected. Each one quietly does nothing, or
-// does less, when that fact is absent -- so this is the list dead-op guards are
-// drawn from, and the one the palette paints yellow.
+// Ops that read a fact inference elected, so what they do depends on what it
+// found. How much they depend varies -- some can only no-op without it, others
+// lose a refinement or fall back to a local answer -- so a dead-op guard is a
+// per-op verdict and those guards are a strict subset of this list, never all
+// of it. This is what the palette paints yellow.
 inline constexpr bool reads_inference(node_type t) {
     return t == node_type::InputWithoutBackground || t == node_type::Colors ||
            t == node_type::Split || t == node_type::VoteDenoise ||
