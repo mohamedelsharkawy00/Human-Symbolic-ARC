@@ -11,6 +11,16 @@
 
 namespace arc {
 
+// One spelling of a wall-clock time, so everything that stamps one agrees.
+inline std::string time_text(std::chrono::system_clock::time_point when) {
+  std::time_t as_time = std::chrono::system_clock::to_time_t(when);
+  std::tm parts{};
+  if (localtime_s(&parts, &as_time) != 0) return "unknown";
+  char text[32];
+  if (!std::strftime(text, sizeof text, "%Y-%m-%d %H:%M:%S", &parts)) return "unknown";
+  return text;
+}
+
 // When the binary this app is running was built. It ASKS THE FILE, because a
 // __DATE__ macro is only as fresh as the last time its own translation unit
 // recompiled, and the whole point is to catch an app that is older than the code.
@@ -26,13 +36,7 @@ inline std::string exe_build_time() {
     std::error_code ec;
     auto written = std::filesystem::last_write_time(exe_path, ec);
     if (ec) return "unknown";
-    std::time_t when = std::chrono::system_clock::to_time_t(
-        std::chrono::clock_cast<std::chrono::system_clock>(written));
-    std::tm parts{};
-    if (localtime_s(&parts, &when) != 0) return "unknown";
-    char text[32];
-    if (!std::strftime(text, sizeof text, "%Y-%m-%d %H:%M:%S", &parts)) return "unknown";
-    return text;
+    return time_text(std::chrono::clock_cast<std::chrono::system_clock>(written));
   }();
   return first_answer;
 }
@@ -45,7 +49,13 @@ inline void claim_folder_or_exit() {
   std::filesystem::create_directories("logs");
   static HANDLE claim = CreateFileW(L"logs\\app.lock", GENERIC_WRITE, 0, nullptr,
                                     OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (claim != INVALID_HANDLE_VALUE) return;
+  if (claim != INVALID_HANDLE_VALUE) {
+    // The note below is a fact by existing, so a start that works takes it away.
+    // Left behind, it would answer for today with a refusal from last week.
+    std::error_code gone;
+    std::filesystem::remove("logs/refused_to_start.txt", gone);
+    return;
+  }
 
   const wchar_t *why =
       L"Another app is already running in this folder.\n\n"
@@ -59,7 +69,8 @@ inline void claim_folder_or_exit() {
   if (!wcsstr(GetCommandLineW(), L"--minimized"))
     MessageBoxW(nullptr, why, L"ARC is already running here", MB_OK | MB_ICONWARNING);
   if (std::ofstream note("logs/refused_to_start.txt", std::ios::trunc); note)
-    note << "another app is already running in this folder, only one runs per "
+    note << time_text(std::chrono::system_clock::now())
+         << " | another app is already running in this folder, only one runs per "
             "folder because they share solutions, settings and logs\n"
             "open a worktree instead: git worktree add -b <branch> ..\\ARC-<name>\n";
   ExitProcess(1);

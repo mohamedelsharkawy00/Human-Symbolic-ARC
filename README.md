@@ -13,6 +13,9 @@
 7. The headless one is what produces a submission. `scripts\kaggle_push.py` copies the headless source up as a Kaggle dataset, then the notebook in `kaggle\src\arc_build\` compiles it on Kaggle's GPU and runs it.
 8. Predictions are written to `kaggle\working\submission.json`, locally and on Kaggle alike.
 
-# 3. Licence
+# 3. Logs
+1. Nothing in `logs/` accumulates. Each file is the current one of its kind, cleared by whatever starts the next.
+
+# 4. Licence
 1. MIT No Attribution, see `LICENSE`. Take it and do anything, no strings.
 2. `include\third_party\fmt` is someone else's, MIT, and keeps its own notice.
