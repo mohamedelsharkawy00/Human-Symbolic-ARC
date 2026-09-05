@@ -151,7 +151,7 @@ for s in range(SHARDS):
     env["ARC_SHARD_TOTAL"] = str(SHARDS)
     env["ARC_PUZZLE_LIMIT"] = PUZZLE_LIMIT  # overall task cap (shard takes its slice)
     env["ARC_TIMEOUT"] = TIMEOUT
-    env["ARC_CHALLENGES_JSON"] = TEST_JSON   # solver slices this big JSON in-memory
+    env["ARC_DATASET"] = "test"   # which set to solve; the solver finds the file itself
     lf = open(f"/kaggle/working/shard_{s}.log", "w")
     procs.append((s, subprocess.Popen([BIN], stdout=lf, stderr=subprocess.STDOUT, env=env), lf))
 

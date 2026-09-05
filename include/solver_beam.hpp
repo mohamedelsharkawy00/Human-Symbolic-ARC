@@ -16,7 +16,8 @@
 #include "sound_manager.hpp"
 
 #include <algorithm>
-#include <cstdlib>   // std::getenv (ARC_CHALLENGES_JSON)
+#include <cstdio>    // std::fprintf (headless refuses an unset ARC_DATASET)
+#include <cstdlib>   // std::getenv (ARC_DATASET), std::exit
 #include <cstring>
 #include <filesystem>
 #include "text_format.hpp"
@@ -363,7 +364,6 @@ public:
 
 
   void report_score(const node *n, float score, uint64_t g_hash);
-  bool check_candidate_compatibility(node_type type, node* arg);
 
   // True if a color-literal op of `type` with literal `value` is allowed for the
   // current puzzle. When pinning is on, a literal is pinned to the side it
@@ -444,7 +444,7 @@ private:
   void collect_subtrees(node *n, unordered_set<uint64_t> &existing, int &added);
   void rebuild_skeleton_beam();
   void prepare_next_level_slots();
-  void find_slots_recursive(node *n, int depth, vector<slot_t> &out, set<int> &visited);
+  void find_slots_recursive(node *n, int depth, vector<slot_t> &out, set<int> &visited_depths);
   void reset_d2_generator();
 
   static constexpr int MAX_STAGNANT_LEVELS = 5;
@@ -457,7 +457,7 @@ private:
     return c;
   }
 
-  phase_result generate_phase_prune(const slot_t &slot, node* target, int &batch_count, node *&candidate_sub);
+  phase_result generate_phase_prune(node* target, int &batch_count, node *&candidate_sub);
   phase_result generate_phase_0(const slot_t &slot, int &batch_count, node *&candidate_sub, bool &created_new);
   phase_result generate_phase_1(const slot_t &slot, int &batch_count, node *&candidate_sub, bool &created_new);
   phase_result execute_current_phase(const slot_t &slot, node* target, int &batch_count, node *&candidate_sub, bool &created_new);
@@ -657,23 +657,28 @@ public:
     }
     m_base_gpu_buffer_size = gpu_buffer.size();
 
-    // Pick the initial dataset(s). ARC_CHALLENGES_JSON still wins (Kaggle points
-    // it at the test/eval file it selected; headless has no GUI to toggle). With
-    // no override the GUI default is TRAIN (dev/mining); the user can check more
-    // sets at runtime and they get concatenated into one list.
-    int initial = DS_TRAIN;
-    if (const char *env = std::getenv("ARC_CHALLENGES_JSON")) {
-      string e = env;
-      if (e.find("test") != string::npos) initial = DS_TEST;
-      else if (e.find("eval") != string::npos) initial = DS_EVAL;
-      else initial = DS_TRAIN;
-    }
+    // Which sets to open, decided the way each build is able to decide it.
 #ifdef _MSC_VER
-    // GUI resume: restore the saved dataset selection before the saved puzzle
-    // index is read below, so the index lands in the same list it came from.
-    else {
-      int saved = settings_int(read_settings_file(), "datasets", 0) & (DS_TRAIN | DS_EVAL | DS_TEST);
-      if (saved > 0) initial = saved;
+    // The saved selection, restored before the saved puzzle index is read below
+    // so the index lands in the same list it came from. TRAIN when nothing is
+    // saved: a person is looking at the screen and can check another box.
+    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_TRAIN | DS_EVAL | DS_TEST);
+    if (initial <= 0) initial = DS_TRAIN;
+#else
+    // The notebook says which, because nothing here can ask. NO DEFAULT, ON
+    // PURPOSE: guessing wrong writes a submission built from the training set
+    // that looks exactly like a real one, and no one is watching to notice.
+    int initial = 0;
+    if (const char *chosen = std::getenv("ARC_DATASET")) {
+      string want = chosen;
+      if (want == "test") initial = DS_TEST;
+      else if (want == "eval") initial = DS_EVAL;
+      else if (want == "train") initial = DS_TRAIN;
+    }
+    if (initial == 0) {
+      std::fprintf(stderr, "ARC_DATASET must be test, eval or train. Refusing to guess.
+");
+      std::exit(1);
     }
 #endif
     load_dataset(initial);
@@ -820,7 +825,7 @@ public:
         if (!p.inferred)
           infer_into_puzzle(p, m_solver_state.puzzle_idx,
                             (int)m_puzzle_tasks.size(), m_dataset_flags.load());
-        apply_solution(p, m_solver_state, *m_gpu_buffer, sol_str, m_log);
+        apply_solution(p, *m_gpu_buffer, sol_str, m_log);
         if (p.is_solved) {
           active_example_count = (int)p.train.size();
         }
@@ -906,7 +911,9 @@ public:
     auto it = m_solutions.find(id);
     return it != m_solutions.end() ? &it->second : nullptr;
   }
-  inline const puzzle &get_puzzle(int idx) const {
+  // Takes no index: one puzzle is loaded at a time, so this is that one. It
+  // used to take one and ignore it, which read as a promise it never kept.
+  inline const puzzle &get_puzzle() const {
     static puzzle dummy;
     return m_puzzle_loaded ? m_puzzle : dummy;
   }
@@ -928,7 +935,7 @@ private:
     return false;
   }
 
-  bool pump_generate(const puzzle &p, std::atomic<long long> *global_attempts);
+  bool pump_generate(std::atomic<long long> *global_attempts);
   void log_tree_record(node *tree, float score, long long attempts);
   void update_best_solution(int target_idx, puzzle &p, node *tree, int node_count, candidate_batch &res);
   void worker();

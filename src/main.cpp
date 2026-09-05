@@ -201,7 +201,7 @@ int main() {
 				if (int p_idx = st.puzzle_idx; p_idx >= 0 && p_idx < solver.get_puzzle_count()) {
 					lock_guard<mutex> lock(st.mtx);
 					draw_frame(&context, chars, bg_grid, st, app_state,
-						solver.get_puzzle(p_idx), w, h, fps, aps, gpu_ms, p_idx,
+						solver.get_puzzle(), w, h, fps, aps, gpu_ms, p_idx,
 						solver.get_puzzle_count(), gpu_buffer);
 				}
 				if (!context.end_capture(pass == 1 ? path : string()))
@@ -213,7 +213,7 @@ int main() {
 			auto &st = solver.get_solver_state();
 			int idx = st.puzzle_idx.load();
 			bool solved = idx >= 0 && idx < solver.get_puzzle_count() &&
-			              solver.get_puzzle(idx).is_solved;
+			              solver.get_puzzle().is_solved;
 			// gpu_used says whether the card is shared right now, so nobody reads
 			// a contended run as a regression.
 			gpu_memory gpu = read_gpu_memory();
@@ -317,7 +317,7 @@ int main() {
 			if (app_state.benchmark.waiting_for_advance) {
 				if (p_idx != app_state.benchmark.last_idx) app_state.benchmark.waiting_for_advance = false;
 			} else if (p_idx >= 0 && p_idx < p_count) {
-				const puzzle &p = solver.get_puzzle(p_idx);
+				const puzzle &p = solver.get_puzzle();
 				float elapsed = get_elapsed(app_state, state);
 				bool timed_out = elapsed >= app_state.benchmark_timeout_seconds;
 
@@ -435,7 +435,7 @@ int main() {
 			if (p_idx >= 0 && p_idx < p_count) {
 				lock_guard<mutex> lock(state.mtx);
 				draw_frame(&context, chars, bg_grid, state,
-					app_state, solver.get_puzzle(p_idx), w, h, fps, aps, gpu_ms, p_idx,
+					app_state, solver.get_puzzle(), w, h, fps, aps, gpu_ms, p_idx,
 					p_count, gpu_buffer);
 			}
 			context.end_frame();
@@ -484,6 +484,11 @@ int main() {
 	             out_path.c_str(), ok ? "written" : "WRITE FAILED", submission.count());
 #endif
 
+	// Said BEFORE the join, because the join is what runs the solver thread's
+	// thread-local destructors, and those are the frees in question. Nothing
+	// below wants the card, so a pinned buffer left unfreed here is one the
+	// operating system takes back a moment later.
+	cuda_runtime_shutting_down();
 	solver.stop_thread();
 	return 0;
 }

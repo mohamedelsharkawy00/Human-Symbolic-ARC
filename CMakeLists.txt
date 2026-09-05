@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.18)
-set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr" CACHE STRING "" FORCE)
+set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr -Wreorder -Wmissing-launch-bounds -Wdefault-stream-launch -Wext-lambda-captures-this -Xcompiler /W4" CACHE STRING "" FORCE)
 project(ARC LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -14,12 +14,13 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32)
 # Off by choice, not by breakage: it is the only thing that checks a to_text
 # format string against its arguments, and the fmtlib false positives that
 # forced it off left with fmtlib. Run on 2026-09-05 over all 112 call sites and
-# came back clean, proven by planting a bad one and watching C6273 fire. Turn it
-# back on after adding to_text calls, since nothing else will read them.
-# add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
+# came back clean, proven by planting a bad one and watching C6273 fire. On while
+# its remaining findings are being worked through.
+add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
 
 if(MSVC)
     string(REGEX REPLACE "/Ob[0-9]" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/MP>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # source and exec charset agree
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2;/Oi;/Ot;/GS-;/GL;/fp:fast;/Qpar;/favor:blend>")

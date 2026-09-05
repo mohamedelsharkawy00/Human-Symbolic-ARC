@@ -12,10 +12,6 @@ namespace arc {
     global_cache[n->hash] = {score, g_hash};
   }
 
-  inline bool beam_solver::check_candidate_compatibility(node_type type, node* arg) {
-    return arg != nullptr;
-  }
-
   inline beam_solver::phase_result beam_solver::handle_retry(int& batch_count) {
     if (check_yield(batch_count)) return beam_solver::phase_result::yield;
     return beam_solver::phase_result::retry;
@@ -238,8 +234,9 @@ namespace arc {
     ns_fetch = ns_analyze = ns_best = 0;
   }
 
-  inline bool beam_solver::pump_generate(const puzzle &p,
-             atomic<long long> *global_attempts) {
+  // Takes no puzzle: beam_solver already holds it, and this only steers its own
+  // members. The parameter was a second way to say the same thing.
+  inline bool beam_solver::pump_generate(atomic<long long> *global_attempts) {
     m_global_attempts = global_attempts;
     // Sentence mode never seeds starters: it has no history pool and no slots,
     // because a sentence is built whole rather than grown an op at a time.
@@ -323,8 +320,8 @@ namespace arc {
     }
 
     uint64_t child_hash = new_subtree_hash;
-    for (int depth = spine_len - 1; depth >= 0; --depth) {
-      const node *n = spine[depth];
+    for (int spine_at = spine_len - 1; spine_at >= 0; --spine_at) {
+      const node *n = spine[spine_at];
       // Mirror environment::update_hash exactly; the swapped child is treated
       // as non-null.
       uint64_t h = 0x9e3779b97f4a7c15ULL + to_underlying(n->type);
@@ -610,18 +607,18 @@ namespace arc {
   }
 
   inline void beam_solver::find_slots_recursive(node *n, int depth, vector<beam_solver::slot_t> &out,
-                            set<int> &visited) {
+                            set<int> &visited_depths) {
     if (!n)
       return;
     if (depth >= MAX_SEARCH_DEPTH) return;
     node *child = n->arg;
     if (!child) return;
     int child_depth = depth + 1;
-    if (visited.find(child_depth) == visited.end()) {
+    if (visited_depths.find(child_depth) == visited_depths.end()) {
       out.push_back({child_depth});
-      visited.insert(child_depth);
+      visited_depths.insert(child_depth);
     }
-    find_slots_recursive(child, child_depth, out, visited);
+    find_slots_recursive(child, child_depth, out, visited_depths);
   }
 
   inline void beam_solver::reset_d2_generator() {
@@ -633,7 +630,7 @@ namespace arc {
     total_candidates_this_slot = 0;
   }
 
-  inline beam_solver::phase_result beam_solver::generate_phase_prune(const beam_solver::slot_t &slot, node* target, int &batch_count, node *&candidate_sub) {
+  inline beam_solver::phase_result beam_solver::generate_phase_prune(node* target, int &batch_count, node *&candidate_sub) {
     if (!target) return beam_solver::phase_result::next_phase;
     if (m_gen_outer_idx < 1) {
       m_gen_outer_idx++;
@@ -648,7 +645,7 @@ namespace arc {
     return beam_solver::phase_result::next_phase;
   }
 
-  inline beam_solver::phase_result beam_solver::generate_phase_0(const beam_solver::slot_t &slot, int &batch_count, node *&candidate_sub, bool &created_new) {
+  inline beam_solver::phase_result beam_solver::generate_phase_0(const beam_solver::slot_t &slot, int &batch_count, node *&candidate_sub, [[maybe_unused]] bool &created_new) {
     if (m_gen_outer_idx < (int)history_pool.size()) {
       node *h = history_pool[m_gen_outer_idx++];
       if (slot.depth + h->max_depth <= MAX_SEARCH_DEPTH) {
@@ -741,7 +738,7 @@ namespace arc {
 
   inline beam_solver::phase_result beam_solver::execute_current_phase(const beam_solver::slot_t &slot, node* target, int &batch_count, node *&candidate_sub, bool &created_new) {
     switch (m_gen_phase) {
-      case 0: return generate_phase_prune(slot, target, batch_count, candidate_sub);
+      case 0: return generate_phase_prune(target, batch_count, candidate_sub);
       case 1: return generate_phase_0(slot, batch_count, candidate_sub, created_new);
       case 2: return generate_phase_1(slot, batch_count, candidate_sub, created_new);
     }
@@ -1607,11 +1604,11 @@ namespace arc {
                                                  flat_program_batch::MAX_PROGRAMS));
 
       // Prime the generator.
-      { scope_ns t{ns_generate};
-        pump_generate(p, &m_solver_state.attempts); }
+      { scope_ns generate_time{ns_generate};
+        pump_generate(&m_solver_state.attempts); }
 
       if (pending_evaluation.empty()) {
-        scope_ns t{ns_idle};
+        scope_ns idle_time{ns_idle};
         if (!is_generating_layer)
           this_thread::sleep_for(chrono::milliseconds(1));
         continue;
@@ -1630,7 +1627,7 @@ namespace arc {
       // pending drains, so the GPU gets a full grid. STOP at a beam-level boundary:
       // pump_generate leaves pending empty after committing a level, and we must NOT
       // mix level N+1 candidates into this batch (level N+1 needs level N's scores).
-      { scope_ns t{ns_generate};
+      { scope_ns generate_time{ns_generate};
       while ((int)chunk.trees.size() < chunk_cap) {
         while ((int)chunk.trees.size() < chunk_cap && !pending_evaluation.empty()) {
           node *orig = pending_evaluation.front();
@@ -1654,7 +1651,7 @@ namespace arc {
         }
         if ((int)chunk.trees.size() >= chunk_cap) break;
         // Chunk not full and pending drained: generate more of the CURRENT level.
-        pump_generate(p, &m_solver_state.attempts);
+        pump_generate(&m_solver_state.attempts);
         if (pending_evaluation.empty()) break;  // level committed / dry -> launch what we have
       }
       }
@@ -1693,7 +1690,7 @@ namespace arc {
       // the GPU. That host/GPU overlap is the whole point of the two-slot
       // pipeline. The launch_slot buffers were drained the previous iteration
       // (when this slot was the wait_slot), so overwriting them is safe.
-      { scope_ns t{ns_launch};
+      { scope_ns launch_time{ns_launch};
         pack_cuda_dsl_exec_batch(exec_batch[launch_slot], chunk, active);
         cuda_dsl_exec_and_score(exec_batch[launch_slot], launch_slot); }
 
@@ -1704,7 +1701,7 @@ namespace arc {
       if (slot_pending[wait_slot] && prev_original_nodes[wait_slot].size() > 0) {
         { gpu_wait_scope t{m_solver_state};
           cuda_dsl_wait_for_exec(wait_slot); }
-        scope_ns t{ns_harvest};
+        scope_ns harvest_time{ns_harvest};
         // GPU fault detector (permanent). CUDA errors are sticky + cudaGetLastError
         // surfaces the error from ANY preceding call, so this one check is a catch-all
         // for every kernel/memcpy/malloc. If "magic madness" returns (frozen/garbled
@@ -1730,7 +1727,7 @@ namespace arc {
         bool winner_solved = false;
         int node_count = (int)prev_original_nodes[wait_slot].size();
 
-        { scope_ns t{ns_tally};
+        { scope_ns tally_time{ns_tally};
         for (int j = 0; j < prev_batch.job_count; ++j) {
           int pidx = prev_batch.program_indices[j];
           program_totals[pidx] += prev_batch.scores[j];
@@ -1777,7 +1774,7 @@ namespace arc {
         // rides that slot's stream, so the wait above ordered it. Read it BEFORE
         // asking for the next one.
         if (tl_deferred[wait_slot].valid) {
-          scope_ns t{ns_winner};
+          scope_ns winner_time{ns_winner};
           deferred_winner &done = tl_deferred[wait_slot];
           const int8_t *grids = cuda_dsl_winner_grids(wait_slot);
           const int8_t *dims  = cuda_dsl_winner_dims(wait_slot);
@@ -1790,7 +1787,7 @@ namespace arc {
           winner_breakdowns.clear();
           winner_breakdowns.reserve(done.active);
 
-          { scope_ns ta{ns_analyze};
+          { scope_ns analyze_time{ns_analyze};
           for (int i = 0; i < done.active && grids && dims; ++i) {
             const int8_t *og = grids + (size_t)i * GPU_GRID_CELLS;
             int ow = dims[i * 2 + 0];
@@ -1815,7 +1812,7 @@ namespace arc {
           if (done.tree) {
             log_score_formula(done.tree, winner_breakdowns);
             report_score(done.tree, winner_res.total_train_score, g_hash);
-            { scope_ns tb{ns_best};
+            { scope_ns best_time{ns_best};
               update_best_solution(done.target_idx, p, done.tree,
                                    done.node_count, winner_res); }
             environment::remove(done.tree);
@@ -1827,7 +1824,7 @@ namespace arc {
         // Ask for this batch's picture and leave it to travel.
         if (winner_idx >= 0 && !batch_stale) {
           deferred_winner &next = tl_deferred[wait_slot];
-          { scope_ns tf{ns_fetch};
+          { scope_ns fetch_time{ns_fetch};
             cuda_dsl_fetch_output_grids_async(winner_idx, active, wait_slot); }
           next.tree = environment::copy(prev_original_nodes[wait_slot][winner_idx]);
           next.node_count = prev_batch.node_counts[winner_idx];
@@ -1842,7 +1839,7 @@ namespace arc {
           }
           next.valid = (next.tree != nullptr);
         }
-        { scope_ns t{ns_free};
+        { scope_ns free_time{ns_free};
           for (node *n : prev_original_nodes[wait_slot]) environment::remove(n);
           prev_original_nodes[wait_slot].clear(); }
       }
@@ -1994,7 +1991,10 @@ namespace arc {
     // prefix steals depth budget from every later layer, and the found
     // prefix is then the shortest train-equivalent version of itself.
     // Try the best k-subset drop once; apply it and report whether it improved.
-    auto sweep = [&](int k) -> bool {
+    auto try_dropping = [&](int k) -> bool {
+      // Dropping nothing is not a sweep, and idx[k - 1] below would step off the
+      // front of the array asking about it.
+      if (k < 1) return false;
       int idx[flat_program::MAX_OPS];
       int best_drop[flat_program::MAX_OPS];
       int best_found = 0;
@@ -2041,7 +2041,7 @@ namespace arc {
         for (int i = 0; i < k; ++i) combos = combos * (flat.count - 1 - i) / (i + 1);
         if (combos > 20000) break;
       }
-      if (sweep(k)) { changed = true; k = 1; }
+      if (try_dropping(k)) { changed = true; k = 1; }
       else ++k;
     }
 

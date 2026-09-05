@@ -129,7 +129,7 @@ inline void compute_distance_maps(example &ex) {
   }
 }
 
-inline void apply_solution(puzzle &task, solver_state &solver_state,
+inline void apply_solution(puzzle &task,
                            vector<int> &gpu_buffer, const string &sol_str, logger &log) {
   // Re-import (or import onto a puzzle that loaded with a solved tree) would
   // otherwise leak the whole prior node subtree.
@@ -487,20 +487,20 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
                     if (ranges::find(said, joins) != said.end()) continue;
                     said.push_back(joins);
                 }
-                const int16_t idx = (int16_t)out.size();
+                const int16_t out_idx = (int16_t)out.size();
                 // A SITS-ON EDGE ANSWERS BOTH ENDS. Same stuff rearranged is
                 // a claim about two objects, and it names them both, so both
                 // jump to this line. Only a landing on bare ground has one end,
                 // and then the far side is found by overlap instead.
-                if (first_mine[e.from] < 0) first_mine[e.from] = idx;
-                if (e.to >= 0 && first_theirs[e.to] < 0) first_theirs[e.to] = idx;
+                if (first_mine[e.from] < 0) first_mine[e.from] = out_idx;
+                if (e.to >= 0 && first_theirs[e.to] < 0) first_theirs[e.to] = out_idx;
                 if (e.same_shape) {
                     for (size_t j = 0; j < theirs.size(); ++j) {
                         const auto& t = theirs[j];
                         if (first_theirs[j] >= 0) continue;
                         if (t.left >= e.col + w || e.col >= t.left + t.width) continue;
                         if (t.top >= e.row + h || e.row >= t.top + t.height) continue;
-                        first_theirs[j] = idx;
+                        first_theirs[j] = out_idx;
                     }
                 }
                 using readout = puzzle::correspondence_readout;

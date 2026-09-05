@@ -4,9 +4,19 @@
 #include "sound_manager.hpp"
 #include <windows.h>
 #include <cctype>
+#include <cstdlib>   // std::getenv (ARC_W / ARC_H debug overrides)
 #include <cstring>
 
 namespace arc {
+
+// A developer knob read once at startup and never written back. The CRT calls
+// getenv unsafe because a later putenv can invalidate the pointer it handed
+// out, which cannot happen here -- so the exception is stated once, in the one
+// place that takes it, rather than switched off for the whole build.
+inline const char *debug_override(const char *name) {
+#pragma warning(suppress : 4996)
+  return std::getenv(name);
+}
 
 inline void *g_window_manager_ptr = nullptr;
 
@@ -37,11 +47,11 @@ public:
     // borderless window in the top-left, not a display-mode change) so a
     // given resolution can be reproduced without touching desktop settings.
     // e.g. set ARC_W=1920 & ARC_H=1080 to repro the 1080p layout on any panel.
-    if (const char *ow = getenv("ARC_W")) {
+    if (const char *ow = debug_override("ARC_W")) {
       int v = atoi(ow);
       if (v > 0) m_width = v;
     }
-    if (const char *oh = getenv("ARC_H")) {
+    if (const char *oh = debug_override("ARC_H")) {
       int v = atoi(oh);
       if (v > 0) m_height = v;
     }
@@ -645,7 +655,11 @@ private:
     EmptyClipboard();
     HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
     if (h) {
+      // The allocation succeeding does not mean the lock will. Nobody owns the
+      // block until SetClipboardData below, so give it back rather than write
+      // to nothing.
       char *dst = (char *)GlobalLock(h);
+      if (!dst) { GlobalFree(h); CloseClipboard(); return; }
       memcpy(dst, text.c_str(), text.size() + 1);
       GlobalUnlock(h);
       SetClipboardData(CF_TEXT, h); // clipboard now owns h

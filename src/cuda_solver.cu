@@ -1,6 +1,7 @@
 #include "cuda_solver.cuh"
 #include "cuda_dsl.cuh"
 #include <chrono>
+#include <atomic>
 #include <cstdio>
 
 void* pinned_buffer_alloc(size_t bytes) {
@@ -9,8 +10,17 @@ void* pinned_buffer_alloc(size_t bytes) {
     return p;
 }
 
+// The pinned buffers live in thread_local batches, so their destructors run as
+// threads unwind at process exit -- after the CUDA runtime has already torn
+// itself down, where every free fails with "initialization error". The pages go
+// back to the operating system regardless, so the last thing main does is say
+// the runtime is gone and the frees stop asking.
+static std::atomic<bool> cuda_runtime_alive{true};
+
+void cuda_runtime_shutting_down() { cuda_runtime_alive.store(false); }
+
 void pinned_buffer_free(void* ptr) {
-    if (ptr) cudaFreeHost(ptr);
+    if (ptr && cuda_runtime_alive.load()) cudaFreeHost(ptr);
 }
 
 gpu_memory read_gpu_memory() {
@@ -3911,7 +3921,13 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
 // SCORE kernel (split from exec): one warp = one job, reads the canvas the exec
 // kernel left in contexts[idx].output and produces scores. No 47-op switch here,
 // so ptxas needs far fewer registers -> higher occupancy -> latency hiding.
-__global__ void __launch_bounds__(32, 32) dsl_score_kernel(
+// 24, not 32: 24 blocks per SM is the ceiling on sm_89, so 32 was refused
+// outright and the kernel ran with no occupancy request at all. It never
+// needed one -- 78 registers x 32 threads leaves room for 26 blocks, past
+// the ceiling already -- so this only stops asking for the impossible.
+// Measured on 2026-09-05 over the first two puzzles, three runs each:
+// 6.678s before, 6.687s after, identical codegen at 78 registers.
+__global__ void __launch_bounds__(32, 24) dsl_score_kernel(
     gpu_exec_context* __restrict__ contexts,
     const gpu_example_template* __restrict__ templates,
     const int8_t* __restrict__ node_counts,
@@ -4244,6 +4260,10 @@ static void capture_cuda_err(const char* where, cudaError_t e, int slot, int n) 
 // solver uses and hands back what it made; no op is touched or reimplemented.
 // TWO ops are sent, `Input` then the splitter, because the dispatch gives an op
 // with no list before it nothing to work on and just acquires the input.
+// NO __launch_bounds__ ON PURPOSE, and nvcc says so every build. Nothing calls
+// this yet -- inference still segments grids itself -- so the occupancy worth
+// asking for depends on grid counts nobody has passed. A number now would be a
+// guess frozen into the source. See Inference Master.md, "REPLACING THESE".
 __global__ void dsl_pieces_kernel(gpu_exec_context* __restrict__ contexts,
                                   const gpu_fixed_grid* __restrict__ grids,
                                   node_type op, int8_t variant, int8_t background,
@@ -4322,6 +4342,9 @@ void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
         return;
     }
     cudaMemcpy(d_grids, grids, (size_t)grid_count * sizeof(gpu_fixed_grid), cudaMemcpyHostToDevice);
+    // DEFAULT STREAM ON PURPOSE, and nvcc says so every build. The copies either
+    // side of this are blocking, so a stream would have nothing to overlap with.
+    // Whoever makes those async wants to revisit this line in the same breath.
     dsl_pieces_kernel<<<grid_count, 32>>>(d_ctx, d_grids, op, variant, background, d_out, grid_count);
     cudaMemcpy(out, d_out, (size_t)grid_count * sizeof(dsl_pieces), cudaMemcpyDeviceToHost);
     cudaFree(d_ctx); cudaFree(d_grids); cudaFree(d_out);

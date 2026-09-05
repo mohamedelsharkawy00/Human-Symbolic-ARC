@@ -631,7 +631,6 @@ inline bool draw_grid_view(
     return false;
 
   int inputs_n = (int)(task.train.size() + task.test.size());
-  int pad = lay.base_margin / 2;
   int available_grid_h = lay.footer1_y - lay.grid_data_start_y;
 
   int n = inputs_n > 0 ? inputs_n : 1;
@@ -1057,10 +1056,6 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   };
 
   if (!facts_face) {
-    // Shadows the outer one for this face only: every row here steps by row_h.
-    auto line = [&](const string& s) {
-      draw_text(context, font, s, tx, ty, scale); ty += row_h;
-    };
     // A boxed word the mouse can press, in the header buttons' clothes.
     auto button = [&](const string& label, int x, int y, ui_action act) {
       int bw = text_w(label, scale) + pad * 2;
@@ -1929,11 +1924,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
     // right edge. Single-line programs reproduce the original footer positions
     // exactly (cur_lines == best_lines == 1 -> footer{2,1}_y a row_h apart).
     {
-      int fscale = lay.scale, fpad = 2 * fscale;
-      int max_x = lay.screen_w - lay.base_margin;
+      int fscale = lay.scale;
       int line_h = 9 * fscale + lay.v_gap;
-      int best_lw = text_w("BEST", fscale) + fpad * 2;
-      int cur_lw = text_w("CURRENT", fscale) + fpad * 2;
       // Always reserve at least 3 lines each so the layout doesn't jump on wrap.
       // Four sentences of room, always, so the footer does not walk up and down
       // the screen as a program grows a sentence.
@@ -2337,17 +2329,6 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
     }
     chars[cp] = g;
   }
-  auto push_block = [&](int val, char ch) {
-    pad_buffer(gpu_buffer);
-    grid g{1, 1, (int)gpu_buffer.size(), 4};
-    gpu_buffer.insert(gpu_buffer.end(), {val, 0, 0, 0});
-    chars[ch] = g;
-  };
-  push_block(UI_COLOR_LINE, (char)255);
-  push_block(0, (char)254);
-  for (int i = 0; i < (int)arc_color::count; ++i)
-    push_block(i, (char)(240 + i));
-
   vector<int> colors;
   colors.reserve(64);
   for (int i = 0; i < (int)arc_color::count; ++i)

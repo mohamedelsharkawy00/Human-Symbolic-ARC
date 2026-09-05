@@ -370,8 +370,10 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
 
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM];
     int  queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];  // blob footprint over its box
-    bool outside[MAX_GRID_DIM * MAX_GRID_DIM];   // box cells reachable from the rim
+    // Zeroed once here, then the used prefix is reset per blob below. The reset
+    // is what the code relies on; this only says so where a reader starts.
+    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};  // blob footprint over its box
+    bool outside[MAX_GRID_DIM * MAX_GRID_DIM] = {};   // box cells reachable from the rim
 
     for (const auto& ex : train) {
         const grid& in = ex.input;

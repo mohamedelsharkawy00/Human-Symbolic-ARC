@@ -162,7 +162,6 @@ namespace arc {
 	// debt never drifts. `n->arg` is the chain so far (null = n is a GET start).
 	inline void set_generation_debt(node* n) {
 		bool prev_sel = n->arg ? n->arg->sel_waiting : false;
-		bool prev_work = n->arg ? n->arg->work_unlanded : false;
 		bool prev_picked = n->arg ? n->arg->something_picked : false;
 		node_type prev_combine = n->arg ? n->arg->last_combine : node_type::type_count;
 		node_type t = n->type;

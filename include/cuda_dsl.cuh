@@ -15,6 +15,8 @@
 // this header stays CUDA-free for non-CUDA translation units.
 void* pinned_buffer_alloc(size_t bytes);
 void  pinned_buffer_free(void* ptr);
+// Said once, by main, after the last thing that could still want the GPU.
+void  cuda_runtime_shutting_down();
 
 // Drop-in replacement for std::vector<T> that uses pinned host memory so
 // cudaMemcpyAsync can issue real DMA transfers instead of silently staging

@@ -446,7 +446,9 @@ inline int best_pose(const grid& one_grid) {
         stream.reserve((size_t)view.width * view.height);
         for (int row = 0; row < view.height; ++row)
             for (int col = 0; col < view.width; ++col)
-                stream.push_back(view.data[row][col]);
+                // A cell is a colour 0..9 or TRANSPARENT, so the narrowing is
+                // safe and saying so stops the compiler asking every build.
+                stream.push_back((int8_t)view.data[row][col]);
         return stream;
     };
     int best = 0;
@@ -1325,7 +1327,7 @@ inline bool says_more(const correspondence_facts::edge& left, size_t left_cells,
 inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& found,
                          const vector<grid>& from_glyphs,
                          const vector<grid>& into_glyphs,
-                         const grid& into, int8_t background) {
+                         const grid& into) {
     fitting laid_out;
     // EVERY CELL OF THE GRID IS A CELL, background included. Left out, a piece
     // landing on background was painting on nothing and got thrown out of the
@@ -1414,7 +1416,6 @@ inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& foun
 // so it searches: every cell, fewest options first, backtracking. Fills
 // `chosen` on success. Story in notes/1 - Overall Design/Inference Master.md, 3d.
 inline fit_verdict fit_the_pieces_together(const fitting& laid_out,
-                                const vector<correspondence_facts::edge>& found,
                                 vector<int>& chosen) {
     if (!ranges::any_of(laid_out.required, [](bool needed) { return needed; }))
         return fit_verdict::no_fit;
@@ -1637,11 +1638,11 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
             found.erase(found.begin() + i);
         }
 
-    const fitting laid_out = set_up_the_fitting(found, from_glyphs, into_glyphs, into, background);
+    const fitting laid_out = set_up_the_fitting(found, from_glyphs, into_glyphs, into);
 
     vector<int> chosen;
     const fit_verdict searched =
-        fit_the_pieces_together(laid_out, found, chosen);
+        fit_the_pieces_together(laid_out, chosen);
     if (searched == fit_verdict::fitted) {
         keep_what_fitted(chosen, laid_out, found, edges, discarded, discard_why);
         return fit_verdict::fitted;
@@ -2061,8 +2062,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                 if (moves[at].color != piece.color) moves[at].color = -1;
             }
         }
-        for (const auto& agreed : moves)
-            if (agreed.pieces >= 2) pair.agreed_moves.push_back(agreed);
+        for (const auto& move : moves)
+            if (move.pieces >= 2) pair.agreed_moves.push_back(move);
         ranges::sort(pair.agreed_moves, [](const auto& left, const auto& right) {
             return left.pieces > right.pieces; });
     };
