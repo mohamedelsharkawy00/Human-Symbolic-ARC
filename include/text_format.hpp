@@ -23,7 +23,7 @@ using namespace std;
 
 // Measure first, then write, so no value is ever too big for the buffer.
 inline string to_text(ARC_FORMAT_ARG const char *form, ...) ARC_FORMAT_CHECK;
-inline string to_text(const char *form, ...) {
+inline string to_text(ARC_FORMAT_ARG const char *form, ...) {
   va_list args;
   va_start(args, form);
   va_list measure;

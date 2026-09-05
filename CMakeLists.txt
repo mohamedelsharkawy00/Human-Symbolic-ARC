@@ -13,7 +13,9 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32)
 # MSVC flags (CXX only â€” exclude CUDA). /analyze is Release-only (slow in dev).
 # Off by choice, not by breakage: it is the only thing that checks a to_text
 # format string against its arguments, and the fmtlib false positives that
-# forced it off left with fmtlib.
+# forced it off left with fmtlib. Run on 2026-09-05 over all 112 call sites and
+# came back clean, proven by planting a bad one and watching C6273 fire. Turn it
+# back on after adding to_text calls, since nothing else will read them.
 # add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
 
 if(MSVC)
