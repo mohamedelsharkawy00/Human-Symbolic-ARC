@@ -177,11 +177,14 @@ private:
     // Debug logs go to per-puzzle files (logs/<id>.txt). Skipped headless: on
     // Kaggle this writes 240+ files into /kaggle/working and blows the disk
     // quota. The buffer is still drained above (swapped out), just not written.
+    // A line logged before a puzzle is loaded has no file to belong to, and in
+    // this repo's whole history nothing has ever logged one.
+    if (pid.empty()) return;
+
     static once_flag dir_flag;
     call_once(dir_flag, [] { filesystem::create_directory("logs"); });
 
-    string path = pid.empty() ? "logs/solver.txt" : "logs/" + pid + ".txt";
-    ofstream f(path, ios::app);
+    ofstream f("logs/" + pid + ".txt", ios::app);
     if (f.is_open()) f << local;
 #endif
   }

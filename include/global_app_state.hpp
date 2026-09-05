@@ -10,22 +10,9 @@
 #include <unordered_map>
 #include <vector>
 #include <filesystem>
-#include <fstream>
 
 namespace arc {
 using namespace std;
-
-// --- Temporary diagnostic sink (logs/diag.txt) for the cross-puzzle grid-leak
-// investigation. Thread-safe, flushed each line, low-volume. REMOVE when found. ---
-inline void diag_log(const string& msg) {
-  static mutex m;
-  static ofstream f = [] {
-    filesystem::create_directories("logs");
-    return ofstream("logs/diag.txt", ios::trunc);
-  }();
-  lock_guard<mutex> lk(m);
-  if (f.is_open()) { f << msg << '\n'; f.flush(); }
-}
 
 // Path where the GUI persists its settings, current puzzle index included.
 inline std::filesystem::path get_settings_path() {

@@ -1733,11 +1733,6 @@ namespace arc {
         { scope_ns t{ns_tally};
         for (int j = 0; j < prev_batch.job_count; ++j) {
           int pidx = prev_batch.program_indices[j];
-          if (pidx < 0 || pidx >= program_count) {
-            diag_log(to_text("[ASSERT pidx-OOB] puz=%s j=%d pidx=%d program_count=%d active=%d batch_active=%d job_count=%d",
-                                 p.id.c_str(), j, pidx, program_count, active, prev_batch.active_examples, prev_batch.job_count));
-            continue;
-          }
           program_totals[pidx] += prev_batch.scores[j];
           if (!prev_batch.solved[j]) program_all_solved[pidx] = false;
         }
