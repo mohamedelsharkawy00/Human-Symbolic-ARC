@@ -7,12 +7,16 @@ REM Keep this window open while editing; close it (or Ctrl+C) to stop the server
 setlocal
 
 set "MKDOCS=%~dp0..\notes\.mkdocs"
-set "PY=%MKDOCS%\.venv\Scripts\python.exe"
 set "CFG=%MKDOCS%\mkdocs.yml"
 set "NO_MKDOCS_2_WARNING=1"
 
-if not exist "%PY%" (
-    echo [ERROR] venv not found at "%PY%".
+REM Uses the machine's Python, not a venv. Two packages are all this needs;
+REM pip pulls the rest. Install line is in the error below, so the fix travels
+REM with the failure.
+python -m mkdocs --version >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] mkdocs is not installed for this Python. Install it with:
+    echo     python -m pip install "mkdocs==1.6.1" "mkdocs-material==9.7.6"
     pause
     exit /b 1
 )
@@ -26,4 +30,4 @@ REM backgrounded so it doesn't block the server start below.
 start "" /b powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep 2; Start-Process 'http://127.0.0.1:8000/Home.html'"
 
 REM serve from the project root so it can watch files with spaces in their paths.
-"%PY%" -m mkdocs serve -f "%CFG%" -a 127.0.0.1:8000
+python -m mkdocs serve -f "%CFG%" -a 127.0.0.1:8000
