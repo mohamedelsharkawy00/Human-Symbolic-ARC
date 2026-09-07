@@ -158,7 +158,7 @@ struct correspondence_facts {
         // of it, indexed by the piece's own colour -- so a cut that labels its
         // pieces -1 (a motif block, anything mixed) threw the answer away. How a
         // piece was carved and what colour it became are different questions.
-        int8_t color_map[10] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+        int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     };
     struct object_info {
         // Component color; -1 = the whole-grid object
@@ -373,7 +373,7 @@ struct object_match {
     // Cells that fell off the edge of the grid — never shown, so no evidence
     int outside = 0;
     // Glyph color -> found color; -1 = unused
-    int8_t color_map[10];
+    int8_t color_map[COLOR_COUNT];
 };
 
 // WHERE A CELL LANDS ONCE ITS GRID IS POSED — the read posed_glyph does, run
@@ -405,8 +405,8 @@ inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
 // never be allowed to empty it.
 struct what_the_pairs_agreed {
     int8_t pose = 0;
-    bool color_speaks[10] = {};
-    int8_t down[10] = {}, across[10] = {};
+    bool color_speaks[COLOR_COUNT] = {};
+    int8_t down[COLOR_COUNT] = {}, across[COLOR_COUNT] = {};
 };
 
 // Would this match be contradicted by what the pairs agreed? STAYING PUT NEVER
@@ -545,8 +545,8 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
                     for (int col = 0; col < posed.width; ++col)
                         shown += (posed.data[row][col] != TRANSPARENT && !off_grid(row, col));
                 if (!shown) continue;
-                int8_t color_map[10];
-                for (int i = 0; i < 10; ++i) color_map[i] = -1;
+                int8_t color_map[COLOR_COUNT];
+                for (int i = 0; i < COLOR_COUNT; ++i) color_map[i] = -1;
                 bool fits = true, exact = true;
                 for (int row = 0; fits && row < posed.height; ++row)
                     for (int col = 0; fits && col < posed.width; ++col) {
@@ -561,8 +561,8 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
                         }
                         if (there_color == TRANSPARENT) { fits = false; break; }
                         if (match_footprint && there_color == background) { fits = false; break; }
-                        if (glyph_color < 0 || glyph_color > 9 ||
-                            there_color < 0 || there_color > 9) { fits = false; break; }
+                        if (!is_color(glyph_color) ||
+                            !is_color(there_color)) { fits = false; break; }
                         if (color_map[glyph_color] == -1)
                             color_map[glyph_color] = (int8_t)there_color;
                         if (color_map[glyph_color] != there_color) { fits = false; break; }
@@ -572,7 +572,7 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
                 // itself, with the missing cells hidden behind other cells.
                 int hidden = 0;
                 if (!fits && !match_footprint) {
-                    for (int i = 0; i < 10; ++i) color_map[i] = (int8_t)i;
+                    for (int i = 0; i < COLOR_COUNT; ++i) color_map[i] = (int8_t)i;
                     fits = true; exact = true;
                     for (int row = 0; fits && row < posed.height; ++row)
                         for (int col = 0; fits && col < posed.width; ++col) {
@@ -590,7 +590,7 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
                 hit.row = at_row; hit.col = at_col; hit.pose = pose;
                 hit.exact = exact; hit.hidden = hidden;
                 hit.outside = lit - shown;
-                for (int i = 0; i < 10; ++i) hit.color_map[i] = color_map[i];
+                for (int i = 0; i < COLOR_COUNT; ++i) hit.color_map[i] = color_map[i];
                 found.hits.push_back(hit);
             }
     }
@@ -891,15 +891,11 @@ inline void segment_for_correspondence(const grid& one_grid, int8_t background, 
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
 inline double describe_cost(const grid& one_grid, int8_t background,
                             const vector<correspondence_facts::object_info>& pieces) {
-    const double cell_bits = log2(10.0);
+    const double cell_bits = log2((double)COLOR_COUNT);
     const double place_bits =
         log2((double)max(1, one_grid.width * one_grid.height));
     int colored = 0;
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            const int color = one_grid.data[row][col];
-            colored += (color >= 0 && color != background);
-        }
+    walk_colored_cells(one_grid, background, [&](int, int, int) { ++colored; });
     // Nothing on the grid, so there is nothing to save and nothing to lose.
     const double plain = colored * cell_bits;
     if (plain <= 0.0) return 1.0;
@@ -921,11 +917,11 @@ inline double describe_cost(const grid& one_grid, int8_t background,
 
 // What share of a grid's cells each color holds — the odds a cell picked at
 // random wears that color.
-inline void color_shares(const grid& one_grid, double share[10]) {
-    int counts[10], total = 0;
+inline void color_shares(const grid& one_grid, double share[COLOR_COUNT]) {
+    int counts[COLOR_COUNT], total = 0;
     count_colors(one_grid, counts);
-    for (int i = 0; i < 10; ++i) total += counts[i];
-    for (int i = 0; i < 10; ++i) share[i] = total ? (double)counts[i] / total : 0.0;
+    for (int i = 0; i < COLOR_COUNT; ++i) total += counts[i];
+    for (int i = 0; i < COLOR_COUNT; ++i) share[i] = total ? (double)counts[i] / total : 0.0;
 }
 
 // Would this match have happened anyway? `odds` is the chance one placement
@@ -1036,7 +1032,7 @@ inline fit_verdict collect_motif_edges(
         edge.recolored_to =
             (!hit.exact && from_objects[from_index].color >= 0)
                 ? hit.color_map[from_objects[from_index].color] : (int8_t)-1;
-        if (!hit.exact) for (int c = 0; c < 10; ++c) edge.color_map[c] = hit.color_map[c];
+        if (!hit.exact) for (int c = 0; c < COLOR_COUNT; ++c) edge.color_map[c] = hit.color_map[c];
         edges.push_back(edge);
     };
 
@@ -1143,7 +1139,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         const grid& into, int8_t background, bool may_hang_off,
         vector<correspondence_facts::edge>* discarded,
         vector<int8_t>* discard_why, match_mode match) {
-    double share[10];
+    double share[COLOR_COUNT];
     color_shares(into, share);
 
     // A SHAPE THE OTHER GRID HOLDS SEVERAL OF. Read off that grid's own pieces,
@@ -1200,7 +1196,7 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.outside = (int16_t)hit.outside;
             edge.recolored_to =
                 (!hit.exact && piece.color >= 0) ? hit.color_map[piece.color] : (int8_t)-1;
-            if (!hit.exact) for (int c = 0; c < 10; ++c) edge.color_map[c] = hit.color_map[c];
+            if (!hit.exact) for (int c = 0; c < COLOR_COUNT; ++c) edge.color_map[c] = hit.color_map[c];
             const bool stands_alone = beats_chance(found_here.places, odds);
             // ANYTHING LESS THAN THE WHOLE PIECE AS ITSELF MUST EARN ITS PLACE
             // ALONE — only the full identity claim may lean on the set test.
@@ -1268,11 +1264,8 @@ inline vector<correspondence_facts::edge> gather_matches(
             if (landing.color >= 0)
                 for (int i = 0; i < landing.count; ++i) odds *= share[landing.color];
             else
-                for (int row = 0; row < into.height; ++row)
-                    for (int col = 0; col < into.width; ++col) {
-                        int color = into.data[row][col];
-                        if (color >= 0 && color < 10) odds *= share[color];
-                    }
+                walk_colored_cells(into, TRANSPARENT,
+                                   [&](int, int, int color) { odds *= share[color]; });
             correspondence_facts::edge edge;
             edge.from = (int16_t)from_index;
             edge.to = (int16_t)into_index;
@@ -1280,7 +1273,7 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.exact = (landing.color == piece.color);
             if (!match.recolor && !edge.exact) continue;
             edge.recolored_to = (!edge.exact && piece.color >= 0) ? landing.color : (int8_t)-1;
-            if (!edge.exact && piece.color >= 0 && piece.color < 10)
+            if (!edge.exact && is_color(piece.color))
                 edge.color_map[piece.color] = landing.color;
             const bool stands_alone = beats_chance(
                 (into.width - landing.width + 1) * (into.height - landing.height + 1), odds);
@@ -2112,7 +2105,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     };
     vector<what_the_pairs_agreed> agreed(train.size());
     bool anything_agreed = false;
-    for (int color = 0; color < 10; ++color) {
+    for (int color = 0; color < COLOR_COUNT; ++color) {
         int read = 0, said_once = 0;
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
             if (!pair_was_read(which)) continue;
@@ -2320,21 +2313,19 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                     for (int col = 0; col < ours[i].width; ++col)
                         if (our_glyphs[i].data[row][col] != TRANSPARENT)
                             piece_at[ours[i].top + row][ours[i].left + col] = (int16_t)i;
-            for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-                for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-                    const int color = one_grid.data[row][col];
-                    if (color < 0 || color == background || carried[row][col]) continue;
-                    // MADE, or UNEXPLAINED. Nothing over there is this piece, so
-                    // the cell was made where it stands (or, read from the input
-                    // side, it went nowhere) — a real answer, and a different
-                    // one from a piece whose partner is known and still cannot
-                    // say where these cells came from.
-                    const int16_t which = piece_at[row][col];
-                    const bool nobody_claims_the_piece =
-                        which < 0 || !has_a_partner[which];
-                    pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col,
-                                               nobody_claims_the_piece });
-                }
+            walk_colored_cells(one_grid, background, [&](int row, int col, int) {
+                if (carried[row][col]) return;
+                // MADE, or UNEXPLAINED. Nothing over there is this piece, so
+                // the cell was made where it stands (or, read from the input
+                // side, it went nowhere) — a real answer, and a different
+                // one from a piece whose partner is known and still cannot
+                // say where these cells came from.
+                const int16_t which = piece_at[row][col];
+                const bool nobody_claims_the_piece =
+                    which < 0 || !has_a_partner[which];
+                pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col,
+                                           nobody_claims_the_piece });
+            });
         };
         unexplained(output, forward, input_glyphs, output_glyphs,
                     pair.output_objects, backward, false);
@@ -2346,13 +2337,10 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         // owes to what it was given.
         bool covered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
         mark_painted(forward, input_glyphs, output_glyphs, output, covered);
-        for (int row = 0; row < output.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < output.width && col < MAX_GRID_DIM; ++col) {
-                const int color = output.data[row][col];
-                if (color < 0 || color == background) continue;
-                if (covered[row][col]) pair.exact_covered_cells++;
-                else                   pair.created_cells++;
-            }
+        walk_colored_cells(output, background, [&](int row, int col, int) {
+            if (covered[row][col]) pair.exact_covered_cells++;
+            else                   pair.created_cells++;
+        });
     }
     facts.valid = true;
     return facts;
@@ -2392,11 +2380,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     int facts_cells = 0;
     for (const auto& train_pair : train)
         for (const grid* one : { &train_pair.input, &train_pair.output })
-            for (int row = 0; row < one->height && row < MAX_GRID_DIM; ++row)
-                for (int col = 0; col < one->width && col < MAX_GRID_DIM; ++col) {
-                    const int color = one->data[row][col];
-                    facts_cells += (color >= 0 && color != background);
-                }
+            walk_colored_cells(*one, background, [&](int, int, int) { ++facts_cells; });
 
     // THE LOOKING. One number per cut, off the grids alone. Scored on BOTH
     // grids: the cut has to make sense of the pair, and comparing a total taken
