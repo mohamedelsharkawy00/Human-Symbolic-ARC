@@ -376,26 +376,16 @@ struct object_match {
     int8_t color_map[COLOR_COUNT];
 };
 
-// WHERE A CELL LANDS ONCE ITS GRID IS POSED — the read posed_glyph does, run
-// the other way, so a place can be carried into the frame a pair is compared
-// in. Height and width are the grid's OWN, before posing, which is what the
-// mirrors are measured against.
-inline pair<int, int> posed_place(int pose, int row, int col, int height, int width) {
-    const int down   = (pose & 2) ? height - 1 - row : row;
-    const int across = (pose & 4) ? width  - 1 - col : col;
-    return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
-}
-
 // THE MOVE AN EDGE NAMES, in the way up its pair is read. Said once, because
 // the clusters are counted from it and the sieve then asks it again, and two
 // spellings of one question is how the two ends of a sieve come to disagree.
 inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
                               const correspondence_facts::object_info& piece,
                               const grid& from_grid, const grid& into_grid) {
-    const auto was = posed_place(pose, piece.top, piece.left,
-                                 from_grid.height, from_grid.width);
-    const auto now = posed_place(pose, edge.row, edge.col,
-                                 into_grid.height, into_grid.width);
+    const auto was = posed_place(pose, from_grid.width, from_grid.height,
+                                 piece.top, piece.left);
+    const auto now = posed_place(pose, into_grid.width, into_grid.height,
+                                 edge.row, edge.col);
     return { now.first - was.first, now.second - was.second };
 }
 
@@ -426,19 +416,14 @@ inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
            agreed.across[piece.color] != went.second;
 }
 
-// One of the EIGHT ways a glyph can sit: four turns by two mirrors. Pose 0 is
-// the glyph as given. Same index walk canonical_shape_hash uses, so the two
-// agree on what "the same shape, turned" means.
+// The glyph drawn out in one of the eight ways round (1_readings.hpp).
 inline grid posed_glyph(const grid& glyph, int pose) {
-    const bool turned = (pose & 1) != 0;
-    const int posed_width  = turned ? glyph.height : glyph.width;
-    const int posed_height = turned ? glyph.width  : glyph.height;
+    const auto [posed_width, posed_height] = posed_size(pose, glyph.width, glyph.height);
     grid posed(posed_width, posed_height, 0, MAX_GRID_DIM);
     for (int row = 0; row < posed_height; ++row)
         for (int col = 0; col < posed_width; ++col) {
-            int source_row = turned ? col : row, source_col = turned ? row : col;
-            if (pose & 2) source_row = glyph.height - 1 - source_row;
-            if (pose & 4) source_col = glyph.width  - 1 - source_col;
+            const auto [source_row, source_col] =
+                pose_source(pose, glyph.width, glyph.height, row, col);
             posed.data[row][col] = glyph.data[source_row][source_col];
         }
     return posed;
@@ -451,7 +436,6 @@ inline grid posed_glyph(const grid& glyph, int pose) {
 // same way up. So the whole grid votes: of the eight ways round, the one whose
 // cells read smallest in row order. A vote and not a shape rule, because every
 // grid here is square and a shape rule is blind to that.
-// The same eight and the same bits posed_glyph uses, so a pose means one thing.
 inline int best_pose(const grid& one_grid) {
     auto read_out = [&](int pose) {
         const grid view = posed_glyph(one_grid, pose);
@@ -466,7 +450,7 @@ inline int best_pose(const grid& one_grid) {
     };
     int best = 0;
     vector<int8_t> smallest = read_out(0);
-    for (int pose = 1; pose < 8; ++pose) {
+    for (int pose = 1; pose < POSE_COUNT; ++pose) {
         const vector<int8_t> here = read_out(pose);
         if (here < smallest) { best = pose; smallest = here; }
     }
@@ -496,7 +480,7 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
     object_matches found;
     if (glyph.width <= 0 || glyph.height <= 0) return found;
     const bool fixed = fixed_row >= 0 && fixed_col >= 0;
-    const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : 8);
+    const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : POSE_COUNT);
 
     vector<grid> tried;
     for (int pose = 0; pose < pose_limit; ++pose) {

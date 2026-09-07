@@ -2892,26 +2892,23 @@ __device__ void gpu_rule_output_dims(int8_t rt, const int16_t* rp,
 // — plus a width<->height swap, keeping already-painted accumulator pixels
 // consistent with the rotated geometry.
 // ---- Canonical pose (NormalizeOrientation[1]) ----
-// 8 poses of a grid: bit0 = transpose, bit1 = flip columns, bit2 = flip rows.
+// What the eight poses mean is core_types.hpp's to say, and the card reads it
+// from there, so the two sides cannot drift. The card once kept its own
+// spelling with flip-rows and flip-cols on the opposite bits; nothing crossed
+// the boundary so nothing was wrong, and now nothing can be.
 // Every example picks the pose whose row-major cell stream is lexicographically
 // smallest — the whole grid votes, so rotated/mirrored pairs land identically.
 
 // posed(r,c) reads original(pr,pc). W,H = ORIGINAL dims.
 __device__ inline void gpu_pose_src(int p, int r, int c, int W, int H, int& pr, int& pc) {
-    int pw = (p & 1) ? H : W, ph = (p & 1) ? W : H;
-    if (p & 4) r = ph - 1 - r;
-    if (p & 2) c = pw - 1 - c;
-    if (p & 1) { pr = c; pc = r; } else { pr = r; pc = c; }
+    const auto [row, col] = pose_source(p, W, H, r, c);
+    pr = row; pc = col;
 }
 
 // original(gr,gc) lands at posed(r,c). Exact inverse of gpu_pose_src.
 __device__ inline void gpu_pose_dst(int p, int gr, int gc, int W, int H, int& r, int& c) {
-    int pw = (p & 1) ? H : W, ph = (p & 1) ? W : H;
-    int rr, cc;
-    if (p & 1) { rr = gc; cc = gr; } else { rr = gr; cc = gc; }
-    if (p & 2) cc = pw - 1 - cc;
-    if (p & 4) rr = ph - 1 - rr;
-    r = rr; c = cc;
+    const auto [row, col] = posed_place(p, W, H, gr, gc);
+    r = row; c = col;
 }
 
 __device__ int gpu_best_pose(const gpu_fixed_grid& g) {

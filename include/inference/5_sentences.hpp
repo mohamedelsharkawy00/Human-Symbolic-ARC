@@ -50,9 +50,8 @@ inline const char* word_for_cut(split_kind cut) {
     }
 }
 
-// ONE OF THE EIGHT WAYS ROUND, said in turns and mirrors. The bits are
-// posed_glyph's own: 1 swaps rows with columns, 2 flips top to bottom, 4 flips
-// left to right. Every one of the eight is sayable, four of them in one word.
+// ONE OF THE EIGHT WAYS ROUND (1_readings.hpp), said in turns and mirrors.
+// Every one of the eight is sayable, four of them in one word.
 inline vector<string> words_for_pose(int pose) {
     switch (pose & 7) {
         case 1:  return { "TurnRight", "FlipHorizontal" };

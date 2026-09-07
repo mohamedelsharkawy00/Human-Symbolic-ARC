@@ -108,21 +108,17 @@ inline uint32_t shape_occupancy_hash(int width, int height, const bool* occupied
 }
 
 // Canonical (orientationless, positionless) shape identity: the smallest
-// shape_occupancy_hash over the 8 read orders (4 turns x 2 mirrors), done by
-// index arithmetic — no pose grids are built. Two objects share a shape,
-// in any orientation, iff their canonical hashes are equal.
+// shape_occupancy_hash over the eight ways round, done by index arithmetic —
+// no pose grids are built. Two objects share a shape, in any orientation, iff
+// their canonical hashes are equal.
 inline uint32_t canonical_shape_hash(int width, int height, const bool* occupied) {
     uint32_t best = 0xFFFFFFFFu;
-    for (int pose = 0; pose < 8; ++pose) {
-        const bool turned = pose & 1;
-        const int posed_width = turned ? height : width;
-        const int posed_height = turned ? width : height;
+    for (int pose = 0; pose < POSE_COUNT; ++pose) {
+        const auto [posed_width, posed_height] = posed_size(pose, width, height);
         uint32_t hash = ::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
-            int row = i / posed_width, col = i % posed_width;
-            int source_row = turned ? col : row, source_col = turned ? row : col;
-            if (pose & 2) source_row = height - 1 - source_row;
-            if (pose & 4) source_col = width - 1 - source_col;
-            return occupied[source_row * width + source_col];
+            const auto [row, col] = pose_source(pose, width, height, i / posed_width,
+                                                i % posed_width);
+            return occupied[row * width + col];
         });
         best = min(best, hash);
     }
