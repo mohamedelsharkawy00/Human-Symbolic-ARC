@@ -149,8 +149,16 @@ struct correspondence_facts {
         // Cells of a pattern window that continue beyond the displayed grid.
         // Same reason: a block hanging off the edge can leave hundreds outside.
         int16_t outside = 0;
-        // The uniform target color when !exact; -1 for multi-color glyphs
+        // The uniform target color when !exact; -1 for multi-color glyphs.
+        // A VIEW OF THE MAP BELOW, kept because most callers only ever want the
+        // one-colour case and asking for a whole map to read one entry is worse.
         int8_t recolored_to = -1;
+        // WHAT TURNED INTO WHAT, by glyph colour; -1 = that colour is not in the
+        // glyph. The matcher knows the whole map and used to hand over one entry
+        // of it, indexed by the piece's own colour -- so a cut that labels its
+        // pieces -1 (a motif block, anything mixed) threw the answer away. How a
+        // piece was carved and what colour it became are different questions.
+        int8_t color_map[10] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     };
     struct object_info {
         // Component color; -1 = the whole-grid object
@@ -1028,6 +1036,7 @@ inline fit_verdict collect_motif_edges(
         edge.recolored_to =
             (!hit.exact && from_objects[from_index].color >= 0)
                 ? hit.color_map[from_objects[from_index].color] : (int8_t)-1;
+        if (!hit.exact) for (int c = 0; c < 10; ++c) edge.color_map[c] = hit.color_map[c];
         edges.push_back(edge);
     };
 
@@ -1191,6 +1200,7 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.outside = (int16_t)hit.outside;
             edge.recolored_to =
                 (!hit.exact && piece.color >= 0) ? hit.color_map[piece.color] : (int8_t)-1;
+            if (!hit.exact) for (int c = 0; c < 10; ++c) edge.color_map[c] = hit.color_map[c];
             const bool stands_alone = beats_chance(found_here.places, odds);
             // ANYTHING LESS THAN THE WHOLE PIECE AS ITSELF MUST EARN ITS PLACE
             // ALONE — only the full identity claim may lean on the set test.
@@ -1270,6 +1280,8 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.exact = (landing.color == piece.color);
             if (!match.recolor && !edge.exact) continue;
             edge.recolored_to = (!edge.exact && piece.color >= 0) ? landing.color : (int8_t)-1;
+            if (!edge.exact && piece.color >= 0 && piece.color < 10)
+                edge.color_map[piece.color] = landing.color;
             const bool stands_alone = beats_chance(
                 (into.width - landing.width + 1) * (into.height - landing.height + 1), odds);
             // Same bar as source 1: a recolor is the weaker claim either way it

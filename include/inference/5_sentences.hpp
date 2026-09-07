@@ -24,6 +24,10 @@
 namespace arc {
 using namespace std;
 
+// A beat nothing has a word for yet. Said out loud rather than left out, so the
+// search knows exactly which one slot it has to fill.
+inline constexpr const char* a_blank = "?";
+
 struct said_reading {
     vector<string> sentences;
     vector<string> no_word_for;
@@ -73,6 +77,39 @@ inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
     }
 }
 
+// THE WHOLE READING AS PROGRAMS, most likely first. The tied openings are whole
+// programs of their own rather than a claim that one of them is right.
+inline vector<string> programs_from(const said_reading& said) {
+    vector<string> programs;
+    if (said.sentences.empty()) return programs;
+    string whole;
+    for (const string& sentence : said.sentences)
+        whole += (whole.empty() ? "" : " ") + sentence;
+    programs.push_back(whole);
+    for (const string& opening : said.other_openings) {
+        string rest;
+        for (size_t i = 1; i < said.sentences.size(); ++i) rest += " " + said.sentences[i];
+        programs.push_back(opening + rest);
+    }
+    return programs;
+}
+
+// A PROGRAM READ BACK AS ITS SENTENCES, four beats to a row. What the pane draws
+// and what the log writes, so neither has to know how a program is spelled.
+inline vector<string> sentences_of(const string& program) {
+    vector<string> beats, rows;
+    for (size_t at = 0, next; at < program.size(); at = next) {
+        next = program.find(' ', at);
+        if (next == string::npos) next = program.size();
+        if (next > at) beats.push_back(program.substr(at, next - at));
+        if (next < program.size()) ++next;
+    }
+    for (size_t beat = 0; beat + 3 < beats.size(); beat += 4)
+        rows.push_back(beats[beat] + " " + beats[beat + 1] + " " +
+                       beats[beat + 2] + " " + beats[beat + 3]);
+    return rows;
+}
+
 inline said_reading say_the_reading(const inference& inf) {
     const correspondence_facts& facts = inf.correspondence;
     said_reading said;
@@ -108,62 +145,72 @@ inline said_reading say_the_reading(const inference& inf) {
         if (!already) said.other_openings.push_back(opening);
     }
 
-    // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND
-    // move AND change colour, so a line carries several acts -- and the grammar
-    // gives each act its own sentence, all sharing the line's GET and SELECT.
-    // Only the last of them paints; the rest withhold, which is what that word
-    // is for. A line must hold in EVERY pair, or it is one example's accident.
-    struct line_key {
-        int8_t color;      // the selection, as the only thing a SELECT can name
-        int8_t pose;
-        int8_t down, across;
-        int8_t recolor_to;
-        bool operator==(const line_key& other) const {
-            return color == other.color && pose == other.pose && down == other.down &&
-                   across == other.across && recolor_to == other.recolor_to;
-        }
+    // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND move
+    // AND change colour, so a line carries several acts, and the grammar gives
+    // each act its own sentence sharing the line's GET and SELECT. Only the last
+    // of them paints; the rest withhold, which is what that word is for.
+    //
+    // EACH ACT STANDS ON ITS OWN EVIDENCE. Asked as one key, a turn that differs
+    // between pairs took the colour down with it -- 017c7c7b recolours 1 to 2 in
+    // every pair and says so on every edge, and the reading lost it because the
+    // poses read 0, 5 and 5. Turn, move and colour are three questions, so a
+    // disagreement about one says nothing about the others.
+    //
+    // AN ACT MUST HOLD IN EVERY PAIR, or it is one example's accident.
+    struct seen_act { int8_t color; int8_t what; int8_t value; };
+    auto same_act = [](const seen_act& one, const seen_act& other) {
+        return one.color == other.color && one.what == other.what && one.value == other.value;
     };
-    vector<line_key> lines_in_every_pair;
+    enum : int8_t { act_turn, act_down, act_across, act_recolor };
+    vector<seen_act> acts_in_every_pair;
     for (size_t which = 0; which < facts.pairs.size(); ++which) {
         const auto& pair = facts.pairs[which];
-        vector<line_key> here;
+        vector<seen_act> here;
+        auto note = [&](int8_t color, int8_t what, int8_t value) {
+            if (value == 0 && what != act_recolor) return;   // nothing happened
+            for (const auto& already : here)
+                if (same_act(already, {color, what, value})) return;
+            here.push_back({color, what, value});
+        };
         for (const auto& edge : pair.edges) {
             if (!edge.from_input || !edge.same_shape) continue;
             if (edge.from < 0 || edge.from >= (int16_t)pair.input_objects.size()) continue;
             const auto& piece = pair.input_objects[edge.from];
-            line_key key{piece.color, edge.pose,
-                         (int8_t)(edge.row - piece.top), (int8_t)(edge.col - piece.left),
-                         edge.exact ? (int8_t)-1 : edge.recolored_to};
-            if (key.pose == 0 && key.down == 0 && key.across == 0 && key.recolor_to < 0)
-                continue;  // nothing happened to it, so there is no line to say
-            bool seen = false;
-            for (const auto& already : here) seen = seen || (already == key);
-            if (!seen) here.push_back(key);
+            note(piece.color, act_turn,   edge.pose);
+            note(piece.color, act_down,   (int8_t)(edge.row - piece.top));
+            note(piece.color, act_across, (int8_t)(edge.col - piece.left));
+            if (!edge.exact)
+                for (int8_t was = 0; was < 10; ++was)
+                    if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
+                        note(was, act_recolor, edge.color_map[was]);
         }
-        if (which == 0) { lines_in_every_pair = here; continue; }
-        vector<line_key> still;
-        for (const auto& key : lines_in_every_pair)
+        if (which == 0) { acts_in_every_pair = here; continue; }
+        vector<seen_act> still;
+        for (const auto& act : acts_in_every_pair)
             for (const auto& mine : here)
-                if (key == mine) { still.push_back(key); break; }
-        lines_in_every_pair = still;
+                if (same_act(act, mine)) { still.push_back(act); break; }
+        acts_in_every_pair = still;
     }
 
-    for (const auto& key : lines_in_every_pair) {
-        const string pick = key.color < 0 ? string("SelectAll")
-                                          : "SelectColor[" + to_string((int)key.color) + "]";
-        vector<string> acts;
-        for (const string& word : words_for_pose(key.pose)) acts.push_back(word);
-        if (key.across != 0) acts.push_back("MoveRow[" + to_string((int)key.across) + "]");
-        if (key.down != 0)   acts.push_back("MoveColumn[" + to_string((int)key.down) + "]");
-        if (key.recolor_to >= 0) acts.push_back("Recolor[" + to_string((int)key.recolor_to) + "]");
-        for (size_t i = 0; i < acts.size(); ++i)
+    bool a_recolor_was_said = false;
+    for (const auto& act : acts_in_every_pair) {
+        if (act.what == act_recolor) a_recolor_was_said = true;
+        const string pick = act.color < 0 ? string("SelectAll")
+                                          : "SelectColor[" + to_string((int)act.color) + "]";
+        vector<string> words;
+        switch (act.what) {
+            case act_turn:    words = words_for_pose(act.value); break;
+            case act_down:    words = {"MoveColumn[" + to_string((int)act.value) + "]"}; break;
+            case act_across:  words = {"MoveRow[" + to_string((int)act.value) + "]"}; break;
+            case act_recolor: words = {"Recolor[" + to_string((int)act.value) + "]"}; break;
+            default: break;
+        }
+        for (size_t i = 0; i < words.size(); ++i)
             said.sentences.push_back(
                 string(said.sentences.empty() ? "Input" : "CurrentObjects") + " " + pick + " " +
-                acts[i] + " " + (i + 1 < acts.size() ? "Withhold" : combine));
+                words[i] + " " + (i + 1 < words.size() ? "Withhold" : combine));
     }
 
-    // Said last because nothing spells it yet: a recolor needs the map from the
-    // old color to the new one, and the reading carries the pieces, not the map.
     // Colours that trade places. Said before the reading's own recolor, because
     // a swap is the whole story for the cells it touches and needs no pieces.
     for (int variant = 0; variant < 45; ++variant)
@@ -175,7 +222,7 @@ inline said_reading say_the_reading(const inference& inf) {
             if (pair.found_recolored > 0) {
                 if (const char* word = word_for_learned_recolor(inf.shape_color_map))
                     say(word);
-                else
+                else if (!a_recolor_was_said)
                     said.no_word_for.push_back("a recolor");
                 break;
             }

@@ -593,21 +593,7 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one
     // of them is right.
-    {
-        const said_reading said = say_the_reading(inf);
-        task.suggested_programs.clear();
-        if (!said.sentences.empty()) {
-            string whole;
-            for (const string& sentence : said.sentences)
-                whole += (whole.empty() ? "" : " ") + sentence;
-            task.suggested_programs.push_back(whole);
-            for (const string& opening : said.other_openings) {
-                string rest;
-                for (size_t i = 1; i < said.sentences.size(); ++i) rest += " " + said.sentences[i];
-                task.suggested_programs.push_back(opening + rest);
-            }
-        }
-    }
+    task.suggested_programs = programs_from(say_the_reading(inf));
     for (int i = 0; i < 10; ++i) {                    // color-literal pin sets,
         if (inf.colors.in_any_input[i]) {             // one per side
             task.colors_in_any_input[i] = true;

@@ -1,5 +1,6 @@
 #pragma once
 #include "environment.hpp"
+#include "inference/5_sentences.hpp"  // sentences_of: the pane says a program the way the log does
 #include "grid_buffer.hpp"
 #include "global_app_state.hpp"
 #include "cuda_dsl.cuh"
@@ -980,6 +981,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
                                 int piece_at, int dropped_at, int motif_at,
                                 int left_over_at) {
   const bool facts_face = (view == global_app_state::INFERENCE_FACTS);
+  // MEASURING PASS. The frame is drawn from what the body actually spends, so a
+  // row added below is a row the frame already knows about. Counting the rows
+  // twice -- once for the frame, once in the body -- is what let the text out.
+  bool measuring = false;
   int scale = lay.scale;
   int pad = 2 * scale;
   int line_h = 7 * scale;
@@ -991,6 +996,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
 
   int t = max(1, scale / 2);          // swatch outline thickness
   auto swatch = [&](int color, int x, int y) {
+    if (measuring) return;
     // white outline first, swatch inset on top â€” so black reads on black.
     draw_border(context, x, y, sw, sw, t);
     if (color >= 0 && color < (int)arc_color::count && solid_sheets.count(color))
@@ -1002,15 +1008,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
 
   const int readings = (int)task.correspondence.readings.size();
 
-  // Count total lines to size the backing panel.
   auto& bg = task.bg;
   auto& F = task.facts;
-  // each election: name row + column-header row + candidate rows + half-gap
-  auto dir_rows = [](const vector<puzzle::background_readout::cand>& d) { return (int)d.size() + 2; };
-  // size + colors(4) + blank + bg head/veto/per-pair + blank + elections
-  // + blank + changed(2) + blank + correspondence's two head rows + one per pair
-  int total = 13 + dir_rows(bg.across_inputs) + dir_rows(bg.across_outputs) +
-              dir_rows(bg.across_inputs_outputs) + (int)F.pairs.size() + 2;
   const int box_h = 5 * scale + pad * 2;   // a control row is a button, not a line
   // ONE ROW HEIGHT FOR THE WHOLE PANE, the control rows' own, so a list of text
   // reads at the same rhythm as a list of buttons. And ONE BLOCK GAP: the air
@@ -1025,28 +1024,41 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   // ONE MARGIN, LEFT AND RIGHT ALIKE, and the sector rules run its full width —
   // so every row of text starts and ends exactly where the rules do.
   const int margin = pad * 9;
-  int panel_h = facts_face
-      ? total * line_h + line_h * 2 + pad * 3   // + gaps
-      // WRITTEN THE WAY THE BODY BELOW SPENDS IT, term for term, so a row added
-      // there is a term added here and the frame cannot end up shorter than
-      // what it holds. Six steppers, a detail line under each and a second one
-      // under ALONE, two rules, the matrix (its axis title, three freedom
-      // rows, a row per cut TWICE with a title over the second block, and the
-      // legend), then the pair table (its head, a row per pair) and the three
-      // reasons a match was refused.
-      : frame_pad * 2 +
-            6 * (box_h + pad) + 7 * line_h +
-            2 * (block_gap * 2 + row_h - 5 * scale) +
-            (6 + 2 * (int)split_kind::split_count) * row_h +
-            (1 + (int)F.pairs.size()) * row_h + 3 * line_h;
-
-  // Dark backing, so the grids behind don't read through the readout.
-  fill_rect(context, 0, x0, y0, panel_w, panel_h);
-  draw_border(context, x0, y0, panel_w, panel_h, max(1, scale));
+  // NOBODY COUNTS ROWS ANY MORE. Both faces run their body once to measure and
+  // once to draw, so the frame is whatever the rows spent and a row added below
+  // needs no arithmetic kept in step with it up here.
 
   int tx = x0 + margin, ty = y0 + (facts_face ? pad : frame_pad);
+
+  // A NAME WEARS A CHIP, BOTH FACES ALIKE. Hoisted out of the controls body so
+  // the facts rows can say a name the same way the steppers do.
+  auto label_chip = [&](const string& name, int y, int x = -1) {
+    if (x < 0) x = tx;
+    if (!colored_fonts.count(0)) { draw_text(context, font, name, x, y, scale); return; }
+    if (!measuring)
+      fill_rect(context, UI_COLOR_LINE, x - pad / 2, y - pad / 2,
+                text_w(name, scale) + pad, 5 * scale + pad);
+    if (!measuring) draw_text(context, colored_fonts[0], name, x, y, scale);
+  };
+  // A ROW OF NAMED THINGS: each name in its chip, its value beside it, the next
+  // name a gap further on. One row however many things it names.
+  auto named_row = [&](std::initializer_list<std::pair<const char*, string>> parts) {
+    int x = tx;
+    for (const auto& part : parts) {
+      label_chip(part.first, ty, x);
+      x += text_w(part.first, scale) + pad * 2;
+      if (!part.second.empty()) {
+        if (!measuring) draw_text(context, font, part.second, x, ty, scale);
+        x += text_w(part.second, scale) + pad * 4;
+      }
+    }
+    ty += line_h;
+  };
   const int right_x = x0 + panel_w - margin;
-  auto line = [&](const string& s) { draw_text(context, font, s, tx, ty, scale); ty += line_h; };
+  auto line = [&](const string& s) {
+    if (!measuring) draw_text(context, font, s, tx, ty, scale);
+    ty += line_h;
+  };
   // Colors as a list of digits, e.g. "0,2,4"; a dash when the set is empty.
   auto color_list = [](uint16_t m) {
     string s;
@@ -1056,628 +1068,657 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   };
 
   if (!facts_face) {
-    // A boxed word the mouse can press, in the header buttons' clothes.
-    auto button = [&](const string& label, int x, int y, ui_action act) {
-      int bw = text_w(label, scale) + pad * 2;
-      draw_boxed_text(context, font, label, x, y, scale, bw, box_h,
-                      app_state.active_ui_action == act ? 4 : 1);
-      app_state.click_zones.push_back({x, y, bw, box_h, act});
-      return bw;
-    };
-    // Every control row reads NAME, what it is now, then the control. The name
-    // column and the value field are fixed widths that don't depend on what they
-    // say, so every control begins at the same place and none of them moves. The
-    // value field holds only "WHICH OF HOW MANY", the widest of which is a track
-    // saying OFF or ALL of some hundreds. What the split IS gets a line of its
-    // own below, because saying it properly takes a sentence and a sentence
-    // would push every control off the panel.
-    const int value_chars = (int)string("OFF OF 9999").size();
-    // EVERY LABEL THE PANE USES, so the value column is as wide as the widest
-    // of them. This was the width of "DROPPED" alone, and the moment a label
-    // grew past it the name ran straight through its own value.
-    static const char* const pane_labels[] = {
-        "READING", "LINE", "LEFT OVER", "REFUSED", "MOTIF", "EACH CELL" };
-    int label_col = 0;
-    for (const char* name : pane_labels) label_col = max(label_col, text_w(name, scale));
-    // THREE CHARACTERS CLEAR OF THE LONGEST LABEL. At one character the widest
-    // of them sat right against its own value and read as one word.
-    const int value_x = tx + label_col + pad * 6;
-    const int control_x = value_x + text_w(string(value_chars, ' '), scale) + pad * 6;
-    // `chosen` inverts the value — black on white — for the reading inference
-    // actually decided on. Two readings can score the same to the last cell, so
-    // which one leads has to be visible, not remembered from an ordering.
-    auto label_chip = [&](const string& name, int y, int x = -1) {
-      if (x < 0) x = tx;
-      if (!colored_fonts.count(0)) { draw_text(context, font, name, x, y, scale); return; }
-      fill_rect(context, UI_COLOR_LINE, x - pad / 2, y - pad / 2,
-                text_w(name, scale) + pad, 5 * scale + pad);
-      draw_text(context, colored_fonts[0], name, x, y, scale);
-    };
-    auto row_head = [&](const string& name, const string& value, bool chosen = false) {
-      label_chip(name, ty + pad);
-      if (chosen && colored_fonts.count(0)) {
-        fill_rect(context, UI_COLOR_LINE, value_x - pad / 2, ty + pad / 2,
-                  text_w(value, scale) + pad, 5 * scale + pad);
-        draw_text(context, colored_fonts[0], value, value_x, ty + pad, scale);
-        return;
-      }
-      draw_text(context, font, value, value_x, ty + pad, scale);
-    };
-    // A named line of plain text on the same column the controls use, so every
-    // label in the pane lines its value up on one edge.
-    auto named_line = [&](const string& name, const string& value) {
-      label_chip(name, ty);
-      draw_text(context, font, value, value_x, ty, scale);
-      ty += row_h;
-    };
-    // A track with a handle on the stop it's on, filling the rest of the row.
-    // Press or drag anywhere along it to land there. The handle is one size
-    // whatever the puzzle offers — only where it sits says anything — and it
-    // wears the color of what it walks, the same color that thing is drawn in on
-    // the grids. It travels the track less its own width, so the first
-    // and last stops park it flush inside either end and both are plain to see.
-    auto slider = [&](int x, int stop, int stops, int color, track* which) {
-      const int w = right_x - x;
-      const int cap = max(2, scale * 2);
-      const int knob_w = min(6 * scale, max(1, w - cap * 2));
-      if (w <= cap * 2 || stops <= 0) return;
-      // THE HANDLE RUNS BETWEEN THE END STOPS, NOT UNDER THEM. Drawing the caps
-      // over it hid the handle at either extreme, which is exactly where you
-      // most need to see where it sits. Its run is inset by a cap at each end,
-      // and the press zone is inset with it so the two agree on where a stop is.
-      const int run_x = x + cap, run_w = w - cap * 2;
-      const int travel = max(1, run_w - knob_w);
-      const int kx = run_x + (stops > 1 ? travel * stop / (stops - 1) : 0);
-      fill_rect(context, 11, x, ty, w, box_h);
-      fill_rect(context, UI_COLOR_LINE, x, ty, cap, box_h);
-      fill_rect(context, UI_COLOR_LINE, x + w - cap, ty, cap, box_h);
-      fill_rect(context, color, kx, ty, knob_w, box_h);
-      app_state.slider_zones.push_back({run_x, ty, run_w, box_h, which, stops, knob_w});
-    };
-
-    // A RULE ACROSS THE PANE AND AIR EITHER SIDE OF IT. No title: a block that
-    // needs a heading to be understood has under-named its own rows, and the
-    // heading then says twice what the rows should have said once. The break
-    // itself is all the sectioning needed. Spacing lives here alone, so every
-    // block is parted from the next by the same gap whatever it holds.
-    auto divide = [&]() {
-      // EQUAL AIR EITHER SIDE, WHICH IS NOT THE SAME AS EQUAL NUMBERS HERE.
-      // A row leaves `ty` a whole line below its own text, so that trailing
-      // line is already part of the gap above the rule — matching the two
-      // numbers made the gap above a line and a half bigger than the gap below.
-      // Below therefore gets one line more than above, and they draw even.
-      ty += block_gap;
-      if (right_x > tx)
-        fill_rect(context, UI_COLOR_LINE, tx, ty, right_x - tx, max(1, scale / 2));
-      ty += block_gap + row_h - 5 * scale;
-    };
-
-    // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
-    // nothing above this one to part it from.
-    // Which reading of the split is on screen, and how many there are. THE
-    // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
-    // along that table and never a jump off it.
-    // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
-    // from one it read as a different number from the same thing, and every
-    // sentence about a reading had to say which of the two it meant.
-    row_head("READING", to_text("%4d OF %d", rank, max(1, readings)),
-             rank == task.correspondence.chosen);
-    {
-      int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
-      button("> [C]", x, ty, ui_action::cycle_coarseness);
-    }
-    ty += box_h + pad;
-    // ONE SHAPE FOR ALL THREE, because they answer the same question about
-    // three lists: none of it, one of them, all of it — OFF at the left, the
-    // items in between, ALL at the right. The steps beside the track land on
-    // the one next door; the track itself is how you cross a long list.
-    auto track_row = [&](const string& name, const string& key, int at, int count,
-                         int color, ui_action back, ui_action fwd, track* which) {
-      // RIGHT-ALIGNED, because OFF is three characters and 7 is one, and a
-      // wandering OF makes four rows read as four different shapes.
-      // Counted from zero, the same as READING above and the same as the log.
-      row_head(name, at == SHOW_OFF ? to_text("%4s OF %d", "OFF", count)
-                   : at == SHOW_ALL ? to_text("%4s OF %d", "ALL", count)
-                                    : to_text("%4d OF %d", at, count));
-      int x = control_x + button(to_text("< [SHIFT %s]", key.c_str()), control_x, ty, back) + pad;
-      x += button(to_text("> [%s]", key.c_str()), x, ty, fwd) + pad;
-      slider(x, track::to_stop(at, count), count + 2, color, which);
-      ty += box_h + pad;
-    };
-    // WHAT THE STEPPER IS ON, SAID DIRECTLY UNDER IT. Two blocks apart, each of
-    // these had to repeat its own label to say which stepper it belonged to;
-    // under it, the stepper's name is the label. ALWAYS A ROW HIGH, said or not,
-    // so nothing below shifts as you step.
-    // A LINE OF TEXT IS SHORTER THAN A ROW OF CONTROLS, and taking a control
-    // row each is what ran the panel off the bottom of a 1080p screen.
-    // HARD LEFT, not lined up with the values above it. These are sentences,
-    // not values, and the longest of them ran off the panel when it started
-    // where a value starts. Nothing sits to their left to line up with anyway.
-    auto detail = [&](const string& value) {
-      if (!value.empty()) draw_text(context, font, value, tx, ty, scale);
-      ty += line_h;
-    };
-    if (rank >= readings) return;
-    const auto& R = task.correspondence.readings[rank];
-    // WHICH READING THIS IS, in words. The table below says it too, but only by
-    // where the boxed cell sits, and hunting for it is work the reader should
-    // not have to do to know what is on screen.
-    detail(to_text("%s %s  ---  %s", split_names_lead,
-                   split_names[clamp((int)R.cut_kind, 0,
-                                     (int)split_kind::split_count - 1)],
-                   match_mode::from_index(R.match_kind).label().c_str()));
-    static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
-    // The pieces the reading cut out, and the matches it threw away. Neither is
-    // reachable through the lines: a piece with no edge draws nothing, and a
-    // thrown-away match was never drawn at all.
-    const vector<int> alone = pieces_standing_alone(R);
-    const int pieces_n = (int)alone.size();
-    const int dropped_n = (int)R.dropped_seen.size();
-    const int left_over_n = (int)R.left_over_seen.size();
-    track_row("LINE", "S", step, drawn, (int)arc_color::yellow,
-              ui_action::step_edge_back, ui_action::step_edge, &app_state.inference_edge);
-    // THE ONE LINE YOU ARE ON, said in full. All of this is invisible in the
-    // drawing: a line looks the same whether the piece was found as itself,
-    // found in another color, or never found at all.
-    {
-      string said;
-      int nth = -1;
-      for (const auto& ln : task.correspondence.lines) {
-        if (ln.rank != rank) continue;
-        if (++nth != step) continue;
-        said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
-                       (int)ln.pair, (ln.color < 0 ? string("MIXED") : to_string(ln.color)).c_str(),
-                       (int)ln.from_w, (int)ln.from_h, (int)ln.from_x, (int)ln.from_y,
-                       (int)ln.to_x, (int)ln.to_y, kind_name[clamp((int)ln.kind, 0, 2)]);
-        if (ln.pose & 1) said += ", TURNED";
-        if (ln.pose & 2) said += ", FLIPPED ROWS";
-        if (ln.pose & 4) said += ", FLIPPED COLS";
-        if (ln.hidden)   said += to_text(", %d HIDDEN", (int)ln.hidden);
-        break;
-      }
-      detail(said);
-    }
-    track_row("REFUSED", "X", dropped_at, dropped_n, (int)arc_color::red,
-              ui_action::step_dropped_back, ui_action::step_dropped, &app_state.inference_dropped);
-    // THE ONE THROWN-AWAY MATCH YOU ARE ON: the piece, where it wanted to land,
-    // what it was claiming, and why it lost.
-    {
-      string said;
-      if (dropped_at >= 0 && dropped_at < dropped_n) {
-        const auto& dr = R.dropped_seen[dropped_at];
-        said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
-                       (int)dr.pair, (int)dr.piece, (int)dr.to_x, (int)dr.to_y,
-                       kind_name[clamp((int)dr.kind, 0, 2)],
-                       correspondence_facts::refusal_names[clamp((int)dr.why, 0, 2)]);
-        if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
-      }
-      detail(said);
-    }
-    const vector<motif_set> sets = motif_sets(R);
-    track_row("MOTIF", "O", motif_at, (int)sets.size(), (int)arc_color::magenta,
-              ui_action::step_motif_back, ui_action::step_motif, &app_state.inference_motif);
-    // THE SET OF COPIES YOU ARE ON — one set, on one grid, so its count, its
-    // size and where its leader sits all mean one thing. The leader is the
-    // medoid: the member that disagrees least with all the others, and the one
-    // drawn magenta while the rest are blue.
-    {
-      string said;
-      if (motif_at >= 0 && motif_at < (int)sets.size()) {
-        const motif_set& set = sets[motif_at];
-        int members = 0, leader_w = 0, leader_h = 0, leader_x = 0, leader_y = 0;
-        for (const auto& pc : R.pieces_seen) {
-          if (!piece_is_in(pc, set)) continue;
-          ++members;
-          if (!pc.medoid) continue;
-          leader_w = pc.w; leader_h = pc.h; leader_x = pc.x; leader_y = pc.y;
+    // ONE BODY, RUN TWICE: measured first, drawn second, so the frame is sized
+    // by what the rows actually spend and adding one needs no bookkeeping.
+    auto paint_the_controls = [&]() {
+      // A boxed word the mouse can press, in the header buttons' clothes.
+      auto button = [&](const string& label, int x, int y, ui_action act) {
+        int bw = text_w(label, scale) + pad * 2;
+        draw_boxed_text(context, font, label, x, y, scale, bw, box_h,
+                        app_state.active_ui_action == act ? 4 : 1);
+        if (!measuring) app_state.click_zones.push_back({x, y, bw, box_h, act});
+        return bw;
+      };
+      // Every control row reads NAME, what it is now, then the control. The name
+      // column and the value field are fixed widths that don't depend on what they
+      // say, so every control begins at the same place and none of them moves. The
+      // value field holds only "WHICH OF HOW MANY", the widest of which is a track
+      // saying OFF or ALL of some hundreds. What the split IS gets a line of its
+      // own below, because saying it properly takes a sentence and a sentence
+      // would push every control off the panel.
+      const int value_chars = (int)string("OFF OF 9999").size();
+      // EVERY LABEL THE PANE USES, so the value column is as wide as the widest
+      // of them. This was the width of "DROPPED" alone, and the moment a label
+      // grew past it the name ran straight through its own value.
+      static const char* const pane_labels[] = {
+          "READING", "LINE", "LEFT OVER", "REFUSED", "MOTIF", "EACH CELL" };
+      int label_col = 0;
+      for (const char* name : pane_labels) label_col = max(label_col, text_w(name, scale));
+      // THREE CHARACTERS CLEAR OF THE LONGEST LABEL. At one character the widest
+      // of them sat right against its own value and read as one word.
+      const int value_x = tx + label_col + pad * 6;
+      const int control_x = value_x + text_w(string(value_chars, ' '), scale) + pad * 6;
+      // `chosen` inverts the value — black on white — for the reading inference
+      // actually decided on. Two readings can score the same to the last cell, so
+      // which one leads has to be visible, not remembered from an ordering.
+      auto row_head = [&](const string& name, const string& value, bool chosen = false) {
+        label_chip(name, ty + pad);
+        if (chosen && colored_fonts.count(0)) {
+          fill_rect(context, UI_COLOR_LINE, value_x - pad / 2, ty + pad / 2,
+                    text_w(value, scale) + pad, 5 * scale + pad);
+          draw_text(context, colored_fonts[0], value, value_x, ty + pad, scale);
+          return;
         }
-        said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
-                       (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
-                       members, leader_w, leader_h, leader_x, leader_y);
-      }
-      detail(said);
-    }
-    // LAST OF THE STEPPERS, because its readout is the only one that needs two
-    // lines and the pair of them sit better against the rule below than wedged
-    // between two other controls.
-    track_row("ALONE", "P", piece_at, pieces_n, (int)arc_color::gray,
-              ui_action::step_piece_back, ui_action::step_piece, &app_state.inference_piece);
-    // WHICH KIND OF ALONE IT IS. Deleted, inserted and covered are ANSWERS, so
-    // the walk is not named for their absence — it is named for the one thing
-    // they share, having no piece on the other grid that is them.
-    // NOTHING FOUND IT is one fact, not two: which grid the
-    // piece sits on is a property of the piece, and swapping which side is
-    // called input turns either word into the other. So it is said FROM THE
-    // INPUT SIDE and says so in the same breath, because a bare INSERTED leaves
-    // the reader to remember whose standpoint it was, which is the thing nobody
-    // remembers a day later. A piece with an edge but no line is neither:
-    // something found a place for it and never found IT.
-    // TWO LINES: the piece, then the patch of background it covers on the other
-    // grid. On one line the pair of them ran past the panel, and the widest
-    // screen is the tighter of the two.
-    {
-      string piece_said, blank_said;
-      if (piece_at >= 0 && piece_at < pieces_n) {
-        const auto& pc = R.pieces_seen[alone[piece_at]];
-        const char* silence = pc.edges > 0 ? "ONLY SITS ON SOMETHING"
-                            : pc.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
-                                            : "INSERTED, IT WAS NOT IN THE INPUT";
-        piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
-                             silence, (int)pc.pair,
-                             (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
-                             (int)pc.w, (int)pc.h, (int)pc.x, (int)pc.y, (int)pc.cells);
-        if (pc.blank_w > 0)
-          blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
-                               pc.blank_enclosed ? "FILLS A HOLE"
-                                                 : "OVER OPEN SPACE",
-                               (int)pc.blank_w, (int)pc.blank_h, (int)pc.blank_x,
-                               (int)pc.blank_y, (int)pc.blank_cells);
-      }
-      detail(piece_said);
-      detail(blank_said);
-    }
-    // A CELL, NOT A PIECE. Everything above walks things the reading made —
-    // pieces, matches, sets — and a cell it could not account for is none of
-    // them, so it was the one fact on the pane with nothing behind it to point
-    // at. The number here IS this list's length, so they cannot disagree.
-    track_row("LEFT OVER", "U", left_over_at, left_over_n, (int)arc_color::orange,
-              ui_action::step_left_over_back, ui_action::step_left_over,
-              &app_state.inference_left_over);
-    {
-      string said;
-      if (left_over_at >= 0 && left_over_at < left_over_n) {
-        const auto& cell = R.left_over_seen[left_over_at];
-        said = to_text("PAIR %d  %s  CELL AT %d,%d", (int)cell.pair,
-                       cell.from_input ? "INPUT" : "OUTPUT", (int)cell.x, (int)cell.y);
-      }
-      detail(said);
-    }
-    // A CONTROL ROW IS TALLER THAN A TEXT ROW, so it leaves more behind it than
-    // divide() expects, and the first rule sat lower in its gap than the rest.
-    // Give back the difference and all the gaps draw the same.
-
-    // What this reading COST, the whole reason it leads or trails: pieces it
-    // used and output cells no edge of any kind accounts for, over the train
-    // set. Without it the coarseness steps are unnamed preferences.
-    using readout = puzzle::correspondence_readout;
-    // EVERY READING AT ONCE: how the grid was cut and which way round down
-    // the side, what the pieces were allowed to do across the top. Stepping
-    // them one at a time never says how they relate — the table says it in one
-    // look, and the number in a cell is what that correspondence could not
-    // account for ON EITHER GRID, so the best cells are the small ones and you
-    // read for them without being told.
-    divide();
-    {
-      const int cuts = (int)split_kind::split_count;
-      // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
-      // edge became one of them, and sixteen columns ran off the panel and off
-      // the screen. So the table says the other three across the top, as it
-      // always did, and says this one by drawing the whole block of cuts twice:
-      // once for pieces that must stay on the grid, once for pieces that may
-      // hang off it. Same reading in the same place either way — a cell is
-      // still its reading's own cell, the block just says which half it is in.
-      const int modes = match_mode::COUNT / 2;
-      // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
-      // cut and one column per freedom, so a cell knows which reading it stands
-      // for without anything having to be looked up — and stepping the reading
-      // walks the table you are looking at.
-      // A ROW IS NAMED BY WHAT IT COST TO LOOK AT, because that is what decided
-      // whether it got searched at all. Said in the label, not in a column of
-      // its own: it is one number per row, and a column would repeat it eight
-      // times as though the freedoms changed it.
-      // NO COST COLUMN. What a cut costs to say orders the walk and breaks a
-      // dead tie, and nothing else — the rows here are in cut order, not cost
-      // order, so a number beside them read as a ranking that ranks nothing.
-      // It is still in the log, where a diagnostic belongs.
-      int label_w = text_w(split_names_lead, scale);
-      for (int c = 0; c < cuts; ++c)
-        label_w = max(label_w, text_w(split_names[c], scale));
-      // EVERY CELL IS THE SAME BOX, as wide as the widest thing a column ever
-      // holds — a freedom's name, or the biggest number. Cut to its own text a
-      // single digit read as a smaller thing than three, and the boxes down a
-      // column no longer lined up with each other.
-      // MEASURED OVER WHAT A COLUMN ACTUALLY HOLDS. Measured over every freedom
-      // name, the one that has no column — it titles the second block instead —
-      // still set the width of all of them, and the table ran off the panel.
-      int widest = text_w("9999", scale);
-      for (int freedom = 0; freedom < match_mode::FREEDOMS - 1; ++freedom)
-        widest = max(widest, text_w(match_mode::freedom_names[freedom], scale));
-      const int cell_w = widest + pad * 2;
-      const int chip_w = widest + pad;
-      // THE LABEL ENDS IN A NUMBER, so a one-character gap made that number read
-      // as the first cell of the row. The columns start a clear space away.
-      const int gx = tx + label_w + pad * 10;
-      // EACH COLUMN SAYS WHAT IT IS, AT THE COLUMN. Three named rows of bars
-      // meant reading downwards to decode one column, and a freedom that was
-      // OFF drew nothing — which looks the same as a row that is missing.
-      // A dash is present and legible; a blank is not.
-      // TWO AXES, TWO TITLES, AND THEY FINISH ONE SENTENCE. Down the side is
-      // what an object IS; across the top is what it MAY DO. A reader who has
-      // both can say a cell out loud without a legend: "an object is a group of
-      // cells that touch, and it may move and turn".
-      // CENTRED ON WHAT THEY TITLE. A heading pinned to the left edge of a wide
-      // block reads as the first item of it, not as the name of the whole.
-      auto centred = [&](const string& name, int from_x, int width) {
-        label_chip(name, ty, from_x + (width - text_w(name, scale)) / 2);
+        draw_text(context, font, value, value_x, ty + pad, scale);
       };
-      // EVERY COLUMN IS THE SAME BOX WIDE, so its heading sits in the middle of
-      // it and so does what it holds. Pinned to the left edge instead, a number
-      // drifts as it gains a digit and the heading no longer names the column
-      // under it.
-      auto cell_x = [&](int m) { return gx + m * cell_w - pad / 2; };
-      // ONE BOX FOR A CELL AND FOR THE HEADING OVER IT. Cut to its own text
-      // instead, a three-letter heading and a one-digit number were two widths
-      // in the same column. Hands back where it drew, so a cell that wants a
-      // border round it puts it on the box and not on the writing.
-      auto column_chip = [&](const string& s, int m, bool inverted) {
-        const int chip_x = cell_x(m) + (cell_w - chip_w) / 2;
-        if (inverted && colored_fonts.count(0))
-          fill_rect(context, UI_COLOR_LINE, chip_x, ty - pad / 2, chip_w, 5 * scale + pad);
-        draw_text(context, inverted && colored_fonts.count(0) ? colored_fonts[0] : font,
-                  s, cell_x(m) + (cell_w - text_w(s, scale)) / 2, ty, scale);
-        return chip_x;
-      };
-      centred("AND IT MAY", cell_x(0), modes * cell_w);
-      ty += row_h;
-      // ONE FREEDOM PER LINE, IN ITS OWN WORD. Three initials side by side
-      // needed a legend under the table to be read at all, and one of them
-      // could be taken for either of two freedoms. A dash where a word would
-      // be says the freedom was withheld — a blank would look like a gap.
-      // The freedoms that have a column of their own: everything but the last.
-      const int across = match_mode::FREEDOMS - 1;
-      for (int freedom = 0; freedom < across; ++freedom) {
-        // On the last line, so it sits against the sentences it names.
-        if (freedom == across - 1)
-          centred(split_names_lead, tx, label_w);
-        for (int m = 0; m < modes; ++m)
-          column_chip(match_mode::from_index(m).may(freedom)
-                          ? match_mode::freedom_names[freedom] : "-", m, true);
+      // A named line of plain text on the same column the controls use, so every
+      // label in the pane lines its value up on one edge.
+      auto named_line = [&](const string& name, const string& value) {
+        label_chip(name, ty);
+        draw_text(context, font, value, value_x, ty, scale);
         ty += row_h;
+      };
+      // A track with a handle on the stop it's on, filling the rest of the row.
+      // Press or drag anywhere along it to land there. The handle is one size
+      // whatever the puzzle offers — only where it sits says anything — and it
+      // wears the color of what it walks, the same color that thing is drawn in on
+      // the grids. It travels the track less its own width, so the first
+      // and last stops park it flush inside either end and both are plain to see.
+      auto slider = [&](int x, int stop, int stops, int color, track* which) {
+        const int w = right_x - x;
+        const int cap = max(2, scale * 2);
+        const int knob_w = min(6 * scale, max(1, w - cap * 2));
+        if (w <= cap * 2 || stops <= 0) return;
+        // THE HANDLE RUNS BETWEEN THE END STOPS, NOT UNDER THEM. Drawing the caps
+        // over it hid the handle at either extreme, which is exactly where you
+        // most need to see where it sits. Its run is inset by a cap at each end,
+        // and the press zone is inset with it so the two agree on where a stop is.
+        const int run_x = x + cap, run_w = w - cap * 2;
+        const int travel = max(1, run_w - knob_w);
+        const int kx = run_x + (stops > 1 ? travel * stop / (stops - 1) : 0);
+        fill_rect(context, 11, x, ty, w, box_h);
+        fill_rect(context, UI_COLOR_LINE, x, ty, cap, box_h);
+        fill_rect(context, UI_COLOR_LINE, x + w - cap, ty, cap, box_h);
+        fill_rect(context, color, kx, ty, knob_w, box_h);
+        app_state.slider_zones.push_back({run_x, ty, run_w, box_h, which, stops, knob_w});
+      };
+
+      // A RULE ACROSS THE PANE AND AIR EITHER SIDE OF IT. No title: a block that
+      // needs a heading to be understood has under-named its own rows, and the
+      // heading then says twice what the rows should have said once. The break
+      // itself is all the sectioning needed. Spacing lives here alone, so every
+      // block is parted from the next by the same gap whatever it holds.
+      auto divide = [&]() {
+        // EQUAL AIR EITHER SIDE, WHICH IS NOT THE SAME AS EQUAL NUMBERS HERE.
+        // A row leaves `ty` a whole line below its own text, so that trailing
+        // line is already part of the gap above the rule — matching the two
+        // numbers made the gap above a line and a half bigger than the gap below.
+        // Below therefore gets one line more than above, and they draw even.
+        ty += block_gap;
+        if (right_x > tx)
+          fill_rect(context, UI_COLOR_LINE, tx, ty, right_x - tx, max(1, scale / 2));
+        ty += block_gap + row_h - 5 * scale;
+      };
+
+      // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
+      // nothing above this one to part it from.
+      // Which reading of the split is on screen, and how many there are. THE
+      // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
+      // along that table and never a jump off it.
+      // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
+      // from one it read as a different number from the same thing, and every
+      // sentence about a reading had to say which of the two it meant.
+      row_head("READING", to_text("%4d OF %d", rank, max(1, readings)),
+               rank == task.correspondence.chosen);
+      {
+        int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
+        button("> [C]", x, ty, ui_action::cycle_coarseness);
       }
-      // THE SAME ROWS, TWICE, THE SECOND TIME WITH THE LAST FREEDOM GRANTED.
-      // Its own name titles the second block, so the sentence still finishes:
-      // an object is a group of cells that touch, and it may move and turn and
-      // hang off the edge.
-      for (int half = 0; half < 2; ++half) {
-        if (half) {
-          centred(match_mode::freedom_names[across], cell_x(0), modes * cell_w);
+      ty += box_h + pad;
+      // ONE SHAPE FOR ALL THREE, because they answer the same question about
+      // three lists: none of it, one of them, all of it — OFF at the left, the
+      // items in between, ALL at the right. The steps beside the track land on
+      // the one next door; the track itself is how you cross a long list.
+      auto track_row = [&](const string& name, const string& key, int at, int count,
+                           int color, ui_action back, ui_action fwd, track* which) {
+        // RIGHT-ALIGNED, because OFF is three characters and 7 is one, and a
+        // wandering OF makes four rows read as four different shapes.
+        // Counted from zero, the same as READING above and the same as the log.
+        row_head(name, at == SHOW_OFF ? to_text("%4s OF %d", "OFF", count)
+                     : at == SHOW_ALL ? to_text("%4s OF %d", "ALL", count)
+                                      : to_text("%4d OF %d", at, count));
+        int x = control_x + button(to_text("< [SHIFT %s]", key.c_str()), control_x, ty, back) + pad;
+        x += button(to_text("> [%s]", key.c_str()), x, ty, fwd) + pad;
+        slider(x, track::to_stop(at, count), count + 2, color, which);
+        ty += box_h + pad;
+      };
+      // WHAT THE STEPPER IS ON, SAID DIRECTLY UNDER IT. Two blocks apart, each of
+      // these had to repeat its own label to say which stepper it belonged to;
+      // under it, the stepper's name is the label. ALWAYS A ROW HIGH, said or not,
+      // so nothing below shifts as you step.
+      // A LINE OF TEXT IS SHORTER THAN A ROW OF CONTROLS, and taking a control
+      // row each is what ran the panel off the bottom of a 1080p screen.
+      // HARD LEFT, not lined up with the values above it. These are sentences,
+      // not values, and the longest of them ran off the panel when it started
+      // where a value starts. Nothing sits to their left to line up with anyway.
+      auto detail = [&](const string& value) {
+        if (!value.empty()) draw_text(context, font, value, tx, ty, scale);
+        ty += line_h;
+      };
+      if (rank >= readings) return;
+      const auto& R = task.correspondence.readings[rank];
+      // WHICH READING THIS IS, in words. The table below says it too, but only by
+      // where the boxed cell sits, and hunting for it is work the reader should
+      // not have to do to know what is on screen.
+      detail(to_text("%s %s  ---  %s", split_names_lead,
+                     split_names[clamp((int)R.cut_kind, 0,
+                                       (int)split_kind::split_count - 1)],
+                     match_mode::from_index(R.match_kind).label().c_str()));
+      static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
+      // The pieces the reading cut out, and the matches it threw away. Neither is
+      // reachable through the lines: a piece with no edge draws nothing, and a
+      // thrown-away match was never drawn at all.
+      const vector<int> alone = pieces_standing_alone(R);
+      const int pieces_n = (int)alone.size();
+      const int dropped_n = (int)R.dropped_seen.size();
+      const int left_over_n = (int)R.left_over_seen.size();
+      track_row("LINE", "S", step, drawn, (int)arc_color::yellow,
+                ui_action::step_edge_back, ui_action::step_edge, &app_state.inference_edge);
+      // THE ONE LINE YOU ARE ON, said in full. All of this is invisible in the
+      // drawing: a line looks the same whether the piece was found as itself,
+      // found in another color, or never found at all.
+      {
+        string said;
+        int nth = -1;
+        for (const auto& ln : task.correspondence.lines) {
+          if (ln.rank != rank) continue;
+          if (++nth != step) continue;
+          said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
+                         (int)ln.pair, (ln.color < 0 ? string("MIXED") : to_string(ln.color)).c_str(),
+                         (int)ln.from_w, (int)ln.from_h, (int)ln.from_x, (int)ln.from_y,
+                         (int)ln.to_x, (int)ln.to_y, kind_name[clamp((int)ln.kind, 0, 2)]);
+          if (ln.pose & 1) said += ", TURNED";
+          if (ln.pose & 2) said += ", FLIPPED ROWS";
+          if (ln.pose & 4) said += ", FLIPPED COLS";
+          if (ln.hidden)   said += to_text(", %d HIDDEN", (int)ln.hidden);
+          break;
+        }
+        detail(said);
+      }
+      track_row("REFUSED", "X", dropped_at, dropped_n, (int)arc_color::red,
+                ui_action::step_dropped_back, ui_action::step_dropped, &app_state.inference_dropped);
+      // THE ONE THROWN-AWAY MATCH YOU ARE ON: the piece, where it wanted to land,
+      // what it was claiming, and why it lost.
+      {
+        string said;
+        if (dropped_at >= 0 && dropped_at < dropped_n) {
+          const auto& dr = R.dropped_seen[dropped_at];
+          said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
+                         (int)dr.pair, (int)dr.piece, (int)dr.to_x, (int)dr.to_y,
+                         kind_name[clamp((int)dr.kind, 0, 2)],
+                         correspondence_facts::refusal_names[clamp((int)dr.why, 0, 2)]);
+          if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
+        }
+        detail(said);
+      }
+      const vector<motif_set> sets = motif_sets(R);
+      track_row("MOTIF", "O", motif_at, (int)sets.size(), (int)arc_color::magenta,
+                ui_action::step_motif_back, ui_action::step_motif, &app_state.inference_motif);
+      // THE SET OF COPIES YOU ARE ON — one set, on one grid, so its count, its
+      // size and where its leader sits all mean one thing. The leader is the
+      // medoid: the member that disagrees least with all the others, and the one
+      // drawn magenta while the rest are blue.
+      {
+        string said;
+        if (motif_at >= 0 && motif_at < (int)sets.size()) {
+          const motif_set& set = sets[motif_at];
+          int members = 0, leader_w = 0, leader_h = 0, leader_x = 0, leader_y = 0;
+          for (const auto& pc : R.pieces_seen) {
+            if (!piece_is_in(pc, set)) continue;
+            ++members;
+            if (!pc.medoid) continue;
+            leader_w = pc.w; leader_h = pc.h; leader_x = pc.x; leader_y = pc.y;
+          }
+          said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
+                         (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
+                         members, leader_w, leader_h, leader_x, leader_y);
+        }
+        detail(said);
+      }
+      // LAST OF THE STEPPERS, because its readout is the only one that needs two
+      // lines and the pair of them sit better against the rule below than wedged
+      // between two other controls.
+      track_row("ALONE", "P", piece_at, pieces_n, (int)arc_color::gray,
+                ui_action::step_piece_back, ui_action::step_piece, &app_state.inference_piece);
+      // WHICH KIND OF ALONE IT IS. Deleted, inserted and covered are ANSWERS, so
+      // the walk is not named for their absence — it is named for the one thing
+      // they share, having no piece on the other grid that is them.
+      // NOTHING FOUND IT is one fact, not two: which grid the
+      // piece sits on is a property of the piece, and swapping which side is
+      // called input turns either word into the other. So it is said FROM THE
+      // INPUT SIDE and says so in the same breath, because a bare INSERTED leaves
+      // the reader to remember whose standpoint it was, which is the thing nobody
+      // remembers a day later. A piece with an edge but no line is neither:
+      // something found a place for it and never found IT.
+      // TWO LINES: the piece, then the patch of background it covers on the other
+      // grid. On one line the pair of them ran past the panel, and the widest
+      // screen is the tighter of the two.
+      {
+        string piece_said, blank_said;
+        if (piece_at >= 0 && piece_at < pieces_n) {
+          const auto& pc = R.pieces_seen[alone[piece_at]];
+          const char* silence = pc.edges > 0 ? "ONLY SITS ON SOMETHING"
+                              : pc.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
+                                              : "INSERTED, IT WAS NOT IN THE INPUT";
+          piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
+                               silence, (int)pc.pair,
+                               (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
+                               (int)pc.w, (int)pc.h, (int)pc.x, (int)pc.y, (int)pc.cells);
+          if (pc.blank_w > 0)
+            blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
+                                 pc.blank_enclosed ? "FILLS A HOLE"
+                                                   : "OVER OPEN SPACE",
+                                 (int)pc.blank_w, (int)pc.blank_h, (int)pc.blank_x,
+                                 (int)pc.blank_y, (int)pc.blank_cells);
+        }
+        detail(piece_said);
+        detail(blank_said);
+      }
+      // A CELL, NOT A PIECE. Everything above walks things the reading made —
+      // pieces, matches, sets — and a cell it could not account for is none of
+      // them, so it was the one fact on the pane with nothing behind it to point
+      // at. The number here IS this list's length, so they cannot disagree.
+      track_row("LEFT OVER", "U", left_over_at, left_over_n, (int)arc_color::orange,
+                ui_action::step_left_over_back, ui_action::step_left_over,
+                &app_state.inference_left_over);
+      {
+        string said;
+        if (left_over_at >= 0 && left_over_at < left_over_n) {
+          const auto& cell = R.left_over_seen[left_over_at];
+          said = to_text("PAIR %d  %s  CELL AT %d,%d", (int)cell.pair,
+                         cell.from_input ? "INPUT" : "OUTPUT", (int)cell.x, (int)cell.y);
+        }
+        detail(said);
+      }
+      // A CONTROL ROW IS TALLER THAN A TEXT ROW, so it leaves more behind it than
+      // divide() expects, and the first rule sat lower in its gap than the rest.
+      // Give back the difference and all the gaps draw the same.
+
+      // What this reading COST, the whole reason it leads or trails: pieces it
+      // used and output cells no edge of any kind accounts for, over the train
+      // set. Without it the coarseness steps are unnamed preferences.
+      using readout = puzzle::correspondence_readout;
+      // EVERY READING AT ONCE: how the grid was cut and which way round down
+      // the side, what the pieces were allowed to do across the top. Stepping
+      // them one at a time never says how they relate — the table says it in one
+      // look, and the number in a cell is what that correspondence could not
+      // account for ON EITHER GRID, so the best cells are the small ones and you
+      // read for them without being told.
+      divide();
+      {
+        const int cuts = (int)split_kind::split_count;
+        // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
+        // edge became one of them, and sixteen columns ran off the panel and off
+        // the screen. So the table says the other three across the top, as it
+        // always did, and says this one by drawing the whole block of cuts twice:
+        // once for pieces that must stay on the grid, once for pieces that may
+        // hang off it. Same reading in the same place either way — a cell is
+        // still its reading's own cell, the block just says which half it is in.
+        const int modes = match_mode::COUNT / 2;
+        // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
+        // cut and one column per freedom, so a cell knows which reading it stands
+        // for without anything having to be looked up — and stepping the reading
+        // walks the table you are looking at.
+        // A ROW IS NAMED BY WHAT IT COST TO LOOK AT, because that is what decided
+        // whether it got searched at all. Said in the label, not in a column of
+        // its own: it is one number per row, and a column would repeat it eight
+        // times as though the freedoms changed it.
+        // NO COST COLUMN. What a cut costs to say orders the walk and breaks a
+        // dead tie, and nothing else — the rows here are in cut order, not cost
+        // order, so a number beside them read as a ranking that ranks nothing.
+        // It is still in the log, where a diagnostic belongs.
+        int label_w = text_w(split_names_lead, scale);
+        for (int c = 0; c < cuts; ++c)
+          label_w = max(label_w, text_w(split_names[c], scale));
+        // EVERY CELL IS THE SAME BOX, as wide as the widest thing a column ever
+        // holds — a freedom's name, or the biggest number. Cut to its own text a
+        // single digit read as a smaller thing than three, and the boxes down a
+        // column no longer lined up with each other.
+        // MEASURED OVER WHAT A COLUMN ACTUALLY HOLDS. Measured over every freedom
+        // name, the one that has no column — it titles the second block instead —
+        // still set the width of all of them, and the table ran off the panel.
+        int widest = text_w("9999", scale);
+        for (int freedom = 0; freedom < match_mode::FREEDOMS - 1; ++freedom)
+          widest = max(widest, text_w(match_mode::freedom_names[freedom], scale));
+        const int cell_w = widest + pad * 2;
+        const int chip_w = widest + pad;
+        // THE LABEL ENDS IN A NUMBER, so a one-character gap made that number read
+        // as the first cell of the row. The columns start a clear space away.
+        const int gx = tx + label_w + pad * 10;
+        // EACH COLUMN SAYS WHAT IT IS, AT THE COLUMN. Three named rows of bars
+        // meant reading downwards to decode one column, and a freedom that was
+        // OFF drew nothing — which looks the same as a row that is missing.
+        // A dash is present and legible; a blank is not.
+        // TWO AXES, TWO TITLES, AND THEY FINISH ONE SENTENCE. Down the side is
+        // what an object IS; across the top is what it MAY DO. A reader who has
+        // both can say a cell out loud without a legend: "an object is a group of
+        // cells that touch, and it may move and turn".
+        // CENTRED ON WHAT THEY TITLE. A heading pinned to the left edge of a wide
+        // block reads as the first item of it, not as the name of the whole.
+        auto centred = [&](const string& name, int from_x, int width) {
+          label_chip(name, ty, from_x + (width - text_w(name, scale)) / 2);
+        };
+        // EVERY COLUMN IS THE SAME BOX WIDE, so its heading sits in the middle of
+        // it and so does what it holds. Pinned to the left edge instead, a number
+        // drifts as it gains a digit and the heading no longer names the column
+        // under it.
+        auto cell_x = [&](int m) { return gx + m * cell_w - pad / 2; };
+        // ONE BOX FOR A CELL AND FOR THE HEADING OVER IT. Cut to its own text
+        // instead, a three-letter heading and a one-digit number were two widths
+        // in the same column. Hands back where it drew, so a cell that wants a
+        // border round it puts it on the box and not on the writing.
+        auto column_chip = [&](const string& s, int m, bool inverted) {
+          const int chip_x = cell_x(m) + (cell_w - chip_w) / 2;
+          if (inverted && colored_fonts.count(0))
+            fill_rect(context, UI_COLOR_LINE, chip_x, ty - pad / 2, chip_w, 5 * scale + pad);
+          draw_text(context, inverted && colored_fonts.count(0) ? colored_fonts[0] : font,
+                    s, cell_x(m) + (cell_w - text_w(s, scale)) / 2, ty, scale);
+          return chip_x;
+        };
+        centred("AND IT MAY", cell_x(0), modes * cell_w);
+        ty += row_h;
+        // ONE FREEDOM PER LINE, IN ITS OWN WORD. Three initials side by side
+        // needed a legend under the table to be read at all, and one of them
+        // could be taken for either of two freedoms. A dash where a word would
+        // be says the freedom was withheld — a blank would look like a gap.
+        // The freedoms that have a column of their own: everything but the last.
+        const int across = match_mode::FREEDOMS - 1;
+        for (int freedom = 0; freedom < across; ++freedom) {
+          // On the last line, so it sits against the sentences it names.
+          if (freedom == across - 1)
+            centred(split_names_lead, tx, label_w);
+          for (int m = 0; m < modes; ++m)
+            column_chip(match_mode::from_index(m).may(freedom)
+                            ? match_mode::freedom_names[freedom] : "-", m, true);
           ty += row_h;
         }
-        for (int c = 0; c < cuts; ++c) {
-          label_chip(split_names[c], ty);
-          for (int m = 0; m < modes; ++m) {
-            const int i = c * match_mode::COUNT + m + half * modes;
-            if (i >= readings) continue;
-            const string s = to_string(task.correspondence.readings[i].left_over);
-            // The one inference chose reads inverted; the one on screen is boxed.
-            const int chip_x = column_chip(s, m, i == task.correspondence.chosen);
-            if (i == rank)
-              draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
-                          max(1, scale / 2));
-            app_state.pick_zones.push_back({cell_x(m), ty - (row_h - 5 * scale) / 2,
-                                            cell_w, row_h, &app_state.inference_rank.at, i});
+        // THE SAME ROWS, TWICE, THE SECOND TIME WITH THE LAST FREEDOM GRANTED.
+        // Its own name titles the second block, so the sentence still finishes:
+        // an object is a group of cells that touch, and it may move and turn and
+        // hang off the edge.
+        for (int half = 0; half < 2; ++half) {
+          if (half) {
+            centred(match_mode::freedom_names[across], cell_x(0), modes * cell_w);
+            ty += row_h;
+          }
+          for (int c = 0; c < cuts; ++c) {
+            label_chip(split_names[c], ty);
+            for (int m = 0; m < modes; ++m) {
+              const int i = c * match_mode::COUNT + m + half * modes;
+              if (i >= readings) continue;
+              const string s = to_string(task.correspondence.readings[i].left_over);
+              // The one inference chose reads inverted; the one on screen is boxed.
+              const int chip_x = column_chip(s, m, i == task.correspondence.chosen);
+              if (i == rank)
+                draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
+                            max(1, scale / 2));
+              app_state.pick_zones.push_back({cell_x(m), ty - (row_h - 5 * scale) / 2,
+                                              cell_w, row_h, &app_state.inference_rank.at, i});
+            }
+            ty += row_h;
+          }
+        }
+        named_line("EACH CELL", to_text(
+            "CELLS IT COULD NOT ACCOUNT FOR, OF %d ON BOTH GRIDS, EVERY PAIR",
+            (int)task.correspondence.cells));
+      }
+
+      // The same questions asked of every line of the reading, pair by pair, plus
+      // how the pieces were settled and what was thrown out on the way. CLASS is
+      // the two extremes read off the pieces of THIS reading: the most pieces that
+      // met at one landing, and the most places one piece went. So 1-1 is a plain
+      // swap, 1-9 is one piece stamped nine times, 2-1 is two meeting at one.
+      divide();
+      static const char* how_name[] = { "FIT", "GREEDY", "GAVE UP" };
+      // ONE ARRAY OF COLUMNS, so the heads and the rows cannot drift apart and
+      // EACH HEAD IS ITS OWN CHIP — one chip over the whole line fused ten labels
+      // into a single white bar with nothing between them.
+      static const struct { const char* name; int width; } pair_columns[] = {
+          {"PAIR", 4}, {"SETTLED", 7}, {"CLASS", 6}, {"EXACT", 6},
+          {"RECOLORED", 10}, {"SITS ON", 8}, {"HIDDEN", 7}, {"TURNED", 7},
+          {"REFUSED", 8}, {"OVER", 5} };
+      const int char_w = 4 * scale;
+      // A cell is right-aligned in its field, so its left edge is the field's end
+      // less its own length — the same sum for a head and for a number below it.
+      auto pair_cell_x = [&](int column, int text_chars) {
+          int at = 0;
+          for (int i = 0; i < column; ++i) at += pair_columns[i].width + 1;
+          return tx + (at + pair_columns[column].width - text_chars) * char_w;
+      };
+      auto pair_row = [&](auto&&... cells) {
+          int column = 0;
+          for (const string& cell : { string(cells)... }) {
+              draw_text(context, font, cell, pair_cell_x(column, (int)cell.size()),
+                        ty, scale);
+              ++column;
           }
           ty += row_h;
+      };
+      for (int i = 0; i < (int)size(pair_columns); ++i)
+          label_chip(pair_columns[i].name, ty,
+                     pair_cell_x(i, (int)string(pair_columns[i].name).size()));
+      ty += row_h;
+      for (size_t i = 0; i < R.pairs.size(); ++i) {
+        int kinds[3] = {}, hidden = 0, turned = 0;
+        for (const auto& ln : task.correspondence.lines) {
+          if (ln.rank != rank || ln.pair != (int8_t)i) continue;
+          kinds[clamp((int)ln.kind, 0, 2)]++;
+          hidden += (ln.hidden > 0);
+          turned += (ln.pose != 0);
+        }
+        // Places one piece went is an input-side question, pieces meeting at one
+        // landing an output-side one. Both ends are read, so both are counted.
+        int most_landings = 0, most_sources = 0;
+        for (const auto& pc : R.pieces_seen) {
+          if (pc.pair != (int8_t)i) continue;
+          int& most = pc.from_input ? most_landings : most_sources;
+          most = max(most, (int)pc.edges);
+        }
+        const auto& pr = R.pairs[i];
+        pair_row(to_string(i), how_name[clamp((int)pr.how, 0, 2)],
+                 to_text("%d-%d", most_sources, most_landings),
+                 to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
+                 to_string(hidden), to_string(turned),
+                 to_string(pr.dropped), to_string(pr.left_over));
+      }
+      // Why the dropped ones were dropped, over the whole reading.
+      {
+        int by_reason[3] = {};
+        for (const auto& pr : R.pairs) {
+          by_reason[0] += pr.chance; by_reason[1] += pr.stale; by_reason[2] += pr.did_not_fit;
+        }
+        // ONE REASON A LINE. All three on one line came to more characters than
+        // the panel is wide, and the widest screen is the tighter of the two:
+        // the label column grows with the font while the panel grows with the
+        // screen. The label is said once and the rest sit under it.
+        for (int reason = 0; reason < 3; ++reason) {
+          if (reason == 0) label_chip("REFUSED", ty);
+          draw_text(context, font,
+                    to_text("%d %s", by_reason[reason],
+                            correspondence_facts::refusal_names[reason]),
+                    value_x, ty, scale);
+          ty += line_h;
         }
       }
-      named_line("EACH CELL", to_text(
-          "CELLS IT COULD NOT ACCOUNT FOR, OF %d ON BOTH GRIDS, EVERY PAIR",
-          (int)task.correspondence.cells));
-    }
+    };
 
-    // The same questions asked of every line of the reading, pair by pair, plus
-    // how the pieces were settled and what was thrown out on the way. CLASS is
-    // the two extremes read off the pieces of THIS reading: the most pieces that
-    // met at one landing, and the most places one piece went. So 1-1 is a plain
-    // swap, 1-9 is one piece stamped nine times, 2-1 is two meeting at one.
-    divide();
-    static const char* how_name[] = { "FIT", "GREEDY", "GAVE UP" };
-    // ONE ARRAY OF COLUMNS, so the heads and the rows cannot drift apart and
-    // EACH HEAD IS ITS OWN CHIP — one chip over the whole line fused ten labels
-    // into a single white bar with nothing between them.
-    static const struct { const char* name; int width; } pair_columns[] = {
-        {"PAIR", 4}, {"SETTLED", 7}, {"CLASS", 6}, {"EXACT", 6},
-        {"RECOLORED", 10}, {"SITS ON", 8}, {"HIDDEN", 7}, {"TURNED", 7},
-        {"REFUSED", 8}, {"OVER", 5} };
-    const int char_w = 4 * scale;
-    // A cell is right-aligned in its field, so its left edge is the field's end
-    // less its own length — the same sum for a head and for a number below it.
-    auto pair_cell_x = [&](int column, int text_chars) {
-        int at = 0;
-        for (int i = 0; i < column; ++i) at += pair_columns[i].width + 1;
-        return tx + (at + pair_columns[column].width - text_chars) * char_w;
-    };
-    auto pair_row = [&](auto&&... cells) {
-        int column = 0;
-        for (const string& cell : { string(cells)... }) {
-            draw_text(context, font, cell, pair_cell_x(column, (int)cell.size()),
-                      ty, scale);
-            ++column;
-        }
-        ty += row_h;
-    };
-    for (int i = 0; i < (int)size(pair_columns); ++i)
-        label_chip(pair_columns[i].name, ty,
-                   pair_cell_x(i, (int)string(pair_columns[i].name).size()));
-    ty += row_h;
-    for (size_t i = 0; i < R.pairs.size(); ++i) {
-      int kinds[3] = {}, hidden = 0, turned = 0;
-      for (const auto& ln : task.correspondence.lines) {
-        if (ln.rank != rank || ln.pair != (int8_t)i) continue;
-        kinds[clamp((int)ln.kind, 0, 2)]++;
-        hidden += (ln.hidden > 0);
-        turned += (ln.pose != 0);
-      }
-      // Places one piece went is an input-side question, pieces meeting at one
-      // landing an output-side one. Both ends are read, so both are counted.
-      int most_landings = 0, most_sources = 0;
-      for (const auto& pc : R.pieces_seen) {
-        if (pc.pair != (int8_t)i) continue;
-        int& most = pc.from_input ? most_landings : most_sources;
-        most = max(most, (int)pc.edges);
-      }
-      const auto& pr = R.pairs[i];
-      pair_row(to_string(i), how_name[clamp((int)pr.how, 0, 2)],
-               to_text("%d-%d", most_sources, most_landings),
-               to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
-               to_string(hidden), to_string(turned),
-               to_string(pr.dropped), to_string(pr.left_over));
-    }
-    // Why the dropped ones were dropped, over the whole reading.
-    {
-      int by_reason[3] = {};
-      for (const auto& pr : R.pairs) {
-        by_reason[0] += pr.chance; by_reason[1] += pr.stale; by_reason[2] += pr.did_not_fit;
-      }
-      // ONE REASON A LINE. All three on one line came to more characters than
-      // the panel is wide, and the widest screen is the tighter of the two:
-      // the label column grows with the font while the panel grows with the
-      // screen. The label is said once and the rest sit under it.
-      for (int reason = 0; reason < 3; ++reason) {
-        if (reason == 0) label_chip("REFUSED", ty);
-        draw_text(context, font,
-                  to_text("%d %s", by_reason[reason],
-                          correspondence_facts::refusal_names[reason]),
-                  value_x, ty, scale);
-        ty += line_h;
-      }
-    }
+    const int ty_top = ty;
+    measuring = true;  paint_the_controls();  measuring = false;
+    const int measured_h = (ty - ty_top) + frame_pad * 2;
+    ty = ty_top;
+    fill_rect(context, 0, x0, y0, panel_w, measured_h);
+    draw_border(context, x0, y0, panel_w, measured_h, max(1, scale));
+    paint_the_controls();
     return;
   }
 
-  {
-    // Size · what decides how big the output is.
-    static const char* rule_name[] = { "NOT INFERRED", "SAME AS INPUT", "FIXED",
-                                       "SCALED", "WHAT IT DRAWS" };
-    string s = to_text("OUTPUT SIZE  %s", rule_name[(int)task.rule.Chosen]);
-    if (task.rule.Chosen == output_dimension_rule::Fixed)
-      s += to_text("  %dX%d", (int)task.rule.width, (int)task.rule.height);
-    if (task.rule.Chosen == output_dimension_rule::Scale)
-      s += to_text("  %d/%d BY %d/%d", (int)task.rule.width_numerator, (int)task.rule.width_denominator,
-                   (int)task.rule.height_numerator, (int)task.rule.height_denominator);
-    line(s);
-  }
-  line(to_text("COLORS GONE %s   NEW %s   KEPT %s",
-               color_list(F.consumed).c_str(), color_list(F.introduced).c_str(),
-               color_list(F.preserved).c_str()));
-  line(to_text("IN EVERY INPUT %s   IN EVERY OUTPUT %s",
-               color_list(F.every_input).c_str(), color_list(F.every_output).c_str()));
-  line(to_text("IN EVERY GRID %s   ANYWHERE %s",
-               color_list(F.every_grid).c_str(), color_list(F.any_grid).c_str()));
-  {
-    string s = "OUTPUT COLORS ";
-    for (int i = 0; i < task.output_colors_count; ++i)
-      s += to_text("%d", (int)task.output_colors[i]);
-    if (task.output_colors_by_size_count) {
-      s += "   BY SIZE ";
+  // ONE BODY, RUN TWICE: once to find out how tall it is, once to draw it.
+  auto paint_the_facts = [&]() {
+    {
+      // Size · what decides how big the output is.
+      static const char* rule_name[] = { "NOT INFERRED", "SAME AS INPUT", "FIXED",
+                                         "SCALED", "WHAT IT DRAWS" };
+      string s = to_text("OUTPUT SIZE  %s", rule_name[(int)task.rule.Chosen]);
+      if (task.rule.Chosen == output_dimension_rule::Fixed)
+        s += to_text("  %dX%d", (int)task.rule.width, (int)task.rule.height);
+      if (task.rule.Chosen == output_dimension_rule::Scale)
+        s += to_text("  %d/%d BY %d/%d", (int)task.rule.width_numerator, (int)task.rule.width_denominator,
+                     (int)task.rule.height_numerator, (int)task.rule.height_denominator);
+      line(s);
+    }
+    named_row({{"COLORS GONE", color_list(F.consumed)},
+               {"NEW", color_list(F.introduced)},
+               {"KEPT", color_list(F.preserved)}});
+    named_row({{"IN EVERY INPUT", color_list(F.every_input)},
+               {"IN EVERY OUTPUT", color_list(F.every_output)}});
+    named_row({{"IN EVERY GRID", color_list(F.every_grid)},
+               {"ANYWHERE", color_list(F.any_grid)}});
+    {
+      string all;
+      for (int i = 0; i < task.output_colors_count; ++i)
+        all += to_text("%d", (int)task.output_colors[i]);
+      string by_size;
       for (int i = 0; i < task.output_colors_by_size_count; ++i)
-        s += to_text("%d", (int)task.output_colors_by_size[i]);
+        by_size += to_text("%d", (int)task.output_colors_by_size[i]);
+      if (by_size.empty()) named_row({{"OUTPUT COLORS", all}});
+      else named_row({{"OUTPUT COLORS", all}, {"BY SIZE", by_size}});
     }
-    line(s);
-  }
-  ty += line_h;
-  {
-    string head = to_text("BG INPUT %d  OUTPUT %d",
-                          (int)bg.input_elected, (int)bg.output_elected);
-    if (bg.per_pair_mode) head += "  MODE PER-PAIR";
-    draw_text(context, font, head, tx, ty, scale);
-  }
-  ty += line_h;
-  {
-    string tier = to_text("VETOED %s", bg.input_vetoed ? "YES" : "NO");
-    draw_text(context, font, tier, tx, ty, scale);
     ty += line_h;
-  }
-  {
-    string pp = "PER PAIR";
-    for (int8_t c : bg.per_pair) pp += to_text(" %d", (int)c);
-    draw_text(context, font, pp, tx, ty, scale);
-    ty += line_h + line_h;  // blank line after
-  }
+    {
+      if (bg.per_pair_mode)
+        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected)},
+                   {"OUTPUT", to_text("%d", (int)bg.output_elected)},
+                   {"MODE", "PER-PAIR"}});
+      else
+        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected)},
+                   {"OUTPUT", to_text("%d", (int)bg.output_elected)}});
+    }
+    named_row({{"VETOED", bg.input_vetoed ? "YES" : "NO"}});
+    {
+      string pp;
+      for (int8_t c : bg.per_pair) pp += to_text(" %d", (int)c);
+      named_row({{"PER PAIR", pp}});
+      ty += line_h;  // blank line after
+    }
 
-  auto draw_dir = [&](const char* name, const vector<puzzle::background_readout::cand>& d) {
-    draw_text(context, font, name, tx, ty, scale); ty += line_h;
-    // column header, aligned with the rows below
-    // Every cell is text in a width, so heads and rows share one shape.
-    static const char* bg_columns = "%7s %10s %10s %8s %7s %6s %6s %6s";
-    draw_text(context, font, to_text(bg_columns,
-              "COLOR", "EMBEDS", "DOMINANCE", "PERSISTS", "SCORE", "SPAN", "GAPS", "UNDER"),
-              tx + sw + scale, ty, scale);
-    ty += line_h;
-    for (const auto& c : d) {
-      swatch(c.color, tx, ty);
-      string label = (c.color < 0) ? "NONE" : to_string((int)c.color);
-      string row = to_text(bg_columns,
-                           label.c_str(), to_string(c.embeds).c_str(), to_string(c.dominance).c_str(),
-                           c.persists ? "YES" : "NO", to_string(c.score).c_str(),
-                           to_string(c.span).c_str(), to_string(c.gaps).c_str(),
-                           c.underneath ? "YES" : "NO");
-      draw_text(context, font, row, tx + sw + scale, ty, scale);
+    auto draw_dir = [&](const char* name, const vector<puzzle::background_readout::cand>& d) {
+      label_chip(name, ty); ty += line_h;
+      // column header, aligned with the rows below
+      // Every cell is text in a width, so heads and rows share one shape.
+      static const char* bg_columns = "%7s %10s %10s %8s %7s %6s %6s %6s";
+      draw_text(context, font, to_text(bg_columns,
+                "COLOR", "EMBEDS", "DOMINANCE", "PERSISTS", "SCORE", "SPAN", "GAPS", "UNDER"),
+                tx + sw + scale, ty, scale);
       ty += line_h;
+      for (const auto& c : d) {
+        swatch(c.color, tx, ty);
+        string label = (c.color < 0) ? "NONE" : to_string((int)c.color);
+        string row = to_text(bg_columns,
+                             label.c_str(), to_string(c.embeds).c_str(), to_string(c.dominance).c_str(),
+                             c.persists ? "YES" : "NO", to_string(c.score).c_str(),
+                             to_string(c.span).c_str(), to_string(c.gaps).c_str(),
+                             c.underneath ? "YES" : "NO");
+        draw_text(context, font, row, tx + sw + scale, ty, scale);
+        ty += line_h;
+      }
+      ty += line_h / 2;   // gap between elections
+    };
+    draw_dir("ACROSS INPUTS", bg.across_inputs);
+    draw_dir("ACROSS OUTPUTS", bg.across_outputs);
+    draw_dir("ACROSS IN+OUT", bg.across_inputs_outputs);
+
+    // What changed between the two sides.
+    ty += line_h / 2;
+    if (F.unchanged_valid)
+      line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
+                   F.min_kept * 100.0f));
+    if (F.diff_valid) {
+      string s = "CELLS WON/LOST ";
+      for (int c = 0; c < 10; ++c)
+        if (F.gained[c] || F.lost[c])
+          s += to_text(" %d:%d/%d", c, (int)F.gained[c], (int)F.lost[c]);
+      line(s);
     }
-    ty += line_h / 2;   // gap between elections
+    if (task.color_swap_variants_count) {
+      string s = "SWAPPED";
+      int k = 0;
+      for (int a = 0; a < 10; ++a)
+        for (int b = a + 1; b < 10; ++b, ++k)
+          if (task.color_swap_variants[k]) s += to_text(" %d<>%d", a, b);
+      line(s);
+    }
+    if (task.shape_color_count)
+      named_row({{"SHAPE PICKS COLOR", to_text("%d LEARNED", (int)task.shape_color_count)}});
+
+    // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs the
+    // search will actually try, not a prettier retelling, so what is on screen and
+    // what is run cannot drift apart. One sentence a row, four beats to a sentence.
+    if (!task.suggested_programs.empty()) {
+      named_row({{"WHAT THE READING SAYS",
+                  to_text("%d PROGRAM%s", (int)task.suggested_programs.size(),
+                          task.suggested_programs.size() == 1 ? "" : "S")}});
+      for (size_t which = 0; which < task.suggested_programs.size(); ++which) {
+        bool first = true;
+        for (const string& row : sentences_of(task.suggested_programs[which])) {
+          line(to_text("  %s %s", first ? to_text("%d", (int)which + 1).c_str() : " ", row.c_str()));
+          first = false;
+        }
+      }
+    }
+
+    // What correspondence made of each pair, said FROM THE INPUT'S SIDE, which is
+    // the same standpoint the ALONE row uses. DELETED and INSERTED are one fact
+    // read from two ends — no piece on the other grid is this one — and which end
+    // is just which grid it sits on, so the two must not read as two different
+    // findings. CLASS is the two extremes the six counts hide: most pieces
+    // meeting at one landing, most places one piece went. 1-1 is a plain swap,
+    // 1-9 is one piece stamped nine times, 3-2 is both at once.
+    ty += line_h / 2;
+    // Every cell is text in a width, so the head and the rows share one shape.
+    const char* pair_columns_wide =
+        "%4s %9s %5s %6s %9s %8s %6s %8s %8s %5s";
+    draw_text(context, font,
+              to_text("%4s %s %s %8s %6s",
+                      "", align_centre("EACH INPUT PIECE", 22).c_str(),
+                      align_centre("EACH OUTPUT PIECE", 25).c_str(), "", ""),
+              tx, ty, scale);
+    ty += line_h;
+    draw_text(context, font,
+              to_text(pair_columns_wide,
+                      "PAIR", "DELETED", "KEPT", "COPIED",
+                      "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
+              tx, ty, scale);
+    ty += line_h;
+    for (size_t i = 0; i < F.pairs.size(); ++i) {
+      const auto& p = F.pairs[i];
+      line(to_text(pair_columns_wide,
+                   to_string(i).c_str(), to_string(p.deleted).c_str(),
+                   to_string(p.persisted).c_str(), to_string(p.copied).c_str(),
+                   to_string(p.invented).c_str(), to_string(p.from_one).c_str(),
+                   to_string(p.from_many).c_str(),
+                   to_text("%d-%d", (int)p.most_sources, (int)p.most_landings).c_str(),
+                   to_string(p.carried_cells).c_str(), to_string(p.created_cells).c_str()));
+    }
+
   };
-  draw_dir("ACROSS INPUTS", bg.across_inputs);
-  draw_dir("ACROSS OUTPUTS", bg.across_outputs);
-  draw_dir("ACROSS IN+OUT", bg.across_inputs_outputs);
 
-  // What changed between the two sides.
-  ty += line_h / 2;
-  if (F.unchanged_valid)
-    line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
-                 F.min_kept * 100.0f));
-  if (F.diff_valid) {
-    string s = "CELLS WON/LOST ";
-    for (int c = 0; c < 10; ++c)
-      if (F.gained[c] || F.lost[c])
-        s += to_text(" %d:%d/%d", c, (int)F.gained[c], (int)F.lost[c]);
-    line(s);
-  }
-  if (task.color_swap_variants_count) {
-    string s = "SWAPPED";
-    int k = 0;
-    for (int a = 0; a < 10; ++a)
-      for (int b = a + 1; b < 10; ++b, ++k)
-        if (task.color_swap_variants[k]) s += to_text(" %d<>%d", a, b);
-    line(s);
-  }
-  if (task.shape_color_count)
-    line(to_text("SHAPE PICKS COLOR, %d LEARNED", (int)task.shape_color_count));
-
-  // What correspondence made of each pair, said FROM THE INPUT'S SIDE, which is
-  // the same standpoint the ALONE row uses. DELETED and INSERTED are one fact
-  // read from two ends — no piece on the other grid is this one — and which end
-  // is just which grid it sits on, so the two must not read as two different
-  // findings. CLASS is the two extremes the six counts hide: most pieces
-  // meeting at one landing, most places one piece went. 1-1 is a plain swap,
-  // 1-9 is one piece stamped nine times, 3-2 is both at once.
-  ty += line_h / 2;
-  // Every cell is text in a width, so the head and the rows share one shape.
-  const char* pair_columns_wide =
-      "%4s %9s %5s %6s %9s %8s %6s %8s %8s %5s";
-  draw_text(context, font,
-            to_text("%4s %s %s %8s %6s",
-                    "", align_centre("EACH INPUT PIECE", 22).c_str(),
-                    align_centre("EACH OUTPUT PIECE", 25).c_str(), "", ""),
-            tx, ty, scale);
-  ty += line_h;
-  draw_text(context, font,
-            to_text(pair_columns_wide,
-                    "PAIR", "DELETED", "KEPT", "COPIED",
-                    "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
-            tx, ty, scale);
-  ty += line_h;
-  for (size_t i = 0; i < F.pairs.size(); ++i) {
-    const auto& p = F.pairs[i];
-    line(to_text(pair_columns_wide,
-                 to_string(i).c_str(), to_string(p.deleted).c_str(),
-                 to_string(p.persisted).c_str(), to_string(p.copied).c_str(),
-                 to_string(p.invented).c_str(), to_string(p.from_one).c_str(),
-                 to_string(p.from_many).c_str(),
-                 to_text("%d-%d", (int)p.most_sources, (int)p.most_landings).c_str(),
-                 to_string(p.carried_cells).c_str(), to_string(p.created_cells).c_str()));
-  }
-
+  const int ty_top = ty;
+  measuring = true;  paint_the_facts();  measuring = false;
+  const int measured_h = (ty - ty_top) + pad * 3;
+  ty = ty_top;
+  fill_rect(context, 0, x0, y0, panel_w, measured_h);
+  draw_border(context, x0, y0, panel_w, measured_h, max(1, scale));
+  paint_the_facts();
 }
 
 inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &font,

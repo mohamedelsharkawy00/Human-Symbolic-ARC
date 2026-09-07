@@ -195,10 +195,14 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 // looking wanted it.
 inline void report_said_reading(ostream& report, const inference& inf) {
     const said_reading said = say_the_reading(inf);
-    report << "[sentences] " << said.sentences.size() << " said, "
+    const vector<string> programs = programs_from(said);
+    report << "[sentences] " << programs.size() << " program"
+           << (programs.size() == 1 ? "" : "s") << ", "
            << said.no_word_for.size() << " with no word\n";
-    for (const string& sentence : said.sentences) report << "  " << sentence << "\n";
-    for (const string& other : said.other_openings) report << "  OR OPEN WITH " << other << "\n";
+    for (const string& program : programs) {
+        for (const string& row : sentences_of(program)) report << "  " << row << "\n";
+        report << "\n";
+    }
     for (const string& missing : said.no_word_for) report << "  NO WORD FOR " << missing << "\n";
 }
 
