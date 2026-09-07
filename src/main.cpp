@@ -101,10 +101,12 @@ int main() {
 	map<uint32_t, grid> chars;
 	grid bg_grid;
 	solver.init(gpu_buffer, chars, bg_grid);
-	solver.start_thread();
 
 	// Restore the saved GUI settings. Datasets were already restored inside
 	// solver.init; pause and mute go through their owners here.
+	// BEFORE the thread starts, so the solver has the last word on pausing: it
+	// stops itself on a solved puzzle, and restoring "was running" afterwards
+	// simply started it again.
 #ifdef _MSC_VER
 	{
 		auto saved = read_settings_file();
@@ -113,6 +115,8 @@ int main() {
 		if (settings_int(saved, "paused", 1) == 0) solver.toggle_pause();
 	}
 #endif
+
+	solver.start_thread();
 
 	// Headless (Kaggle) startup config. There is no GUI to toggle benchmarking
 	// or set options, so we turn it on by default and configure it here.
