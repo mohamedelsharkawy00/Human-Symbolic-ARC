@@ -413,7 +413,7 @@ public:
     // it — a count is the same fact said twice, and it drifted the moment one
     // of the two was filled and the other was not.
     bool anything_known = false;
-    for (int i = 0; i < 10; ++i) anything_known |= side[i];
+    for (int i = 0; i < COLOR_COUNT; ++i) anything_known |= side[i];
     if (!anything_known) return true;
     return side[value];
   }

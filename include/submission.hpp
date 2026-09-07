@@ -93,7 +93,7 @@ private:
         // transparent/uncomputed) that can leak into a predicted grid; any
         // out-of-range value -> 0, else the scorer rejects the submission
         // ("Submission Scoring Error"). THIS bug caused the v15 scoring error.
-        if (v < 0 || v > 9) v = 0;
+        if (!is_color(v)) v = 0;
         o << v;
         if (c + 1 < w) o << ", ";
       }

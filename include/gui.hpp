@@ -25,8 +25,8 @@ inline constexpr string_view font_data =
     "Y55222Z71247075557126227271747371717455711574717674757771111875757975717"
     ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700";
 
-constexpr int UI_COLOR_LINE = (int)arc_color::count;
-constexpr int UI_COLOR_PASTEL_START = (int)arc_color::count * 2;
+constexpr int UI_COLOR_LINE = COLOR_COUNT;
+constexpr int UI_COLOR_PASTEL_START = COLOR_COUNT * 2;
 
 inline grid create_character_grid(uint32_t ch) {
   static map<uint32_t, int> glyphs;
@@ -60,7 +60,7 @@ inline grid create_character_grid(uint32_t ch) {
     for (int row_idx = 0; row_idx < 5; ++row_idx) {
       int row_bits = (v >> (3 * (4 - row_idx))) & 7;
       for (int col_idx = 0; col_idx < 3; ++col_idx) {
-        g.data[row_idx][col_idx] = (row_bits & (1 << (2 - col_idx))) ? 10 : 0;
+        g.data[row_idx][col_idx] = (row_bits & (1 << (2 - col_idx))) ? UI_COLOR_LINE : 0;
       }
     }
   }
@@ -464,7 +464,7 @@ inline int draw_header_rows(
   // ARC palette reference -- a flush strip of square swatches, each with its
   // index drawn with a black outline.
   {
-    int n_colors = (int)arc_color::count;
+    int n_colors = COLOR_COUNT;
     // The white outline lives inside the line's box: swatches are inset by t so
     // the strip's outer edge lands exactly on the line height.
     int t = max(1, scale / 2);
@@ -1127,7 +1127,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     if (measuring) return;
     // white outline first, swatch inset on top â€” so black reads on black.
     draw_border(context, x, y, sw, sw, t);
-    if (color >= 0 && color < (int)arc_color::count && solid_sheets.count(color))
+    if (color >= 0 && color < COLOR_COUNT && solid_sheets.count(color))
       context->draw(solid_sheets[color].offset, sw - t * 2, sw - t * 2,
                     x + t, y + t, 1, solid_sheets[color].stride);
     else
@@ -1786,7 +1786,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
                    task.inf.unchanged.min_kept_fraction * 100.0f));
     if (task.inf.color_diff.valid) {
       string s = "CELLS WON/LOST ";
-      for (int c = 0; c < 10; ++c)
+      for (int c = 0; c < COLOR_COUNT; ++c)
         if (task.inf.color_diff.gained_count[c] || task.inf.color_diff.lost_count[c])
           s += to_text(" %d:%d/%d", c, (int)task.inf.color_diff.gained_count[c], (int)task.inf.color_diff.lost_count[c]);
       line(s);
@@ -1794,8 +1794,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     if (task.inf.color_swaps.count) {
       string s = "SWAPPED";
       int k = 0;
-      for (int a = 0; a < 10; ++a)
-        for (int b = a + 1; b < 10; ++b, ++k)
+      for (int a = 0; a < COLOR_COUNT; ++a)
+        for (int b = a + 1; b < COLOR_COUNT; ++b, ++k)
           if (task.inf.color_swaps.variant[k]) s += to_text(" %d<>%d", a, b);
       line(s);
     }
@@ -2531,9 +2531,9 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
   }
   vector<int> colors;
   colors.reserve(64);
-  for (int i = 0; i < (int)arc_color::count; ++i)
+  for (int i = 0; i < COLOR_COUNT; ++i)
     colors.push_back(i);
-  for (int i = 0; i < (int)arc_color::count; ++i)
+  for (int i = 0; i < COLOR_COUNT; ++i)
     colors.push_back(UI_COLOR_PASTEL_START + i);
   // Add Line Color
   colors.push_back(UI_COLOR_LINE);
@@ -2554,10 +2554,10 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
         for (int c = 0; c < cv.width; ++c) {
           if (c_idx < UI_COLOR_PASTEL_START) {
             // Label Mode: Colored letters on transparent background
-            gpu_buffer.push_back(v.data[r][c] == 10 ? c_idx : -1);
+            gpu_buffer.push_back(v.data[r][c] == UI_COLOR_LINE ? c_idx : -1);
           } else {
             // Box Mode: White letters on colored background
-            gpu_buffer.push_back(v.data[r][c] == 10 ? UI_COLOR_LINE : c_idx);
+            gpu_buffer.push_back(v.data[r][c] == UI_COLOR_LINE ? UI_COLOR_LINE : c_idx);
           }
         }
         gpu_buffer.push_back(0);

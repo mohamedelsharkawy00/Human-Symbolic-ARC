@@ -113,8 +113,8 @@ inline void report_background(ostream& report, const background_hypotheses& back
 inline void report_color_swaps(ostream& report, const color_swap_rule& swaps) {
     report << "[color_swaps] count " << swaps.count << "\n";
     int variant = 0;
-    for (int first = 0; first < 10; ++first)
-        for (int second = first + 1; second < 10; ++second, ++variant)
+    for (int first = 0; first < COLOR_COUNT; ++first)
+        for (int second = first + 1; second < COLOR_COUNT; ++second, ++variant)
             if (swaps.variant[variant])
                 report << "swap " << first << "<->" << second << "\n";
     report << "\n";
@@ -143,7 +143,7 @@ inline void report_unchanged(ostream& report, const unchanged_cells_facts& uncha
 inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
     report << "[color_diff] valid " << diff.valid << "\n";
     if (diff.valid)
-        for (int color = 0; color < 10; ++color)
+        for (int color = 0; color < COLOR_COUNT; ++color)
             if (diff.gained_count[color] || diff.lost_count[color])
                 report << "color " << color
                   << "  gained " << diff.gained_count[color]

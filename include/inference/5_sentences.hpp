@@ -180,7 +180,7 @@ inline said_reading say_the_reading(const inference& inf) {
             note(piece.color, act_down,   (int8_t)(edge.row - piece.top));
             note(piece.color, act_across, (int8_t)(edge.col - piece.left));
             if (!edge.exact)
-                for (int8_t was = 0; was < 10; ++was)
+                for (int8_t was = 0; was < COLOR_COUNT; ++was)
                     if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
                         note(was, act_recolor, edge.color_map[was]);
         }

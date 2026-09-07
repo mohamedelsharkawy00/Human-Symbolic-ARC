@@ -262,7 +262,7 @@ static inline void fixed_init_context(
         int dst = 0;
         for (int i = 0; i < all_objects.count; ++i) {
             int8_t c = fixed_obj_first_color(all_objects.objects[i]);
-            if (c >= 0 && c < 10 && invariant_colors[c]) continue;
+            if (is_color(c) && invariant_colors[c]) continue;
             all_objects.objects[dst++] = all_objects.objects[i];
         }
         all_objects.count = dst;

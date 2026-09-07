@@ -99,7 +99,7 @@ inline void compute_distance_maps(example &ex) {
   int h = ex.output.height, w = ex.output.width;
   static constexpr int drs[] = {-1, 1, 0, 0};
   static constexpr int dcs[] = {0, 0, -1, 1};
-  for (int c = 0; c < (int)arc_color::count; ++c) {
+  for (int c = 0; c < COLOR_COUNT; ++c) {
     // BFS from all cells matching color c — O(W*H) instead of O(W²*H²)
     // Queue is static thread_local + clear() (not a local): it grows to the
     // max grid size once and never reallocates again. Do not localize this.

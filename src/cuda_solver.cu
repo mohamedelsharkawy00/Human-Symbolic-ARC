@@ -203,7 +203,7 @@ __device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& ou
 }
 
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {
-    int counts[11];
+    int counts[GPU_MAX_COLORS];
     memset(counts, 0, sizeof(counts));
     int non_trans = 0;
     for (int dr = 0; dr < factor; ++dr)
@@ -211,12 +211,12 @@ __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, i
             int sr = r * factor + dr, sc = c * factor + dc;
             if (sr >= oh || sc >= ow) continue;
             int8_t clr = mask[sr][sc];
-            if (clr == GPU_TRANSPARENT) counts[10]++;
-            else { counts[clr % 10]++; non_trans++; }
+            if (clr == GPU_TRANSPARENT) continue;
+            counts[clr % GPU_MAX_COLORS]++; non_trans++;
         }
     if (non_trans == 0) return GPU_TRANSPARENT;
     int winner = -1, best = -1;
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < GPU_MAX_COLORS; ++i)
         if (counts[i] > best) { best = counts[i]; winner = i; }
     return (int8_t)winner;
 }
@@ -239,14 +239,14 @@ __device__ inline int8_t gpu_obj_first_color(const gpu_fixed_object& o) {
 // 11 = its most common. Frequency ties break toward the lower color number.
 // Returns GPU_TRANSPARENT if the mask is empty.
 __device__ inline int8_t gpu_obj_resolve_color(const gpu_fixed_object& o, int8_t value) {
-    if (value < 10) return value;
+    if (value < GPU_MAX_COLORS) return value;
     int counts[GPU_MAX_COLORS] = {};
     for (int r = 0; r < o.height; ++r)
         for (int c = 0; c < o.width; ++c) {
             int8_t v = o.mask[r][c];
             if (v >= 0 && v < GPU_MAX_COLORS) counts[v]++;
         }
-    bool rarest = (value == 10);
+    bool rarest = (value == GPU_MAX_COLORS);
     int best = GPU_TRANSPARENT, best_n = 0;
     for (int col = 0; col < GPU_MAX_COLORS; ++col) {
         if (counts[col] == 0) continue;
@@ -315,7 +315,7 @@ __device__ gpu_object_list& gpu_exec_input_without_background(gpu_exec_context& 
 // Color-argument sentinel meaning "any non-transparent color" (value 10, one past
 // the 0..9 real colors). Used by MaskBy[10]/MaskOut[10] to match on the canvas
 // being painted at all, regardless of which color.
-static constexpr int8_t GPU_COLOR_ANY = 10;
+static constexpr int8_t GPU_COLOR_ANY = GPU_MAX_COLORS;
 
 __device__ gpu_object_list& gpu_exec_output(gpu_exec_context& ctx) {
     // Target: output-shaped snapshot of the live canvas (ctx.output, accumulated
@@ -409,18 +409,18 @@ __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_obj
 __device__ gpu_object_list& gpu_exec_select_most_common_color(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     res = src;
-    int freq[10];
-    for (int i = 0; i < 10; ++i) freq[i] = 0;
+    int freq[GPU_MAX_COLORS];
+    for (int i = 0; i < GPU_MAX_COLORS; ++i) freq[i] = 0;
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c) {
                 int8_t col = obj.mask[r][c];
-                if (col >= 0 && col < 10) freq[col]++;
+                if (arc::is_color(col)) freq[col]++;
             }
     }
     int top = 0;
-    for (int i = 1; i < 10; ++i) if (freq[i] > freq[top]) top = i;
+    for (int i = 1; i < GPU_MAX_COLORS; ++i) if (freq[i] > freq[top]) top = i;
     if (freq[top] == 0) return res;  // nothing painted -> nothing to mark
     // Mark every object that contains the most-common color. After a carve
     // (Colors/Split) each object is single-color, so this is exactly "the
@@ -1054,7 +1054,7 @@ __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int l
         gpu_fixed_object& obj = res->objects[i];
         // Color-source values (10 = rarest, 11 = most common) resolve per object:
         // lane 0 scans, everyone gets the nibble via shuffle.
-        if (color >= 10) {
+        if (color >= GPU_MAX_COLORS) {
             int f = 0;
             if (lane == 0) f = gpu_obj_resolve_color(sobj, color);
             f = __shfl_sync(0xffffffffu, f, 0);
@@ -1093,9 +1093,9 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
 
     // Decode k -> unordered pair (a,b), a<b. Row-major over {0..9}.
     int a = 0, b = 1, idx = 0;
-    for (a = 0; a < 10; ++a) {
+    for (a = 0; a < GPU_MAX_COLORS; ++a) {
         bool found = false;
-        for (b = a + 1; b < 10; ++b) {
+        for (b = a + 1; b < GPU_MAX_COLORS; ++b) {
             if (idx == k) { found = true; break; }
             ++idx;
         }
@@ -2127,12 +2127,12 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // reproducing the old top-left copy.
         for (int r = 0; r < best_h; ++r)
             for (int c = 0; c < best_w; ++c) {
-                int counts[11]; memset(counts, 0, sizeof(counts));
+                int counts[GPU_MAX_COLORS]; memset(counts, 0, sizeof(counts));
                 int best_v = GPU_TRANSPARENT, best_n = 0;
                 for (int sr = r; sr < obj_src.height; sr += best_h)
                     for (int sc = c; sc < obj_src.width; sc += best_w) {
                         int8_t v = obj_src.mask[sr][sc];
-                        if (v < 0 || v > 9) continue;          // skip holes/transparent
+                        if (!arc::is_color(v)) continue;       // skip holes/transparent
                         if (++counts[v] > best_n) { best_n = counts[v]; best_v = v; }
                     }
                 obj.mask[r][c] = (int8_t)best_v;
@@ -2165,14 +2165,14 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
         // Background: puzzle-level detected color, else most frequent in the mask.
         int8_t bg = ctx.background_color;
         if (bg < 0) {
-            int freq[10]; memset(freq, 0, sizeof(freq));
+            int freq[GPU_MAX_COLORS]; memset(freq, 0, sizeof(freq));
             for (int r = 0; r < h; ++r)
                 for (int c = 0; c < w; ++c) {
                     int8_t v = s.mask[r][c];
-                    if (v >= 0 && v <= 9) ++freq[v];
+                    if (arc::is_color(v)) ++freq[v];
                 }
             int bn = -1;
-            for (int v = 0; v < 10; ++v)
+            for (int v = 0; v < GPU_MAX_COLORS; ++v)
                 if (freq[v] > bn) { bn = freq[v]; bg = (int8_t)v; }
         }
 
@@ -2222,11 +2222,13 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
             for (int c = 0; c < w; ++c) {
                 int agree = 0;
                 for (int r = 0; r < h; ++r) {
-                    int counts[11]; memset(counts, 0, sizeof(counts));
+                    // One bucket past the colors, because a transparent cell can
+                    // win this vote and become the template.
+                    int counts[GPU_MAX_COLORS + 1]; memset(counts, 0, sizeof(counts));
                     int8_t tmpl = GPU_TRANSPARENT; int tn = 0;
                     for (int sc = c % px; sc < w; sc += px) {
                         int8_t v = ground_at(r, sc);
-                        int slot = (v >= 0 && v <= 9) ? v : 10;
+                        int slot = arc::is_color(v) ? v : GPU_MAX_COLORS;
                         if (++counts[slot] > tn) { tn = counts[slot]; tmpl = v; }
                     }
                     if (ground_at(r, c) == tmpl) ++agree;
@@ -2237,11 +2239,12 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
             for (int r = 0; r < h; ++r) {
                 int agree = 0;
                 for (int c = 0; c < w; ++c) {
-                    int counts[11]; memset(counts, 0, sizeof(counts));
+                    // One bucket past the colors, same reason as above.
+                    int counts[GPU_MAX_COLORS + 1]; memset(counts, 0, sizeof(counts));
                     int8_t tmpl = GPU_TRANSPARENT; int tn = 0;
                     for (int sr = r % py; sr < h; sr += py) {
                         int8_t v = ground_at(sr, c);
-                        int slot = (v >= 0 && v <= 9) ? v : 10;
+                        int slot = arc::is_color(v) ? v : GPU_MAX_COLORS;
                         if (++counts[slot] > tn) { tn = counts[slot]; tmpl = v; }
                     }
                     if (ground_at(r, c) == tmpl) ++agree;
@@ -2252,17 +2255,17 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
         for (int r = 0; r < h; ++r)
             for (int c = 0; c < w; ++c) {
                 if (!row_in[r] || !col_in[c]) { obj.mask[r][c] = bg; continue; }
-                int counts[10]; memset(counts, 0, sizeof(counts));
+                int counts[GPU_MAX_COLORS]; memset(counts, 0, sizeof(counts));
                 for (int sr = (py > 0 ? r % py : r); sr < h; sr += (py > 0 ? py : h))
                     for (int sc = (px > 0 ? c % px : c); sc < w; sc += (px > 0 ? px : w)) {
                         if (!row_in[sr] || !col_in[sc]) continue;
                         int8_t v = ground_at(sr, sc);
-                        if (v >= 0 && v <= 9) ++counts[v];
+                        if (arc::is_color(v)) ++counts[v];
                     }
                 int8_t own = ground_at(r, c);
                 int8_t best_v = own;
-                int best_n = (own >= 0 && own <= 9) ? counts[own] : 0;
-                for (int v = 0; v < 10; ++v)
+                int best_n = arc::is_color(own) ? counts[own] : 0;
+                for (int v = 0; v < GPU_MAX_COLORS; ++v)
                     if (counts[v] > best_n) { best_n = counts[v]; best_v = (int8_t)v; }
                 obj.mask[r][c] = best_v;
             }
@@ -2401,14 +2404,14 @@ __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool ho
 }
 
 __device__ gpu_object_list& gpu_exec_diag_tile(gpu_exec_context& ctx, const gpu_object_list& src, int8_t variant) {
-    bool seen[10];
+    bool seen[GPU_MAX_COLORS];
     memset(seen, 0, sizeof(seen));
     int color_count = 0;
     for (int i = 0; i < src.count; ++i) {
         const auto& obj = src.objects[i];
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
             int8_t col = v;
-            if (col >= 0 && col < 10 && !seen[col]) { seen[col] = true; ++color_count; }
+            if (arc::is_color(col) && !seen[col]) { seen[col] = true; ++color_count; }
         }
     }
     auto& res = gpu_acquire(ctx);
@@ -2417,14 +2420,14 @@ __device__ gpu_object_list& gpu_exec_diag_tile(gpu_exec_context& ctx, const gpu_
             res.objects[res.count++] = src.objects[i];
         return res;
     }
-    int8_t mapping[10];
-    bool mapped[10];
+    int8_t mapping[GPU_MAX_COLORS];
+    bool mapped[GPU_MAX_COLORS];
     memset(mapping, 0, sizeof(mapping)); memset(mapped, 0, sizeof(mapped));
     for (int i = 0; i < src.count; ++i) {
         const auto& obj = src.objects[i];
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
             int8_t col = v;
-            if (col < 0 || col >= 10) continue;
+            if (!arc::is_color(col)) continue;
             int wr = obj.y0 + r, wc = obj.x0 + c;
             int diag = (variant == 0) ? (wr + wc) : (wr - wc);
             int idx = diag % color_count;
@@ -2450,7 +2453,7 @@ __device__ gpu_object_list& gpu_exec_diag_tile(gpu_exec_context& ctx, const gpu_
             int diag = (variant == 0) ? (r + c) : (r - c);
             int idx = diag % color_count;
             if (idx < 0) idx += color_count;
-            if (idx >= 0 && idx < 10) out_obj.mask[r][c] = mapping[idx];
+            if (idx >= 0 && idx < GPU_MAX_COLORS) out_obj.mask[r][c] = mapping[idx];
         }
     res.count = 1;
     return res;
@@ -3178,14 +3181,14 @@ __device__ gpu_object_list& gpu_exec_snap_to_anchors(gpu_exec_context& ctx, cons
     if (W <= 0 || H <= 0) return res;
 
     // 1. body color = most frequent present (non-transparent) color.
-    int freq[10]; for (int i = 0; i < 10; ++i) freq[i] = 0;
+    int freq[GPU_MAX_COLORS]; for (int i = 0; i < GPU_MAX_COLORS; ++i) freq[i] = 0;
     for (int r = 0; r < H; ++r)
         for (int c = 0; c < W; ++c) {
             int8_t v = temp.data[r][c];
-            if (v >= 0 && v < 10) freq[v]++;
+            if (arc::is_color(v)) freq[v]++;
         }
     int bodycol = -1, bestfreq = 0;
-    for (int i = 0; i < 10; ++i) if (freq[i] > bestfreq) { bestfreq = freq[i]; bodycol = i; }
+    for (int i = 0; i < GPU_MAX_COLORS; ++i) if (freq[i] > bestfreq) { bestfreq = freq[i]; bodycol = i; }
     if (bodycol < 0) return res;
 
     // 2. mixed-color 8-connected component labeling over non-transparent cells.
@@ -3225,8 +3228,9 @@ __device__ gpu_object_list& gpu_exec_snap_to_anchors(gpu_exec_context& ctx, cons
     //    position lookup (loose_color) plus per-color candidate lists.
     constexpr int MAX_ANCHORS_PER_COLOR = 16;
     int8_t loose_color[GPU_MAX_GRID][GPU_MAX_GRID];
-    int16_t anc_r[10][MAX_ANCHORS_PER_COLOR], anc_c[10][MAX_ANCHORS_PER_COLOR];
-    int anc_n[10]; for (int i = 0; i < 10; ++i) anc_n[i] = 0;
+    int16_t anc_r[GPU_MAX_COLORS][MAX_ANCHORS_PER_COLOR];
+    int16_t anc_c[GPU_MAX_COLORS][MAX_ANCHORS_PER_COLOR];
+    int anc_n[GPU_MAX_COLORS]; for (int i = 0; i < GPU_MAX_COLORS; ++i) anc_n[i] = 0;
     for (int r = 0; r < GPU_MAX_GRID; ++r)
         for (int c = 0; c < GPU_MAX_GRID; ++c) loose_color[r][c] = GPU_TRANSPARENT;
     for (int r = 0; r < H; ++r)
@@ -3236,7 +3240,7 @@ __device__ gpu_object_list& gpu_exec_snap_to_anchors(gpu_exec_context& ctx, cons
             int id = label[r][c];
             if (id < 0 || comp_has_body[id]) continue;   // body cell, not loose
             loose_color[r][c] = v;
-            if (v >= 0 && v < 10 && anc_n[v] < MAX_ANCHORS_PER_COLOR) {
+            if (arc::is_color(v) && anc_n[v] < MAX_ANCHORS_PER_COLOR) {
                 anc_r[v][anc_n[v]] = (int16_t)r; anc_c[v][anc_n[v]] = (int16_t)c; anc_n[v]++;
             }
         }
@@ -3566,7 +3570,7 @@ static constexpr int MAX_CACHED_EXAMPLES = 16;
 struct gpu_example_template {
     gpu_fixed_grid input;
     gpu_object_list seed_objs;
-    int8_t output_colors_by_size[10];
+    int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
     uint32_t shape_color_keys[16];
     int8_t   shape_color_vals[16];
@@ -3748,7 +3752,8 @@ static void build_example_templates(const cuda_dsl_example_data& ex, int count,
         memcpy(tmpl.distance_maps, dm, GPU_MAX_COLORS * GPU_GRID_CELLS);
 
         tmpl.seed_objs = ex.seed_lists[ei];
-        memcpy(tmpl.output_colors_by_size, ex.output_colors_by_size, 10);
+        memcpy(tmpl.output_colors_by_size, ex.output_colors_by_size,
+               sizeof(tmpl.output_colors_by_size));
         tmpl.output_colors_by_size_count = ex.output_colors_by_size_count;
         memcpy(tmpl.shape_color_keys, ex.shape_color_keys, sizeof(tmpl.shape_color_keys));
         memcpy(tmpl.shape_color_vals, ex.shape_color_vals, sizeof(tmpl.shape_color_vals));
@@ -3855,9 +3860,10 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
         // hotspot) since these lists usually hold only a few objects.
         gpu_copy_used_objs(tmpl.seed_objs,          ctx.seed_objs,          lane);
 
-        // Copy output_colors_by_size (10 bytes + count) — small, lane 0 only.
+        // Copy output_colors_by_size (one byte a color, plus the count) — small,
+        // lane 0 only.
         if (lane == 0) {
-            for (int i = 0; i < 10; ++i)
+            for (int i = 0; i < GPU_MAX_COLORS; ++i)
                 ctx.output_colors_by_size[i] = tmpl.output_colors_by_size[i];
             ctx.output_colors_by_size_count = tmpl.output_colors_by_size_count;
             // Learned shape->color lookup for ShapeColorMap (puzzle-level).
@@ -4027,9 +4033,9 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
     int my_mismatches = 0;
     float my_exact_err = 0.0f;
     float my_dist_err = 0.0f;
-    int my_target_hist[10]  = {0};
-    int my_attempt_hist[10] = {0};
-    int my_match_by_color[10] = {0};
+    int my_target_hist[GPU_MAX_COLORS]  = {0};
+    int my_attempt_hist[GPU_MAX_COLORS] = {0};
+    int my_match_by_color[GPU_MAX_COLORS] = {0};
     int my_vandal = 0;
     // vandalism = wrong paint no later layer can repair: on a KEPT cell
     // (input == target, only meaningful same-dims) or on a DONE color's cell.
@@ -4048,11 +4054,11 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                 // wrong is damage nothing later repairs.
                 if (same_dims_as_input && ctx.input.data[r][c] == t) my_vandal++;
             }
-        } else if (t >= 0 && t < 10) {
+        } else if (arc::is_color(t)) {
             my_match_by_color[t]++;
         }
-        if (t >= 0 && t < 10) my_target_hist[t]++;
-        if (a >= 0 && a < 10) {
+        if (arc::is_color(t)) my_target_hist[t]++;
+        if (arc::is_color(a)) {
             my_attempt_hist[a]++;
             my_dist_err += (float)ctx.distance_maps[a][r][c];
         }
@@ -4067,7 +4073,7 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         my_dist_err   += __shfl_xor_sync(kAll, my_dist_err,   off);
         my_vandal     += __shfl_xor_sync(kAll, my_vandal,     off);
         #pragma unroll
-        for (int k = 0; k < 10; ++k) {
+        for (int k = 0; k < GPU_MAX_COLORS; ++k) {
             my_target_hist[k]     += __shfl_xor_sync(kAll, my_target_hist[k],     off);
             my_attempt_hist[k]    += __shfl_xor_sync(kAll, my_attempt_hist[k],    off);
             my_match_by_color[k]  += __shfl_xor_sync(kAll, my_match_by_color[k],  off);
@@ -4122,12 +4128,12 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         bool dims_match = (tw == aw && th == ah);
 
         float rarity_score = 0.0f;
-        for (int i = 0; i < 10; ++i)
+        for (int i = 0; i < GPU_MAX_COLORS; ++i)
             if (my_target_hist[i] > 0)
                 rarity_score += my_match_by_color[i] * ((float)total_target_pixels / my_target_hist[i]);
 
         float hist_err = 0.0f;
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < GPU_MAX_COLORS; ++i) {
             int d = my_target_hist[i] - my_attempt_hist[i];
             hist_err += (float)(d < 0 ? -d : d);
         }

@@ -380,7 +380,7 @@ namespace arc {
 		// function now, so nothing has to be copied out of it.
 		inference inf;
 		output_dimension_rule rule;
-		bool invariant_colors[10] = {}; // one bit: the elected input background
+		bool invariant_colors[COLOR_COUNT] = {}; // one bit: the elected input background
 		// Allowed colors for color-LITERAL ops, one set per SIDE: a literal the
 		// chain READS by can only name a color some train input has, one it
 		// WRITES can only name a color some train output has. Bridged from
@@ -728,7 +728,7 @@ namespace arc {
 		// left to forget: this is the only hop, and it is from the source.
 		static inline void fill_puzzle_level(cuda_dsl_example_data& ex, const puzzle& p) {
 			// Output colors ranked by total pixel count, descending.
-			for (int i = 0; i < 10; ++i) ex.output_colors_by_size[i] = p.inf.colors.output_colors_by_size[i];
+			for (int i = 0; i < COLOR_COUNT; ++i) ex.output_colors_by_size[i] = p.inf.colors.output_colors_by_size[i];
 			ex.output_colors_by_size_count = (int8_t)p.inf.colors.output_colors_by_size_count;
 
 			// Learned shape -> color lookup for the ShapeColorMap op. ONLY WHEN THE

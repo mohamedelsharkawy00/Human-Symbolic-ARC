@@ -547,7 +547,8 @@ struct gpu_exec_context {
     // to undo exactly what was done (works on square grids, unlike target dims).
     int8_t orientation_flipped = 0;
     gpu_object_list seed_objs;
-    int8_t output_colors_by_size[10];     // puzzle-level: train output colors ranked by total pixel count (desc); count below
+    // puzzle-level: train output colors ranked by total pixel count (desc); count below
+    int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
     // puzzle-level: dominant across-inputs color (inference background_color); -1 = unknown
     int8_t background_color = -1;
@@ -608,7 +609,7 @@ struct cuda_dsl_example_data {
     int8_t target_dims[MAX_UPLOAD_EXAMPLES * 2];
     int8_t distance_maps[MAX_UPLOAD_EXAMPLES * GPU_MAX_COLORS * GPU_GRID_CELLS];
     gpu_object_list seed_lists[MAX_UPLOAD_EXAMPLES];
-    int8_t output_colors_by_size[10] = {};
+    int8_t output_colors_by_size[GPU_MAX_COLORS] = {};
     int8_t output_colors_by_size_count = 0;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level).
     uint32_t shape_color_keys[16] = {};
