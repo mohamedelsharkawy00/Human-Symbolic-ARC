@@ -1,1 +1,9 @@
-Colors SelectAll SortBySize[1] SelectAll InteriorColor[4] Underlay Input Underlay
+Input SelectAll Split[0] Union CurrentObjects SelectAll BidiColorMap[3] Union CurrentObjects SelectAll ShapeToInteriorColorMap Union
+Puzzle:       00d62c1b
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:00.0418
+Attempts:     0
+Nodes:        12
+Best Score:   6554.0000
+Max Depth:    12

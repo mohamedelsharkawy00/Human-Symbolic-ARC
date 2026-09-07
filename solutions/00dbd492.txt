@@ -1,1 +1,9 @@
-Split[1] SelectAll Trim Underlay ShapeToInteriorColorMap Underlay Input Underlay
+Input SelectAll Split[0] Union CurrentObjects SelectAll ShapeToInteriorColorMap Union
+Puzzle:       00dbd492
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:04.3301
+Attempts:     1218166
+Nodes:        8
+Best Score:   5511.0000
+Max Depth:    8

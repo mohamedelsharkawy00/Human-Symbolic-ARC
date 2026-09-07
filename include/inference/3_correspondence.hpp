@@ -2513,33 +2513,42 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
 
     // WHAT A READING FAILS TO EXPLAIN, IT STILL HAS TO SPELL OUT. So there is
     // ONE number and not two keys: what the cut costs to say, plus a plain
-    // cell's price for every cell it left over.
+    // cell's price for every cell it could not account for.
     //
     // TWO KEYS ALWAYS BREAK, whichever goes first, because the winner is then
     // whoever ignores the other one. Fewest left over first: cut into single
     // cells and every cell finds a cell, so nothing is ever left over and a
     // reading twice as long as the grid wins. Cheapest to say first: a cut that
-    // explains almost nothing wins by being three percent cheaper to describe --
-    // 00dbd492 elected a reading at 108% that left 103 of 388 cells unaccounted
-    // for, over one at 111% that left none.
-    // Priced together neither trick pays. The flood pays for its words; the
-    // silent cut pays for its silence, and 103 of 388 costs it 27%.
+    // explains almost nothing wins by being a few percent cheaper to describe.
+    // Priced together neither trick pays. The flood pays for its words, and the
+    // silent cut pays for its silence.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     //
     // A MARGIN, because these are ratios and two readings that cost the same
     // should fall through to the piece count rather than be split by rounding.
     const double same_price = 0.001;
     const double spelling_out = facts_cells > 0 ? 1.0 / facts_cells : 0.0;
-    // MADE IS NOT A FAILURE. A cell nothing over there is the piece of was made
-    // where it stands — a real answer, and the one a person gives for the half
-    // of a puzzle that is drawn rather than carried. Charged as though the
-    // reading had failed, it beat the honest readings with the dishonest ones:
-    // 00dbd492's two right readings leave 120 and 88 cells MADE and not one
-    // unexplained, while the reading that won leaves 88 it cannot account for
-    // at all. Only what a reading claims to know and still cannot say is a
-    // failure, so only that is priced.
+    // MADE IS HALF SAID, and that is why it is priced at half. A cell nothing
+    // over there is the piece of was made where it stands, and that IS the
+    // answer for the half of a puzzle that is drawn rather than carried -- so
+    // charging it as a failure would beat the honest readings with the
+    // dishonest ones. But knowing a cell was not carried is not knowing why it
+    // is there, so it is not free either.
+    //
+    // FREE, IT UNDID THE PRICING ABOVE IT. 00dbd492 went back to electing a
+    // reading at 108% that uses 8 pieces and makes 120 cells, over one at 111%
+    // that uses 18 and leaves nothing -- the same trade, on the same puzzle,
+    // that pricing left over was written to stop. It also cost that puzzle its
+    // answer: the thin reading sees no recolor, so nothing asks the detector
+    // that had already learned the map, and the search spent 4.3 seconds
+    // finding a word inference was holding.
+    // At half, both readings behave. The drawn half is not called a failure,
+    // and no cut can buy a cheaper description by drawing more out of thin air.
+    const double half_said = 0.5;
     auto price_of = [&](const correspondence_facts::reading& one) {
-        return one.describe_cost + (one.left_over - one.made - one.gone) * spelling_out;
+        const double unsaid = (one.left_over - one.made - one.gone)
+                            + (one.made + one.gone) * half_said;
+        return one.describe_cost + unsaid * spelling_out;
     };
     size_t elected = 0;
     for (size_t i = 1; i < passes.size(); ++i) {

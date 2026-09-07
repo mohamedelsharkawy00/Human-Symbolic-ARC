@@ -1,7 +1,8 @@
 # 1. Context
 1. High-performance symbolic C++20 solver for the ARC-AGI-2 2026 Kaggle contest.
 2. Source: https://arcprize.org/competitions/2026/arc-agi-2
-3. Tries to follow the human process of solving ARC most closely, and stays symbolic because a clear mechanism lets you spot what to improve at first sight, unlike the black box methods that are popular.
+3. Tries to be how a human solves ARC, mostly how I solve it, ported to a computer program. Every part of it should be something a person does when they look at a puzzle, written down so a machine can do it too.
+4. It stays symbolic because a clear mechanism lets you spot what to improve at first sight, unlike the black box methods that are popular.
 
 # 2. Getting Started
 1. Clone it: `git clone https://github.com/mohamedelsharkawy00/human-symbolic-arc`
