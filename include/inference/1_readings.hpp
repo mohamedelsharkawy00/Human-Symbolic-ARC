@@ -35,8 +35,10 @@ inline void walk_colored_cells(const grid& one_grid, int skip, See see) {
 }
 
 // How many cells of each color a grid holds. `skip` leaves one color out of the
-// tally — the background, wherever a caller wants it ignored; -1 counts all ten.
-inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT], int skip = -1) {
+// tally — the background, wherever a caller wants it ignored; TRANSPARENT
+// counts all ten.
+inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT],
+                         int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
     walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
 }
@@ -47,7 +49,8 @@ struct color_box {
     int row0, col0, row1, col1;
 };
 
-inline void color_boxes(const grid& one_grid, color_box boxes[COLOR_COUNT], int skip = -1) {
+inline void color_boxes(const grid& one_grid, color_box boxes[COLOR_COUNT],
+                        int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = { MAX_GRID_DIM, MAX_GRID_DIM, -1, -1 };
     walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
         color_box& box = boxes[color];

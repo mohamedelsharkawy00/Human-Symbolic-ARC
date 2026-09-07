@@ -129,9 +129,9 @@ struct background_hypotheses {
     // case; truly distinct pairs have no majority and stay per-pair.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int8_t per_pair_majority() const {
-        int wins[10] = {};
+        int wins[COLOR_COUNT] = {};
         for (int8_t color : per_pair) if (color >= 0) ++wins[color];
-        for (int color = 0; color < 10; ++color)
+        for (int color = 0; color < COLOR_COUNT; ++color)
             if (wins[color] * 2 > (int)per_pair.size()) return (int8_t)color;
         return -1;
     }
@@ -166,26 +166,26 @@ struct background_hypotheses {
 // verdict, and structure always overrides it.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline int background_rank(int color) {
-    static constexpr int8_t order[10] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
-    for (int rank = 0; rank < 10; ++rank) if (order[rank] == color) return rank;
-    return 10;
+    static constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
+    for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
+    return COLOR_COUNT;
 }
 
 // What the side's grids say about each color. Every share is folded WORST-GRID:
 // a canvas has to hold up everywhere, so one bad grid is the honest number.
 struct canvas_evidence {
     // Worst grid, out of 1000
-    int embeds[10], dominance[10], span[10], gaps[10];
+    int embeds[COLOR_COUNT], dominance[COLOR_COUNT], span[COLOR_COUNT], gaps[COLOR_COUNT];
     // In EVERY grid: the quietest color present, showing only as enclosed windows
-    bool only_windows[10];
+    bool only_windows[COLOR_COUNT];
     // Grids where this color was the standout canvas, and how many grids voted
-    int standout_wins[10] = {};
+    int standout_wins[COLOR_COUNT] = {};
     int grid_count = 0;
     // Total cells per color over the whole side
-    long long global_cells[10] = {};
+    long long global_cells[COLOR_COUNT] = {};
 
     canvas_evidence() {
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < COLOR_COUNT; ++i) {
             embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
             only_windows[i] = true;
         }
@@ -193,26 +193,23 @@ struct canvas_evidence {
 };
 
 // A candidate must appear in EVERY grid on the side.
-inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[10]) {
-    for (int i = 0; i < 10; ++i) in_every[i] = true;
+inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
+    for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
     for (const grid* grid_ptr : grids) {
-        bool seen[10] = {};
-        for (int row = 0; row < grid_ptr->height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < grid_ptr->width && col < MAX_GRID_DIM; ++col) {
-                int color = grid_ptr->data[row][col];
-                if (color >= 0 && color < 10) seen[color] = true;
-            }
-        for (int i = 0; i < 10; ++i) in_every[i] = in_every[i] && seen[i];
+        bool seen[COLOR_COUNT] = {};
+        walk_colored_cells(*grid_ptr, TRANSPARENT,
+                           [&](int, int, int color) { seen[color] = true; });
+        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && seen[i];
     }
 }
 
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
 // which color reads as the canvas here.
-inline void measure_area_and_reach(const grid& one_grid, const int cells_of_color[10],
+inline void measure_area_and_reach(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
                                    canvas_evidence& evidence) {
     const int area = one_grid.width * one_grid.height;
-    for (int i = 0; i < 10; ++i) evidence.global_cells[i] += cells_of_color[i];
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < COLOR_COUNT; ++i) evidence.global_cells[i] += cells_of_color[i];
+    for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.dominance[i] = min(evidence.dominance[i], cells_of_color[i] * 1000 / area);
 
     // Punched-through probes (measured only): span = how much of the grid the
@@ -221,24 +218,19 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // ADJACENCY, SO FOUR: a fraying measure asks what BORDERS this cell, and a
     // corner touch is not a border. Not the 8 that grouping uses — see the note
     // beside NEIGHBOUR_ROW_4 in core_types.hpp before making these agree.
-    int touching[10] = {};
-    color_box box[10];
+    int touching[COLOR_COUNT] = {};
+    color_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            int color = one_grid.data[row][col];
-            if (color < 0 || color > 9) continue;
-            bool touches = false;
-            for (int dir = 0; dir < 4; ++dir) {
-                int next_row = row + NEIGHBOUR_ROW_4[dir];
-                int next_col = col + NEIGHBOUR_COL_4[dir];
-                if (next_row < 0 || next_col < 0 ||
-                    next_row >= one_grid.height || next_col >= one_grid.width) continue;
-                if (one_grid.data[next_row][next_col] != color) { touches = true; break; }
-            }
-            if (touches) touching[color]++;
+    walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
+        for (int dir = 0; dir < 4; ++dir) {
+            int next_row = row + NEIGHBOUR_ROW_4[dir];
+            int next_col = col + NEIGHBOUR_COL_4[dir];
+            if (next_row < 0 || next_col < 0 ||
+                next_row >= one_grid.height || next_col >= one_grid.width) continue;
+            if (one_grid.data[next_row][next_col] != color) { touching[color]++; return; }
         }
-    for (int i = 0; i < 10; ++i) {
+    });
+    for (int i = 0; i < COLOR_COUNT; ++i) {
         if (!cells_of_color[i]) { evidence.span[i] = 0; evidence.gaps[i] = 0; continue; }
         int box_area = (box[i].row1 - box[i].row0 + 1) * (box[i].col1 - box[i].col0 + 1);
         evidence.span[i] = min(evidence.span[i], box_area * 1000 / area);
@@ -251,9 +243,9 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // color's area past the true canvas. Then the corpus VOTES, not unanimity.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int most_cells = 0;
-    for (int i = 0; i < 10; ++i) most_cells = max(most_cells, cells_of_color[i]);
+    for (int i = 0; i < COLOR_COUNT; ++i) most_cells = max(most_cells, cells_of_color[i]);
     int winner = -1;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < COLOR_COUNT; ++i) {
         if (cells_of_color[i] * BG_NEAR_TIE_DEN < most_cells * BG_NEAR_TIE_NUM) continue;
         if (winner < 0 || background_rank(i) < background_rank(winner)) winner = i;
     }
@@ -277,11 +269,8 @@ inline blob_map label_blobs(const grid& one_grid) {
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) blobs.id[row][col] = -1;
     int queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    for (int start_row = 0; start_row < one_grid.height; ++start_row)
-    for (int start_col = 0; start_col < one_grid.width; ++start_col) {
-        if (blobs.id[start_row][start_col] >= 0) continue;
-        int color = one_grid.data[start_row][start_col];
-        if (color < 0 || color > 9) continue;
+    walk_colored_cells(one_grid, TRANSPARENT, [&](int start_row, int start_col, int color) {
+        if (blobs.id[start_row][start_col] >= 0) return;
         int16_t id = (int16_t)blobs.color.size();
         queue_row[0] = start_row; queue_col[0] = start_col;
         blobs.id[start_row][start_col] = id;
@@ -301,7 +290,7 @@ inline blob_map label_blobs(const grid& one_grid) {
             });
         blobs.color.push_back(color); blobs.size.push_back(size);
         blobs.first_cell.push_back(first_cell); blobs.on_border.push_back(on_border);
-    }
+    });
     return blobs;
 }
 
@@ -311,11 +300,11 @@ inline blob_map label_blobs(const grid& one_grid) {
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
-inline void measure_embedding(const grid& one_grid, const int cells_of_color[10],
+inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               canvas_evidence& evidence) {
     const blob_map blobs = label_blobs(one_grid);
-    int figure_area = 0, embedded_area[10] = {};
-    int blobs_of_color[10] = {}, backdrop_blobs_of_color[10] = {};
+    int figure_area = 0, embedded_area[COLOR_COUNT] = {};
+    int blobs_of_color[COLOR_COUNT] = {}, backdrop_blobs_of_color[COLOR_COUNT] = {};
 
     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
     int queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
@@ -378,7 +367,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[10]
         figure_area += blobs.size[blob];
         embedded_area[blobs.color[best_owner]] += blobs.size[blob];
     }
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.embeds[i] = min(evidence.embeds[i],
                                  figure_area ? embedded_area[i] * 1000 / figure_area : 0);
 
@@ -386,11 +375,11 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[10]
     // windows (>= 2 blobs, none touching the border). One enclosed blob is an
     // object; many windows are the ground showing through.
     int quietest = -1;
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < COLOR_COUNT; ++i)
         if (cells_of_color[i] > 0 &&
             (quietest < 0 || background_rank(i) < background_rank(quietest)))
             quietest = i;
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.only_windows[i] = evidence.only_windows[i] && i == quietest &&
                                    blobs_of_color[i] >= 2 && backdrop_blobs_of_color[i] == 0;
 }
@@ -400,12 +389,12 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[10]
 // underneath. Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline void close_underneath(canvas_evidence& evidence) {
     int coverer = -1;
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < COLOR_COUNT; ++i)
         if (evidence.global_cells[i] > 0 &&
             (coverer < 0 || evidence.global_cells[i] > evidence.global_cells[coverer]))
             coverer = i;
     if (coverer >= 0 && evidence.gaps[coverer] < BG_HALF)
-        for (int i = 0; i < 10; ++i) evidence.only_windows[i] = false;
+        for (int i = 0; i < COLOR_COUNT; ++i) evidence.only_windows[i] = false;
 }
 
 // STAGE 4 — weighted signals sum to a confidence per color. No single rule is a
@@ -415,9 +404,9 @@ inline void close_underneath(canvas_evidence& evidence) {
 // at all; that needs the object story.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
-                             const canvas_evidence& evidence, const bool in_every[10]) {
+                             const canvas_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
-    for (int i = 0; i < 10; ++i) total_cells += evidence.global_cells[i];
+    for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
 
     for (auto& candidate : ranked) {
         if (candidate.color < 0 || !in_every[candidate.color]) { candidate.score = 0; continue; }
@@ -470,14 +459,14 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
     vector<background_hypotheses::hypothesis> ranked;
     if (grids.empty()) return ranked;
 
-    bool in_every[10];
+    bool in_every[COLOR_COUNT];
     colors_in_every_grid(grids, in_every);
 
     canvas_evidence evidence;
     for (const grid* grid_ptr : grids) {
         const grid& one_grid = *grid_ptr;
         if (one_grid.width <= 0 || one_grid.height <= 0) continue;
-        int cells_of_color[10];
+        int cells_of_color[COLOR_COUNT];
         count_colors(one_grid, cells_of_color);
         measure_area_and_reach(one_grid, cells_of_color, evidence);
         measure_embedding(one_grid, cells_of_color, evidence);
@@ -485,7 +474,7 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
     close_underneath(evidence);
 
     ranked.push_back({ (int8_t)-1, 0, 0, false, 0, 0, 0, false });  // "none" always a candidate
-    for (int candidate = 0; candidate < 10; ++candidate) {
+    for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
         if (!in_every[candidate]) continue;
         bool survives = persists ? persists[candidate] : true;
         ranked.push_back({ (int8_t)candidate, evidence.embeds[candidate],
@@ -507,15 +496,10 @@ inline background_hypotheses elect_background(const vector<example>& train) {
     background_hypotheses out;
     // Persistence: a color surviving into some output — the canvas stays,
     // content is consumed. Feeds the input election's tiebreak.
-    bool persists[10] = {};
-    for (const auto& ex : train) {
-        const grid& output_grid = ex.output;
-        for (int row = 0; row < output_grid.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < output_grid.width && col < MAX_GRID_DIM; ++col) {
-                int color = output_grid.data[row][col];
-                if (color >= 0 && color < 10) persists[color] = true;
-            }
-    }
+    bool persists[COLOR_COUNT] = {};
+    for (const auto& ex : train)
+        walk_colored_cells(ex.output, TRANSPARENT,
+                           [&](int, int, int color) { persists[color] = true; });
 
     vector<const grid*> inputs, outputs, both;
     for (const auto& ex : train) {
