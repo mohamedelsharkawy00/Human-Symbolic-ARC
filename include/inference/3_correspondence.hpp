@@ -419,7 +419,7 @@ inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
 // The glyph drawn out in one of the eight ways round (1_readings.hpp).
 inline grid posed_glyph(const grid& glyph, int pose) {
     const auto [posed_width, posed_height] = posed_size(pose, glyph.width, glyph.height);
-    grid posed(posed_width, posed_height, 0, MAX_GRID_DIM);
+    grid posed(posed_width, posed_height);
     for (int row = 0; row < posed_height; ++row)
         for (int col = 0; col < posed_width; ++col) {
             const auto [source_row, source_col] =
@@ -612,7 +612,7 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
             // edge; it is still a block, and dropping it would lose real cells.
             const int block_width  = min(step_width,  one_grid.width  - block_left);
             const int block_height = min(step_height, one_grid.height - block_top);
-            grid glyph(block_width, block_height, 0, MAX_GRID_DIM);
+            grid glyph(block_width, block_height);
             int lit = 0;
             for (int row = 0; row < block_height; ++row)
                 for (int col = 0; col < block_width; ++col) {
@@ -702,7 +702,7 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
         if (glyphs) {
             // Each cell keeps its own color, so a piece of several reads as it
             // looks. For a one-color piece that is the color it already had.
-            grid glyph(piece.width, piece.height, 0, MAX_GRID_DIM);
+            grid glyph(piece.width, piece.height);
             for (int row = 0; row < piece.height; ++row)
                 for (int col = 0; col < piece.width; ++col) glyph.data[row][col] = TRANSPARENT;
             for (int i = 0; i < size; ++i)

@@ -32,7 +32,9 @@ inline void upload_grid(grid &g, vector<int> &gpu_buffer) {
 
 inline grid allocate_empty_grid(vector<int> &gpu_buffer) {
   pad_buffer(gpu_buffer);
-  grid g(0, 0, (int)gpu_buffer.size(), 32);
+  grid g;
+  g.offset = (int)gpu_buffer.size();
+  g.stride = 32;
   gpu_buffer.resize(gpu_buffer.size() + MAX_GRID_DIM * 32, 0);
   return g;
 }

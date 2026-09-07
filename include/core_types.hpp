@@ -156,13 +156,18 @@ constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
 constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
 
 struct grid {
-	int width = 0, height = 0, offset = 0, stride = MAX_GRID_DIM;
-	bool visible = true;
+	int width = 0, height = 0;
 	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
+
+	// Where this grid sits in the renderer's cell buffer, and whether to draw it.
+	// Set only by whoever puts it there (grid_buffer.hpp); nothing below the
+	// screen reads them, so a grid that is never drawn leaves them alone.
+	int offset = 0, stride = 0;
+	bool visible = true;
 
 	// Nothing here needs hand-copying, so the compiler lists the fields, not us.
 	grid() = default;
-	grid(int w, int h, int off, int str) : width(w), height(h), offset(off), stride(str) {}
+	grid(int w, int h) : width(w), height(h) {}
 
 	uint64_t hash() const {
 		uint64_t h = 0;
