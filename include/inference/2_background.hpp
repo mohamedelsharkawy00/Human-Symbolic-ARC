@@ -1,5 +1,6 @@
 // 2_background.hpp — which color is the canvas, elected per side.
-// Design story in notes/1 - Overall Design/Inference Master.md, section 3g.
+// Design story for everything below, said here so nothing below repeats it:
+// notes/1 - Overall Design/Inference Master.md, section 3g.
 //
 // Self-contained: the election reads grids and nothing else. It shares no name
 // with 3_correspondence.hpp in either direction, so the two are siblings.
@@ -19,7 +20,6 @@ using namespace std;
 // what load-time consumers use; the rest stay alive. Do not collapse this to a
 // scalar: the list is the revisability hook, and a switch is just another
 // infer() call under ranked[i].
-// Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 
 // The background election's FITTED CONVENTIONS — fitted to
 // tests/background_truth.txt, not derived. Every threshold in the election
@@ -85,7 +85,6 @@ struct background_hypotheses {
     // INPUT-side verdict: the canvas the input figures sit on — what
     // segmentation excludes. Walks input-derived evidence STRONGEST -> WEAKEST
     // and takes the first real canvas; -1 = backgroundless or per-pair.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int8_t input_elected() const {
         // A ground showing through beats the area winner by definition, since
         // the pattern covering it is what wins the area.
@@ -107,7 +106,6 @@ struct background_hypotheses {
     // PERSISTS wins before any confidence gate; without input support the
     // winner must be dominance-CONFIDENT. NOT the embeds gate — embeds is a
     // worst-grid number and one grid zeroes it.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int8_t output_elected() const {
         int8_t input_canvas = input_elected();
         if (input_canvas >= 0)
@@ -121,13 +119,11 @@ struct background_hypotheses {
     // A color DECISIVELY beaten inside some pair cannot be the global canvas:
     // there it is a figure sitting ON another ground. Set by elect_background,
     // where each pair's dominances are on hand.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     bool input_vetoed = false;
 
     // A strict MAJORITY of confident pair grounds names the canvas — learn from
     // the clear pairs, extend to the flipped ones. Unanimity is the special
     // case; truly distinct pairs have no majority and stay per-pair.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int8_t per_pair_majority() const {
         int wins[COLOR_COUNT] = {};
         for (int8_t color : per_pair) if (color >= 0) ++wins[color];
@@ -151,7 +147,6 @@ struct background_hypotheses {
     // has its own real background that DIFFERS across pairs. Constant WITHIN a
     // pair, varying ACROSS pairs. per_pair holds the colors; this just flags
     // that the mode applies. Detect-only for now — nothing segments per-pair.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     bool is_per_pair() const {
         // Matches input_elected()'s order, so the output-influenced directions
         // cannot suppress a strong per-pair input signal.
@@ -164,7 +159,6 @@ struct background_hypotheses {
 // Per-color background-ness prior, most-background first. The LAST tiebreak
 // only, when area/embeds/story can't separate two candidates — a prior, not a
 // verdict, and structure always overrides it.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline int background_rank(int color) {
     static constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
     for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
@@ -241,7 +235,6 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // co-dominant with the leader — where the background-ness prior picks the
     // quieter one. Not raw-most-cells: a separator grid inflates a foreground
     // color's area past the true canvas. Then the corpus VOTES, not unanimity.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     int most_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) most_cells = max(most_cells, cells_of_color[i]);
     int winner = -1;
@@ -299,7 +292,6 @@ inline blob_map label_blobs(const grid& one_grid) {
 // blob; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               canvas_evidence& evidence) {
     const blob_map blobs = label_blobs(one_grid);
@@ -386,7 +378,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
 
 // STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The
 // coverer is the global area leader; if it is solid, no color may claim
-// underneath. Story in notes/1 - Overall Design/Inference Master.md, section 3g.
+// underneath.
 inline void close_underneath(canvas_evidence& evidence) {
     int coverer = -1;
     for (int i = 0; i < COLOR_COUNT; ++i)
@@ -402,7 +394,6 @@ inline void close_underneath(canvas_evidence& evidence) {
 // punched-through and embeds are graded votes.
 // KNOWN GAP: a canvas that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
                              const canvas_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
@@ -453,7 +444,6 @@ inline void rank_candidates(vector<background_hypotheses::hypothesis>& ranked) {
 // Candidates: any color present in EVERY grid on the side, plus -1 ("no
 // background"). persists[c] = does color c survive into the outputs (nullptr =
 // assume all persist, e.g. when electing outputs); it only breaks ties.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3g.
 inline vector<background_hypotheses::hypothesis> elect_side_background(
         const vector<const grid*>& grids, const bool* persists = nullptr) {
     vector<background_hypotheses::hypothesis> ranked;
@@ -526,7 +516,6 @@ inline background_hypotheses elect_background(const vector<example>& train) {
         // dominates absolutely, OR beats the runner-up DECISIVELY, OR holds the
         // figures while having a BODY rather than being a separator skeleton.
         // This is what keeps a BACKGROUNDLESS puzzle from reading as per-pair.
-        // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
         int best_dominance = 0, second_dominance = 0;
         for (const auto& candidate : local) {
             if (candidate.color < 0) continue;
@@ -555,7 +544,6 @@ inline background_hypotheses elect_background(const vector<example>& train) {
         // beaten in this pair when the local ground has at least twice its local
         // area — then the global winner is a figure here, not canvas. Unless it
         // still HOLDS THE FIGURES locally.
-        // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
         const int8_t global_background = background_hypotheses::top(out.across_inputs);
         if (global_background >= 0 && pair_background >= 0 &&
             pair_background != global_background) {
@@ -576,7 +564,6 @@ inline background_hypotheses elect_background(const vector<example>& train) {
     // A single pair's area flip cannot stand against CROSS-SIDE agreement: when
     // the output side independently elects the very color the veto targeted, the
     // flip was a color, not the background.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3g.
     if (out.input_vetoed &&
         background_hypotheses::top(out.across_inputs) ==
         background_hypotheses::top(out.across_outputs))
