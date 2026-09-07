@@ -315,7 +315,7 @@ struct correspondence_facts {
         // partner that still cannot say where they came from, which is the only
         // part that is the reading failing. Kept per reading because a table
         // that shows one number for the two cannot be argued with.
-        int made_or_gone = 0;
+        int made = 0, gone = 0;
         // The grid-only score, AVERAGED over the pairs — it is a share of plain
         // cost, and shares add up to nothing meaningful. Owes nothing to the
         // matching, so it is had BEFORE any search — see describe_cost.
@@ -331,6 +331,11 @@ struct correspondence_facts {
     // because the list is in table order and the winner can sit anywhere in it —
     // being first was the only thing that ever said so.
     int8_t chosen = 0;
+    // THE ONES THE ELECTION COULD NOT SEPARATE FROM THE WINNER, as places in
+    // `readings`. Saying only the winner claims a distinction the reading never
+    // made -- on 009d5c81 three cuts explain exactly as much and declaration
+    // order picked between them.
+    vector<int8_t> tied_with_chosen;
     // THE PIECES AND EDGES OF EVERY READING, in `readings` order, so the work is
     // done once. Without it a consumer wanting a reading other than the chosen
     // one has to run it again — and the pane wants all of them, which meant the
@@ -2465,8 +2470,10 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             double shares = 0.0;
             for (const auto& pair : tried.pairs) {
                 scored.left_over += (int)pair.left_over.size();
-                scored.made_or_gone += (int)ranges::count_if(pair.left_over,
-                    [](const auto& cell) { return cell.made_or_gone; });
+                scored.made += (int)ranges::count_if(pair.left_over,
+                    [](const auto& cell) { return cell.made_or_gone && !cell.from_input; });
+                scored.gone += (int)ranges::count_if(pair.left_over,
+                    [](const auto& cell) { return cell.made_or_gone && cell.from_input; });
                 scored.pieces_used += pair.pieces_used;
                 shares += pair.describe_cost;
                 scored.pieces_found +=
@@ -2532,7 +2539,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // at all. Only what a reading claims to know and still cannot say is a
     // failure, so only that is priced.
     auto price_of = [&](const correspondence_facts::reading& one) {
-        return one.describe_cost + (one.left_over - one.made_or_gone) * spelling_out;
+        return one.describe_cost + (one.left_over - one.made - one.gone) * spelling_out;
     };
     size_t elected = 0;
     for (size_t i = 1; i < passes.size(); ++i) {
@@ -2567,6 +2574,17 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             facts.reading_pairs[cell_of(one.summary)] = std::move(one.pairs);
         }
     facts.chosen = (int8_t)cell_of(passes[elected].front().summary);
+    {
+        const auto& winner = passes[elected].front().summary;
+        for (size_t i = 0; i < passes.size(); ++i) {
+            if (i == elected) continue;
+            const auto& here = passes[i].front().summary;
+            if ((here.pieces_used > 0) != (winner.pieces_used > 0)) continue;
+            if (abs(price_of(here) - price_of(winner)) > same_price) continue;
+            if (here.pieces_used != winner.pieces_used) continue;
+            facts.tied_with_chosen.push_back((int8_t)cell_of(here));
+        }
+    }
     facts.pairs = facts.reading_pairs[facts.chosen];
     facts.valid = true;
     return facts;

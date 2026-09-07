@@ -64,6 +64,19 @@ int main() {
 	global_app_state app_state;
 	beam_solver solver(app_state);
 
+	// --start-examples N judges candidates against N examples from the first
+	// one, instead of starting at one and promoting. An experiment knob, read
+	// here because the first reload already wants the answer.
+	// --max-attempts N pauses the solver once it has tried that many candidates,
+	// so two runs compared against each other stopped at the same place.
+	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--max-attempts "))
+		if (long long given = _wtoi64(arg + 15); given > 0)
+			solver.set_stop_after_attempts(given);
+
+	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--start-examples "))
+		if (int given = _wtoi(arg + 17); given > 0)
+			solver.set_start_example_count(given);
+
 	// Window + Vulkan rendering: GUI build only. The headless build runs the
 	// solver with no window or renderer.
 #ifdef _MSC_VER
@@ -221,11 +234,12 @@ int main() {
 			// every caller of this port already parses.
 			auto yes_no = [](bool b) { return b ? "true" : "false"; };
 			return to_text(
-				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s gpu_used=%d%% build=%s",
+				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s "
+				"attempts=%lld gpu_used=%d%% build=%s",
 				solver.current_puzzle_id().c_str(), idx, solver.get_puzzle_count(),
 				yes_no((bool)app_state.is_paused), yes_no((bool)app_state.is_benchmarking),
-				yes_no(solved), format_elapsed(get_elapsed(app_state, st)).c_str(), gpu.used_percent,
-				exe_build_time().c_str());
+				yes_no(solved), format_elapsed(get_elapsed(app_state, st)).c_str(),
+				st.attempts.load(), gpu.used_percent, exe_build_time().c_str());
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);

@@ -388,6 +388,11 @@ namespace arc {
 		// absent, so they can only no-op. Verdict filled once, right after
 		// infer(); generation never offers a dead op.
 		bool dead_ops[(int)node_type::type_count] = {};
+		// PROGRAMS INFERENCE ALREADY SPELLED, most likely first. Bridged from
+		// say_the_reading; empty when the reading had nothing sayable. Tried
+		// before the search starts -- a sentence that was read off the pairs is
+		// one the beam never has to score its way to.
+		vector<string> suggested_programs;
 		// Learned color swaps, by BidiColorMap's variant index k in [0,44].
 		// Bridged from inference (inf.color_swaps). Pins the op's 45-way fan-out
 		// in candidate generation; count==0 means "not learned / don't pin".

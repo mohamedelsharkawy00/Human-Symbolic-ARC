@@ -5,6 +5,8 @@
 
 #include <vector>
 #include <cstdint>
+#include <string>
+#include "text_format.hpp"  // to_text, for gpu_score_terms::say
 #include <cstddef>
 #include <cstdio>   // fprintf / stderr in pinned_vector::resize failure path
 #include <cstdlib>  // std::abort
@@ -186,6 +188,9 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
   X(Trim, "Trim", 0, 0, reduce)                                                  \
   X(OverlapCorner, "OverlapCorner", 0, 0, map)                                   \
   X(Underlay, "Underlay", 0, 0, combine)                                         \
+  /* Withhold closes the beat without painting, so a sentence that only sets  */ \
+  /* up the hand is sayable and does not read as damage to the canvas.        */ \
+  X(Withhold, "Withhold", 0, 0, combine)                                         \
   X(Fit, "Fit", 0, 0, reduce)                                                    \
   X(Intersection, "Intersection", 0, 0, combine)                                 \
   X(Fractal, "Fractal", 0, 0, generate)                                          \
@@ -461,6 +466,36 @@ struct gpu_object_list {
     int count = 0;
 };
 
+// The box the paint actually fills, which is not always the box the object
+// declares -- Colors hands back layers carrying the whole source bbox.
+struct gpu_painted_box { int x0, y0, width, height; };
+
+inline ARC_HOST_DEVICE gpu_painted_box gpu_box_of_paint(const gpu_fixed_object& obj) {
+    int x0 = obj.width, y0 = obj.height, x1 = -1, y1 = -1;
+    for (int row = 0; row < obj.height; ++row)
+        for (int col = 0; col < obj.width; ++col)
+            if (obj.mask[row][col] != GPU_TRANSPARENT) {
+                if (col < x0) x0 = col;
+                if (col > x1) x1 = col;
+                if (row < y0) y0 = row;
+                if (row > y1) y1 = row;
+            }
+    if (x1 < 0) return {0, 0, 0, 0};
+    return {x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+}
+
+// The glyph's fingerprint, read off the paint. Inference learns its keys from
+// tight color boxes, so applying must hash a tight box too or a padded object
+// fingerprints a different glyph and every lookup misses. Untrimmed input is
+// therefore accepted rather than required to arrive trimmed.
+inline ARC_HOST_DEVICE uint32_t gpu_shape_hash_of_paint(const gpu_fixed_object& obj) {
+    const gpu_painted_box box = gpu_box_of_paint(obj);
+    if (box.width <= 0 || box.height <= 0) return 0;
+    return shape_occupancy_hash(box.width, box.height, [&](int i) {
+        return obj.mask[box.y0 + i / box.width][box.x0 + i % box.width] != GPU_TRANSPARENT;
+    });
+}
+
 struct gpu_fixed_grid {
     int8_t data[GPU_MAX_GRID][GPU_MAX_GRID];
     int16_t width = 0, height = 0;
@@ -602,7 +637,26 @@ struct gpu_score_terms {
     float vandal = 0, exact = 0, histogram = 0, distance = 0;
     float rarity = 0, shape = 0, color = 0, position = 0;
     float node_penalty = 0, dimension_penalty = 0;
+    float hand = 0;
     float total = 0;
+
+    // ONE HOME for the readout, because two of them drifted the moment a term
+    // was added to one side: the import line silently lost `hand` and a reader
+    // had to recover it from total minus sum. Everything that prints a score
+    // asks here, so the printed sum is always the whole formula.
+    float parts_sum() const {
+        return vandal + exact + histogram + distance + rarity + shape +
+               color + position + hand + node_penalty + dimension_penalty;
+    }
+    std::string say(const std::string& tree, int example, const char* phase = nullptr) const {
+        return arc::to_text(
+            "[SCORE] %s%s%stree=\"%s\" ex=%d vandal=%.4f exact=%.4f histogram=%.4f "
+            "distance=%.4f rarity=%.4f shape=%.4f color=%.4f position=%.4f "
+            "hand=%.4f node_penalty=%.4f dim_penalty=%.4f sum=%.4f total=%.4f",
+            phase ? "phase=" : "", phase ? phase : "", phase ? " " : "", tree.c_str(), example,
+            vandal, exact, histogram, distance, rarity, shape, color, position,
+            hand, node_penalty, dimension_penalty, parts_sum(), total);
+    }
 };
 
 struct cuda_dsl_exec_batch {

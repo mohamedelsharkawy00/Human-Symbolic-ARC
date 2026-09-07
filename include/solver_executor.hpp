@@ -194,7 +194,7 @@ namespace arc {
     commit_level_champion();
     // The beam's own order, so a tie decided later can be traced to where it
     // actually sat rather than guessed at.
-    for (int i = 0; i < (int)beam.size() && i < 8; ++i)
+    for (int i = 0; i < (int)beam.size(); ++i)
       if (beam[i].n)
         log_debug(to_text("[BEAM %d] %.2f  \"%s\"", i, (double)beam[i].score,
                               environment::stringify_tree_via_flat(beam[i].n).c_str()));
@@ -1199,31 +1199,28 @@ namespace arc {
     if (terms.empty())
       return;
     string tree_str = environment::stringify_tree_via_flat(tree);
-    for (int i = 0; i < (int)terms.size(); ++i) {
-      const gpu_score_terms &t = terms[i];
-      log_debug(to_text(
-          "[SCORE] tree=\"%s\" ex=%d vandal=%.4f exact=%.4f histogram=%.4f "
-          "distance=%.4f rarity=%.4f shape=%.4f color=%.4f position=%.4f "
-          "node_penalty=%.4f dim_penalty=%.4f sum=%.4f total=%.4f",
-          tree_str.c_str(), i, t.vandal, t.exact, t.histogram, t.distance, t.rarity,
-          t.shape, t.color, t.position, t.node_penalty, t.dimension_penalty,
-          t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
-              t.color + t.position + t.node_penalty + t.dimension_penalty,
-          t.total));
-    }
+    for (int i = 0; i < (int)terms.size(); ++i)
+      log_debug(terms[i].say(tree_str, i));
   }
 
   inline void beam_solver::update_best_solution(int target_idx, puzzle &p, node *tree,
                                    int node_count, beam_solver::candidate_batch &res) {
     int active = min(active_example_count, (int)p.train.size());
 
-    bool overrides_worse_tree = res.all_train_solved && !check_old_tree_solves(p, active);
+    bool best_already_solves = check_old_tree_solves(p, active);
+    bool overrides_worse_tree = res.all_train_solved && !best_already_solves;
 
     float current_best_sum = 0;
     for (int i = 0; i < active; ++i)
       current_best_sum += p.train[i].best_score;
 
-    bool score_better = res.total_train_score > current_best_sum + 0.0001f;
+    // SOLVING OUTRANKS RESEMBLING. Nothing that fails the active examples may
+    // displace something that passes them, however high it scores -- otherwise
+    // the two doors trade the best tree back and forth forever, each undoing
+    // the other: one asks who scores higher, the other asks who solves.
+    bool would_lose_a_solve = best_already_solves && !res.all_train_solved;
+    bool score_better = !would_lose_a_solve &&
+                        res.total_train_score > current_best_sum + 0.0001f;
     // Only treat "same score" as a valid simplification trigger if the new
     // tree is actually correct on all active examples — tying on a rarity-
     // weighted score does not imply functional equivalence.
@@ -1237,13 +1234,17 @@ namespace arc {
       if (target_idx != m_solver_state.puzzle_idx)
         return;
 
-      bool still_overrides = res.all_train_solved && !check_old_tree_solves(p, active);
+      // Hoisted, so the gate line below can say it even when nothing short-circuits.
+      bool old_tree_solves = check_old_tree_solves(p, active);
+      bool still_overrides = res.all_train_solved && !old_tree_solves;
+      bool still_would_lose_a_solve = old_tree_solves && !res.all_train_solved;
 
       current_best_sum = 0;
       for (int i = 0; i < active; ++i)
         current_best_sum += p.train[i].best_score;
 
-      bool still_score_better = res.total_train_score > current_best_sum + 0.0001f;
+      bool still_score_better = !still_would_lose_a_solve &&
+                                res.total_train_score > current_best_sum + 0.0001f;
       bool still_score_same = res.all_train_solved &&
                               abs(res.total_train_score - current_best_sum) < 0.0001f;
       bool still_nodes_better = node_count < p.best_node_count;
@@ -1251,6 +1252,14 @@ namespace arc {
 
       if (!still_overrides && !still_score_better && !(still_score_same && still_nodes_better) && !still_should_promote)
         return;
+
+      // Which door opened, so a gate that keeps reopening has to say why.
+      log_debug(to_text("[GATE] all_solved=%d old_solves=%d overrides=%d better=%d same=%d fewer=%d "
+                        "promote=%d score=%.4f best=%.4f nodes=%d best_nodes=%d active=%d",
+                        (int)res.all_train_solved, (int)old_tree_solves, (int)still_overrides,
+                        (int)still_score_better, (int)still_score_same, (int)still_nodes_better,
+                        (int)still_should_promote, (double)res.total_train_score,
+                        (double)current_best_sum, node_count, p.best_node_count, active));
 
       // Test eval happens in the train-finale branch below via the CPU
       // evaluate_test_after_solve path — no GPU scratch launches needed.
@@ -1322,9 +1331,9 @@ namespace arc {
       p.best_tree = environment::copy(reduced);
       invalidate_best_tree_cache(p);
 
-      if (promotion_count == 0 && !is_train_finale)
-        p.best_node_count = reduced_node_count;
-
+      // The tree and how many nodes it has are one fact, so they are written together.
+      int previous_node_count = p.best_node_count;
+      p.best_node_count = reduced_node_count;
 
       refresh_best_display_scores(p, active, reduced_node_count);
 
@@ -1337,18 +1346,18 @@ namespace arc {
 
       bool is_simplification = (promotion_count == 0) && !is_train_finale && !is_test_solve && still_score_same && still_nodes_better && p.is_solved;
       if (is_train_finale || is_simplification) {
-        log_debug(is_train_finale ? "!!!! TASK SOLVED ON TRAINING SET !!!" : "!!!! SIMPLIFIED SOLUTION FOUND !!!!");
         if (is_train_finale) {
+          log_debug("!!!! TASK SOLVED ON TRAINING SET !!!");
           p.is_test_solved = is_test_solve;
           p.is_solved = true;
-          p.best_node_count = node_count;
           for (auto &ex : p.test) ex.output.visible = true;
         } else {
-          log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", node_count, p.best_node_count));
+          log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", reduced_node_count, previous_node_count));
         }
         if (!m_app_state.is_benchmarking) toggle_pause();
       } else if (promotion_count == 0 && !is_test_solve) {
-        log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", node_count, p.best_node_count));
+        // Not a solve and not a simplification, just a new best, so say that.
+        log_debug(to_text("!!!! NEW BEST: %d nodes (was %d) !!!!", reduced_node_count, previous_node_count));
       }
 
       if (is_test_solve) {
@@ -1407,7 +1416,8 @@ namespace arc {
       m_solver_state.start_time = now;
       m_app_state.pause_start_time = now;
 
-      active_example_count = 1;
+      active_example_count = start_example_count;
+      asked_inference_yet = false;
       m_app_state.needs_upload = true;
 
       if (m_puzzle_loaded) {
@@ -1419,6 +1429,8 @@ namespace arc {
           for (auto &ex : p.train) { clear_current_view(ex); clear_best_view(ex); }
           for (auto &ex : p.test)  { clear_current_view(ex); clear_best_view(ex); }
           if (!p.is_solved) {
+            if (active_example_count > (int)p.train.size())
+              active_example_count = (int)p.train.size();
             environment::remove(p.best_tree);
             p.best_tree = nullptr;
             invalidate_best_tree_cache(p);
@@ -1530,6 +1542,28 @@ namespace arc {
         m_app_state.needs_upload = true;
       }
 
+      // Try what the looking spelled before spending a single beam candidate.
+      // The lock is let go before pausing: toggle_pause takes the same one, and
+      // it is not recursive, so pausing while holding it hangs the whole app.
+      if (m_puzzle_loaded && m_puzzle.inferred && !asked_inference_yet) {
+        bool it_fitted = false;
+        {
+          scoped_lock lock(m_solver_state.mtx);
+          asked_inference_yet = true;
+          if (!m_puzzle.is_solved && try_what_inference_said(m_puzzle)) {
+            active_example_count = (int)m_puzzle.train.size();
+            cuda_dsl_invalidate_examples();
+            environment::remove(m_solver_state.current_tree);
+            m_solver_state.current_tree = environment::copy(m_puzzle.best_tree);
+            for (auto &ex : m_puzzle.test) ex.output.visible = true;
+            m_app_state.needs_upload = true;
+            it_fitted = true;
+          }
+        }
+        if (it_fitted && !m_app_state.is_paused && !m_app_state.is_benchmarking)
+          toggle_pause();
+      }
+
       int target_idx = -1;
       if (should_pause_or_wait(target_idx))
         continue;
@@ -1628,8 +1662,13 @@ namespace arc {
       // pump_generate leaves pending empty after committing a level, and we must NOT
       // mix level N+1 candidates into this batch (level N+1 needs level N's scores).
       { scope_ns generate_time{ns_generate};
-      while ((int)chunk.trees.size() < chunk_cap) {
-        while ((int)chunk.trees.size() < chunk_cap && !pending_evaluation.empty()) {
+      auto asked_for_enough = [&] {
+        return stop_after_attempts > 0 &&
+               m_solver_state.attempts.load() >= stop_after_attempts;
+      };
+      while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap) {
+        while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap &&
+               !pending_evaluation.empty()) {
           node *orig = pending_evaluation.front();
           pending_evaluation.pop();
           if (!orig) continue;
@@ -2065,6 +2104,28 @@ namespace arc {
     return {s, solved};
   }
 
+  // WHAT THE LOOKING ALREADY SPELLED, tried before the search starts. Each
+  // suggestion is a whole program, so this either finishes the puzzle or costs
+  // one scratch evaluation per suggestion -- which is nothing beside the beam.
+  inline bool beam_solver::try_what_inference_said(puzzle &p) {
+    if (p.suggested_programs.empty() || !m_gpu_buffer) return false;
+    for (const string &program : p.suggested_programs) {
+      apply_solution(p, *m_gpu_buffer, program, m_log);
+      if (p.is_solved) {
+        log_debug("!!!! SOLVED BY WHAT INFERENCE SAID: " + program + " !!!!");
+        return true;
+      }
+    }
+    // Nothing fitted, so the last failed tree must not stay on as the best.
+    environment::remove(p.best_tree);
+    p.best_tree = nullptr;
+    invalidate_best_tree_cache(p);
+    p.best_node_count = NODE_COUNT_MAX;
+    for (auto &ex : p.train) { clear_current_view(ex); clear_best_view(ex); }
+    for (auto &ex : p.test)  { clear_current_view(ex); clear_best_view(ex); }
+    return false;
+  }
+
   inline bool beam_solver::check_old_tree_solves(puzzle &p, int active) {
     if (!p.best_tree) return false;
     for (int i = 0; i < active; ++i) {
@@ -2157,7 +2218,6 @@ namespace arc {
   }
 
   inline void beam_solver::reset_test_display(puzzle &p) {
-    p.best_node_count = NODE_COUNT_MAX;
     for (auto &ex : p.test) {
       if (m_gpu_buffer) {
         clear_current_view(ex);

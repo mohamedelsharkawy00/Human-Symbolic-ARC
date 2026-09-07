@@ -179,8 +179,9 @@ inline void report_correspondence_readings(ostream& report, const correspondence
           << "% of plain  cut into " << reading.pieces_found;
         report << ", used " << reading.pieces_used
           << " (" << reading.exact << " exact, " << reading.recolored << " recolored, "
-          << reading.sits_on << " sits on), " << reading.made_or_gone << " made or gone, "
-          << (reading.left_over - reading.made_or_gone) << " unexplained, " << reading.left_over
+          << reading.sits_on << " sits on), " << reading.made << " made, "
+          << reading.gone << " gone, "
+          << (reading.left_over - reading.made - reading.gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
         if (!reading.pieces_can_fit) report << "  (no piece fits the other grid)";
         report << "   " << split_name((int)reading.cut_kind)
@@ -192,11 +193,12 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
-inline void report_said_reading(ostream& report, const correspondence_facts& correspondence) {
-    const said_reading said = say_the_reading(correspondence);
+inline void report_said_reading(ostream& report, const inference& inf) {
+    const said_reading said = say_the_reading(inf);
     report << "[sentences] " << said.sentences.size() << " said, "
            << said.no_word_for.size() << " with no word\n";
     for (const string& sentence : said.sentences) report << "  " << sentence << "\n";
+    for (const string& other : said.other_openings) report << "  OR OPEN WITH " << other << "\n";
     for (const string& missing : said.no_word_for) report << "  NO WORD FOR " << missing << "\n";
 }
 
@@ -273,7 +275,8 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << "  exact " << pair.found_exact << " recolored " << pair.found_recolored
       << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
       << " turned " << pair.turned << " dropped " << pair.dropped
-      << "  made or gone " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone; })
+      << "  made " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone && !c.from_input; })
+      << "  gone " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone && c.from_input; })
       << "  unexplained " << ranges::count_if(pair.left_over, [](const auto& c) { return !c.made_or_gone; })
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
@@ -342,7 +345,7 @@ inline void log_inference(const string& id, const inference& inf, const Readout&
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
-    report_said_reading(report, inf.correspondence);
+    report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, seen);
     for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)

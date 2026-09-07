@@ -144,17 +144,7 @@ inline void apply_solution(puzzle &task,
     string tree_str = environment::stringify_tree_via_flat(task.best_tree);
     // Straight from the kernel that scored it, so the printed sum IS the score.
     auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
-      log.debug(to_text(
-          "[SCORE] phase=%s tree=\"%s\" ex=%d vandal=%.4f exact=%.4f "
-          "histogram=%.4f distance=%.4f rarity=%.4f shape=%.4f color=%.4f "
-          "position=%.4f node_penalty=%.4f dim_penalty=%.4f "
-          "sum=%.4f total=%.4f",
-          phase, tree_str.c_str(), ei, t.vandal, t.exact, t.histogram, t.distance,
-          t.rarity, t.shape, t.color, t.position, t.node_penalty,
-          t.dimension_penalty,
-          t.vandal + t.exact + t.histogram + t.distance + t.rarity + t.shape +
-              t.color + t.position + t.node_penalty + t.dimension_penalty,
-          t.total));
+      log.debug(t.say(tree_str, ei, phase));
     };
 
     // Evaluate and update GPU buffers
@@ -599,6 +589,25 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
     for (int k = 0; k < 45; ++k)                      // color_swap · across_input_output
         task.color_swap_variants[k] = inf.color_swaps.variant[k];
     task.color_swap_variants_count = inf.color_swaps.count;
+
+    // THE READING, SAID AS PROGRAMS. The election could not separate the tied
+    // openings, so each is its own whole program rather than a claim that one
+    // of them is right.
+    {
+        const said_reading said = say_the_reading(inf);
+        task.suggested_programs.clear();
+        if (!said.sentences.empty()) {
+            string whole;
+            for (const string& sentence : said.sentences)
+                whole += (whole.empty() ? "" : " ") + sentence;
+            task.suggested_programs.push_back(whole);
+            for (const string& opening : said.other_openings) {
+                string rest;
+                for (size_t i = 1; i < said.sentences.size(); ++i) rest += " " + said.sentences[i];
+                task.suggested_programs.push_back(opening + rest);
+            }
+        }
+    }
     for (int i = 0; i < 10; ++i) {                    // color-literal pin sets,
         if (inf.colors.in_any_input[i]) {             // one per side
             task.colors_in_any_input[i] = true;

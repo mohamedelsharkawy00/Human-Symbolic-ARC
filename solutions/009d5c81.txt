@@ -1,1 +1,9 @@
-Colors SelectAll SortBySize[1] SelectAll Trim ShapeColorMap BidiColorMap[0] Underlay Input Underlay
+Input SelectAll Colors Withhold CurrentObjects SelectAll ShapeColorMap Union InputWithoutBackground SelectLargestObject[0] MaskOut[1] Intersection
+Puzzle:       009d5c81
+Train:        Solved
+Test:         Solved
+Elapsed:      00:11:09.9125
+Attempts:     108210246
+Nodes:        12
+Best Score:   2570.0000
+Max Depth:    12

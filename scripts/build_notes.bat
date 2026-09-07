@@ -30,4 +30,8 @@ REM backgrounded so it doesn't block the server start below.
 start "" /b powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep 2; Start-Process 'http://127.0.0.1:8000/Home.html'"
 
 REM serve from the project root so it can watch files with spaces in their paths.
-python -m mkdocs serve -f "%CFG%" -a 127.0.0.1:8000
+REM --livereload is spelled out because mkdocs' own default for it stopped being
+REM trusted: it declares the off-switch first, and newer versions of the command
+REM line library it uses read the FIRST one as the default, so auto-refresh was
+REM silently off. Saying it out loud does not depend on any version's default.
+python -m mkdocs serve --livereload -f "%CFG%" -a 127.0.0.1:8000

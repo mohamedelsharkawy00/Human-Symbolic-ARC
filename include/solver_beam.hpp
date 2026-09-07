@@ -223,6 +223,14 @@ struct search_state {
   float all_time_best_score = SCORE_MIN;
 
   int active_example_count = 1;
+  // How many examples a fresh puzzle starts scoring against. One means the
+  // usual promotion ladder; more means judge on that many from the first
+  // candidate. Set once from --start-examples, clamped to the train set.
+  int start_example_count = 1;
+  // Stop after this many attempts, 0 meaning never. A count stops in the same
+  // place every run; a clock stops wherever the machine happened to be.
+  long long stop_after_attempts = 0;
+
 
   vector<champion> current_slot_candidates;
   vector<champion> level_candidates;
@@ -335,6 +343,13 @@ private:
   };
 
 public:
+  // Seeds the live count too: the startup load runs inside init(), which never
+  // touches it, so only reload_current_puzzle would have heard this otherwise.
+  void set_stop_after_attempts(long long n) { stop_after_attempts = n > 0 ? n : 0; }
+  void set_start_example_count(int n) {
+    start_example_count = n < 1 ? 1 : n;
+    active_example_count = start_example_count;
+  }
   void log_debug(const string &msg) { m_log.debug(msg); }
   void log_timing(const string &msg) { m_log.timing(msg); }
   void clear_logs() { m_log.clear(); }
@@ -928,6 +943,16 @@ private:
       return true;
     }
 
+    // One-shot: cleared as it fires, so unpausing by hand does not re-stop.
+    if (stop_after_attempts > 0 && !m_app_state.is_paused &&
+        m_solver_state.attempts.load() >= stop_after_attempts) {
+      log_debug(to_text("!!!! PAUSED AT %lld ATTEMPTS !!!!",
+                        m_solver_state.attempts.load()));
+      stop_after_attempts = 0;
+      toggle_pause();
+      return true;
+    }
+
     if (m_app_state.is_paused) {
       this_thread::sleep_for(chrono::milliseconds(10));
       return true;
@@ -943,6 +968,11 @@ private:
   void clear_test_current_views(puzzle &p);
   void update_test_current_views(puzzle &p, node *tree, int node_count, bool all_train_solved);
   bool check_old_tree_solves(puzzle &p, int active);
+  bool try_what_inference_said(puzzle &p);
+  // Gated on the ATTEMPT, not on when inference happened: init() infers at
+  // startup and the worker infers lazily, so keying off `inferred` missed
+  // whichever came first.
+  bool asked_inference_yet = false;
   // Greedy leave-one-out reduction of a candidate tree over the active train
   // examples. Repeatedly drops the single op whose removal most improves the
   // summed train score (node-count penalty included, so a true no-op strictly

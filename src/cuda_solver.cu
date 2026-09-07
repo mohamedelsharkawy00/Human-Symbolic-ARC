@@ -786,6 +786,23 @@ __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
     __syncwarp();
 }
 
+// Withhold: closes the sentence and paints nothing. The hand rides through so
+// the next sentence can act on it, and the canvas is left exactly as it was --
+// which is the whole point: a sentence that only prepares should read as having
+// done nothing, not as having damaged the picture.
+__device__ void gpu_exec_withhold_warp(gpu_exec_context& ctx, int lane) {
+    gpu_object_list* src = gpu_current_objects(ctx);
+    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
+    int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
+    gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
+    int used = n * (int)sizeof(gpu_fixed_object);
+    const int8_t* source = reinterpret_cast<const int8_t*>(src->objects);
+    int8_t* dest = reinterpret_cast<int8_t*>(pass->objects);
+    for (int b = lane; b < used; b += 32) dest[b] = source[b];
+    if (lane == 0) pass->count = n;
+    __syncwarp();
+}
+
 // Underlay: like Union but paints each pixel ONLY into transparent canvas cells
 // (paint-behind). One-op, non-destructive z-order -- "put this under what's
 // already there" instead of reordering the chain. The only change from
@@ -1219,20 +1236,20 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
     res = src;  // pass everything through; default is no-op
     if (ctx.shape_color_count <= 0 || src.count <= 0) return res;
 
-    // key = smallest bbox area, target = largest bbox area.
+    // key = smallest painted box, target = largest. Measured on the paint so an
+    // untrimmed layer ranks by its glyph, the way inference learned it.
     int key = -1, tgt = -1, ka = 1 << 30, ta = -1;
     for (int i = 0; i < src.count; ++i) {
-        const auto& o = src.objects[i];
-        int a = (int)o.width * (int)o.height;
+        const gpu_painted_box b = gpu_box_of_paint(src.objects[i]);
+        if (b.width <= 0 || b.height <= 0) continue;
+        int a = b.width * b.height;
         if (a < ka) { ka = a; key = i; }
         if (a > ta) { ta = a; tgt = i; }
     }
     if (key < 0 || tgt < 0 || key == tgt) return res;
 
     // Fingerprint the key glyph's occupancy (shared recipe in cuda_dsl.cuh).
-    const auto& kobj = src.objects[key];
-    uint32_t hsh = shape_occupancy_hash((int)kobj.width, (int)kobj.height,
-        [&](int i) { return kobj.mask[i / kobj.width][i % kobj.width] != GPU_TRANSPARENT; });
+    uint32_t hsh = gpu_shape_hash_of_paint(src.objects[key]);
 
     // Look up the color; miss -> no-op.
     int8_t color = -1;
@@ -1276,8 +1293,7 @@ __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx,
         int f = -1;
         if (lane == 0) {
             // Fingerprint the object's occupancy (shared recipe in cuda_dsl.cuh).
-            uint32_t hsh = shape_occupancy_hash((int)obj_src.width, (int)obj_src.height,
-                [&](int i) { return obj_src.mask[i / obj_src.width][i % obj_src.width] != GPU_TRANSPARENT; });
+            uint32_t hsh = gpu_shape_hash_of_paint(obj_src);
             for (int k = 0; k < ctx.shape_color_count && k < 16; ++k)
                 if (ctx.shape_color_keys[k] == hsh) { f = ctx.shape_color_vals[k]; break; }
         }
@@ -3403,6 +3419,10 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             gpu_exec_underlay_warp(ctx, lane);
             continue;
         }
+        if (type == node_type::Withhold && has_current_objects) {
+            gpu_exec_withhold_warp(ctx, lane);
+            continue;
+        }
         if (type == node_type::InteriorColor && has_current_objects) {
             gpu_exec_interior_color_warp(ctx, value, lane);
             continue;
@@ -3460,6 +3480,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Partition:      result = last ? &gpu_exec_partition(ctx, *last) : &gpu_acquire(ctx); break;
             // Union handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Union:          result = &gpu_acquire(ctx); break;
+            // Withhold handled in the warp-parallel branch above; here means !has_current_objects.
+            case node_type::Withhold:       result = &gpu_acquire(ctx); break;
             case node_type::Difference:     result = last ? &gpu_exec_difference(ctx, *last) : &gpu_acquire(ctx); break;
             // Intersection handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Intersection:   result = &gpu_acquire(ctx); break;
@@ -3558,6 +3580,53 @@ struct gpu_example_template {
     gpu_object_summary target_objs[GPU_MAX_TARGET_OBJECTS];
     int8_t target_obj_count;
 };
+
+// MULTISET MATCH, one home. Each attempt summary claims at most one target
+// summary by (w,h,count); a same-color target is preferred so color credit is
+// granted whenever feasible. Position bonus is a continuous
+// (1 - chebyshev/target_size) per matched pair, normalized by the target's own
+// footprint rather than the grid. The canvas asks this about its components and
+// the hand asks it about its objects, so the two are judged by one rule.
+__device__ inline void gpu_match_summaries(const gpu_object_summary* attempt, int attempt_count,
+                                           const gpu_example_template& tmpl,
+                                           int& shape_matches, int& color_matches,
+                                           float& position_score) {
+    bool used[GPU_MAX_TARGET_OBJECTS];
+    for (int j = 0; j < GPU_MAX_TARGET_OBJECTS; ++j) used[j] = false;
+    for (int i = 0; i < attempt_count; ++i) {
+        int best_j = -1;
+        bool best_color = false;
+        for (int j = 0; j < tmpl.target_obj_count; ++j) {
+            if (used[j]) continue;
+            if (attempt[i].w != tmpl.target_objs[j].w) continue;
+            if (attempt[i].h != tmpl.target_objs[j].h) continue;
+            if (attempt[i].count != tmpl.target_objs[j].count) continue;
+            bool cm = (attempt[i].color == tmpl.target_objs[j].color);
+            if (best_j < 0 || (cm && !best_color)) {
+                best_j = j;
+                best_color = cm;
+                if (cm) break;
+            }
+        }
+        if (best_j < 0) continue;
+        used[best_j] = true;
+        shape_matches++;
+        if (best_color) color_matches++;
+        int acx = attempt[i].x0 * 2 + (attempt[i].w - 1);
+        int acy = attempt[i].y0 * 2 + (attempt[i].h - 1);
+        int tcx = tmpl.target_objs[best_j].x0 * 2 + (tmpl.target_objs[best_j].w - 1);
+        int tcy = tmpl.target_objs[best_j].y0 * 2 + (tmpl.target_objs[best_j].h - 1);
+        int dx = acx > tcx ? acx - tcx : tcx - acx;
+        int dy = acy > tcy ? acy - tcy : tcy - acy;
+        int cheb = dx > dy ? dx : dy;
+        int tsize = tmpl.target_objs[best_j].w > tmpl.target_objs[best_j].h
+                    ? tmpl.target_objs[best_j].w : tmpl.target_objs[best_j].h;
+        if (tsize < 1) tsize = 1;
+        float ps = 1.0f - (float)cheb / (float)(tsize * 2);
+        if (ps < 0.0f) ps = 0.0f;
+        position_score += ps;
+    }
+}
 
 static gpu_example_template* d_example_templates = nullptr;
 static bool d_examples_uploaded = false;
@@ -4123,43 +4192,54 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
             // color credit is granted whenever feasible. Position bonus is a
             // continuous (1 - chebyshev/target_size) per matched pair —
             // normalized by the target CC's own footprint, not the grid.
-            bool used[GPU_MAX_TARGET_OBJECTS];
-            for (int j = 0; j < GPU_MAX_TARGET_OBJECTS; ++j) used[j] = false;
-            for (int i = 0; i < attempt_count; ++i) {
-                int best_j = -1;
-                bool best_color = false;
-                for (int j = 0; j < tmpl.target_obj_count; ++j) {
-                    if (used[j]) continue;
-                    if (attempt_summaries[i].w != tmpl.target_objs[j].w) continue;
-                    if (attempt_summaries[i].h != tmpl.target_objs[j].h) continue;
-                    if (attempt_summaries[i].count != tmpl.target_objs[j].count) continue;
-                    bool cm = (attempt_summaries[i].color == tmpl.target_objs[j].color);
-                    if (best_j < 0 || (cm && !best_color)) {
-                        best_j = j;
-                        best_color = cm;
-                        if (cm) break;
-                    }
-                }
-                if (best_j >= 0) {
-                    used[best_j] = true;
-                    shape_matches++;
-                    if (best_color) color_matches++;
-                    int acx = attempt_summaries[i].x0 * 2 + (attempt_summaries[i].w - 1);
-                    int acy = attempt_summaries[i].y0 * 2 + (attempt_summaries[i].h - 1);
-                    int tcx = tmpl.target_objs[best_j].x0 * 2 + (tmpl.target_objs[best_j].w - 1);
-                    int tcy = tmpl.target_objs[best_j].y0 * 2 + (tmpl.target_objs[best_j].h - 1);
-                    int dx = acx > tcx ? acx - tcx : tcx - acx;
-                    int dy = acy > tcy ? acy - tcy : tcy - acy;
-                    int cheb = dx > dy ? dx : dy;
-                    int tsize = tmpl.target_objs[best_j].w > tmpl.target_objs[best_j].h
-                                ? tmpl.target_objs[best_j].w : tmpl.target_objs[best_j].h;
-                    if (tsize < 1) tsize = 1;
-                    float norm = (float)cheb / (float)(tsize * 2);
-                    float ps = 1.0f - norm;
-                    if (ps < 0.0f) ps = 0.0f;
-                    position_score += ps;
+            gpu_match_summaries(attempt_summaries, attempt_count, tmpl,
+                                shape_matches, color_matches, position_score);
+        }
+
+        // THE HAND, JUDGED BY THE SAME RULE AS THE CANVAS. A sentence that only
+        // prepares paints nothing, so the canvas terms score it as if it did
+        // nothing; asking the held objects the same question is what makes the
+        // preparation visible. Boxes come from the paint, not the declared bbox,
+        // because a Colors layer carries the whole source frame.
+        int hand_shape = 0, hand_color = 0;
+        float hand_position = 0.0f;
+        {
+            __shared__ gpu_object_summary hand_summaries[GPU_MAX_TARGET_OBJECTS];
+            int hand_count = 0;
+            const gpu_object_list* held = gpu_current_objects(ctx);
+            if (held) {
+                int held_n = min((int)held->count, GPU_KERNEL_MAX_OBJECTS);
+                for (int i = 0; i < held_n && hand_count < GPU_MAX_TARGET_OBJECTS; ++i) {
+                    const gpu_fixed_object& obj = held->objects[i];
+                    const gpu_painted_box box = gpu_box_of_paint(obj);
+                    if (box.width <= 0 || box.height <= 0) continue;
+                    // Dominant painted color, so a mixed object still says one
+                    // thing; it simply forfeits color credit when it disagrees.
+                    int tally[GPU_MAX_COLORS];
+                    for (int k = 0; k < GPU_MAX_COLORS; ++k) tally[k] = 0;
+                    int painted = 0;
+                    for (int r = 0; r < box.height; ++r)
+                        for (int c = 0; c < box.width; ++c) {
+                            int8_t v = obj.mask[box.y0 + r][box.x0 + c];
+                            if (v == GPU_TRANSPARENT) continue;
+                            painted++;
+                            if (v >= 0 && v < GPU_MAX_COLORS) tally[v]++;
+                        }
+                    if (painted <= 0) continue;
+                    int top = 0;
+                    for (int k = 1; k < GPU_MAX_COLORS; ++k) if (tally[k] > tally[top]) top = k;
+                    gpu_object_summary& sum = hand_summaries[hand_count++];
+                    sum.color = (int8_t)top;
+                    sum.w = (int8_t)box.width;
+                    sum.h = (int8_t)box.height;
+                    sum.x0 = (int8_t)(obj.x0 + box.x0);
+                    sum.y0 = (int8_t)(obj.y0 + box.y0);
+                    sum.count = (int16_t)painted;
                 }
             }
+            if (hand_count > 0)
+                gpu_match_summaries(hand_summaries, hand_count, tmpl,
+                                    hand_shape, hand_color, hand_position);
         }
 
         // Focus term (GPU-only, like lookahead): correct cells of the focus
@@ -4176,6 +4256,9 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                     + shape_matches * GPU_SCORE_W_SHAPE_MATCH
                     + color_matches * GPU_SCORE_W_COLOR_MATCH
                     + position_score * GPU_SCORE_W_POSITION_MATCH
+                    + hand_shape * GPU_SCORE_W_SHAPE_MATCH
+                    + hand_color * GPU_SCORE_W_COLOR_MATCH
+                    + hand_position * GPU_SCORE_W_POSITION_MATCH
                     // EXPERIMENT: lookahead removed. It scores what a chain is
                     // still HOLDING as if it were about to paint it -- the answer
                     // to an unfinished chain, which the four-beat cannot produce:
@@ -4236,6 +4319,9 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         terms.shape             = shape_matches * GPU_SCORE_W_SHAPE_MATCH;
         terms.color             = color_matches * GPU_SCORE_W_COLOR_MATCH;
         terms.position          = position_score * GPU_SCORE_W_POSITION_MATCH;
+        terms.hand              = hand_shape * GPU_SCORE_W_SHAPE_MATCH
+                                + hand_color * GPU_SCORE_W_COLOR_MATCH
+                                + hand_position * GPU_SCORE_W_POSITION_MATCH;
         terms.node_penalty      = -(nc * GPU_SCORE_W_NODE_PENALTY);
         terms.dimension_penalty = -dim_pen;
         terms.total             = total;

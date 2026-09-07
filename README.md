@@ -18,4 +18,3 @@
 
 # 4. Licence
 1. MIT No Attribution, see `LICENSE`. Take it and do anything, no strings.
-2. `include\third_party\fmt` is someone else's, MIT, and keeps its own notice.

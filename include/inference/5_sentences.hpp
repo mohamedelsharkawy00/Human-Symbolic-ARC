@@ -27,6 +27,10 @@ using namespace std;
 struct said_reading {
     vector<string> sentences;
     vector<string> no_word_for;
+    // OPENINGS THE READING COULD NOT RULE OUT. Only the first sentence can be
+    // said more than one way -- everything after it hangs off the chosen
+    // reading's own pieces, so a rival cut has no follow-on to go with it.
+    vector<string> other_openings;
 };
 
 // WHAT AN OBJECT IS, as the word that cuts the same way. Split's argument is
@@ -58,7 +62,19 @@ inline vector<string> words_for_pose(int pose) {
     }
 }
 
-inline said_reading say_the_reading(const correspondence_facts& facts) {
+// WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
+// detector filled it; feeding one op the other's table would be silent nonsense.
+inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
+    if (!rule.valid) return nullptr;
+    switch (rule.claimed_by) {
+        case shape_color_map_rule::body_recolor:  return "ShapeColorMap";
+        case shape_color_map_rule::interior_fill: return "ShapeToInteriorColorMap";
+        default:                                  return nullptr;
+    }
+}
+
+inline said_reading say_the_reading(const inference& inf) {
+    const correspondence_facts& facts = inf.correspondence;
     said_reading said;
     if (!facts.valid || facts.pairs.empty()) return said;
 
@@ -80,53 +96,87 @@ inline said_reading say_the_reading(const correspondence_facts& facts) {
     if (const char* cut = word_for_cut(facts.cut_kind)) say(cut);
     else said.no_word_for.push_back(string("the cut ") + split_name((int)facts.cut_kind));
 
-    // THE TURN, only when every kept edge in every pair turned the same way. A
-    // turn one piece alone saw is a coincidence with nobody to back it, and a
-    // program cannot turn one piece differently from the next anyway.
-    int turn = -1;
-    bool turns_differ = false;
-    for (const auto& pair : facts.pairs)
-        for (const auto& edge : pair.edges) {
-            if (!edge.same_shape) continue;
-            if (turn < 0) turn = edge.pose;
-            else if (turn != edge.pose) turns_differ = true;
-        }
-    if (turns_differ) said.no_word_for.push_back("a turn that differs from piece to piece");
-    else if (turn > 0)
-        for (const string& word : words_for_pose(turn)) say(word);
-
-    // THE MOVE, only when every pair said the same one. Each pair's loudest
-    // agreement is the one the most pieces backed; pairs that disagree with
-    // each other have said nothing a test pair could hear.
-    bool have_move = allowed.translate && !facts.pairs.empty();
-    bool first_pair = true;
-    int down = 0, across = 0;
-    for (const auto& pair : facts.pairs) {
-        const correspondence_facts::pair_info::moved_together* loudest = nullptr;
-        for (const auto& moved : pair.agreed_moves)
-            if (!loudest || moved.pieces > loudest->pieces) loudest = &moved;
-        if (!loudest) { have_move = false; break; }  // nobody agreed here
-        if (first_pair) { down = loudest->down; across = loudest->across; first_pair = false; }
-        else if (loudest->down != down || loudest->across != across) {
-            have_move = false;
-            said.no_word_for.push_back("a move the pairs did not agree on");
-            break;
-        }
+    // The cuts that explained just as much. Said as openings of their own so a
+    // search can try each, rather than trusting the order they were declared in.
+    for (int8_t cell : facts.tied_with_chosen) {
+        if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
+        const char* cut = word_for_cut(facts.readings[cell].cut_kind);
+        if (!cut) continue;
+        string opening = string("Input SelectAll ") + cut + " " + combine;
+        bool already = !said.sentences.empty() && said.sentences.front() == opening;
+        for (const string& seen : said.other_openings) already = already || seen == opening;
+        if (!already) said.other_openings.push_back(opening);
     }
-    if (have_move) {
-        // One act to a sentence, so a corner-to-corner move is two of them.
-        if (across != 0) say("MoveRow[" + to_string((int)across) + "]");
-        if (down != 0)   say("MoveColumn[" + to_string((int)down) + "]");
-    } else if (allowed.translate) {
-        said.no_word_for.push_back("a move that differs from piece to piece");
+
+    // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND
+    // move AND change colour, so a line carries several acts -- and the grammar
+    // gives each act its own sentence, all sharing the line's GET and SELECT.
+    // Only the last of them paints; the rest withhold, which is what that word
+    // is for. A line must hold in EVERY pair, or it is one example's accident.
+    struct line_key {
+        int8_t color;      // the selection, as the only thing a SELECT can name
+        int8_t pose;
+        int8_t down, across;
+        int8_t recolor_to;
+        bool operator==(const line_key& other) const {
+            return color == other.color && pose == other.pose && down == other.down &&
+                   across == other.across && recolor_to == other.recolor_to;
+        }
+    };
+    vector<line_key> lines_in_every_pair;
+    for (size_t which = 0; which < facts.pairs.size(); ++which) {
+        const auto& pair = facts.pairs[which];
+        vector<line_key> here;
+        for (const auto& edge : pair.edges) {
+            if (!edge.from_input || !edge.same_shape) continue;
+            if (edge.from < 0 || edge.from >= (int16_t)pair.input_objects.size()) continue;
+            const auto& piece = pair.input_objects[edge.from];
+            line_key key{piece.color, edge.pose,
+                         (int8_t)(edge.row - piece.top), (int8_t)(edge.col - piece.left),
+                         edge.exact ? (int8_t)-1 : edge.recolored_to};
+            if (key.pose == 0 && key.down == 0 && key.across == 0 && key.recolor_to < 0)
+                continue;  // nothing happened to it, so there is no line to say
+            bool seen = false;
+            for (const auto& already : here) seen = seen || (already == key);
+            if (!seen) here.push_back(key);
+        }
+        if (which == 0) { lines_in_every_pair = here; continue; }
+        vector<line_key> still;
+        for (const auto& key : lines_in_every_pair)
+            for (const auto& mine : here)
+                if (key == mine) { still.push_back(key); break; }
+        lines_in_every_pair = still;
+    }
+
+    for (const auto& key : lines_in_every_pair) {
+        const string pick = key.color < 0 ? string("SelectAll")
+                                          : "SelectColor[" + to_string((int)key.color) + "]";
+        vector<string> acts;
+        for (const string& word : words_for_pose(key.pose)) acts.push_back(word);
+        if (key.across != 0) acts.push_back("MoveRow[" + to_string((int)key.across) + "]");
+        if (key.down != 0)   acts.push_back("MoveColumn[" + to_string((int)key.down) + "]");
+        if (key.recolor_to >= 0) acts.push_back("Recolor[" + to_string((int)key.recolor_to) + "]");
+        for (size_t i = 0; i < acts.size(); ++i)
+            said.sentences.push_back(
+                string(said.sentences.empty() ? "Input" : "CurrentObjects") + " " + pick + " " +
+                acts[i] + " " + (i + 1 < acts.size() ? "Withhold" : combine));
     }
 
     // Said last because nothing spells it yet: a recolor needs the map from the
     // old color to the new one, and the reading carries the pieces, not the map.
+    // Colours that trade places. Said before the reading's own recolor, because
+    // a swap is the whole story for the cells it touches and needs no pieces.
+    for (int variant = 0; variant < 45; ++variant)
+        if (inf.color_swaps.variant[variant])
+            say("BidiColorMap[" + to_string(variant) + "]");
+
     if (allowed.recolor)
         for (const auto& pair : facts.pairs)
             if (pair.found_recolored > 0) {
-                said.no_word_for.push_back("a recolor");
+                if (const char* word = word_for_learned_recolor(inf.shape_color_map))
+                    say(word);
+                else
+                    said.no_word_for.push_back("a recolor");
                 break;
             }
 
