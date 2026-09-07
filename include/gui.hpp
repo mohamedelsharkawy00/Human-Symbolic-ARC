@@ -926,6 +926,16 @@ inline vector<row_place> left_over_of(const vector<correspondence_facts::pair_in
   return all;
 }
 
+// THE ONE READING ON SCREEN, walked ONCE A FRAME and handed to whoever draws
+// it. Every walk below sorts, and the pane runs its body twice — to measure and
+// to draw — so working them out where they are used cost three walks a frame.
+struct reading_on_screen {
+  const vector<correspondence_facts::pair_info>* pairs = nullptr;
+  vector<piece_place> pieces, alone;
+  vector<row_place> refused, left_over, lines;
+  vector<motif_set> sets;
+};
+
 // Every edge of the reading, both ways round, one list a stepper can walk.
 inline vector<row_place> lines_of(const vector<correspondence_facts::pair_info>& pairs) {
   vector<row_place> all;
@@ -1094,6 +1104,7 @@ inline void draw_selection(vulkan_context *context, const puzzle &task,
 inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, grid> &font,
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
+                                const reading_on_screen &walked,
                                 int view, int rank, int step, int drawn,
                                 int piece_at, int dropped_at, int motif_at,
                                 int left_over_at) {
@@ -1330,11 +1341,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // The pieces the reading cut out, and the matches it threw away. Neither is
       // reachable through the lines: a piece with no edge draws nothing, and a
       // thrown-away match was never drawn at all.
-      const vector<piece_place> pieces = pieces_of(pairs);
-      const vector<piece_place> alone = pieces_standing_alone(pairs, pieces);
-      const vector<row_place> refused = refusals_of(pairs);
-      const vector<row_place> left_over = left_over_of(pairs);
-      const vector<row_place> lines = lines_of(pairs);
+      const auto& pieces = walked.pieces;
+      const auto& alone = walked.alone;
+      const auto& refused = walked.refused;
+      const auto& left_over = walked.left_over;
+      const auto& lines = walked.lines;
       const int pieces_n = (int)alone.size();
       const int dropped_n = (int)refused.size();
       const int left_over_n = (int)left_over.size();
@@ -1381,7 +1392,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
         }
         detail(said);
       }
-      const vector<motif_set> sets = motif_sets(pairs, pieces);
+      const auto& sets = walked.sets;
       track_row("MOTIF", "O", motif_at, (int)sets.size(), (int)arc_color::magenta,
                 ui_action::step_motif_back, ui_action::step_motif, &app_state.inference_motif);
       // THE SET OF COPIES YOU ARE ON — one set, on one grid, so its count, its
@@ -2393,18 +2404,26 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
     static const vector<correspondence_facts::pair_info> nothing;
     const auto &pairs = rank < (int)correspondence.reading_pairs.size()
                           ? correspondence.reading_pairs[rank] : nothing;
-    const vector<piece_place> pieces = pieces_of(pairs);
-    const vector<piece_place> alone = pieces_standing_alone(pairs, pieces);
-    const vector<row_place> refused = refusals_of(pairs);
-    const vector<row_place> left_over = left_over_of(pairs);
-    const int drawn = (int)lines_of(pairs).size();
+    reading_on_screen walked;
+    walked.pairs = &pairs;
+    walked.pieces = pieces_of(pairs);
+    walked.alone = pieces_standing_alone(pairs, walked.pieces);
+    walked.refused = refusals_of(pairs);
+    walked.left_over = left_over_of(pairs);
+    walked.lines = lines_of(pairs);
+    walked.sets = motif_sets(pairs, walked.pieces);
+    const auto& pieces = walked.pieces;
+    const auto& alone = walked.alone;
+    const auto& refused = walked.refused;
+    const auto& left_over = walked.left_over;
+    const int drawn = (int)walked.lines.size();
     // Each track is told how long its list is and hands back what is chosen.
     const int pieces_n = (int)alone.size();
     const int dropped_n = (int)refused.size();
     const int step = app_state.inference_edge.pick(drawn);
     const int piece_at = app_state.inference_piece.pick(pieces_n);
     const int dropped_at = app_state.inference_dropped.pick(dropped_n);
-    const vector<motif_set> sets = motif_sets(pairs, pieces);
+    const auto& sets = walked.sets;
     const int motif_at = app_state.inference_motif.pick((int)sets.size());
     const int left_over_n = (int)left_over.size();
     const int left_over_at = app_state.inference_left_over.pick(left_over_n);
@@ -2471,8 +2490,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
                        (int)arc_color::orange, rings);
       }
     }
-    draw_inference_pane(context, font, app_state, task, lay, view, rank, step,
-                        drawn, piece_at, dropped_at, motif_at, left_over_at);
+    draw_inference_pane(context, font, app_state, task, lay, walked, view, rank,
+                        step, drawn, piece_at, dropped_at, motif_at, left_over_at);
   }
 
   // The op palette goes last, so it is over everything. It already swallows every
