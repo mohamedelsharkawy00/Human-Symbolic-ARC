@@ -26,17 +26,6 @@ using namespace std;
 // a question is about is the only one that has to be read.
 #ifdef _MSC_VER
 
-// A color set as digits: "0,3,4", or "-" for none.
-inline string colorset(const bool member[10]) {
-    string listed;
-    for (int color = 0; color < 10; ++color)
-        if (member[color]) {
-            if (!listed.empty()) listed += ',';
-            listed += (char)('0' + color);
-        }
-    return listed.empty() ? string("-") : listed;
-}
-
 // Which grid an edge starts on. A reading holds both, so this is per edge.
 inline const char* edge_side(const correspondence_facts::edge& edge) {
     return edge.from_input ? "in->out" : "out->in";
@@ -78,15 +67,15 @@ inline void report_dims(ostream& report, const output_dimension_rule& size) {
 
 inline void report_colors(ostream& report, const color_facts& colors) {
     report << "[colors]\n";
-    report << "consumed " << colorset(colors.consumed)
-      << "  introduced " << colorset(colors.introduced)
-      << "  preserved " << colorset(colors.preserved) << "\n";
-    report << "every_input " << colorset(colors.in_every_input)
-      << "  any_input " << colorset(colors.in_any_input)
-      << "  every_output " << colorset(colors.in_every_output)
-      << "  any_output " << colorset(colors.in_any_output) << "\n";
-    report << "every_grid " << colorset(colors.in_every_grid)
-      << "  any_grid " << colorset(colors.in_any_grid)
+    report << "consumed " << colors_as_text(colors.consumed)
+      << "  introduced " << colors_as_text(colors.introduced)
+      << "  preserved " << colors_as_text(colors.preserved) << "\n";
+    report << "every_input " << colors_as_text(colors.in_every_input)
+      << "  any_input " << colors_as_text(colors.in_any_input)
+      << "  every_output " << colors_as_text(colors.in_every_output)
+      << "  any_output " << colors_as_text(colors.in_any_output) << "\n";
+    report << "every_grid " << colors_as_text(colors.in_every_grid)
+      << "  any_grid " << colors_as_text(colors.in_any_grid)
       << "  background " << (int)colors.background_color << "\n";
     report << "output_colors ";
     for (int i = 0; i < colors.output_colors_count; ++i)
@@ -234,32 +223,45 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
 // WHAT EACH READING ACTUALLY CUT AND WHERE EACH PIECE WENT, every reading, both
 // sides. The numbers above can agree while the cuts disagree, and only the
 // pieces say how; and a reading that leaves a cell over is only readable next
-// to the edges it did draw. `seen` is the GUI's bridged readout — templated so
-// this file keeps knowing nothing about its types.
-template <class Readout>
-inline void report_pieces_seen(ostream& report, const Readout& seen) {
-    for (size_t i = 0; i < seen.readings.size(); ++i) {
+// to the edges it did draw. Read straight off the readings -- it used to be
+// handed a screen-shaped copy of them, and could only say what that copy kept.
+inline void report_pieces_seen(ostream& report, const correspondence_facts& correspondence) {
+    const char* newline = "\n";
+    for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
         report << "  reading " << i << " pieces   "
-          << split_name(seen.readings[i].cut_kind)
-          << "  [" << match_mode::from_index(seen.readings[i].match_kind).label()
-          << "]\n";
-        for (const auto& seen_piece : seen.readings[i].pieces_seen)
-            report << "    pair " << (int)seen_piece.pair << ' ' << (seen_piece.from_input ? "in " : "out")
-              << "  color " << (int)seen_piece.color
-              << " at " << (int)seen_piece.x << ',' << (int)seen_piece.y
-              << ' ' << (int)seen_piece.w << 'x' << (int)seen_piece.h
-              << " px " << seen_piece.cells << " edges " << seen_piece.edges << "\n";
-        for (const auto& line : seen.lines) {
-            if (line.rank != (int8_t)i) continue;
-            report << "    pair " << (int)line.pair
-              << "  " << (int)line.from_w << 'x' << (int)line.from_h
-              << " at " << (int)line.from_x << ',' << (int)line.from_y
-              << " -> " << (int)line.to_w << 'x' << (int)line.to_h
-              << " at " << (int)line.to_x << ',' << (int)line.to_y;
-            if (line.hidden) report << ", " << (int)line.hidden << " hidden";
-            if (line.outside) report << ", " << (int)line.outside << " off grid";
-            report << "\n";
-        }
+          << split_name((int)correspondence.readings[i].cut_kind)
+          << "  [" << correspondence.readings[i].match_kind.label() << "]" << newline;
+        const auto& pairs = correspondence.reading_pairs[i];
+        for (size_t which = 0; which < pairs.size(); ++which)
+            for (int side = 0; side < 2; ++side) {
+                const auto& list = side ? pairs[which].output_objects
+                                        : pairs[which].input_objects;
+                for (const auto& piece : list)
+                    report << "    pair " << which << (side ? " out" : " in ")
+                      << "  color " << (int)piece.color
+                      << " at " << (int)piece.left << "," << (int)piece.top
+                      << " " << (int)piece.width << "x" << (int)piece.height
+                      << " px " << piece.count
+                      << " edges " << piece.edges_touching << newline;
+            }
+        for (size_t which = 0; which < pairs.size(); ++which)
+            for (const auto& edge : pairs[which].edges) {
+                const auto& mine = edge.from_input ? pairs[which].input_objects
+                                                   : pairs[which].output_objects;
+                const auto& theirs = edge.from_input ? pairs[which].output_objects
+                                                     : pairs[which].input_objects;
+                const auto& piece = mine[edge.from];
+                const int landed_w = edge.to >= 0 ? theirs[edge.to].width : piece.width;
+                const int landed_h = edge.to >= 0 ? theirs[edge.to].height : piece.height;
+                report << "    pair " << which
+                  << "  " << (int)piece.width << "x" << (int)piece.height
+                  << " at " << (int)piece.left << "," << (int)piece.top
+                  << " -> " << landed_w << "x" << landed_h
+                  << " at " << (int)edge.col << "," << (int)edge.row;
+                if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
+                if (edge.outside) report << ", " << (int)edge.outside << " off grid";
+                report << newline;
+            }
     }
 }
 
@@ -331,8 +333,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
 
 #endif
 
-template <class Readout>
-inline void log_inference(const string& id, const inference& inf, const Readout& seen,
+inline void log_inference(const string& id, const inference& inf,
                           int idx = -1, int count = 0, int dataset_flags = 0) {
 #ifdef _MSC_VER
     static once_flag dir_flag;
@@ -351,7 +352,7 @@ inline void log_inference(const string& id, const inference& inf, const Readout&
     report_correspondence_readings(report, inf.correspondence);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
-    report_pieces_seen(report, seen);
+    report_pieces_seen(report, inf.correspondence);
     for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)
         report_one_pair(report, i, inf.correspondence.pairs[i]);
 #endif

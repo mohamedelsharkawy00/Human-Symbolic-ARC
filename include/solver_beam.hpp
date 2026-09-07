@@ -390,9 +390,9 @@ public:
   inline bool color_literal_allowed(node_type type, int16_t value) const {
     if (!m_app_state.pin_color_literals) return true;
     if (type == node_type::BidiColorMap) {
-      if (m_puzzle.color_swap_variants_count == 0) return true;  // not learned -> full fan-out
+      if (m_puzzle.inf.color_swaps.count == 0) return true;  // not learned -> full fan-out
       if (value < 0 || value >= 45) return true;   // out-of-range guard
-      return m_puzzle.color_swap_variants[value];
+      return m_puzzle.inf.color_swaps.variant[value];
     }
     const bool reads_color = type == node_type::SelectObjectsContainingColor ||
                              type == node_type::SelectColor;
@@ -406,11 +406,14 @@ public:
     // via candidate-side checks (see Background Per-Side Split note).
     // A color a chain asks about has to be one the input can answer with, and a
     // color it lays down has to be one an output actually shows.
-    const bool *side = reads_color ? m_puzzle.colors_in_any_input
-                                   : m_puzzle.colors_in_any_output;
-    const int side_count = reads_color ? m_puzzle.colors_in_any_input_count
-                                       : m_puzzle.colors_in_any_output_count;
-    if (side_count == 0) return true;            // no set -> don't pin
+    const bool *side = reads_color ? m_puzzle.inf.colors.in_any_input
+                                   : m_puzzle.inf.colors.in_any_output;
+    // NO SET, NO PINNING. Asked of the set itself, not of a count kept beside
+    // it — a count is the same fact said twice, and it drifted the moment one
+    // of the two was filled and the other was not.
+    bool anything_known = false;
+    for (int i = 0; i < 10; ++i) anything_known |= side[i];
+    if (!anything_known) return true;
     return side[value];
   }
   // RANKING (Background Per-Side Split note, level 1): iterate color-literal
@@ -425,8 +428,9 @@ public:
     const bool read_op  = type == node_type::SelectObjectsContainingColor;
     const bool write_op = type == node_type::AddColor  || type == node_type::Recolor;
     if (!read_op && !write_op) return v;
-    int8_t bg = read_op ? m_puzzle.bg.input_elected : m_puzzle.bg.output_elected;
-    if (write_op && bg < 0) bg = m_puzzle.bg.input_elected;
+    const auto& background = m_puzzle.inf.background;
+    int8_t bg = read_op ? background.input_elected() : background.output_elected();
+    if (write_op && bg < 0) bg = background.input_elected();
     if (bg < 0) return v;
     int variants = get_variant_count(type);
     int bg_idx = -1;

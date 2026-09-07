@@ -787,6 +787,79 @@ inline void draw_line(vulkan_context *context, int color,
 // `first_line < 0`, which is credited by overlapping BOXES and so called every
 // piece sitting in a ring's hole answered by whatever answered the ring.
 
+// A STEPPER WANTS ONE LIST, THE FACTS ARE NESTED. So the walk is a list of
+// PLACES in the facts — which pair, which side, which one — and never a copy of
+// what is there. Four bytes a row instead of thirty, and a row cannot say less
+// than the fact it points at, which a copy always eventually did.
+// Built for the ONE reading on screen, not all eighty, so it is a fraction of
+// the work the stored copy did on every load.
+struct piece_place {
+  int8_t pair = 0;
+  bool from_input = true;
+  int16_t which = 0;
+};
+struct row_place {
+  int8_t pair = 0;
+  int16_t which = 0;
+};
+
+// The piece a place names. Which list it is in is the place's own side, the
+// same way an edge carries the side it was read from.
+inline const correspondence_facts::object_info& piece_in(
+    const vector<correspondence_facts::pair_info>& pairs, const piece_place& at) {
+  const auto& pair = pairs[at.pair];
+  return (at.from_input ? pair.input_objects : pair.output_objects)[at.which];
+}
+
+// WHERE ONE EDGE RUNS, in cells: the box the piece sits in, and the box it
+// landed on. Worked out where it is drawn rather than stored beside the edge —
+// it is a reading of the facts, not another fact.
+// Hanging off the edge, the landing is the piece's OWN size: the window is
+// whole even where the grid stops.
+struct line_ends {
+  int8_t from_x = 0, from_y = 0, from_w = 0, from_h = 0;
+  int8_t to_x = 0, to_y = 0, to_w = 0, to_h = 0;
+};
+inline line_ends ends_of(const correspondence_facts::pair_info& pair,
+                         const correspondence_facts::edge& edge) {
+  const auto& mine = edge.from_input ? pair.input_objects : pair.output_objects;
+  const auto& theirs = edge.from_input ? pair.output_objects : pair.input_objects;
+  const auto& piece = mine[edge.from];
+  const int8_t w = edge.to >= 0 ? theirs[edge.to].width : piece.width;
+  const int8_t h = edge.to >= 0 ? theirs[edge.to].height : piece.height;
+  return { piece.left, piece.top, piece.width, piece.height,
+           edge.col, edge.row, w, h };
+}
+
+// What the edge CLAIMS, which the drawing cannot say: found as itself, found
+// wearing another color, or not found at all and only sitting on what it
+// overlaps most. Said in the order the claim weakens.
+enum : int8_t { line_exact, line_recolored, line_sits_on };
+inline int8_t claim_of(const correspondence_facts::edge& edge) {
+  return !edge.same_shape ? line_sits_on : edge.exact ? line_exact : line_recolored;
+}
+
+// The pieces of one reading, both grids, IN THE ORDER THE SCREEN READS: the
+// pair, then the input column before the output one, then down the grid. The
+// cut is biggest-first, which is not a thing on screen — walked that way the
+// box you are stepping bounced between the columns.
+inline vector<piece_place> pieces_of(const vector<correspondence_facts::pair_info>& pairs) {
+  vector<piece_place> all;
+  for (size_t pair = 0; pair < pairs.size(); ++pair)
+    for (int side = 0; side < 2; ++side) {
+      const auto& list = side ? pairs[pair].output_objects : pairs[pair].input_objects;
+      for (size_t i = 0; i < list.size(); ++i)
+        all.push_back({ (int8_t)pair, side == 0, (int16_t)i });
+    }
+  stable_sort(all.begin(), all.end(), [&](const piece_place& a, const piece_place& b) {
+    const auto& one = piece_in(pairs, a);
+    const auto& two = piece_in(pairs, b);
+    return tuple{ a.pair, !a.from_input, one.top, one.left } <
+           tuple{ b.pair, !b.from_input, two.top, two.left };
+  });
+  return all;
+}
+
 // EVERY SET OF COPIES THERE ACTUALLY IS. A set is elected PER GRID, so a set
 // number on its own names one set on every grid at once — the same number
 // meaning a different set on each. One step here is one set on one grid, which
@@ -797,30 +870,69 @@ struct motif_set {
   int16_t which = -1;
   bool operator==(const motif_set&) const = default;
 };
-inline vector<motif_set> motif_sets(const puzzle::correspondence_readout::reading& R) {
+inline vector<motif_set> motif_sets(const vector<correspondence_facts::pair_info>& pairs,
+                                    const vector<piece_place>& pieces) {
   vector<motif_set> sets;
-  for (const auto& pc : R.pieces_seen) {
+  for (const auto& at : pieces) {
+    const auto& pc = piece_in(pairs, at);
     if (pc.motif < 0) continue;
-    const motif_set here{ pc.pair, pc.from_input, pc.motif };
+    const motif_set here{ at.pair, at.from_input, pc.motif };
     if (ranges::find(sets, here) == sets.end()) sets.push_back(here);
   }
   return sets;
 }
-inline bool piece_is_in(const puzzle::correspondence_readout::reading::piece_row& pc,
-                        const motif_set& set) {
+inline bool piece_is_in(const correspondence_facts::object_info& pc,
+                        const piece_place& at, const motif_set& set) {
   return pc.motif >= 0 && pc.motif == set.which &&
-         pc.pair == set.pair && pc.from_input == set.from_input;
+         at.pair == set.pair && at.from_input == set.from_input;
 }
 
 // THE PIECES THAT STAND ALONE — the ones no piece on the other grid is. Not
 // the ones nothing can be said about: deleted, inserted and covered are all
 // answers, and each one is said under the stepper. What these lack is a
 // partner, which is why the walk is named for that and not for silence.
-inline vector<int> pieces_standing_alone(const puzzle::correspondence_readout::reading& R) {
-  vector<int> which;
-  for (int i = 0; i < (int)R.pieces_seen.size(); ++i)
-    if (!R.pieces_seen[i].has_partner) which.push_back(i);
-  return which;
+inline vector<piece_place> pieces_standing_alone(
+    const vector<correspondence_facts::pair_info>& pairs,
+    const vector<piece_place>& pieces) {
+  vector<piece_place> alone;
+  for (const auto& at : pieces)
+    if (!piece_in(pairs, at).has_partner) alone.push_back(at);
+  return alone;
+}
+
+// The refused matches, read the same way round, off the piece each was for.
+inline vector<row_place> refusals_of(const vector<correspondence_facts::pair_info>& pairs) {
+  vector<row_place> all;
+  for (size_t pair = 0; pair < pairs.size(); ++pair)
+    for (size_t i = 0; i < pairs[pair].discarded.size(); ++i)
+      all.push_back({ (int8_t)pair, (int16_t)i });
+  stable_sort(all.begin(), all.end(), [&](const row_place& a, const row_place& b) {
+    const auto& one = pairs[a.pair].discarded[a.which];
+    const auto& two = pairs[b.pair].discarded[b.which];
+    const auto& mine = one.from_input ? pairs[a.pair].input_objects : pairs[a.pair].output_objects;
+    const auto& theirs = two.from_input ? pairs[b.pair].input_objects : pairs[b.pair].output_objects;
+    return tuple{ a.pair, !one.from_input, mine[one.from].top, mine[one.from].left } <
+           tuple{ b.pair, !two.from_input, theirs[two.from].top, theirs[two.from].left };
+  });
+  return all;
+}
+
+// The cells the reading could not account for, in the order they were found.
+inline vector<row_place> left_over_of(const vector<correspondence_facts::pair_info>& pairs) {
+  vector<row_place> all;
+  for (size_t pair = 0; pair < pairs.size(); ++pair)
+    for (size_t i = 0; i < pairs[pair].left_over.size(); ++i)
+      all.push_back({ (int8_t)pair, (int16_t)i });
+  return all;
+}
+
+// Every edge of the reading, both ways round, one list a stepper can walk.
+inline vector<row_place> lines_of(const vector<correspondence_facts::pair_info>& pairs) {
+  vector<row_place> all;
+  for (size_t pair = 0; pair < pairs.size(); ++pair)
+    for (size_t i = 0; i < pairs[pair].edges.size(); ++i)
+      all.push_back({ (int8_t)pair, (int16_t)i });
+  return all;
 }
 
 // SAME SPOT, ANOTHER OUTLINE. Several overlays can each have something to say
@@ -888,48 +1000,53 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
                                 const frame_layout &lay, int rank, int pick,
                                 nested_outlines &rings) {
   int inputs_n = (int)(task.train.size() + task.test.size());
-  if (inputs_n <= 0 || rank >= (int)task.correspondence.readings.size()) return;
+  const auto& correspondence = task.inf.correspondence;
+  if (inputs_n <= 0 || rank >= (int)correspondence.reading_pairs.size()) return;
+  const auto& pairs = correspondence.reading_pairs[rank];
   int slot_h = (lay.footer1_y - lay.grid_data_start_y) / inputs_n;
   int col_w = lay.screen_w / 4;
   int t = max(1, lay.scale);
   int nth = -1;
-  for (const auto &ln : task.correspondence.lines) {
-    if (ln.rank != rank) continue;
+  for (const row_place& at : lines_of(pairs)) {
     if (pick >= 0 && ++nth != pick) continue;
-    if (ln.pair < 0 || ln.pair >= (int)task.train.size()) continue;
-    const example &ex = task.train[ln.pair];
-    int row_y = lay.grid_data_start_y + ln.pair * slot_h;
+    if (at.pair < 0 || at.pair >= (int)task.train.size()) continue;
+    const auto& edge = pairs[at.pair].edges[at.which];
+    const line_ends ends = ends_of(pairs[at.pair], edge);
+    const example &ex = task.train[at.pair];
+    int row_y = lay.grid_data_start_y + at.pair * slot_h;
     // Input is the left column, output the right; the line says which end it
     // starts on, so the two readings draw on the same grid without arguing.
-    grid_place from = place_grid_cell(ln.from_input ? ex.input : ex.output,
-                                      ln.from_input ? 0 : 1, row_y, lay, col_w, slot_h);
-    grid_place to   = place_grid_cell(ln.from_input ? ex.output : ex.input,
-                                      ln.from_input ? 1 : 0, row_y, lay, col_w, slot_h);
+    grid_place from = place_grid_cell(edge.from_input ? ex.input : ex.output,
+                                      edge.from_input ? 0 : 1, row_y, lay, col_w, slot_h);
+    grid_place to   = place_grid_cell(edge.from_input ? ex.output : ex.input,
+                                      edge.from_input ? 1 : 0, row_y, lay, col_w, slot_h);
     if (!from.fits || !to.fits) continue;
+    // Centers in HALF CELLS (2*x + w), so an even-sized box centers BETWEEN two
+    // cells instead of being nudged off by one.
     draw_line(context, (int)arc_color::yellow,
-              from.x + ln.from_col * from.scale / 2,
-              from.y + ln.from_row * from.scale / 2,
-              to.x + ln.to_col * to.scale / 2,
-              to.y + ln.to_row * to.scale / 2, t);
+              from.x + (2 * ends.from_x + ends.from_w) * from.scale / 2,
+              from.y + (2 * ends.from_y + ends.from_h) * from.scale / 2,
+              to.x + (2 * ends.to_x + ends.to_w) * to.scale / 2,
+              to.y + (2 * ends.to_y + ends.to_h) * to.scale / 2, t);
     // The two boxes the line joins: where the piece sits, and where it landed.
-    rings.add(context, from.x + ln.from_x * from.scale, from.y + ln.from_y * from.scale,
-              ln.from_w * from.scale, ln.from_h * from.scale);
+    rings.add(context, from.x + ends.from_x * from.scale, from.y + ends.from_y * from.scale,
+              ends.from_w * from.scale, ends.from_h * from.scale);
     // Hanging off the edge, the landing is the piece's own size, not the
     // clipped one — the window is whole even where the grid stops, and it is
     // drawn past the wall because that is what it says.
-    const bool clipped = (ln.outside > 0);
-    rings.add(context, to.x + ln.to_x * to.scale, to.y + ln.to_y * to.scale,
-              (clipped ? ln.from_w : ln.to_w) * to.scale,
-              (clipped ? ln.from_h : ln.to_h) * to.scale);
+    const bool clipped = (edge.outside > 0);
+    rings.add(context, to.x + ends.to_x * to.scale, to.y + ends.to_y * to.scale,
+              (clipped ? ends.from_w : ends.to_w) * to.scale,
+              (clipped ? ends.from_h : ends.to_h) * to.scale);
     // WHICH BIT OF IT WAS ALREADY THERE. A sits-on line says this piece is
     // under that one, and the box round the covering piece alone does not say
     // where underneath. So the piece's own outline is drawn a second time, on
     // the far grid, at its own place — a seed shows up inside the tile stamped
     // over it. Only for sits-on: every other line MOVED its piece, and drawing
     // it at its old place on the new grid would say it stayed.
-    if (ln.kind == puzzle::correspondence_readout::line::sits_on)
-      rings.add(context, to.x + ln.from_x * to.scale, to.y + ln.from_y * to.scale,
-                ln.from_w * to.scale, ln.from_h * to.scale, UI_COLOR_LINE, true);
+    if (claim_of(edge) == line_sits_on)
+      rings.add(context, to.x + ends.from_x * to.scale, to.y + ends.from_y * to.scale,
+                ends.from_w * to.scale, ends.from_h * to.scale, UI_COLOR_LINE, true);
   }
 }
 
@@ -1006,10 +1123,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       draw_text(context, font, "-", x + t, y + t, scale);
   };
 
-  const int readings = (int)task.correspondence.readings.size();
+  const auto& correspondence = task.inf.correspondence;
+  const int readings = (int)correspondence.readings.size();
 
-  auto& bg = task.bg;
-  auto& F = task.facts;
+  auto& bg = task.inf.background;
+  auto& F = task.inf.colors;
   const int box_h = 5 * scale + pad * 2;   // a control row is a button, not a line
   // ONE ROW HEIGHT FOR THE WHOLE PANE, the control rows' own, so a list of text
   // reads at the same rhythm as a list of buttons. And ONE BLOCK GAP: the air
@@ -1058,13 +1176,6 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   auto line = [&](const string& s) {
     if (!measuring) draw_text(context, font, s, tx, ty, scale);
     ty += line_h;
-  };
-  // Colors as a list of digits, e.g. "0,2,4"; a dash when the set is empty.
-  auto color_list = [](uint16_t m) {
-    string s;
-    for (int i = 0; i < 10; ++i)
-      if (m & (1u << i)) { if (!s.empty()) s += ','; s += (char)('0' + i); }
-    return s.empty() ? string("-") : s;
   };
 
   if (!facts_face) {
@@ -1169,7 +1280,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // from one it read as a different number from the same thing, and every
       // sentence about a reading had to say which of the two it meant.
       row_head("READING", to_text("%4d OF %d", rank, max(1, readings)),
-               rank == task.correspondence.chosen);
+               rank == correspondence.chosen);
       {
         int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
         button("> [C]", x, ty, ui_action::cycle_coarseness);
@@ -1206,22 +1317,27 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
         ty += line_h;
       };
       if (rank >= readings) return;
-      const auto& R = task.correspondence.readings[rank];
+      const auto& R = correspondence.readings[rank];
+      const auto& pairs = correspondence.reading_pairs[rank];
       // WHICH READING THIS IS, in words. The table below says it too, but only by
       // where the boxed cell sits, and hunting for it is work the reader should
       // not have to do to know what is on screen.
       detail(to_text("%s %s  ---  %s", split_names_lead,
                      split_names[clamp((int)R.cut_kind, 0,
                                        (int)split_kind::split_count - 1)],
-                     match_mode::from_index(R.match_kind).label().c_str()));
+                     R.match_kind.label().c_str()));
       static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
       // The pieces the reading cut out, and the matches it threw away. Neither is
       // reachable through the lines: a piece with no edge draws nothing, and a
       // thrown-away match was never drawn at all.
-      const vector<int> alone = pieces_standing_alone(R);
+      const vector<piece_place> pieces = pieces_of(pairs);
+      const vector<piece_place> alone = pieces_standing_alone(pairs, pieces);
+      const vector<row_place> refused = refusals_of(pairs);
+      const vector<row_place> left_over = left_over_of(pairs);
+      const vector<row_place> lines = lines_of(pairs);
       const int pieces_n = (int)alone.size();
-      const int dropped_n = (int)R.dropped_seen.size();
-      const int left_over_n = (int)R.left_over_seen.size();
+      const int dropped_n = (int)refused.size();
+      const int left_over_n = (int)left_over.size();
       track_row("LINE", "S", step, drawn, (int)arc_color::yellow,
                 ui_action::step_edge_back, ui_action::step_edge, &app_state.inference_edge);
       // THE ONE LINE YOU ARE ON, said in full. All of this is invisible in the
@@ -1229,19 +1345,21 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // found in another color, or never found at all.
       {
         string said;
-        int nth = -1;
-        for (const auto& ln : task.correspondence.lines) {
-          if (ln.rank != rank) continue;
-          if (++nth != step) continue;
+        if (step >= 0 && step < (int)lines.size()) {
+          const row_place& at = lines[step];
+          const auto& edge = pairs[at.pair].edges[at.which];
+          const line_ends ends = ends_of(pairs[at.pair], edge);
+          const auto& mine = edge.from_input ? pairs[at.pair].input_objects
+                                             : pairs[at.pair].output_objects;
+          const int8_t color = mine[edge.from].color;
           said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
-                         (int)ln.pair, (ln.color < 0 ? string("MIXED") : to_string(ln.color)).c_str(),
-                         (int)ln.from_w, (int)ln.from_h, (int)ln.from_x, (int)ln.from_y,
-                         (int)ln.to_x, (int)ln.to_y, kind_name[clamp((int)ln.kind, 0, 2)]);
-          if (ln.pose & 1) said += ", TURNED";
-          if (ln.pose & 2) said += ", FLIPPED ROWS";
-          if (ln.pose & 4) said += ", FLIPPED COLS";
-          if (ln.hidden)   said += to_text(", %d HIDDEN", (int)ln.hidden);
-          break;
+                         (int)at.pair, (color < 0 ? string("MIXED") : to_string(color)).c_str(),
+                         (int)ends.from_w, (int)ends.from_h, (int)ends.from_x, (int)ends.from_y,
+                         (int)ends.to_x, (int)ends.to_y, kind_name[claim_of(edge)]);
+          if (edge.pose & 1) said += ", TURNED";
+          if (edge.pose & 2) said += ", FLIPPED ROWS";
+          if (edge.pose & 4) said += ", FLIPPED COLS";
+          if (edge.hidden)   said += to_text(", %d HIDDEN", (int)edge.hidden);
         }
         detail(said);
       }
@@ -1252,16 +1370,18 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       {
         string said;
         if (dropped_at >= 0 && dropped_at < dropped_n) {
-          const auto& dr = R.dropped_seen[dropped_at];
+          const row_place& at = refused[dropped_at];
+          const auto& dr = pairs[at.pair].discarded[at.which];
           said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
-                         (int)dr.pair, (int)dr.piece, (int)dr.to_x, (int)dr.to_y,
-                         kind_name[clamp((int)dr.kind, 0, 2)],
-                         correspondence_facts::refusal_names[clamp((int)dr.why, 0, 2)]);
+                         (int)at.pair, (int)dr.from, (int)dr.col, (int)dr.row,
+                         kind_name[claim_of(dr)],
+                         correspondence_facts::refusal_names[
+                             clamp((int)pairs[at.pair].discard_why[at.which], 0, 3)]);
           if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
         }
         detail(said);
       }
-      const vector<motif_set> sets = motif_sets(R);
+      const vector<motif_set> sets = motif_sets(pairs, pieces);
       track_row("MOTIF", "O", motif_at, (int)sets.size(), (int)arc_color::magenta,
                 ui_action::step_motif_back, ui_action::step_motif, &app_state.inference_motif);
       // THE SET OF COPIES YOU ARE ON — one set, on one grid, so its count, its
@@ -1273,11 +1393,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
         if (motif_at >= 0 && motif_at < (int)sets.size()) {
           const motif_set& set = sets[motif_at];
           int members = 0, leader_w = 0, leader_h = 0, leader_x = 0, leader_y = 0;
-          for (const auto& pc : R.pieces_seen) {
-            if (!piece_is_in(pc, set)) continue;
+          for (const piece_place& at : pieces) {
+            const auto& pc = piece_in(pairs, at);
+            if (!piece_is_in(pc, at, set)) continue;
             ++members;
             if (!pc.medoid) continue;
-            leader_w = pc.w; leader_h = pc.h; leader_x = pc.x; leader_y = pc.y;
+            leader_w = pc.width; leader_h = pc.height;
+            leader_x = pc.left;  leader_y = pc.top;
           }
           said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
                          (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
@@ -1306,20 +1428,22 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       {
         string piece_said, blank_said;
         if (piece_at >= 0 && piece_at < pieces_n) {
-          const auto& pc = R.pieces_seen[alone[piece_at]];
-          const char* silence = pc.edges > 0 ? "ONLY SITS ON SOMETHING"
-                              : pc.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
+          const piece_place& at = alone[piece_at];
+          const auto& pc = piece_in(pairs, at);
+          const char* silence = pc.edges_touching > 0 ? "ONLY SITS ON SOMETHING"
+                              : at.from_input ? "DELETED, IT IS NOT IN THE OUTPUT"
                                               : "INSERTED, IT WAS NOT IN THE INPUT";
           piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
-                               silence, (int)pc.pair,
+                               silence, (int)at.pair,
                                (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
-                               (int)pc.w, (int)pc.h, (int)pc.x, (int)pc.y, (int)pc.cells);
-          if (pc.blank_w > 0)
+                               (int)pc.width, (int)pc.height, (int)pc.left, (int)pc.top,
+                               (int)pc.count);
+          if (pc.blank_width > 0)
             blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
                                  pc.blank_enclosed ? "FILLS A HOLE"
                                                    : "OVER OPEN SPACE",
-                                 (int)pc.blank_w, (int)pc.blank_h, (int)pc.blank_x,
-                                 (int)pc.blank_y, (int)pc.blank_cells);
+                                 (int)pc.blank_width, (int)pc.blank_height, (int)pc.blank_left,
+                                 (int)pc.blank_top, (int)pc.blank_cells);
         }
         detail(piece_said);
         detail(blank_said);
@@ -1334,9 +1458,16 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       {
         string said;
         if (left_over_at >= 0 && left_over_at < left_over_n) {
-          const auto& cell = R.left_over_seen[left_over_at];
-          said = to_text("PAIR %d  %s  CELL AT %d,%d", (int)cell.pair,
-                         cell.from_input ? "INPUT" : "OUTPUT", (int)cell.x, (int)cell.y);
+          const row_place& at = left_over[left_over_at];
+          const auto& cell = pairs[at.pair].left_over[at.which];
+          // MADE, GONE, or simply not accounted for — the mirror this pane used
+          // to read dropped that field, so the number could be said and the
+          // reason could not.
+          said = to_text("PAIR %d  %s  CELL AT %d,%d  %s", (int)at.pair,
+                         cell.from_input ? "INPUT" : "OUTPUT", (int)cell.col, (int)cell.row,
+                         !cell.made_or_gone ? "UNEXPLAINED"
+                         : cell.from_input  ? "IT WENT NOWHERE"
+                                            : "IT WAS MADE HERE");
         }
         detail(said);
       }
@@ -1347,7 +1478,6 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // What this reading COST, the whole reason it leads or trails: pieces it
       // used and output cells no edge of any kind accounts for, over the train
       // set. Without it the coarseness steps are unnamed preferences.
-      using readout = puzzle::correspondence_readout;
       // EVERY READING AT ONCE: how the grid was cut and which way round down
       // the side, what the pieces were allowed to do across the top. Stepping
       // them one at a time never says how they relate — the table says it in one
@@ -1456,9 +1586,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
             for (int m = 0; m < modes; ++m) {
               const int i = c * match_mode::COUNT + m + half * modes;
               if (i >= readings) continue;
-              const string s = to_string(task.correspondence.readings[i].left_over);
+              const string s = to_string(correspondence.readings[i].left_over);
               // The one inference chose reads inverted; the one on screen is boxed.
-              const int chip_x = column_chip(s, m, i == task.correspondence.chosen);
+              const int chip_x = column_chip(s, m, i == correspondence.chosen);
               if (i == rank)
                 draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
                             max(1, scale / 2));
@@ -1470,7 +1600,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
         }
         named_line("EACH CELL", to_text(
             "CELLS IT COULD NOT ACCOUNT FOR, OF %d ON BOTH GRIDS, EVERY PAIR",
-            (int)task.correspondence.cells));
+            (int)correspondence.cells));
       }
 
       // The same questions asked of every line of the reading, pair by pair, plus
@@ -1508,40 +1638,41 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
           label_chip(pair_columns[i].name, ty,
                      pair_cell_x(i, (int)string(pair_columns[i].name).size()));
       ty += row_h;
-      for (size_t i = 0; i < R.pairs.size(); ++i) {
+      for (size_t i = 0; i < pairs.size(); ++i) {
+        const auto& pr = pairs[i];
         int kinds[3] = {}, hidden = 0, turned = 0;
-        for (const auto& ln : task.correspondence.lines) {
-          if (ln.rank != rank || ln.pair != (int8_t)i) continue;
-          kinds[clamp((int)ln.kind, 0, 2)]++;
-          hidden += (ln.hidden > 0);
-          turned += (ln.pose != 0);
+        for (const auto& edge : pr.edges) {
+          kinds[claim_of(edge)]++;
+          hidden += (edge.hidden > 0);
+          turned += (edge.pose != 0);
         }
         // Places one piece went is an input-side question, pieces meeting at one
         // landing an output-side one. Both ends are read, so both are counted.
         int most_landings = 0, most_sources = 0;
-        for (const auto& pc : R.pieces_seen) {
-          if (pc.pair != (int8_t)i) continue;
-          int& most = pc.from_input ? most_landings : most_sources;
-          most = max(most, (int)pc.edges);
-        }
-        const auto& pr = R.pairs[i];
-        pair_row(to_string(i), how_name[clamp((int)pr.how, 0, 2)],
+        for (const auto& piece : pr.input_objects)
+          most_landings = max(most_landings, piece.edges_touching);
+        for (const auto& landing : pr.output_objects)
+          most_sources = max(most_sources, landing.edges_touching);
+        pair_row(to_string(i), how_name[clamp((int)pr.verdict, 0, 2)],
                  to_text("%d-%d", most_sources, most_landings),
                  to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
                  to_string(hidden), to_string(turned),
-                 to_string(pr.dropped), to_string(pr.left_over));
+                 to_string(pr.discarded.size()), to_string(pr.left_over.size()));
       }
-      // Why the dropped ones were dropped, over the whole reading.
+      // Why the dropped ones were dropped, over the whole reading. EVERY reason
+      // there is: the copy this pane used to read had three buckets for four
+      // reasons, so two of them were reported as one.
       {
-        int by_reason[3] = {};
-        for (const auto& pr : R.pairs) {
-          by_reason[0] += pr.chance; by_reason[1] += pr.stale; by_reason[2] += pr.did_not_fit;
-        }
+        const int reasons = (int)size(correspondence_facts::refusal_names);
+        vector<int> by_reason(reasons, 0);
+        for (const auto& pr : pairs)
+          for (int8_t why : pr.discard_why)
+            if (why >= 0 && why < reasons) by_reason[why]++;
         // ONE REASON A LINE. All three on one line came to more characters than
         // the panel is wide, and the widest screen is the tighter of the two:
         // the label column grows with the font while the panel grows with the
         // screen. The label is said once and the rest sit under it.
-        for (int reason = 0; reason < 3; ++reason) {
+        for (int reason = 0; reason < reasons; ++reason) {
           if (reason == 0) label_chip("REFUSED", ty);
           draw_text(context, font,
                     to_text("%d %s", by_reason[reason],
@@ -1568,40 +1699,40 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       // Size · what decides how big the output is.
       static const char* rule_name[] = { "NOT INFERRED", "SAME AS INPUT", "FIXED",
                                          "SCALED", "WHAT IT DRAWS" };
-      string s = to_text("OUTPUT SIZE  %s", rule_name[(int)task.rule.Chosen]);
-      if (task.rule.Chosen == output_dimension_rule::Fixed)
-        s += to_text("  %dX%d", (int)task.rule.width, (int)task.rule.height);
-      if (task.rule.Chosen == output_dimension_rule::Scale)
-        s += to_text("  %d/%d BY %d/%d", (int)task.rule.width_numerator, (int)task.rule.width_denominator,
-                     (int)task.rule.height_numerator, (int)task.rule.height_denominator);
+      string s = to_text("OUTPUT SIZE  %s", rule_name[(int)task.inf.size.Chosen]);
+      if (task.inf.size.Chosen == output_dimension_rule::Fixed)
+        s += to_text("  %dX%d", (int)task.inf.size.width, (int)task.inf.size.height);
+      if (task.inf.size.Chosen == output_dimension_rule::Scale)
+        s += to_text("  %d/%d BY %d/%d", (int)task.inf.size.width_numerator, (int)task.inf.size.width_denominator,
+                     (int)task.inf.size.height_numerator, (int)task.inf.size.height_denominator);
       line(s);
     }
-    named_row({{"COLORS GONE", color_list(F.consumed)},
-               {"NEW", color_list(F.introduced)},
-               {"KEPT", color_list(F.preserved)}});
-    named_row({{"IN EVERY INPUT", color_list(F.every_input)},
-               {"IN EVERY OUTPUT", color_list(F.every_output)}});
-    named_row({{"IN EVERY GRID", color_list(F.every_grid)},
-               {"ANYWHERE", color_list(F.any_grid)}});
+    named_row({{"COLORS GONE", colors_as_text(F.consumed)},
+               {"NEW", colors_as_text(F.introduced)},
+               {"KEPT", colors_as_text(F.preserved)}});
+    named_row({{"IN EVERY INPUT", colors_as_text(F.in_every_input)},
+               {"IN EVERY OUTPUT", colors_as_text(F.in_every_output)}});
+    named_row({{"IN EVERY GRID", colors_as_text(F.in_every_grid)},
+               {"ANYWHERE", colors_as_text(F.in_any_grid)}});
     {
       string all;
-      for (int i = 0; i < task.output_colors_count; ++i)
-        all += to_text("%d", (int)task.output_colors[i]);
+      for (int i = 0; i < task.inf.colors.output_colors_count; ++i)
+        all += to_text("%d", (int)task.inf.colors.output_colors[i]);
       string by_size;
-      for (int i = 0; i < task.output_colors_by_size_count; ++i)
-        by_size += to_text("%d", (int)task.output_colors_by_size[i]);
+      for (int i = 0; i < task.inf.colors.output_colors_by_size_count; ++i)
+        by_size += to_text("%d", (int)task.inf.colors.output_colors_by_size[i]);
       if (by_size.empty()) named_row({{"OUTPUT COLORS", all}});
       else named_row({{"OUTPUT COLORS", all}, {"BY SIZE", by_size}});
     }
     ty += line_h;
     {
-      if (bg.per_pair_mode)
-        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected)},
-                   {"OUTPUT", to_text("%d", (int)bg.output_elected)},
+      if (bg.is_per_pair())
+        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected())},
+                   {"OUTPUT", to_text("%d", (int)bg.output_elected())},
                    {"MODE", "PER-PAIR"}});
       else
-        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected)},
-                   {"OUTPUT", to_text("%d", (int)bg.output_elected)}});
+        named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected())},
+                   {"OUTPUT", to_text("%d", (int)bg.output_elected())}});
     }
     named_row({{"VETOED", bg.input_vetoed ? "YES" : "NO"}});
     {
@@ -1611,7 +1742,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
       ty += line_h;  // blank line after
     }
 
-    auto draw_dir = [&](const char* name, const vector<puzzle::background_readout::cand>& d) {
+    auto draw_dir = [&](const char* name, const vector<background_hypotheses::hypothesis>& d) {
       label_chip(name, ty); ty += line_h;
       // column header, aligned with the rows below
       // Every cell is text in a width, so heads and rows share one shape.
@@ -1639,26 +1770,26 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
 
     // What changed between the two sides.
     ty += line_h / 2;
-    if (F.unchanged_valid)
+    if (task.inf.unchanged.valid)
       line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
-                   F.min_kept * 100.0f));
-    if (F.diff_valid) {
+                   task.inf.unchanged.min_kept_fraction * 100.0f));
+    if (task.inf.color_diff.valid) {
       string s = "CELLS WON/LOST ";
       for (int c = 0; c < 10; ++c)
-        if (F.gained[c] || F.lost[c])
-          s += to_text(" %d:%d/%d", c, (int)F.gained[c], (int)F.lost[c]);
+        if (task.inf.color_diff.gained_count[c] || task.inf.color_diff.lost_count[c])
+          s += to_text(" %d:%d/%d", c, (int)task.inf.color_diff.gained_count[c], (int)task.inf.color_diff.lost_count[c]);
       line(s);
     }
-    if (task.color_swap_variants_count) {
+    if (task.inf.color_swaps.count) {
       string s = "SWAPPED";
       int k = 0;
       for (int a = 0; a < 10; ++a)
         for (int b = a + 1; b < 10; ++b, ++k)
-          if (task.color_swap_variants[k]) s += to_text(" %d<>%d", a, b);
+          if (task.inf.color_swaps.variant[k]) s += to_text(" %d<>%d", a, b);
       line(s);
     }
-    if (task.shape_color_count)
-      named_row({{"SHAPE PICKS COLOR", to_text("%d LEARNED", (int)task.shape_color_count)}});
+    if (task.inf.shape_color_map.count)
+      named_row({{"SHAPE PICKS COLOR", to_text("%d LEARNED", (int)task.inf.shape_color_map.count)}});
 
     // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs the
     // search will actually try, not a prettier retelling, so what is on screen and
@@ -1699,15 +1830,15 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
                       "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
               tx, ty, scale);
     ty += line_h;
-    for (size_t i = 0; i < F.pairs.size(); ++i) {
-      const auto& p = F.pairs[i];
+    for (size_t i = 0; i < correspondence.pairs.size(); ++i) {
+      const auto& p = correspondence.pairs[i];
       line(to_text(pair_columns_wide,
                    to_string(i).c_str(), to_string(p.deleted).c_str(),
                    to_string(p.persisted).c_str(), to_string(p.copied).c_str(),
                    to_string(p.invented).c_str(), to_string(p.from_one).c_str(),
                    to_string(p.from_many).c_str(),
                    to_text("%d-%d", (int)p.most_sources, (int)p.most_landings).c_str(),
-                   to_string(p.carried_cells).c_str(), to_string(p.created_cells).c_str()));
+                   to_string(p.exact_covered_cells).c_str(), to_string(p.created_cells).c_str()));
     }
 
   };
@@ -2251,27 +2382,31 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
   // step both ways, so the wrap must carry negatives round to the top. Counted
   // once here, for the wrap and for the pane.
   if (int view = app_state.inference_view.load(); view != global_app_state::INFERENCE_OFF) {
-    const int readings = max(1, (int)task.correspondence.readings.size());
+    const auto &correspondence = task.inf.correspondence;
+    const int readings = max(1, (int)correspondence.readings.size());
     // Told which reading inference chose and how many there are, it hands back
     // the one to show — following the chosen one until somebody steps away.
     const int rank =
-        app_state.inference_rank.pick(task.correspondence.chosen, readings);
-    int drawn = 0;
-    for (const auto &ln : task.correspondence.lines)
-      if (ln.rank == rank) drawn++;
+        app_state.inference_rank.pick(correspondence.chosen, readings);
+    // WALKED FOR THE ONE READING ON SCREEN, and worked out here rather than
+    // stored: these are places in the facts, not copies of them.
+    static const vector<correspondence_facts::pair_info> nothing;
+    const auto &pairs = rank < (int)correspondence.reading_pairs.size()
+                          ? correspondence.reading_pairs[rank] : nothing;
+    const vector<piece_place> pieces = pieces_of(pairs);
+    const vector<piece_place> alone = pieces_standing_alone(pairs, pieces);
+    const vector<row_place> refused = refusals_of(pairs);
+    const vector<row_place> left_over = left_over_of(pairs);
+    const int drawn = (int)lines_of(pairs).size();
     // Each track is told how long its list is and hands back what is chosen.
-    const auto &R = task.correspondence.readings;
-    const vector<int> alone =
-        rank < (int)R.size() ? pieces_standing_alone(R[rank]) : vector<int>{};
     const int pieces_n = (int)alone.size();
-    const int dropped_n = rank < (int)R.size() ? (int)R[rank].dropped_seen.size() : 0;
+    const int dropped_n = (int)refused.size();
     const int step = app_state.inference_edge.pick(drawn);
     const int piece_at = app_state.inference_piece.pick(pieces_n);
     const int dropped_at = app_state.inference_dropped.pick(dropped_n);
-    const vector<motif_set> sets =
-        rank < (int)R.size() ? motif_sets(R[rank]) : vector<motif_set>{};
+    const vector<motif_set> sets = motif_sets(pairs, pieces);
     const int motif_at = app_state.inference_motif.pick((int)sets.size());
-    const int left_over_n = rank < (int)R.size() ? (int)R[rank].left_over_seen.size() : 0;
+    const int left_over_n = (int)left_over.size();
     const int left_over_at = app_state.inference_left_over.pick(left_over_n);
     if (view == global_app_state::INFERENCE_LINES) {
       // DRAWN IN THE ORDER THE SLIDERS ARE LISTED, because that is the order
@@ -2282,15 +2417,17 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       // The refused match where it wanted to go, in red.
       for (int i = 0; i < dropped_n; ++i) {
         if (dropped_at != SHOW_ALL && dropped_at != i) continue;
-        const auto &dr = R[rank].dropped_seen[i];
+        const row_place &at = refused[i];
+        const auto &dr = pairs[at.pair].discarded[at.which];
+        const line_ends ends = ends_of(pairs[at.pair], dr);
         const bool one = (dropped_at == i);
         // ONE shows the refused piece and where it wanted to go; ALL shows only
         // the wanted landings. So the first box is on the piece's own grid when
         // one is singled out and on the other grid otherwise.
-        draw_selection(context, task, lay, dr.pair, one == dr.from_input,
-                       one ? dr.from_x : dr.to_x, one ? dr.from_y : dr.to_y,
-                       one ? dr.from_w : dr.to_w, one ? dr.from_h : dr.to_h,
-                       one, dr.to_x, dr.to_y, dr.to_w, dr.to_h,
+        draw_selection(context, task, lay, at.pair, one == dr.from_input,
+                       one ? ends.from_x : ends.to_x, one ? ends.from_y : ends.to_y,
+                       one ? ends.from_w : ends.to_w, one ? ends.from_h : ends.to_h,
+                       one, ends.to_x, ends.to_y, ends.to_w, ends.to_h,
                        (int)arc_color::red, rings);
       }
       // COPIES OF ONE THING, ONE SET AT A TIME. A grid can hold several
@@ -2299,12 +2436,13 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       // rest: a set wants an exemplar, and it cannot be the biggest or the
       // first — both pick by luck, and a block the noise landed on is complete
       // and still the odd one out.
-      for (const auto &pc : R[rank].pieces_seen) {
+      for (const piece_place &at : pieces) {
+        const auto &pc = piece_in(pairs, at);
         if (pc.motif < 0) continue;
         if (motif_at != SHOW_ALL &&
-            !(motif_at < (int)sets.size() && piece_is_in(pc, sets[motif_at]))) continue;
-        draw_selection(context, task, lay, pc.pair, pc.from_input,
-                       pc.x, pc.y, pc.w, pc.h, false, 0, 0, 0, 0,
+            !(motif_at < (int)sets.size() && piece_is_in(pc, at, sets[motif_at]))) continue;
+        draw_selection(context, task, lay, at.pair, at.from_input,
+                       pc.left, pc.top, pc.width, pc.height, false, 0, 0, 0, 0,
                        (int)(pc.medoid ? arc_color::magenta : arc_color::blue),
                        rings);
       }
@@ -2314,10 +2452,11 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       // patch is where a grid makes something out of nothing.
       for (int i = 0; i < pieces_n; ++i) {
         if (piece_at != SHOW_ALL && piece_at != i) continue;
-        const auto &pc = R[rank].pieces_seen[alone[i]];
-        draw_selection(context, task, lay, pc.pair, pc.from_input,
-                       pc.x, pc.y, pc.w, pc.h, pc.blank_w > 0,
-                       pc.blank_x, pc.blank_y, pc.blank_w, pc.blank_h,
+        const piece_place &at = alone[i];
+        const auto &pc = piece_in(pairs, at);
+        draw_selection(context, task, lay, at.pair, at.from_input,
+                       pc.left, pc.top, pc.width, pc.height, pc.blank_width > 0,
+                       pc.blank_left, pc.blank_top, pc.blank_width, pc.blank_height,
                        (int)arc_color::gray, rings);
       }
       // THE CELLS NOTHING ACCOUNTED FOR, one cell each, so there is never room
@@ -2325,9 +2464,10 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
       // where they are.
       for (int i = 0; i < left_over_n; ++i) {
         if (left_over_at != SHOW_ALL && left_over_at != i) continue;
-        const auto &cell = R[rank].left_over_seen[i];
-        draw_selection(context, task, lay, cell.pair, cell.from_input,
-                       cell.x, cell.y, 1, 1, false, 0, 0, 0, 0,
+        const row_place &at = left_over[i];
+        const auto &cell = pairs[at.pair].left_over[at.which];
+        draw_selection(context, task, lay, at.pair, cell.from_input,
+                       cell.col, cell.row, 1, 1, false, 0, 0, 0, 0,
                        (int)arc_color::orange, rings);
       }
     }

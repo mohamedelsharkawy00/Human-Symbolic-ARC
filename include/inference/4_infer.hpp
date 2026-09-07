@@ -165,6 +165,18 @@ struct color_facts {
     // set per side — never a global whitelist (lethal, measured).
 };
 
+// A set of colors said as digits, "0,3,4", or "-" when it holds none. Beside
+// the sets it reads, so the screen and the log say a color set the same way.
+inline string colors_as_text(const bool member[10]) {
+    string listed;
+    for (int color = 0; color < 10; ++color)
+        if (member[color]) {
+            if (!listed.empty()) listed += ',';
+            listed += (char)('0' + color);
+        }
+    return listed.empty() ? string("-") : listed;
+}
+
 // One pass over the train pairs fills every presence set in color_facts.
 inline void detect_color_presence(const vector<example>& train, color_facts& facts) {
     if (train.empty()) return;

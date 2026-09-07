@@ -307,303 +307,43 @@ inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, grid> &chars
   gpu_buffer.resize(gpu_buffer.size() + 800 * 800, 11);
 }
 
-// EVERYTHING INFERENCE SAYS, read once and bridged onto the puzzle. Kept out
-// of the load itself because it is the expensive half: a puzzle nobody is
-// looking at and nobody is solving does not need it, and stepping through a
-// thousand puzzles should cost only the parse. Whoever needs the facts asks
-// for them — the pane when it opens, the search before it starts.
+// EVERYTHING INFERENCE SAYS, read once and kept on the puzzle. Held out of the
+// load itself because it is the expensive half: a puzzle nobody is looking at
+// and nobody is solving does not need it, and stepping through a thousand
+// puzzles should cost only the parse. Whoever needs the facts asks for them —
+// the pane when it opens, the search before it starts.
 inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
                               int dataset_flags = 0) {
-    inference inf = infer(task.train);
-    // Background election readout -> puzzle, for GUI display.
-    {
-        auto copy_dir = [](const vector<background_hypotheses::hypothesis>& src,
-                           vector<puzzle::background_readout::cand>& dst) {
-            dst.clear();
-            for (const auto& h : src)
-                dst.push_back({ h.color, h.embeds, h.dominance, h.persists, h.score, h.span, h.gaps, h.underneath });
-        };
-        copy_dir(inf.background.across_inputs,         task.bg.across_inputs);
-        copy_dir(inf.background.across_outputs,        task.bg.across_outputs);
-        copy_dir(inf.background.across_inputs_outputs, task.bg.across_inputs_outputs);
-        task.bg.per_pair = inf.background.per_pair;
-        task.bg.input_elected  = inf.background.input_elected();
-        task.bg.output_elected = inf.background.output_elected();
-        task.bg.per_pair_mode = inf.background.is_per_pair();
-        task.bg.input_vetoed  = inf.background.input_vetoed;
-    }
-    // Everything else infer() read -> puzzle, for the GUI pane.
-    {
-        auto& F = task.facts;
-        F = puzzle::facts_readout{};
-        auto mask = [](const bool set[10]) {
-            uint16_t m = 0;
-            for (int i = 0; i < 10; ++i) if (set[i]) m |= (uint16_t)(1u << i);
-            return m;
-        };
-        F.consumed     = mask(inf.colors.consumed);
-        F.introduced   = mask(inf.colors.introduced);
-        F.preserved    = mask(inf.colors.preserved);
-        F.every_input  = mask(inf.colors.in_every_input);
-        F.every_output = mask(inf.colors.in_every_output);
-        F.every_grid   = mask(inf.colors.in_every_grid);
-        F.any_grid     = mask(inf.colors.in_any_grid);
-        F.unchanged_valid = inf.unchanged.valid;
-        F.min_kept = inf.unchanged.valid ? inf.unchanged.min_kept_fraction : 0.0f;
-        F.diff_valid = inf.color_diff.valid;
-        for (int c = 0; c < 10; ++c) {
-            F.gained[c] = inf.color_diff.gained_count[c];
-            F.lost[c]   = inf.color_diff.lost_count[c];
-        }
-        for (const auto& P : inf.correspondence.pairs)
-            F.pairs.push_back({ (int)P.input_objects.size(), (int)P.output_objects.size(),
-                                P.deleted, P.persisted, P.copied,
-                                P.invented, P.from_one, P.from_many,
-                                P.most_landings, P.most_sources,
-                                P.exact_covered_cells, P.created_cells });
-    }
-    // Object correspondence readout -> puzzle, for GUI display. One line per
-    // edge, center to center: where the object sits on its own side, and where
-    // it landed on the other. A landing with no object there (a positional hit)
-    // wears the source object's own size.
-    // EVERY reading is bridged, not just the chosen one, so stepping the
-    // coarseness in the GUI is instant instead of a reload.
-    {
-        auto& out = task.correspondence.lines;
-        out.clear();
-        task.correspondence.readings.clear();
-        task.correspondence.chosen = inf.correspondence.chosen;
-        task.correspondence.cells = inf.correspondence.cells;
-        // EVERY READING IS BRIDGED, and NONE IS READ AGAIN. The election
-        // matched all of them and kept the pieces and edges, so the table is
-        // the election — same numbers, same work, done once.
-        const size_t readings = inf.correspondence.readings.size();
-        for (size_t rank = 0; rank < readings; ++rank) {
-        // A line names the reading it belongs to by its place in THIS list.
-        const int8_t bridged = (int8_t)task.correspondence.readings.size();
-        const auto& ranked = inf.correspondence.readings[rank];
-        const auto& read_pairs = inf.correspondence.reading_pairs[rank];
-        puzzle::correspondence_readout::reading R;
-        R.cut_kind = (int8_t)ranked.cut_kind;
-        R.match_kind = (int8_t)ranked.match_kind.index();
-        for (const auto& P : read_pairs) R.left_over += (int)P.left_over.size();
-        for (size_t pi = 0; pi < read_pairs.size(); ++pi) {
-            const auto& P = read_pairs[pi];
-            puzzle::correspondence_readout::reading::pair_read pr;
-            pr.how = P.verdict;
-            pr.left_over = (int)P.left_over.size();
-            // The cells themselves, so the number above has something to point
-            // at. Read in grid order, which is the order they were found in.
-            for (const auto& cell : P.left_over)
-                R.left_over_seen.push_back({ (int8_t)pi, cell.from_input,
-                                             (int8_t)cell.col, (int8_t)cell.row });
-            const auto& why = P.discard_why;
-            const auto& gone = P.discarded;
-            pr.dropped = (int)why.size();
-            for (size_t d = 0; d < gone.size() && d < why.size(); ++d) {
-                if (why[d] == correspondence_facts::lost_to_chance)             pr.chance++;
-                else if (why[d] == correspondence_facts::cells_already_explained) pr.stale++;
-                else                                                           pr.did_not_fit++;
-                using readout = puzzle::correspondence_readout;
-                // A dropped match names its piece on the side it was read from.
-                const auto& mine = gone[d].from_input ? P.input_objects : P.output_objects;
-                const auto& theirs = gone[d].from_input ? P.output_objects : P.input_objects;
-                const auto& src = mine[gone[d].from];
-                const int lw = gone[d].to >= 0 ? theirs[gone[d].to].width : src.width;
-                const int lh = gone[d].to >= 0 ? theirs[gone[d].to].height : src.height;
-                R.dropped_seen.push_back({ (int8_t)pi, gone[d].from,
-                                           (int8_t)(!gone[d].same_shape ? readout::line::sits_on
-                                                    : gone[d].exact     ? readout::line::exact
-                                                                        : readout::line::recolored),
-                                           why[d], gone[d].hidden,
-                                           src.left, src.top, src.width, src.height,
-                                           gone[d].col, gone[d].row, (int8_t)lw, (int8_t)lh,
-                                           gone[d].from_input });
-            }
-            R.pairs.push_back(pr);
-            // The first line each piece got, so a piece row can point at what
-            // answers it instead of searching for it again. -1 stays -1 for a
-            // piece nothing answers, which is what the row is there to say.
-            // A piece with no line of its own takes the first line whose
-            // landing overlaps its BOX. Only a jump target: what ANSWERS a piece
-            // does, read off the boxes.
-            vector<int16_t> first_input(P.input_objects.size(), (int16_t)-1);
-            vector<int16_t> first_output(P.output_objects.size(), (int16_t)-1);
-            // WHICH PIECE A LANDING IS ON. A landing that names no piece still
-            // fell somewhere, and if it fell inside a piece's box that piece is
-            // what it means. THE TIGHTEST BOX WINS: boxes nest, and a ring's box
-            // holds whatever sits in its hole, which is not the ring.
-            auto piece_under = [](const auto& pieces, int col, int row, int w, int h) {
-                int16_t found = -1;
-                int smallest = 0;
-                for (size_t i = 0; i < pieces.size(); ++i) {
-                    const auto& t = pieces[i];
-                    if (col < t.left || row < t.top) continue;
-                    if (col + w > t.left + t.width || row + h > t.top + t.height) continue;
-                    const int box = t.width * t.height;
-                    if (found >= 0 && box >= smallest) continue;
-                    found = (int16_t)i;
-                    smallest = box;
-                }
-                return found;
-            };
-            // The two pieces every line so far joins, so one already said is
-            // never said again.
-            vector<pair<int16_t, int16_t>> said;
-            for (const auto& e : P.edges) {
-                // Each end is a box: where the piece sits, and where it landed.
-                // Centers are the box centers, in half cells. WHICH LIST IS
-                // WHICH is the edge's own side, not the reading's.
-                const auto& mine = e.from_input ? P.input_objects : P.output_objects;
-                const auto& theirs = e.from_input ? P.output_objects : P.input_objects;
-                auto& first_mine = e.from_input ? first_input : first_output;
-                auto& first_theirs = e.from_input ? first_output : first_input;
-                const auto& o = mine[e.from];
-                const int8_t w = e.to >= 0 ? theirs[e.to].width : o.width;
-                const int8_t h = e.to >= 0 ? theirs[e.to].height : o.height;
-                // WHERE THE TWO ENDS SAY THE SAME THING, WALK IT ONCE. A reading
-                // runs both ways round, so a piece found at a place and the piece
-                // sitting at that place found back at it are one fact told twice —
-                // and the walk showed the whole list over again from the other
-                // side. THE INPUT SIDE IS THE ONE KEPT, because the edges arrive
-                // input first and the first to say it is the one that stays.
-                // Said here and not in the matching, which needs both ends to
-                // know which cells it has accounted for.
-                const int16_t landed_on = e.to >= 0 ? e.to
-                                        : piece_under(theirs, e.col, e.row, w, h);
-                if (landed_on >= 0) {
-                    const auto joins = e.from_input ? pair{ e.from, landed_on }
-                                                    : pair{ landed_on, e.from };
-                    if (ranges::find(said, joins) != said.end()) continue;
-                    said.push_back(joins);
-                }
-                const int16_t out_idx = (int16_t)out.size();
-                // A SITS-ON EDGE ANSWERS BOTH ENDS. Same stuff rearranged is
-                // a claim about two objects, and it names them both, so both
-                // jump to this line. Only a landing on bare ground has one end,
-                // and then the far side is found by overlap instead.
-                if (first_mine[e.from] < 0) first_mine[e.from] = out_idx;
-                if (e.to >= 0 && first_theirs[e.to] < 0) first_theirs[e.to] = out_idx;
-                if (e.same_shape) {
-                    for (size_t j = 0; j < theirs.size(); ++j) {
-                        const auto& t = theirs[j];
-                        if (first_theirs[j] >= 0) continue;
-                        if (t.left >= e.col + w || e.col >= t.left + t.width) continue;
-                        if (t.top >= e.row + h || e.row >= t.top + t.height) continue;
-                        first_theirs[j] = out_idx;
-                    }
-                }
-                using readout = puzzle::correspondence_readout;
-                const int8_t kind = !e.same_shape ? readout::line::sits_on
-                                  : e.exact       ? readout::line::exact
-                                                  : readout::line::recolored;
-                out.push_back({ (int8_t)pi,
-                                (int16_t)(2 * o.left + o.width), (int16_t)(2 * o.top + o.height),
-                                (int16_t)(2 * e.col + w),  (int16_t)(2 * e.row + h),
-                                bridged,
-                                 o.left, o.top, o.width, o.height,
-                                 e.col, e.row, w, h,
-                                 kind, e.pose, e.hidden, o.color, e.outside,
-                                 e.from_input });
-            }
-            // Every piece the reading cut out, both grids, in the order it cut
-            // them, each pointing at the first line that answers it.
-            for (int side = 0; side < 2; ++side) {
-                const auto& list = side ? P.output_objects : P.input_objects;
-                const auto& first = side ? first_output : first_input;
-                for (size_t oi = 0; oi < list.size(); ++oi) {
-                    const auto& o = list[oi];
-                    // Which set of copies, and which member speaks for it, are
-                    // decided in detect_correspondence where the cells still
-                    // exist — see find_copies. Carried, not recomputed.
-                    R.pieces_seen.push_back({ (int8_t)pi, side == 0, o.color,
-                                              o.left, o.top, o.width, o.height, o.count,
-                                              (int16_t)o.edges_touching, first[oi],
-                                              o.has_partner,
-                                              o.motif, o.medoid,
-                                              o.blank_left, o.blank_top,
-                                              o.blank_width, o.blank_height,
-                                              o.blank_cells, o.blank_enclosed });
-                }
-            }
-        }
-        // IN THE ORDER THE SCREEN READS, and one order for every stepper the
-        // pane has: the pair, then the input column before the output one, then
-        // down the grid. Biggest first read straight down the CUT, which is not
-        // a thing on screen — it put a piece from the left grid between two from
-        // the right, and the box you were stepping bounced between the columns.
-        auto down_the_grids = [](int8_t pair, bool from_input, int8_t y, int8_t x) {
-            return tuple{ pair, !from_input, y, x };
-        };
-        stable_sort(R.pieces_seen.begin(), R.pieces_seen.end(),
-                    [&](const auto& a, const auto& b) {
-            return down_the_grids(a.pair, a.from_input, a.y, a.x) <
-                   down_the_grids(b.pair, b.from_input, b.y, b.x);
-        });
-        // The refused matches read the same way, off the piece each was for.
-        stable_sort(R.dropped_seen.begin(), R.dropped_seen.end(),
-                    [&](const auto& a, const auto& b) {
-            return down_the_grids(a.pair, a.from_input, a.from_y, a.from_x) <
-                   down_the_grids(b.pair, b.from_input, b.from_y, b.from_x);
-        });
-        task.correspondence.readings.push_back(std::move(R));
-        }
-    }
-    // Written once every reading is bridged, so the file can show them all.
-    log_inference(task.id, inf, task.correspondence, idx, count, dataset_flags);
-    task.rule = inf.size;                              // size · across_input_output
-    if (inf.unchanged.valid)                           // unchanged · across_input_output
-        task.kept_cells = inf.unchanged.kept;          // (Identity only; else empty)
-    if (inf.colors.background_color >= 0)              // color · across_inputs
-        task.invariant_colors[inf.colors.background_color] = true;  // (bg only — see CAVEAT)
-    for (int i = 0; i < inf.colors.output_colors_count; ++i)  // color · across_outputs
-        task.output_colors[i] = inf.colors.output_colors[i];
-    task.output_colors_count = inf.colors.output_colors_count;
-    for (int i = 0; i < inf.colors.output_colors_by_size_count; ++i)  // across_outputs, by size
-        task.output_colors_by_size[i] = inf.colors.output_colors_by_size[i];
-    task.output_colors_by_size_count = inf.colors.output_colors_by_size_count;
-    if (inf.shape_color_map.valid) {                  // shape+color · across_input_output
-        for (int i = 0; i < inf.shape_color_map.count; ++i) {
-            task.shape_color_keys[i] = inf.shape_color_map.keys[i];
-            task.shape_color_vals[i] = inf.shape_color_map.colors[i];
-        }
-        task.shape_color_count = inf.shape_color_map.count;
-    }
-    // Dead-op verdicts: an op whose backing inferred fact is absent can only
-    // no-op here, so it leaves the generating pool now, once, not per candidate.
-    task.dead_ops[(int)node_type::SizeRankColorMap]       = (task.output_colors_by_size_count == 0);
-    // No elected ground means this op is Input spelled longer. Read the same
-    // invariant_colors the kernel reads, so the verdict cannot drift from it.
-    bool ground_elected = false;
-    for (int i = 0; i < 10; ++i) ground_elected |= task.invariant_colors[i];
-    task.dead_ops[(int)node_type::InputWithoutBackground] = !ground_elected;
+    task.inf = infer(task.train);
+    const inference& inf = task.inf;
+    log_inference(task.id, inf, idx, count, dataset_flags);
+    task.rule = inf.size;                              // size - across_input_output
+    if (inf.colors.background_color >= 0)              // color - across_inputs
+        task.invariant_colors[inf.colors.background_color] = true;  // (bg only - see CAVEAT)
+    // WHAT AN OP CANNOT DO ANYTHING WITH. An op whose backing fact is absent
+    // can only no-op, so it leaves the generating pool now, once, rather than
+    // being tried and discarded on every candidate. Read off what inference
+    // actually said, so a verdict cannot drift from the fact behind it.
+    task.dead_ops[(int)node_type::SizeRankColorMap] =
+        (inf.colors.output_colors_by_size_count == 0);
+    // No elected ground means this op is Input spelled longer.
+    task.dead_ops[(int)node_type::InputWithoutBackground] =
+        (inf.colors.background_color < 0);
     // The two shape->color ops SHARE one learned table and mean different things
     // by it: one repaints a body, the other fills a hole. Whichever detector
     // claimed it, the other op would be reading the wrong semantics, so an
     // unclaimed op is as dead as an empty table.
     const auto claimed = inf.shape_color_map.claimed_by;
+    const bool learned = inf.shape_color_map.valid;
     task.dead_ops[(int)node_type::ShapeColorMap] =
-        (task.shape_color_count == 0 || claimed != shape_color_map_rule::body_recolor);
+        (!learned || claimed != shape_color_map_rule::body_recolor);
     task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =
-        (task.shape_color_count == 0 || claimed != shape_color_map_rule::interior_fill);
-    for (int k = 0; k < 45; ++k)                      // color_swap · across_input_output
-        task.color_swap_variants[k] = inf.color_swaps.variant[k];
-    task.color_swap_variants_count = inf.color_swaps.count;
+        (!learned || claimed != shape_color_map_rule::interior_fill);
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one
     // of them is right.
     task.suggested_programs = programs_from(say_the_reading(inf));
-    for (int i = 0; i < 10; ++i) {                    // color-literal pin sets,
-        if (inf.colors.in_any_input[i]) {             // one per side
-            task.colors_in_any_input[i] = true;
-            task.colors_in_any_input_count++;
-        }
-        if (inf.colors.in_any_output[i]) {
-            task.colors_in_any_output[i] = true;
-            task.colors_in_any_output_count++;
-        }
-    }
     task.inferred = true;
 }
 
@@ -724,23 +464,13 @@ inline bool load_task_from_content(const string &content, const string &id,
     parse_examples(train_start, get_section_end(train_start), task.train, true);
     parse_examples(test_start, get_section_end(test_start), task.test, false);
 
-    // ── Analysis phase + bridge ──────────────────────────────────────────────
-    // infer() reads every migrated invariant off the examples and returns them
-    // in one `inference` object. The engine's hot path (scoring / DSL / GPU)
-    // still reads the puzzle's own fields, so we BRIDGE: copy inf.* onto the
-    // matching task.* field here, once, at load. This is a temporary contract —
-    // when the root-flip lands (pure types extracted from environment.hpp), the
-    // engine will hold/read the inference object directly and these copies go
-    // away. Until then, every migrated extractor's result reaches the engine
-    // ONLY through a copy below; if you migrate another extractor, add its
-    // bridge line here or the engine silently sees zeros.
-    //
-    // CAVEAT — intentional asymmetry: inf.colors.in_every_input holds the FULL
-    // across-inputs invariant set, but the engine only ever needed the single
-    // dominant background color, so ONLY inf.colors.background_color is bridged.
-    // The full set is computed and kept on the inference object for future use
-    // (invariant-pinning of the search), but nothing consumes it yet — that is
-    // by design, not a missing bridge.
+    // WHAT LOOKING AT THE PUZZLE SAID. infer() reads every invariant off the
+    // examples and hands back one `inference` object, and the puzzle KEEPS it.
+    // Nothing is copied out of it: what the search reads and what the kernel is
+    // given are both read off the object itself, so a new fact needs no line
+    // adding anywhere to reach them. It used to be copied field by field, which
+    // meant a fact only arrived if somebody remembered its copy line, and a
+    // forgotten one arrived as a zero without saying so.
     if (with_inference) infer_into_puzzle(task, idx, count, dataset_flags);
     // NOT yet migrated — still computed by the engine directly:
     environment::detect_target_objects(task);

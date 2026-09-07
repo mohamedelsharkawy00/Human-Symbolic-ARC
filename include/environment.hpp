@@ -373,6 +373,12 @@ namespace arc {
 	struct puzzle {
 		string id;
 		vector<example> train, test;
+		// EVERYTHING INFERENCE WORKED OUT, kept whole. It used to be computed
+		// into a local and hand-copied out field by field before that local
+		// died, which is why there were reduced copies of it here and a second
+		// set of copies again on the way to the GPU. The object outlives the
+		// function now, so nothing has to be copied out of it.
+		inference inf;
 		output_dimension_rule rule;
 		bool invariant_colors[10] = {}; // one bit: the elected input background
 		// Allowed colors for color-LITERAL ops, one set per SIDE: a literal the
@@ -380,10 +386,6 @@ namespace arc {
 		// WRITES can only name a color some train output has. Bridged from
 		// inference (in_any_input / in_any_output). A count of 0 means "not set
 		// / don't pin" (e.g. empty puzzle) so generation falls back to all 10.
-		bool colors_in_any_input[10] = {};
-		int  colors_in_any_input_count = 0;
-		bool colors_in_any_output[10] = {};
-		int  colors_in_any_output_count = 0;
 		// Ops inference declared dead for this puzzle: their backing fact is
 		// absent, so they can only no-op. Verdict filled once, right after
 		// infer(); generation never offers a dead op.
@@ -396,24 +398,14 @@ namespace arc {
 		// Learned color swaps, by BidiColorMap's variant index k in [0,44].
 		// Bridged from inference (inf.color_swaps). Pins the op's 45-way fan-out
 		// in candidate generation; count==0 means "not learned / don't pin".
-		bool color_swap_variants[45] = {};
-		int  color_swap_variants_count = 0;
-		int8_t output_colors[10] = {};   // ordered: union of colors across train outputs, first-appearance row-major across train pairs
-		int output_colors_count = 0;
-		int8_t output_colors_by_size[10] = {};  // train-output regions sorted by pixel count desc, colors in that order; consistent across train (else count=0)
-		int output_colors_by_size_count = 0;
 		// Learned shape->color lookup for the ShapeColorMap op: hash of a small
 		// glyph's occupancy -> color the main object is repainted to. Bridged from
 		// inference (inf.shape_color_map); count==0 means "not learned" -> op no-ops.
-		uint32_t shape_color_keys[16] = {};
-		int8_t   shape_color_vals[16] = {};
-		int      shape_color_count = 0;
 		// Per-train-pair map of cells the input already gets right (input ==
 		// output). Bridged from inference (inf.unchanged.kept, Identity puzzles
 		// only; empty otherwise). Layer-lock commit uses it: wrong paint on a
 		// kept cell is vandalism (nothing repaints it), wrong paint on a
 		// changed cell is fine (a later layer overwrites it anyway).
-		vector<array<bool, MAX_GRID_DIM * MAX_GRID_DIM>> kept_cells;
 		// Per-train-example connected-component summaries of target output.
 		// Computed once at puzzle-load by segment_objects_by_color_cpu. Used
 		// by the CC-match score term to reward partial structural progress.
@@ -424,195 +416,6 @@ namespace arc {
 			int count = 0;
 		};
 		vector<target_obj_slot> target_objects;
-		// Background election readout, for GUI display / verification. Plain
-		// data (no dependency on the inference family): puzzle_loader copies the four
-		// per-direction elections off the inference object here. See
-		// background_hypotheses (inference/2_background.hpp) for the source of truth.
-		struct background_readout {
-			struct cand { int8_t color = -1; int embeds = 0, dominance = 0; bool persists = false; int score = 0, span = 0, gaps = 0; bool underneath = false; };
-			// one ranked list per direction; [0] is that direction's winner
-			vector<cand> across_inputs, across_outputs, across_inputs_outputs;
-			vector<int8_t> per_pair;     // one elected color per train pair
-			int8_t input_elected = -1;   // the input-side canvas verdict
-			int8_t output_elected = -1;  // the output-side canvas verdict
-			bool per_pair_mode = false;  // global abstains but each pair has its own bg
-			bool input_vetoed = false;   // a confident pair decisively contradicts the input winner
-		};
-		background_readout bg;
-		// Object correspondence readout, for GUI display / verification. Same
-		// deal as background_readout: plain data, filled by puzzle_loader off
-		// correspondence_facts (inference/3_correspondence.hpp), one entry per edge.
-		// Centers are in HALF CELLS (2*x0 + w) so an even-sized object centers
-		// BETWEEN two cells instead of being nudged off by one.
-		struct correspondence_readout {
-			struct line {
-				int8_t pair = 0;
-				// Center of the piece, and of where it landed
-				int16_t from_col = 0, from_row = 0, to_col = 0, to_row = 0;
-				// Which reading of the split this line belongs to, as a place
-				// in `readings`. 'C' walks these.
-				int8_t rank = 0;
-				// The two boxes the line joins, in cells: where the piece sits
-				// and where it landed. Drawn one pixel thin.
-				int8_t from_x = 0, from_y = 0, from_w = 0, from_h = 0;
-				int8_t to_x = 0, to_y = 0, to_w = 0, to_h = 0;
-				// What the line CLAIMS, which the drawing cannot say: found as
-				// itself, found wearing another color, or not found at all and
-				// only sitting on what it overlaps most.
-				enum : int8_t { exact, recolored, sits_on };
-				int8_t kind = exact;
-				// Which of the eight ways round it sat, how many of its cells
-				// another piece covers, its own color (-1 = several), and how
-				// many cells run off the grid. ORDER IS LOAD-BEARING: these are
-				// filled by a positional aggregate initialiser in puzzle_loader.
-				// hidden/outside are wider than a byte because a piece can reach
-				// 900 cells, and a byte would show a wrapped number.
-				int8_t pose = 0;
-				int16_t hidden = 0;
-				int8_t color = -1;
-				int16_t outside = 0;
-				// WHICH GRID THIS LINE STARTS ON. A reading holds edges read
-				// both ways round, so the side belongs to the line and not to
-				// the reading it came from.
-				bool from_input = true;
-			};
-			vector<line> lines;
-			// One entry per reading of the split, IN THE ORDER THE TABLE IS
-			// DRAWN: one row per cut, one column per freedom, so a reading's
-			// place here IS its cell. What it cut on, what it cost and what it
-			// threw away is why one reading leads and another trails.
-			struct reading {
-				// WHERE THIS READING SITS IN THE TABLE: which cut down the
-					// side, which freedoms across the top. Two bytes, not two
-					// copied sentences — the names have one home below.
-					int8_t cut_kind = 0, match_kind = 0;
-				int pieces = 0, left_over = 0, cut = 0, box_cells = 0;
-				// EVERY piece the reading cuts out, both sides, all pairs. The
-				// lines can only ever reach pieces that HAVE an edge, so the
-				// ones that went nowhere or came from nothing are invisible
-				// without this — and those are the interesting ones.
-				struct piece_row {
-					int8_t pair = 0;
-					bool from_input = true;
-					int8_t color = -1, x = 0, y = 0, w = 0, h = 0;
-					int16_t cells = 0;
-					// How many edges it has, read from its own side
-					int16_t edges = 0;
-					// The first line it got, an index into lines; -1 = nothing
-					// answers it, which is the whole reason this list exists.
-					int16_t first_line = -1;
-					// SOMETHING IS ITS PARTNER — see object_info::has_partner. Not read
-					// off first_line: that is credited by overlapping BOXES, and
-					// a ring's box holds its own hole.
-					bool has_partner = false;
-					// ANOTHER OBJECT ON THIS GRID HAS THE SAME SHAPE. Copies of
-					// one thing, not several things that resemble each other —
-					// which is the difference between a motif that repeats and
-					// a grid full of coincidences.
-					// WHICH SET OF COPIES, -1 for none. A grid can hold several
-					// motifs at once and one color cannot say which box belongs
-					// with which, so the set is a number and the pane steps it.
-					int16_t motif = -1;
-					// THE MEDOID of that set — the member that disagrees least
-					// with all the others, elected in find_copies where the cells
-					// still exist. See object_info::medoid.
-					bool medoid = false;
-					// THE BLANK IT FILLED, or the blank it left — the patch of
-					// background on the OTHER grid this piece covers, asked only
-					// where nothing answers it. Closed in by colored cells it is a hole.
-					// blank_w 0 = it covers no blank. See object_info's blanks.
-					int8_t blank_x = 0, blank_y = 0, blank_w = 0, blank_h = 0;
-					int16_t blank_cells = 0;
-					bool blank_enclosed = false;
-				};
-				vector<piece_row> pieces_seen;
-				// EVERY match found and thrown away, with where it would have
-				// landed and why it went. A missing line is only readable next
-				// to the reason it is missing.
-				struct dropped_row {
-					int8_t pair = 0;
-					int16_t piece = 0;
-					// line::kind, and lost to chance / explained nothing new /
-					// not in the fitting
-					int8_t kind = 0, why = 0;
-					// Covered cells — wider than a byte, same reason as line
-					int16_t hidden = 0;
-					// Where the piece sits and where it WANTED to land, the same
-					// two boxes a line joins, so a refusal draws like a landing.
-					int8_t from_x = 0, from_y = 0, from_w = 0, from_h = 0;
-					int8_t to_x = 0, to_y = 0, to_w = 0, to_h = 0;
-						// Which grid the refused piece sits on — same reason as
-						// line::from_input: both readings are kept, so the side
-						// belongs to the row and not to the reading.
-						bool from_input = true;
-				};
-				vector<dropped_row> dropped_seen;
-				// EVERY CELL THE READING COULD NOT ACCOUNT FOR, named by the
-				// grid it sits on. The pane's left-over number is this list's
-				// length, so the number and what you can point at cannot drift.
-				struct left_over_row {
-					int8_t pair = 0;
-					bool from_input = true;
-					int8_t x = 0, y = 0;
-				};
-				vector<left_over_row> left_over_seen;
-				struct pair_read {
-					// How the forward pass decided (correspondence_facts::how)
-					int8_t how = 0;
-					// Matches found and thrown away, and why
-					int dropped = 0, chance = 0, stale = 0, did_not_fit = 0;
-					// Output cells no edge of any kind accounts for
-					int left_over = 0;
-				};
-				vector<pair_read> pairs;
-			};
-			vector<reading> readings;
-			// WHICH ONE INFERENCE CHOSE, a place in `readings`. The list is in
-			// table order, so the winner can sit anywhere in it and being first
-			// no longer says so.
-			int8_t chosen = 0;
-			// Non-background cells across both grids of every train pair. What a
-			// table cell is a share OF — a bare count of what a reading could not
-			// account for says nothing without the size of the thing it failed at.
-			int cells = 0;
-			// The cut names live once, beside the cuts themselves —
-			// arc::split_names in inference/3_correspondence.hpp.
-		};
-		correspondence_readout correspondence;
-		// Everything else infer() read, for the GUI pane. Same plain-data deal:
-		// only the bits not already spelled out above as fields the engine uses.
-		// One bit per color in the masks.
-		struct facts_readout {
-			uint16_t consumed = 0, introduced = 0, preserved = 0;
-			uint16_t every_input = 0, every_output = 0, every_grid = 0, any_grid = 0;
-			// Share of cells the input already gets right, worst pair
-			bool unchanged_valid = false;
-			float min_kept = 0.0f;
-			// Cells each color won and lost across all pairs
-			bool diff_valid = false;
-			int gained[10] = {}, lost[10] = {};
-			// What correspondence made of each pair
-			struct pair_counts {
-				int objects = 0, out_objects = 0;
-				// Where each input piece went, where each output landing came
-				// from: nowhere/nothing, one, several. Same names as
-				// correspondence_facts::pair_info, straight across.
-				int deleted = 0, persisted = 0, copied = 0;
-				int invented = 0, from_one = 0, from_many = 0;
-				// Most places one piece went, most pieces met at one landing
-				int most_landings = 0, most_sources = 0;
-				// Non-background output cells an exact edge does account for:
-				// what the output CARRIED OVER rather than made.
-				int carried_cells = 0;
-				// Cells no EXACT edge accounts for, so cells the output MADE
-				// rather than carried over. Not the same as a reading's left
-				// over, which counts what no edge of ANY kind accounts for —
-				// that one belongs to the reading and lives with the lines.
-				int created_cells = 0;
-			};
-			vector<pair_counts> pairs;
-		};
-		facts_readout facts;
 		node* best_tree = nullptr;
 		int best_node_count = NODE_COUNT_MAX;
 		// Has inference run on this puzzle yet. It is the expensive half of a
@@ -803,10 +606,9 @@ namespace arc {
 		// MOVED to inference/4_infer.hpp (arc::detect_color_presence).
 		// Reading the always-present (across_inputs) colors is inference's job. The
 		// engine only needs the single dominant background color for
-		// segmentation (Colors skips it, Split erases it); puzzle_loader bridges
-		// that from inf.colors.background_color
-		// into p.invariant_colors. The inference version is CORRECTED to keep the
-		// full invariant-color set (the engine version kept only the most-frequent).
+		// segmentation (Colors skips it, Split erases it), and takes it from
+		// inf.colors.background_color. p.invariant_colors is the one place that
+		// still holds a copy, because fixed_init_context cannot name `inference`.
 
 		// OutputColorsBySize: train output colors ranked by total pixel count (desc),
 		// summed across all train outputs. Verified consistent: every train output must
@@ -818,10 +620,9 @@ namespace arc {
 		// components-aware variant is needed (see notes/2_dsl/learned_orderings.txt).
 		// detect_output_colors_by_size MOVED to inference/4_infer.hpp
 		// (arc::detect_output_colors_by_size). Ranking across-outputs colors by
-		// pixel count is inference's job; puzzle_loader bridges
-		// inf.colors.output_colors_by_size / _count onto the puzzle for the
-		// OutputColorsBySize op. (The inference version reads the background color
-		// directly to skip the background, same value as the old p.invariant_colors.)
+		// pixel count is inference's job; fill_puzzle_level hands
+		// inf.colors.output_colors_by_size / _count straight to the kernel for the
+		// OutputColorsBySize op.
 
 		// detect_output_colors MOVED to inference/4_infer.hpp (arc::detect_output_colors).
 		// Reading the across_outputs palette is inference's job. Nothing in the
@@ -920,35 +721,41 @@ namespace arc {
 		// belongs to the whole puzzle rather than one example. Both upload paths
 		// call this, so a new learned fact is added here once and cannot be
 		// missed by the other path.
+		// READ STRAIGHT OFF WHAT INFERENCE SAID. Every one of these used to be
+		// copied onto the puzzle at load and read back from there, so a fact
+		// reached the kernel only if somebody remembered to add its copy line —
+		// and a forgotten one showed up as a zero, silently. There is nothing
+		// left to forget: this is the only hop, and it is from the source.
 		static inline void fill_puzzle_level(cuda_dsl_example_data& ex, const puzzle& p) {
 			// Output colors ranked by total pixel count, descending.
-			for (int i = 0; i < 10; ++i) ex.output_colors_by_size[i] = p.output_colors_by_size[i];
-			ex.output_colors_by_size_count = (int8_t)p.output_colors_by_size_count;
+			for (int i = 0; i < 10; ++i) ex.output_colors_by_size[i] = p.inf.colors.output_colors_by_size[i];
+			ex.output_colors_by_size_count = (int8_t)p.inf.colors.output_colors_by_size_count;
 
-			// Learned shape -> color lookup for the ShapeColorMap op.
+			// Learned shape -> color lookup for the ShapeColorMap op. ONLY WHEN THE
+			// RULE STANDS: a detector that gave up part way through leaves the keys
+			// it had already learned behind it, and `valid` is the whole of what
+			// says whether they were ever meant to be used.
+			const auto& learned = p.inf.shape_color_map;
 			for (int i = 0; i < 16; ++i) {
-				ex.shape_color_keys[i] = p.shape_color_keys[i];
-				ex.shape_color_vals[i] = (int8_t)p.shape_color_vals[i];
+				ex.shape_color_keys[i] = learned.valid ? learned.keys[i] : 0;
+				ex.shape_color_vals[i] = learned.valid ? (int8_t)learned.colors[i] : (int8_t)0;
 			}
-			ex.shape_color_count = (int8_t)p.shape_color_count;
+			ex.shape_color_count = learned.valid ? (int8_t)learned.count : (int8_t)0;
 
-			// invariant_colors holds exactly the dominant background color
-			// (see puzzle_loader CAVEAT), so its one set bit IS the background.
-			ex.background_color = -1;
-			for (int i = 0; i < 10; ++i)
-				if (p.invariant_colors[i]) { ex.background_color = (int8_t)i; break; }
+			// The canvas the INPUT figures sit on — what segmentation excludes.
+			ex.background_color = p.inf.colors.background_color;
 
 			// The canvas the output figures sit on. The kernel starts the canvas
 			// in this color, so the skeleton's closing underlay costs no nodes.
-			ex.output_background_color = p.bg.output_elected;
+			ex.output_background_color = p.inf.background.output_elected();
 
-			ex.rule_type = (int8_t)p.rule.Chosen;
-			ex.rule_params[0] = (int16_t)p.rule.width;
-			ex.rule_params[1] = (int16_t)p.rule.height;
-			ex.rule_params[2] = (int16_t)p.rule.width_numerator;
-			ex.rule_params[3] = (int16_t)p.rule.width_denominator;
-			ex.rule_params[4] = (int16_t)p.rule.height_numerator;
-			ex.rule_params[5] = (int16_t)p.rule.height_denominator;
+			ex.rule_type = (int8_t)p.inf.size.Chosen;
+			ex.rule_params[0] = (int16_t)p.inf.size.width;
+			ex.rule_params[1] = (int16_t)p.inf.size.height;
+			ex.rule_params[2] = (int16_t)p.inf.size.width_numerator;
+			ex.rule_params[3] = (int16_t)p.inf.size.width_denominator;
+			ex.rule_params[4] = (int16_t)p.inf.size.height_numerator;
+			ex.rule_params[5] = (int16_t)p.inf.size.height_denominator;
 		}
 
 		// Execute program on GPU (scratch path). Returns GPU score and solved flag.
