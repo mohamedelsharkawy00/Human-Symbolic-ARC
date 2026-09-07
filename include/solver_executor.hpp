@@ -576,6 +576,17 @@ namespace arc {
       beam.push_back({environment::copy(m_puzzle.best_tree), 10.0f, 0});
     }
 
+    // WHAT THE LOOKING SAID, KEPT IN THE BEAM. Trying the suggestions and then
+    // searching from scratch would waste them the moment they did not finish the
+    // puzzle; a sentence read off the pairs is worth extending even when it is
+    // not the whole answer. Scored above the starters so they survive level 0.
+    if (m_puzzle_loaded)
+      for (const string &program : m_puzzle.suggested_programs)
+        if (node *said = environment::parse(program)) {
+          beam.push_back({environment::copy(said), 5.0f, 0});
+          environment::remove(said);
+        }
+
     environment::remove(inp);
   }
 
@@ -1546,7 +1557,6 @@ namespace arc {
       // The lock is let go before pausing: toggle_pause takes the same one, and
       // it is not recursive, so pausing while holding it hangs the whole app.
       if (m_puzzle_loaded && m_puzzle.inferred && !asked_inference_yet) {
-        bool it_fitted = false;
         {
           scoped_lock lock(m_solver_state.mtx);
           asked_inference_yet = true;
@@ -1557,10 +1567,12 @@ namespace arc {
             m_solver_state.current_tree = environment::copy(m_puzzle.best_tree);
             for (auto &ex : m_puzzle.test) ex.output.visible = true;
             m_app_state.needs_upload = true;
-            it_fitted = true;
           }
         }
-        if (it_fitted && !m_app_state.is_paused && !m_app_state.is_benchmarking)
+        // A SOLVED PUZZLE DOES NOT SEARCH ON ITS OWN, whoever solved it -- the
+        // saved solution at load, what the looking said, or the beam. Unpausing
+        // it again is the user's call, and then it hunts for a shorter one.
+        if (m_puzzle.is_solved && !m_app_state.is_benchmarking && !m_app_state.is_paused)
           toggle_pause();
       }
 
