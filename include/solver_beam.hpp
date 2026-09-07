@@ -392,7 +392,7 @@ public:
     if (!m_app_state.pin_color_literals) return true;
     if (type == node_type::BidiColorMap) {
       if (m_puzzle.inf.color_swaps.count == 0) return true;  // not learned -> full fan-out
-      if (value < 0 || value >= 45) return true;   // out-of-range guard
+      if (value < 0 || value >= COLOR_PAIR_COUNT) return true;   // out-of-range guard
       return m_puzzle.inf.color_swaps.variant[value];
     }
     const bool reads_color = type == node_type::SelectObjectsContainingColor ||

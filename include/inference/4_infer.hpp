@@ -126,35 +126,35 @@ struct output_dimension_rule {
 // COLORS · which colors appear where, and in what order
 // ──────────────────────────────────────────────────────────────────────────
 // Color facts — each answers exactly one question along one direction.
-// A bool[10] is a color set.
+// A bool[COLOR_COUNT] is a color set.
 struct color_facts {
     // Color · across_input_output
     // in input, gone in output
-    bool consumed[10]   = {};
+    bool consumed[COLOR_COUNT]   = {};
     // Absent in input, present in output
-    bool introduced[10] = {};
+    bool introduced[COLOR_COUNT] = {};
     // In both
-    bool preserved[10]  = {};
+    bool preserved[COLOR_COUNT]  = {};
 
     // Color · across_inputs
-    bool in_every_input[10] = {};
-    bool in_any_input[10]   = {};
+    bool in_every_input[COLOR_COUNT] = {};
+    bool in_any_input[COLOR_COUNT]   = {};
 
     // Color · across_outputs
-    bool in_every_output[10] = {};
-    bool in_any_output[10]   = {};
+    bool in_every_output[COLOR_COUNT] = {};
+    bool in_any_output[COLOR_COUNT]   = {};
     // First-appearance order, kept for the log readout; no op consumes it now
-    int8_t output_colors[10] = {};
+    int8_t output_colors[COLOR_COUNT] = {};
     int    output_colors_count = 0;
     // Set only if all outputs rank identically
-    int8_t output_colors_by_size[10] = {};
+    int8_t output_colors_by_size[COLOR_COUNT] = {};
     int    output_colors_by_size_count = 0;
 
     // Color · across_inputs_outputs
     // in every train grid, inputs and outputs alike
-    bool in_every_grid[10] = {};
+    bool in_every_grid[COLOR_COUNT] = {};
     // In at least one train grid
-    bool in_any_grid[10]   = {};
+    bool in_any_grid[COLOR_COUNT]   = {};
     
     // Background is a ROLE, not a statistic: the canvas figures sit on.
     // Elected by elect_background, NOT computed here.
@@ -168,9 +168,9 @@ struct color_facts {
 
 // A set of colors said as digits, "0,3,4", or "-" when it holds none. Beside
 // the sets it reads, so the screen and the log say a color set the same way.
-inline string colors_as_text(const bool member[10]) {
+inline string colors_as_text(const bool member[COLOR_COUNT]) {
     string listed;
-    for (int color = 0; color < 10; ++color)
+    for (int color = 0; color < COLOR_COUNT; ++color)
         if (member[color]) {
             if (!listed.empty()) listed += ',';
             listed += (char)('0' + color);
@@ -182,16 +182,13 @@ inline string colors_as_text(const bool member[10]) {
 inline void detect_color_presence(const vector<example>& train, color_facts& facts) {
     if (train.empty()) return;
 
-    auto present = [](const grid& one_grid, bool seen[10]) {
-        for (int i = 0; i < 10; ++i) seen[i] = false;
-        for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-                int color = one_grid.data[row][col];
-                if (color >= 0 && color < 10) seen[color] = true;
-            }
+    auto present = [](const grid& one_grid, bool seen[COLOR_COUNT]) {
+        for (int i = 0; i < COLOR_COUNT; ++i) seen[i] = false;
+        walk_colored_cells(one_grid, TRANSPARENT,
+                           [&](int, int, int color) { seen[color] = true; });
     };
 
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < COLOR_COUNT; ++i) {
         facts.in_every_input[i]  = true;
         facts.in_every_output[i] = true;
         facts.in_every_grid[i]   = true;
@@ -199,10 +196,10 @@ inline void detect_color_presence(const vector<example>& train, color_facts& fac
     }
 
     for (const auto& ex : train) {
-        bool in[10], out[10];
+        bool in[COLOR_COUNT], out[COLOR_COUNT];
         present(ex.input, in);
         present(ex.output, out);
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < COLOR_COUNT; ++i) {
             facts.in_every_input[i]  = facts.in_every_input[i]  && in[i];
             facts.in_any_input[i]    = facts.in_any_input[i]    || in[i];
             facts.in_every_output[i] = facts.in_every_output[i] && out[i];
@@ -220,19 +217,16 @@ inline void detect_color_presence(const vector<example>& train, color_facts& fac
 // Color · across_outputs — "which colors appear in the outputs, in what
 // order?" First-appearance order (load-bearing).
 inline void detect_output_colors(const vector<example>& train, color_facts& facts) {
-    bool seen[10] = {};
+    bool seen[COLOR_COUNT] = {};
     facts.output_colors_count = 0;
     for (const auto& ex : train) {
         const grid& out = ex.output;
         if (out.width <= 0 || out.height <= 0) continue;
-        for (int row = 0; row < out.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < out.width && col < MAX_GRID_DIM; ++col) {
-                int color = out.data[row][col];
-                if (color >= 0 && color < 10 && !seen[color]) {
-                    seen[color] = true;
-                    facts.output_colors[facts.output_colors_count++] = (int8_t)color;
-                }
-            }
+        walk_colored_cells(out, TRANSPARENT, [&](int, int, int color) {
+            if (seen[color]) return;
+            seen[color] = true;
+            facts.output_colors[facts.output_colors_count++] = (int8_t)color;
+        });
     }
 }
 
@@ -246,11 +240,13 @@ inline void detect_output_colors_by_size(const vector<example>& train,
     if (train.empty()) return;
 
     // Biggest first; returns how many colors this output actually has.
-    auto rank_for_output = [&](const grid& out, int8_t ranking[10]) -> int {
-        int counts[10];
+    auto rank_for_output = [&](const grid& out, int8_t ranking[COLOR_COUNT]) -> int {
+        int counts[COLOR_COUNT];
         count_colors(out, counts, background);
-        int order[10] = {0,1,2,3,4,5,6,7,8,9}, present = 0;
-        for (int color = 0; color < 10; ++color) {
+        // Only the first `present` entries are ever read, and each is written
+        // before it is, so there is nothing to start them at.
+        int order[COLOR_COUNT] = {}, present = 0;
+        for (int color = 0; color < COLOR_COUNT; ++color) {
             if (counts[color] <= 0) continue;
             order[present++] = color;
         }
@@ -261,10 +257,10 @@ inline void detect_output_colors_by_size(const vector<example>& train,
         return present;
     };
 
-    int8_t first_ranking[10] = {};
+    int8_t first_ranking[COLOR_COUNT] = {};
     int first_count = rank_for_output(train[0].output, first_ranking);
     for (size_t i = 1; i < train.size(); ++i) {
-        int8_t ranking[10] = {};
+        int8_t ranking[COLOR_COUNT] = {};
         int count = rank_for_output(train[i].output, ranking);
         if (count != first_count) return;
         for (int rank = 0; rank < count; ++rank)
@@ -327,15 +323,15 @@ inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
         const grid& out = ex.output;
 
         // Per-color box + pixel count over the input (background excluded).
-        int cells_of_color[10];
-        color_box box[10];
+        int cells_of_color[COLOR_COUNT];
+        color_box box[COLOR_COUNT];
         count_colors(in, cells_of_color, background);
         color_boxes(in, box, background);
 
         // Key = the color with the smallest box, target = the largest.
         int key = -1, target = -1;
         int smallest_box = 1 << 30, largest_box = -1;
-        for (int color = 0; color < 10; ++color) {
+        for (int color = 0; color < COLOR_COUNT; ++color) {
             if (cells_of_color[color] == 0) continue;
             int box_area = (box[color].col1 - box[color].col0 + 1) *
                            (box[color].row1 - box[color].row0 + 1);
@@ -351,7 +347,7 @@ inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
                 if (in.data[row][col] == target) {
                     repainted_to = (int8_t)out.data[row][col]; break;
                 }
-        if (repainted_to < 0 || repainted_to > 9) return rule;
+        if (!is_color(repainted_to)) return rule;
 
         // Hash the key glyph's occupancy.
         const int key_width = box[key].col1 - box[key].col0 + 1;
@@ -455,7 +451,7 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
                 int in_row = top + row, in_col = left + col;
                 if (in.data[in_row][in_col] != background) continue;  // inside-noise
                 int out_color = out.data[in_row][in_col];
-                if (out_color < 0 || out_color > 9) return rule;        // bad fill -> reject
+                if (!is_color(out_color)) return rule;                  // bad fill -> reject
                 if (!any_painted) { fill = out_color; any_painted = true; }
                 else if (out_color != fill) return rule;                // non-uniform -> reject
             }
@@ -526,12 +522,12 @@ inline unchanged_cells_facts detect_unchanged_cells(const vector<example>& train
 struct color_diff_facts {
     // One map per train pair per color, indexed [pair][color]
     // gained: output cell is this color, input cell wasn't
-    vector<array<vector<pair<int8_t, int8_t>>, 10>> gained;
+    vector<array<vector<pair<int8_t, int8_t>>, COLOR_COUNT>> gained;
     // Lost: input cell was this color, output cell isn't
-    vector<array<vector<pair<int8_t, int8_t>>, 10>> lost;
+    vector<array<vector<pair<int8_t, int8_t>>, COLOR_COUNT>> lost;
     // Per color, across all pairs: total gained / lost cell counts
-    int gained_count[10] = {};
-    int lost_count[10] = {};
+    int gained_count[COLOR_COUNT] = {};
+    int lost_count[COLOR_COUNT] = {};
     bool valid = false;
 };
 
@@ -548,11 +544,11 @@ inline color_diff_facts detect_color_diff(const vector<example>& train) {
             for (int col = 0; col < in.width; ++col) {
                 int was = in.data[row][col], now = out.data[row][col];
                 if (was == now) continue;
-                if (now >= 0 && now < 10) {
+                if (is_color(now)) {
                     facts.gained[i][now].push_back({(int8_t)row, (int8_t)col});
                     facts.gained_count[now]++;
                 }
-                if (was >= 0 && was < 10) {
+                if (is_color(was)) {
                     facts.lost[i][was].push_back({(int8_t)row, (int8_t)col});
                     facts.lost_count[was]++;
                 }
@@ -573,7 +569,7 @@ inline color_diff_facts detect_color_diff(const vector<example>& train) {
 struct color_swap_rule {
     // Indexed by the op's variant k = row-major pair {a,b}, a<b — the same
     // encoding gpu_exec_bidi_color_map decodes
-    bool variant[45] = {};
+    bool variant[COLOR_PAIR_COUNT] = {};
     int  count = 0;
 };
 
@@ -583,8 +579,8 @@ inline color_swap_rule detect_color_swaps(const vector<example>& train,
     if (!diff.valid || !pairs_overlay(train)) return rule;
 
     int variant = 0;
-    for (int first = 0; first < 10; ++first)
-        for (int second = first + 1; second < 10; ++second, ++variant) {
+    for (int first = 0; first < COLOR_COUNT; ++first)
+        for (int second = first + 1; second < COLOR_COUNT; ++second, ++variant) {
             // Neither color ever changes anywhere, so this pair says nothing
             if (diff.lost_count[first] == 0 && diff.lost_count[second] == 0) continue;
             bool swaps = true;

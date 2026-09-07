@@ -213,7 +213,7 @@ inline said_reading say_the_reading(const inference& inf) {
 
     // Colours that trade places. Said before the reading's own recolor, because
     // a swap is the whole story for the cells it touches and needs no pieces.
-    for (int variant = 0; variant < 45; ++variant)
+    for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
         if (inf.color_swaps.variant[variant])
             say("BidiColorMap[" + to_string(variant) + "]");
 

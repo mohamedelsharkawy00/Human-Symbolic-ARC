@@ -117,6 +117,10 @@ constexpr int MAX_GRID_DIM = 30;
 constexpr int COLOR_COUNT = (int)arc_color::count;
 // Sentinel: "no pixel here" in masks
 constexpr int TRANSPARENT = -1;
+// How many pairs of two different colors there are, which is how many ways
+// two colors can trade places. The swap op counts them in this same order:
+// {a, b} with a < b, row-major.
+constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 
 // Is this one of the ten colors? Single home of the question, so the floor
 // stops being written as a bare 0 and the roof stays COLOR_COUNT. Everything
