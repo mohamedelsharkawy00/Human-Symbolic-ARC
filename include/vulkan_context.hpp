@@ -1,6 +1,7 @@
 #pragma once
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <string>

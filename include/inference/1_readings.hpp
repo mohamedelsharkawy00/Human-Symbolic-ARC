@@ -22,15 +22,23 @@ enum class direction {
     across_inputs_outputs,
 };
 
-// How many cells of each color a grid holds. `skip` leaves one color out of the
-// tally — the background, wherever a caller wants it ignored; -1 counts all ten.
-inline void count_colors(const grid& one_grid, int counts[10], int skip = -1) {
-    for (int i = 0; i < 10; ++i) counts[i] = 0;
+// Every cell wearing a color, in reading order, with one color left out if
+// asked. Single home of the walk: the bounds are the grid's own, held to what a
+// grid can hold, so no two readings can disagree about which cells count.
+template <class See>
+inline void walk_colored_cells(const grid& one_grid, int skip, See see) {
     for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
         for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
             const int color = one_grid.data[row][col];
-            if (color >= 0 && color < 10 && color != skip) counts[color]++;
+            if (is_color(color) && color != skip) see(row, col, color);
         }
+}
+
+// How many cells of each color a grid holds. `skip` leaves one color out of the
+// tally — the background, wherever a caller wants it ignored; -1 counts all ten.
+inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT], int skip = -1) {
+    for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
+    walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
 }
 
 // The smallest box each color's cells fit in. A color with no cells keeps the
@@ -39,16 +47,13 @@ struct color_box {
     int row0, col0, row1, col1;
 };
 
-inline void color_boxes(const grid& one_grid, color_box boxes[10], int skip = -1) {
-    for (int i = 0; i < 10; ++i) boxes[i] = { MAX_GRID_DIM, MAX_GRID_DIM, -1, -1 };
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            const int color = one_grid.data[row][col];
-            if (color < 0 || color > 9 || color == skip) continue;
-            color_box& box = boxes[color];
-            box.row0 = min(box.row0, row); box.row1 = max(box.row1, row);
-            box.col0 = min(box.col0, col); box.col1 = max(box.col1, col);
-        }
+inline void color_boxes(const grid& one_grid, color_box boxes[COLOR_COUNT], int skip = -1) {
+    for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = { MAX_GRID_DIM, MAX_GRID_DIM, -1, -1 };
+    walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
+        color_box& box = boxes[color];
+        box.row0 = min(box.row0, row); box.row1 = max(box.row1, row);
+        box.col0 = min(box.col0, col); box.col1 = max(box.col1, col);
+    });
 }
 
 // Do input and output overlay cell-for-cell in EVERY pair? The channels below

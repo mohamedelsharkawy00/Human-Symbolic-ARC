@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>  // getenv_s / strtoul for ARC_WS_MAX_GB / ARC_COMMIT_GB
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include "environment.hpp"
 #include "global_app_state.hpp"
 #include "cuda_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via gui.hpp on Windows)

@@ -2,6 +2,7 @@
 #include "cuda_dsl.cuh"
 #include <chrono>
 #include <atomic>
+#include <cstring>
 #include <cstdio>
 
 void* pinned_buffer_alloc(size_t bytes) {

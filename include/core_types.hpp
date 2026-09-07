@@ -1,7 +1,5 @@
 #pragma once
-#include <atomic>
 #include <cstdint>
-#include <cstring>
 
 // Host/device marker: expands to nothing for plain C++ compilers.
 #ifdef __CUDACC__
@@ -61,22 +59,16 @@ template <typename Grid>
 ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
                                            int& width, int& height,
                                            bool must_fit_twice = true) {
-    width = g.width; height = g.height;
-    auto row_holds = [&](int w) {
-        for (int r = 0; r < g.height; ++r)
-            for (int c = w; c < g.width; ++c) {
+    // Does the grid repeat every `period` cells along one axis? `across` asks
+    // about columns, otherwise rows. One test for both, so they cannot drift.
+    auto repeats_every = [&](int period, bool across) {
+        for (int r = across ? 0 : period; r < g.height; ++r)
+            for (int c = across ? period : 0; c < g.width; ++c) {
                 const int here = g.data[r][c];
                 if (here == background) continue;
-                if (here != g.data[r][c % w]) return false;
-            }
-        return true;
-    };
-    auto col_holds = [&](int h) {
-        for (int c = 0; c < g.width; ++c)
-            for (int r = h; r < g.height; ++r) {
-                const int here = g.data[r][c];
-                if (here == background) continue;
-                if (here != g.data[r % h][c]) return false;
+                const int folded_row = across ? r : r % period;
+                const int folded_col = across ? c % period : c;
+                if (here != g.data[folded_row][folded_col]) return false;
             }
         return true;
     };
@@ -88,12 +80,15 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     // the full 3 wide. No period fitting twice means the grid does not
     // repeat on that axis, and the width stays whole.
     // The cost of this rule is in notes/4 - To Do/A Repeat Has To Fit Twice.md.
-    const int widest = must_fit_twice ? g.width / 2 : g.width - 1;
-    const int tallest = must_fit_twice ? g.height / 2 : g.height - 1;
-    for (int w = 1; w <= widest; ++w)
-        if (row_holds(w)) { width = w; break; }
-    for (int h = 1; h <= tallest; ++h)
-        if (col_holds(h)) { height = h; break; }
+    // The shortest period that holds, or the whole size when none does.
+    auto smallest_period = [&](int size, bool across) {
+        const int longest = must_fit_twice ? size / 2 : size - 1;
+        for (int period = 1; period <= longest; ++period)
+            if (repeats_every(period, across)) return period;
+        return size;
+    };
+    width = smallest_period(g.width, true);
+    height = smallest_period(g.height, false);
 }
 
 namespace arc {
@@ -123,6 +118,13 @@ constexpr int COLOR_COUNT = (int)arc_color::count;
 // Sentinel: "no pixel here" in masks
 constexpr int TRANSPARENT = -1;
 
+// Is this one of the ten colors? Single home of the question, so the floor
+// stops being written as a bare 0 and the roof stays COLOR_COUNT. Everything
+// else is not a color, TRANSPARENT above all.
+ARC_HOST_DEVICE constexpr bool is_color(int value) {
+	return value >= 0 && value < COLOR_COUNT;
+}
+
 constexpr float SCORE_MIN = -1000000.0f;
 
 // What "next to" means, in the two readings a grid ever uses: all eight
@@ -147,24 +149,13 @@ constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
 constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
 
 struct grid {
-	mutable std::atomic<int> ref_count;
 	int width = 0, height = 0, offset = 0, stride = MAX_GRID_DIM;
 	bool visible = true;
 	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
 
-	grid() : ref_count(1) { memset(data, 0, sizeof(data)); }
-	grid(int w, int h, int off, int str) : ref_count(1), width(w), height(h), offset(off), stride(str) { memset(data, 0, sizeof(data)); }
-	grid(const grid& other) : ref_count(1), width(other.width), height(other.height), offset(other.offset), stride(other.stride), visible(other.visible) {
-		memcpy(data, other.data, sizeof(data));
-	}
-	grid& operator=(const grid& other) {
-		if (this != &other) {
-			width = other.width; height = other.height; offset = other.offset;
-			stride = other.stride; visible = other.visible;
-			memcpy(data, other.data, sizeof(data));
-		}
-		return *this;
-	}
+	// Nothing here needs hand-copying, so the compiler lists the fields, not us.
+	grid() = default;
+	grid(int w, int h, int off, int str) : width(w), height(h), offset(off), stride(str) {}
 
 	uint64_t hash() const {
 		uint64_t h = 0;
@@ -192,7 +183,7 @@ struct grid {
 struct example {
 	grid input, output, current, best;
 	float best_score = SCORE_MIN, cur_score = SCORE_MIN;
-	int distance_maps[(int)arc_color::count][MAX_GRID_DIM][MAX_GRID_DIM]{};
+	int distance_maps[COLOR_COUNT][MAX_GRID_DIM][MAX_GRID_DIM]{};
 };
 
 }
