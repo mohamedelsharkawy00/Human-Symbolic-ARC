@@ -1,1 +1,5 @@
-* text=auto eol=crlf
+# CRLF everywhere, in the working tree and in the repository alike. This is a
+# Windows program, so -text tells git to convert nothing in either direction:
+# what is written here is what is stored, and what is stored is what is checked
+# out, on any machine.
+* -text
