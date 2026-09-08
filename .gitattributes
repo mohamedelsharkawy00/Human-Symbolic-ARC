@@ -1,0 +1,7 @@
+# One line ending everywhere in the repo. The headers were a mix of both, so a
+# whitespace-only rewrite could hide inside any real diff.
+* text=auto eol=lf
+
+# Written by the solver at run time, and on Windows that means CRLF every run.
+# Normalising these would re-dirty the tree after every solve.
+solutions/*.txt -text
