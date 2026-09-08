@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <utility>
 
-// Host/device marker: expands to nothing for plain C++ compilers.
+// This tag is what makes code visible to a CUDA device and CUDA host, otherwise it is host-only.
 #ifdef __CUDACC__
 #define ARC_HOST_DEVICE __host__ __device__
 #else
@@ -33,7 +33,7 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 constexpr int POSE_COUNT = 8;
 
 // How big a grid reads once posed. Only the trade changes the size.
-ARC_HOST_DEVICE inline std::pair<int, int> posed_size(int pose, int width, int height) {
+inline std::pair<int, int> posed_size(int pose, int width, int height) {
     return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
 }
 
@@ -146,14 +146,14 @@ constexpr float SCORE_MIN = -1000000.0f;
 // --- Folding many numbers into one, single home of both halves ---
 // One step of boost's hash_combine, doing a 64-bit job. Cheap and weak on its
 // own: it is the gathering, not the finish.
-ARC_HOST_DEVICE inline uint64_t hash_fold(uint64_t seed, uint64_t value) {
+inline uint64_t hash_fold(uint64_t seed, uint64_t value) {
 	return seed ^ (value + 0x9e3779b9 + (seed << 6) + (seed >> 2));
 }
 
 // splitmix64 finalizer. Turns a weakly-folded value into one whose bits are
 // all doing work, in about two cycles. A fold that is compared for EQUALITY
 // must end here, or near-miss programs collide and the second is never tried.
-ARC_HOST_DEVICE inline uint64_t mix64(uint64_t x) {
+inline uint64_t mix64(uint64_t x) {
 	x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
 	x ^= x >> 27; x *= 0x94d049bb133111ebULL;
 	x ^= x >> 31; return x;
