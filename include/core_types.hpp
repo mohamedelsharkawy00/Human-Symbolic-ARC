@@ -143,6 +143,22 @@ ARC_HOST_DEVICE constexpr bool is_color(int value) {
 
 constexpr float SCORE_MIN = -1000000.0f;
 
+// --- Folding many numbers into one, single home of both halves ---
+// One step of boost's hash_combine, doing a 64-bit job. Cheap and weak on its
+// own: it is the gathering, not the finish.
+ARC_HOST_DEVICE inline uint64_t hash_fold(uint64_t seed, uint64_t value) {
+	return seed ^ (value + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+}
+
+// splitmix64 finalizer. Turns a weakly-folded value into one whose bits are
+// all doing work, in about two cycles. A fold that is compared for EQUALITY
+// must end here, or near-miss programs collide and the second is never tried.
+ARC_HOST_DEVICE inline uint64_t mix64(uint64_t x) {
+	x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
+	x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+	x ^= x >> 31; return x;
+}
+
 // What "next to" means, in the two readings a grid ever uses: all eight
 // neighbours with corners counted, and the four that share an edge. Single home
 // of the offsets, so no two walks over a grid can disagree about who touches.
@@ -171,13 +187,10 @@ struct grid {
 
 	uint64_t hash() const {
 		uint64_t h = 0;
-		for (int r = 0; r < height; ++r) {
-			for (int c = 0; c < width; ++c) {
-				h ^= data[r][c] + 0x9e3779b9 + (h << 6) + (h >> 2);
-			}
-		}
-		h ^= width + 0x9e3779b9 + (h << 6) + (h >> 2);
-		h ^= height + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (int r = 0; r < height; ++r)
+			for (int c = 0; c < width; ++c) h = hash_fold(h, data[r][c]);
+		h = hash_fold(h, width);
+		h = hash_fold(h, height);
 		return h;
 	}
 };

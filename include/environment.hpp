@@ -227,14 +227,6 @@ namespace arc {
 
 	// Compact summary of one connected component in a grid: color, bbox size,
 	// position, pixel count. This is all the CC-match score needs — no per-cell mask.
-	// splitmix64 finalizer. Turns a weakly-folded value into one whose bits are
-	// all doing work, in about two cycles.
-	inline uint64_t mix64(uint64_t x) {
-		x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
-		x ^= x >> 27; x *= 0x94d049bb133111ebULL;
-		x ^= x >> 31; return x;
-	}
-
 	struct object_summary {
 		int8_t color = -1;
 		int8_t w = 0;
@@ -636,20 +628,28 @@ namespace arc {
 		// which returns an `inference` object; its output_dimension_rule is copied to p.rule.
 		// See inference/4_infer.hpp for the verified-foundation notes (1,147-puzzle corpus).
 
+		// What one node's hash is, from its parts alone. Single home of the
+		// recipe: update_hash finalizes real nodes with it, and the beam
+		// predicts the same number without building a tree
+		// (beam_solver::predict_replaced_hash), so the two cannot drift.
+		// The search compares these for EQUALITY -- two programs landing on one
+		// number are one program as far as it can tell, and the second is never
+		// tried -- so the weak fold is finalized before it leaves.
+		static inline uint64_t node_hash(int type, uint64_t value,
+		                                 uint64_t child_hash, bool has_child) {
+			uint64_t h = 0x9e3779b97f4a7c15ULL + (uint64_t)type;
+			h = hash_fold(h, value);
+			if (has_child) h = hash_fold(h, child_hash);
+			return mix64(h);
+		}
+
 		static inline void update_hash(node* n) {
 			if (!n)
 				return;
 			n->update_depth();
 			set_generation_debt(n);  // debt is finalized here, the one node-finalize chokepoint
-			uint64_t h = 0x9e3779b97f4a7c15ULL + to_underlying(n->type);
-			h ^= (uint64_t)n->value + 0x9e3779b9 + (h << 6) + (h >> 2);
-			if (n->arg)
-				h ^= n->arg->hash + 0x9e3779b9 + (h << 6) + (h >> 2);
-			// The fold above is boost's 32-bit hash_combine doing a 64-bit job, and
-			// the search compares these numbers for EQUALITY -- two programs that
-			// land on one number are one program as far as it can tell, and the
-			// second is never tried. Finalize so distinct programs stay distinct.
-			n->hash = mix64(h);
+			n->hash = node_hash(to_underlying(n->type), (uint64_t)n->value,
+			                    n->arg ? n->arg->hash : 0, n->arg != nullptr);
 		}
 
 

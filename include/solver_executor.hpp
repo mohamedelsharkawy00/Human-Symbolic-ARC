@@ -322,12 +322,10 @@ namespace arc {
     uint64_t child_hash = new_subtree_hash;
     for (int spine_at = spine_len - 1; spine_at >= 0; --spine_at) {
       const node *n = spine[spine_at];
-      // Mirror environment::update_hash exactly; the swapped child is treated
-      // as non-null.
-      uint64_t h = 0x9e3779b97f4a7c15ULL + to_underlying(n->type);
-      h ^= (uint64_t)n->value + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= child_hash + 0x9e3779b9 + (h << 6) + (h >> 2);
-      child_hash = h;
+      // The one recipe, not a copy of it; the swapped child is treated as
+      // non-null.
+      child_hash = environment::node_hash(to_underlying(n->type),
+                                          (uint64_t)n->value, child_hash, true);
     }
     return child_hash;
   }
