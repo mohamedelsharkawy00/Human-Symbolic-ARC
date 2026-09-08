@@ -491,7 +491,7 @@ inline ARC_HOST_DEVICE gpu_painted_box gpu_box_of_paint(const gpu_fixed_object& 
 inline ARC_HOST_DEVICE uint32_t gpu_shape_hash_of_paint(const gpu_fixed_object& obj) {
     const gpu_painted_box box = gpu_box_of_paint(obj);
     if (box.width <= 0 || box.height <= 0) return 0;
-    return shape_occupancy_hash(box.width, box.height, [&](int i) {
+    return arc::shape_occupancy_hash(box.width, box.height, [&](int i) {
         return obj.mask[box.y0 + i / box.width][box.x0 + i % box.width] != GPU_TRANSPARENT;
     });
 }

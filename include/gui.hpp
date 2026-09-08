@@ -2540,7 +2540,7 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
 
   for (int c_idx : colors) {
     pad_buffer(gpu_buffer);
-    solid_sheets[c_idx] = grid(256, 256);
+    solid_sheets[c_idx] = grid{256, 256};
     solid_sheets[c_idx].offset = (int)gpu_buffer.size();
     solid_sheets[c_idx].stride = 256;
     gpu_buffer.insert(gpu_buffer.end(), 256 * 256, c_idx);

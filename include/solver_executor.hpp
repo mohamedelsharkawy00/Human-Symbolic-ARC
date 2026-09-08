@@ -1857,7 +1857,7 @@ namespace arc {
           }
 
           uint64_t g_hash = (!winner_res.train.empty() && winner_res.train[0].valid)
-              ? winner_res.train[0].state.hash() : 0;
+              ? grid_hash(winner_res.train[0].state) : 0;
           if (done.tree) {
             log_score_formula(done.tree, winner_breakdowns);
             report_score(done.tree, winner_res.total_train_score, g_hash);

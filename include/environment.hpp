@@ -27,6 +27,32 @@ namespace arc {
 		return static_cast<std::underlying_type_t<Enum>>(e);
 	}
 
+	// Squashing many numbers into one, so the search can ask "have I already tried
+	// this?" by comparing a single number. Start at 0, fold once per value, and
+	// finish with mix64 -- a raw fold spreads its bits badly, and two near-miss
+	// programs landing on one number means the second is never tried.
+	inline uint64_t hash_fold(uint64_t seed, uint64_t value) {
+		return seed ^ (value + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+	}
+
+	// splitmix64 finalizer: about two cycles, and every bit ends up doing work.
+	inline uint64_t mix64(uint64_t x) {
+		x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
+		x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+		x ^= x >> 31; return x;
+	}
+
+	// A grid as one number, for the score log to tag a run with. Only ever
+	// printed, never compared, so it does not finish with mix64.
+	inline uint64_t grid_hash(const grid& g) {
+		uint64_t h = 0;
+		for (int r = 0; r < g.height; ++r)
+			for (int c = 0; c < g.width; ++c) h = hash_fold(h, g.data[r][c]);
+		h = hash_fold(h, g.width);
+		h = hash_fold(h, g.height);
+		return h;
+	}
+
 	// --- Search Sentinels ---
 	constexpr int NODE_COUNT_MAX = 1000000;
 	constexpr int DISTANCE_MAX = 100;

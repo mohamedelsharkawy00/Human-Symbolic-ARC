@@ -112,7 +112,7 @@ inline int walk_out(int rows, int cols, int queue_row[], int queue_col[], int se
 // The hash recipe lives in 0_core_types.hpp (single home); this adapts a packed
 // bool occupancy array to it.
 inline uint32_t shape_occupancy_hash(int width, int height, const bool* occupied) {
-    return ::shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
+    return arc::shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
 }
 
 // Canonical (orientationless, positionless) shape identity: the smallest
@@ -123,7 +123,7 @@ inline uint32_t canonical_shape_hash(int width, int height, const bool* occupied
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, width, height);
-        uint32_t hash = ::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
+        uint32_t hash = arc::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
             const auto [row, col] = pose_source(pose, width, height, i / posed_width,
                                                 i % posed_width);
             return occupied[row * width + col];

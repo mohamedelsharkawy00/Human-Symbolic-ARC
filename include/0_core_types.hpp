@@ -1,20 +1,88 @@
+// Start here. This file depends on no other file in the project, and every other
+// file depends on it.
+// It sets the words the rest of the project is written in.
 #pragma once
 #include <cstdint>
 #include <utility>
 
-// This tag is what makes code visible to a CUDA device and CUDA host, otherwise it is host-only.
+// This tag is what makes code visible to a CUDA device and CUDA host,
+// otherwise it is host-only.
 #ifdef __CUDACC__
 #define ARC_HOST_DEVICE __host__ __device__
 #else
 #define ARC_HOST_DEVICE
 #endif
 
-// FNV-1a fingerprint of a glyph's bbox occupancy (1 = glyph pixel, 0 = empty),
-// seeded with w,h. Single home of the recipe: the CPU hashes learned keys
-// (1_readings.hpp) and the kernel hashes again at apply time
-// both call this, so learned keys cannot silently miss.
-// occ(i): is pixel i (row-major within the bbox) part of the glyph.
-template <typename OccupancyAt>
+namespace arc {
+
+// The ten colors a cell can hold.
+enum class arc_color : int8_t {
+	black = 0, blue = 1, red = 2, green = 3, yellow = 4, gray  = 5,
+    magenta = 6, orange = 7, cyan = 8, maroon = 9, count = 10
+};
+
+constexpr int COLOR_COUNT = (int)arc_color::count;
+
+// 10 choose 2.
+constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
+
+// Sentinel: "no pixel here" in masks.
+constexpr int TRANSPARENT = -1;
+
+// TRANSPARENT is -1, so the >= 0 is what keeps it out: it is not a color.
+ARC_HOST_DEVICE constexpr bool is_color(int value) {
+	return value >= 0 && value < COLOR_COUNT;
+}
+
+// Grouping is 8, "is this one object?".
+constexpr int NEIGHBOUR_ROW_8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
+constexpr int NEIGHBOUR_COL_8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+
+// Adjacency is 4, "what is beside this?".
+constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
+constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
+
+// The largest grid size ARC uses is 30 x 30.
+constexpr int MAX_GRID_DIM = 30;
+
+// Copying is never written out: every field is plain data, so the compiler's own
+// copy of all of them is the right one.
+struct grid {
+	int width = 0, height = 0;
+	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
+
+	// The three below are only for drawing this grid on the GUI; the solver never
+	// reads them.
+
+	// Where its cells were put in the renderer's one big buffer.
+	int offset = 0;
+	// How far apart two rows sit in that buffer.
+	int stride = 0;
+	// Whether to draw it at all.
+	bool visible = true;
+};
+
+// The worst a score can be, so an untried example starts below every real one.
+constexpr float SCORE_MIN = -1000000.0f;
+
+struct example {
+	grid input, output, current, best;
+	float best_score = SCORE_MIN, cur_score = SCORE_MIN;
+	int distance_maps[COLOR_COUNT][MAX_GRID_DIM][MAX_GRID_DIM]{};
+};
+
+// Turn a shape into one number, so "is this the same shape?" becomes "are these
+// two numbers equal?". Shape here means which cells of the box around it are
+// filled, plus w and h. Not the color, not where it sits on the grid.
+// The CPU stores these numbers and the GPU looks them up, so if the two ever
+// hashed differently every lookup would miss. Hence one function, called by both.
+//
+// occ(i) says whether cell i is filled, counting across each row in turn. Every
+// caller must count the same way or the two sides hash the same shape apart.
+// The second template parameter demands a function: without it a plain bool
+// array lands here instead of the array-taking version in 1_readings.hpp.
+template <typename OccupancyAt,
+          typename = decltype(std::declval<OccupancyAt&>()(0))>
 ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
     uint32_t hsh = 2166136261u;
     auto mix = [&](uint8_t b) { hsh = (hsh ^ b) * 16777619u; };
@@ -103,102 +171,4 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     height = smallest_period(g.height, false);
 }
 
-namespace arc {
-
-
-// Below both the engine and inference, so either can be read without the other.
-// Reached through 4_infer.hpp, the one door to everything below it.
-
-// The pieces a puzzle is made of: colors, grids, one train pair.
-enum class arc_color : int8_t {
-	black = 0,
-	blue = 1,
-	red = 2,
-	green = 3,
-	yellow = 4,
-	gray = 5,
-	magenta = 6,
-	orange = 7,
-	cyan = 8,
-	maroon = 9,
-	count = 10
-};
-
-// --- Domain & Type Limits, single home; the GPU_* names alias these ---
-constexpr int MAX_GRID_DIM = 30;
-constexpr int COLOR_COUNT = (int)arc_color::count;
-// Sentinel: "no pixel here" in masks
-constexpr int TRANSPARENT = -1;
-// How many pairs of two different colors there are, which is how many ways
-// two colors can trade places. The swap op counts them in this same order:
-// {a, b} with a < b, row-major.
-constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
-
-// Is this one of the ten colors? Single home of the question, so the floor
-// stops being written as a bare 0 and the roof stays COLOR_COUNT. Everything
-// else is not a color, TRANSPARENT above all.
-ARC_HOST_DEVICE constexpr bool is_color(int value) {
-	return value >= 0 && value < COLOR_COUNT;
-}
-
-constexpr float SCORE_MIN = -1000000.0f;
-
-// --- Folding many numbers into one, single home of both halves ---
-// One step of boost's hash_combine, doing a 64-bit job. Cheap and weak on its
-// own: it is the gathering, not the finish.
-inline uint64_t hash_fold(uint64_t seed, uint64_t value) {
-	return seed ^ (value + 0x9e3779b9 + (seed << 6) + (seed >> 2));
-}
-
-// splitmix64 finalizer. Turns a weakly-folded value into one whose bits are
-// all doing work, in about two cycles. A fold that is compared for EQUALITY
-// must end here, or near-miss programs collide and the second is never tried.
-inline uint64_t mix64(uint64_t x) {
-	x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
-	x ^= x >> 27; x *= 0x94d049bb133111ebULL;
-	x ^= x >> 31; return x;
-}
-
-// What "next to" means, in the two readings a grid ever uses: all eight
-// neighbours with corners counted, and the four that share an edge. Single home
-// of the offsets, so no two walks over a grid can disagree about who touches.
-// GROUPING IS 8, "is this one thing?". ADJACENCY IS 4, "what is beside this?".
-// Which one is not a preference, so a 4 needs no comment and anything else does.
-// Why, and what unifying them would silently move:
-// notes/4 - To Do/Connectivity Is Two Questions.md
-constexpr int NEIGHBOUR_ROW_8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-constexpr int NEIGHBOUR_COL_8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
-constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
-constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
-
-struct grid {
-	int width = 0, height = 0;
-	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
-
-	// Where this grid sits in the renderer's cell buffer, and whether to draw it.
-	// Set only by whoever puts it there (grid_buffer.hpp); nothing below the
-	// screen reads them, so a grid that is never drawn leaves them alone.
-	int offset = 0, stride = 0;
-	bool visible = true;
-
-	// Nothing here needs hand-copying, so the compiler lists the fields, not us.
-	grid() = default;
-	grid(int w, int h) : width(w), height(h) {}
-
-	uint64_t hash() const {
-		uint64_t h = 0;
-		for (int r = 0; r < height; ++r)
-			for (int c = 0; c < width; ++c) h = hash_fold(h, data[r][c]);
-		h = hash_fold(h, width);
-		h = hash_fold(h, height);
-		return h;
-	}
-};
-
-struct example {
-	grid input, output, current, best;
-	float best_score = SCORE_MIN, cur_score = SCORE_MIN;
-	int distance_maps[COLOR_COUNT][MAX_GRID_DIM][MAX_GRID_DIM]{};
-};
-
-}
+}  // namespace arc

@@ -2112,7 +2112,7 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // a grid repeats, and a motif that fits once and a bit is still the
         // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.
         const gpu_object_view view{ obj_src.mask, obj_src.width, obj_src.height };
-        repeat_periods(view, GPU_TRANSPARENT, best_w, best_h, /*must_fit_twice=*/false);
+        arc::repeat_periods(view, GPU_TRANSPARENT, best_w, best_h, /*must_fit_twice=*/false);
         gpu_fixed_object obj;
         // The unit is the same object, so it keeps its mark. A fresh
         // gpu_fixed_object starts unmarked and would drop the pick silently.
@@ -2901,13 +2901,13 @@ __device__ void gpu_rule_output_dims(int8_t rt, const int16_t* rp,
 
 // posed(r,c) reads original(pr,pc). W,H = ORIGINAL dims.
 __device__ inline void gpu_pose_src(int p, int r, int c, int W, int H, int& pr, int& pc) {
-    const auto [row, col] = pose_source(p, W, H, r, c);
+    const auto [row, col] = arc::pose_source(p, W, H, r, c);
     pr = row; pc = col;
 }
 
 // original(gr,gc) lands at posed(r,c). Exact inverse of gpu_pose_src.
 __device__ inline void gpu_pose_dst(int p, int gr, int gc, int W, int H, int& r, int& c) {
-    const auto [row, col] = posed_place(p, W, H, gr, gc);
+    const auto [row, col] = arc::posed_place(p, W, H, gr, gc);
     r = row; c = col;
 }
 

@@ -1,7 +1,8 @@
 #pragma once
-// How a grid is laid out inside the gpu_buffer the CUDA solver consumes.
-// Not rendering code: shared by the real GUI (gui.hpp) and the headless
-// Kaggle build (gui_stub.hpp), so it lives here once.
+// How a grid is laid out inside gpu_buffer, the cell buffer the Vulkan shader
+// draws from. The CUDA solver never reads it. It lives in its own file because
+// solver_beam.hpp calls these whether or not there is a screen, so the headless
+// Kaggle build (gui_stub.hpp) needs them too and writes into a buffer nobody draws.
 #include "environment.hpp"
 #include <algorithm>
 #include <cstring>
