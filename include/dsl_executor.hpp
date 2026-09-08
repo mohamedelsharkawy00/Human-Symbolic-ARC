@@ -53,7 +53,8 @@ namespace arc {
 		// without the CC bonus and every CC-bearing winner would trivially beat it.
 		{
 			object_summary tobjs[MAX_TARGET_OBJECTS];
-			int tcount = segment_objects_by_color_cpu(ex.output, tobjs, MAX_TARGET_OBJECTS);
+			int tcount = find_objects_by_color(ex.output, p.inf.background.output_elected(),
+			                                   tobjs, MAX_TARGET_OBJECTS);
 			gpu_object_summary* dst = ex_data.target_objs; // ei=0
 			for (int k = 0; k < tcount; ++k) {
 				dst[k].color = tobjs[k].color;

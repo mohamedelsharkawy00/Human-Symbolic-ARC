@@ -95,40 +95,6 @@ inline grid parse_grid(const string &str, size_t &pos) {
   return grid;
 }
 
-inline void compute_distance_maps(example &ex) {
-  int h = ex.output.height, w = ex.output.width;
-  static constexpr int drs[] = {-1, 1, 0, 0};
-  static constexpr int dcs[] = {0, 0, -1, 1};
-  for (int c = 0; c < COLOR_COUNT; ++c) {
-    // BFS from all cells matching color c — O(W*H) instead of O(W²*H²)
-    // Queue is static thread_local + clear() (not a local): it grows to the
-    // max grid size once and never reallocates again. Do not localize this.
-    static thread_local vector<pair<int,int>> q;
-    q.clear();
-    for (int y = 0; y < h; ++y)
-      for (int x = 0; x < w; ++x) {
-        if (ex.output.data[y][x] == c) {
-          ex.distance_maps[c][y][x] = 0;
-          q.push_back({y, x});
-        } else {
-          ex.distance_maps[c][y][x] = DISTANCE_MAX;
-        }
-      }
-    size_t head = 0;
-    while (head < q.size()) {
-      auto [cy, cx] = q[head++];
-      int nd = ex.distance_maps[c][cy][cx] + 1;
-      for (int i = 0; i < 4; ++i) {
-        int ny = cy + drs[i], nx = cx + dcs[i];
-        if (ny >= 0 && ny < h && nx >= 0 && nx < w && nd < ex.distance_maps[c][ny][nx]) {
-          ex.distance_maps[c][ny][nx] = nd;
-          q.push_back({ny, nx});
-        }
-      }
-    }
-  }
-}
-
 inline void apply_solution(puzzle &task, puzzle_views &views,
                            vector<int> &gpu_buffer, const string &sol_str, logger &log) {
   // Re-import (or import onto a puzzle that loaded with a solved tree) would
@@ -159,7 +125,7 @@ inline void apply_solution(puzzle &task, puzzle_views &views,
       log.debug(to_text("Example score: %s (Solved: %s)", shortest(s).c_str(), solved ? "YES" : "NO"));
       log_score(i, terms, "import_train");
 
-      ex.best_score = s;
+      task.best_score(false, i) = s;
       if (example_views *v = views.of(false, i))
         update_display_buffer(v->best, temp, gpu_buffer);
       if (!solved)
@@ -175,7 +141,7 @@ inline void apply_solution(puzzle &task, puzzle_views &views,
         auto [s, solved] = environment::score_tree_output(
             task.best_tree, ex, temp, task, task.best_node_count, &terms);
         log_score(i, terms, "import_test");
-        ex.best_score = s;
+        task.best_score(true, i) = s;
         if (example_views *v = views.of(true, i))
           update_display_buffer(v->best, temp, gpu_buffer);
         if (!solved) test_all_solved = false;
@@ -462,8 +428,6 @@ inline bool load_task_from_content(const string &content, const string &id,
 
         view.current = allocate_empty_grid(gpu_buffer);
         view.best = allocate_empty_grid(gpu_buffer);
-
-        if (has_output || has_solution) compute_distance_maps(ex);
 
         out_vec.push_back(ex);
         view_vec.push_back(view);

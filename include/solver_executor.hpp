@@ -41,21 +41,24 @@ namespace arc {
     update_display_buffer(v->current, source, *gpu_buffer);
   }
 
-  // The score is the search's own, so it is cleared either way; the grid is a
-  // picture, so it is only cleared where there is one.
-  static inline void clear_current_view(example& ex, example_views* v) {
-    ex.cur_score = SCORE_MIN - 1.0f;
-    if (v) v->current.width = 0;
+  // Picture and score are both the display's, so there is nothing to clear
+  // where nothing is being shown.
+  static inline void clear_current_view(example_views* v) {
+    if (!v) return;
+    v->current_score = SCORE_MIN - 1.0f;
+    v->current.width = 0;
   }
 
-  static inline void clear_best_view(example& ex, example_views* v) {
-    ex.best_score = SCORE_MIN - 1.0f;
+  static inline void clear_best_view(float& best, example_views* v) {
+    best = SCORE_MIN - 1.0f;
     if (v) v->best.width = 0;
   }
 
-  static inline void set_example_scores(example& ex, float score) {
-    ex.best_score = score;
-    ex.cur_score = score;
+  // One number, two homes: the search keeps it to compare trees by, the display
+  // keeps it to label the CURRENT column with.
+  static inline void set_example_scores(float& best, example_views* v, float score) {
+    best = score;
+    if (v) v->current_score = score;
   }
 
   inline void beam_solver::commit_and_advance_level() {
@@ -1225,7 +1228,7 @@ namespace arc {
 
     float current_best_sum = 0;
     for (int i = 0; i < active; ++i)
-      current_best_sum += p.train[i].best_score;
+      current_best_sum += p.best_score(false, i);
 
     // SOLVING OUTRANKS RESEMBLING. Nothing that fails the active examples may
     // displace something that passes them, however high it scores -- otherwise
@@ -1254,7 +1257,7 @@ namespace arc {
 
       current_best_sum = 0;
       for (int i = 0; i < active; ++i)
-        current_best_sum += p.train[i].best_score;
+        current_best_sum += p.best_score(false, i);
 
       bool still_score_better = !still_would_lose_a_solve &&
                                 res.total_train_score > current_best_sum + 0.0001f;
@@ -1916,14 +1919,13 @@ namespace arc {
     int n = (int)examples.size();
     if (limit >= 0) n = min(n, limit);
     for (int i = 0; i < n; ++i) {
-      example &ex = examples[i];
       example_views *v = (views && (size_t)i < views->size()) ? &(*views)[i] : nullptr;
       if (i < results.size() && results[i].valid) {
         const grid& g = results[i].state;
-        ex.cur_score = results[i].score;
+        if (v) v->current_score = results[i].score;
         update_one_view(v ? &v->current : nullptr, g, m_gpu_buffer);
       } else {
-        clear_current_view(ex, v);
+        clear_current_view(v);
       }
     }
   }
@@ -1931,7 +1933,7 @@ namespace arc {
   inline void beam_solver::clear_test_current_views(puzzle &p) {
     if (!m_gpu_buffer) return;
     for (size_t i = 0; i < p.test.size(); ++i)
-      clear_current_view(p.test[i], m_solver_state.views.of(true, i));
+      clear_current_view(m_solver_state.views.of(true, i));
   }
 
   // When a candidate solves all train, run it on test inputs and show its
@@ -1944,7 +1946,7 @@ namespace arc {
     if (!m_gpu_buffer) return;
     if (!all_train_solved || !tree) {
       for (size_t i = 0; i < p.test.size(); ++i)
-        clear_current_view(p.test[i], m_solver_state.views.of(true, i));
+        clear_current_view(m_solver_state.views.of(true, i));
       return;
     }
     for (size_t ei = 0; ei < p.test.size(); ++ei) {
@@ -1954,12 +1956,12 @@ namespace arc {
       if (ex.output.width > 0) {
         auto [ts, _slv] = environment::score_tree_output(
             tree, ex, tg, p, node_count);
-        ex.cur_score = ts;
+        if (v) v->current_score = ts;
       } else {
         float _s = 0; bool _slv = false;
         bool ok = environment::execute_tree_via_flat(
             tree, ex, tg, p, node_count, _s, _slv);
-        if (!ok) { clear_current_view(ex, v); continue; }
+        if (!ok) { clear_current_view(v); continue; }
         // No ground truth — match BEST's convention: leave score untouched
         // (will mirror best_score, set when the tree was first promoted).
       }
@@ -2148,13 +2150,13 @@ namespace arc {
   inline void beam_solver::clear_all_views(puzzle &p) {
     for (size_t i = 0; i < p.train.size(); ++i) {
       example_views *v = m_solver_state.views.of(false, i);
-      clear_current_view(p.train[i], v);
-      clear_best_view(p.train[i], v);
+      clear_current_view(v);
+      clear_best_view(p.best_score(false, i), v);
     }
     for (size_t i = 0; i < p.test.size(); ++i) {
       example_views *v = m_solver_state.views.of(true, i);
-      clear_current_view(p.test[i], v);
-      clear_best_view(p.test[i], v);
+      clear_current_view(v);
+      clear_best_view(p.best_score(true, i), v);
     }
   }
 
@@ -2174,7 +2176,7 @@ namespace arc {
       auto [s, solved] = environment::score_tree_output(
           tree, p.train[active], temp, p, node_count);
 
-      set_example_scores(p.train[active], s);
+      set_example_scores(p.best_score(false, active), m_solver_state.views.of(false, active), s);
       update_example_views(m_solver_state.views.of(false, active), temp, m_gpu_buffer);
       if (!solved) break;
 
@@ -2233,7 +2235,7 @@ namespace arc {
       // score), so without this the prediction grid would render blank. With no
       // ground truth the score is against an empty target and isn't meaningful,
       // but it still gates display — matching apply_solution's reload path.
-      set_example_scores(p.test[i], ts);
+      set_example_scores(p.best_score(true, i), m_solver_state.views.of(true, i), ts);
       if (p.test[i].output.width > 0) {
         // Ground truth available (eval/training sets): tslv tells us whether the
         // hidden test output was actually solved.
@@ -2251,8 +2253,8 @@ namespace arc {
     if (!m_gpu_buffer) return;
     for (size_t i = 0; i < p.test.size(); ++i) {
       example_views *v = m_solver_state.views.of(true, i);
-      clear_current_view(p.test[i], v);
-      clear_best_view(p.test[i], v);
+      clear_current_view(v);
+      clear_best_view(p.best_score(true, i), v);
     }
   }
 
@@ -2260,13 +2262,13 @@ namespace arc {
     bool all_train_perfect = true;
     for (int i = 0; i < (int)p.train.size(); ++i) {
       if (i >= active) {
-        if (m_gpu_buffer) clear_best_view(p.train[i], m_solver_state.views.of(false, i));
+        if (m_gpu_buffer) clear_best_view(p.best_score(false, i), m_solver_state.views.of(false, i));
         continue;
       }
       grid temp = {};
       auto [s, solved] = environment::score_tree_output(
           p.best_tree, p.train[i], temp, p, node_count);
-      p.train[i].best_score = s;
+      p.best_score(false, i) = s;
       if (example_views *v = m_solver_state.views.of(false, i))
         update_one_view(&v->best, temp, m_gpu_buffer);
       if (!solved) all_train_perfect = false;
@@ -2281,13 +2283,13 @@ namespace arc {
         grid tg = {};
         auto [score, slv] = environment::score_tree_output(
             p.best_tree, p.test[i], tg, p, node_count);
-        p.test[i].best_score = score;
+        p.best_score(true, i) = score;
         if (example_views *v = m_solver_state.views.of(true, i))
           update_one_view(&v->best, tg, m_gpu_buffer);
       }
     } else {
       for (size_t i = 0; i < p.test.size(); ++i) {
-        clear_best_view(p.test[i], m_solver_state.views.of(true, i));
+        clear_best_view(p.best_score(true, i), m_solver_state.views.of(true, i));
       }
     }
   }

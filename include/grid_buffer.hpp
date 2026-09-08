@@ -36,6 +36,11 @@ struct display_grid : grid {
 struct example_views {
   placement input, output;
   display_grid current, best;
+  // What the search is trying right now, scored. Lives here and not on the
+  // example because only this column reads it: nothing in the search decides
+  // anything by it. Below SCORE_MIN means nothing has been tried, which is how
+  // the CURRENT column knows to draw nothing.
+  float current_score = SCORE_MIN - 1.0f;
 };
 
 // One of the above per example, in the same order as puzzle::train and

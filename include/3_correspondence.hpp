@@ -645,7 +645,7 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
     // from what counts as joined: the one walk answers both.
     const bool same_color = (cut_kind != split_kind::touching_any_color);
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    int  queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
 
     for (int start_row = 0; start_row < one_grid.height && start_row < MAX_GRID_DIM; ++start_row)
@@ -657,7 +657,7 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
             continue;
         }
         int seeded = 1;
-        queue_row[0] = start_row; queue_col[0] = start_col;
+        queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
         visited[start_row][start_col] = true;
         int left = start_col, top = start_row, right = start_col, bottom = start_row;
         // One piece per color takes every cell of the color at once, wherever
@@ -668,7 +668,7 @@ inline void cut_into_pieces(const grid& one_grid, int8_t background, split_kind 
                 for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
                     if (visited[row][col] || one_grid.data[row][col] != color) continue;
                     visited[row][col] = true;
-                    queue_row[seeded] = row; queue_col[seeded] = col; seeded++;
+                    queue_row[seeded] = (int16_t)row; queue_col[seeded] = (int16_t)col; seeded++;
                 }
         }
         const int size = walk_out(one_grid.height, one_grid.width,
@@ -775,7 +775,7 @@ struct blank_patch {
 };
 
 // THE PATCHES OF NOTHING IN A GRID. Background cells joined side to side —
-// ADJACENCY IS 4, see 0_core_types.hpp — each patch given a number, and every
+// ADJACENCY IS 4, see 1_readings.hpp — each patch given a number, and every
 // cell told which patch it belongs to. A patch that reaches the border of the
 // grid is open to the outside; one that never does is closed in, and that is a
 // hole. Story in notes/1 - Overall Design/Inference Master.md, 3d.
@@ -1789,6 +1789,52 @@ inline pair<int, int> repeating_step_of(const vector<example>& train) {
             return { 0, 0 };
     }
     return { first_block.width, first_block.height };
+}
+
+// The smallest block a grid repeats: the shortest run of columns that repeats
+// across it, and of rows that repeats down it. A grid that repeats nothing gets
+// back its own width and height. Grid needs width, height, and data[row][col].
+// Single home of the recipe: the Pattern op reads the unit by it and inference
+// cuts by it (split_kind::repeating_motif), so the two can never read a
+// different period off the same grid.
+// `background` is don't care one way round only: a colored cell must be what the
+// block puts there, a background cell where the block has a color is forgiven.
+// Pass a value no cell can hold (-2) to compare raw.
+// `must_fit_twice` is the caller's question, not a setting: inference asks "does
+// this repeat?" and needs two whole copies, the Pattern op asks "what unit do I
+// continue with?" and needs one copy and a matching stub.
+// Why smallest, why there is no biggest, and what each rule costs:
+// notes/1 - Overall Design/The Smallest Repeating Block.md
+template <typename Grid>
+ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
+                                           int& width, int& height,
+                                           bool must_fit_twice = true) {
+    // Does the grid repeat every `period` cells along one axis? `across` asks
+    // about columns, otherwise rows. One test for both, so they cannot drift.
+    auto repeats_every = [&](int period, bool across) {
+        for (int r = across ? 0 : period; r < g.height; ++r)
+            for (int c = across ? period : 0; c < g.width; ++c) {
+                const int here = g.data[r][c];
+                if (here == background) continue;
+                const int folded_row = across ? r : r % period;
+                const int folded_col = across ? c % period : c;
+                if (here != g.data[folded_row][folded_col]) return false;
+            }
+        return true;
+    };
+    // The shortest period that holds, or the whole size when none does. Past
+    // halfway there is too little left to compare, so a long period passes on a
+    // cell or two and means nothing.
+    // Why two whole copies, and what it costs:
+    // notes/4 - To Do/A Repeat Has To Fit Twice.md
+    auto smallest_period = [&](int size, bool across) {
+        const int longest = must_fit_twice ? size / 2 : size - 1;
+        for (int period = 1; period <= longest; ++period)
+            if (repeats_every(period, across)) return period;
+        return size;
+    };
+    width = smallest_period(g.width, true);
+    height = smallest_period(g.height, false);
 }
 
 // The block one pair is cut on under this cut. ONE BLOCK FOR THE PAIR — not for

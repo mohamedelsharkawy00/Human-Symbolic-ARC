@@ -56,6 +56,8 @@ namespace arc {
 	// --- Search Sentinels ---
 	constexpr int NODE_COUNT_MAX = 1000000;
 	constexpr int DISTANCE_MAX = 100;
+	// The worst a score can be, so anything untried sits below every real one.
+	constexpr float SCORE_MIN = -1000000.0f;
 	constexpr size_t BEAM_WIDTH = 128;
 	const int MAX_BATCH_SIZE = 5000;
 	constexpr int MAX_SEARCH_DEPTH = 32;
@@ -253,69 +255,6 @@ namespace arc {
 
 	// Compact summary of one connected component in a grid: color, bbox size,
 	// position, pixel count. This is all the CC-match score needs — no per-cell mask.
-	struct object_summary {
-		int8_t color = -1;
-		int8_t w = 0;
-		int8_t h = 0;
-		int8_t x0 = 0;
-		int8_t y0 = 0;
-		int16_t count = 0;
-	};
-
-	// Segment a grid into per-color connected components (8-connectivity).
-	// Each color is segmented independently so that touching different-color
-	// regions don't merge into one component (which would happen with the
-	// default "everything non-background" segmentation). Background = pixel
-	// value < 0 (TRANSPARENT) or == 0 (puzzle convention for "empty").
-	// Writes up to MAX_TARGET_OBJECTS summaries; extras are silently dropped.
-	static inline int segment_objects_by_color_cpu(const grid& g, object_summary* out, int max_out) {
-		if (g.width <= 0 || g.height <= 0) return 0;
-		int n = 0;
-		bool visited[MAX_GRID_DIM][MAX_GRID_DIM]{};
-		// Static BFS queue sized to a full grid; small enough to stack-alloc.
-		int16_t qr[MAX_GRID_DIM * MAX_GRID_DIM];
-		int16_t qc[MAX_GRID_DIM * MAX_GRID_DIM];
-		static constexpr int8_t dr[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-		static constexpr int8_t dc[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
-		for (int r = 0; r < g.height; ++r) {
-			for (int c = 0; c < g.width; ++c) {
-				if (visited[r][c]) continue;
-				int v = g.data[r][c];
-				// Skip background: TRANSPARENT (-1) and 0 (puzzle "empty").
-				if (v < 0 || v == 0) { visited[r][c] = true; continue; }
-				int head = 0, tail = 0;
-				qr[tail] = (int16_t)r; qc[tail] = (int16_t)c; tail++;
-				visited[r][c] = true;
-				int x0 = c, y0 = r, x1 = c, y1 = r;
-				while (head < tail) {
-					int cr = qr[head], cc = qc[head]; head++;
-					if (cc < x0) x0 = cc;
-					if (cr < y0) y0 = cr;
-					if (cc > x1) x1 = cc;
-					if (cr > y1) y1 = cr;
-					for (int d = 0; d < 8; ++d) {
-						int nr = cr + dr[d], nc = cc + dc[d];
-						if (nr < 0 || nr >= g.height || nc < 0 || nc >= g.width) continue;
-						if (visited[nr][nc]) continue;
-						if (g.data[nr][nc] != v) continue;
-						visited[nr][nc] = true;
-						qr[tail] = (int16_t)nr; qc[tail] = (int16_t)nc; tail++;
-					}
-				}
-				if (n < max_out) {
-					out[n].color = (int8_t)v;
-					out[n].w = (int8_t)(x1 - x0 + 1);
-					out[n].h = (int8_t)(y1 - y0 + 1);
-					out[n].x0 = (int8_t)x0;
-					out[n].y0 = (int8_t)y0;
-					out[n].count = (int16_t)tail;
-					n++;
-				}
-			}
-		}
-		return n;
-	}
-
 	// Multiset match: for each attempt CC, find an unused target CC that matches
 	// by (w,h,count); count it as shape match. If color also matches, count it
 	// as color match too. Position score is the continuous bonus per shape-
@@ -425,7 +364,7 @@ namespace arc {
 		// kept cell is vandalism (nothing repaints it), wrong paint on a
 		// changed cell is fine (a later layer overwrites it anyway).
 		// Per-train-example connected-component summaries of target output.
-		// Computed once at puzzle-load by segment_objects_by_color_cpu. Used
+		// Computed once at puzzle-load by find_objects_by_color. Used
 		// by the CC-match score term to reward partial structural progress.
 		// Sized to train.size(); inner array padded to MAX_TARGET_OBJECTS for
 		// cheap upload to GPU template alongside count.
@@ -436,6 +375,23 @@ namespace arc {
 		vector<target_obj_slot> target_objects;
 		node* best_tree = nullptr;
 		int best_node_count = NODE_COUNT_MAX;
+		// WHAT THE CHAMPION SCORES ON EACH PAIR, indexed like train and test.
+		// It describes best_tree, not the pair, which is why it lives here
+		// beside it: replace the tree and every one of these is stale together.
+		// The search reads the sum back to decide whether a new tree beats the
+		// old one, so it is not a picture and cannot live with the GUI.
+		vector<float> best_train_scores, best_test_scores;
+		// Grown on demand, so nothing has to keep these sized in step with the
+		// pairs; an index never scored yet reads as the worst a score can be.
+		float& best_score(bool is_test, size_t i) {
+			vector<float>& s = is_test ? best_test_scores : best_train_scores;
+			if (s.size() <= i) s.resize(i + 1, SCORE_MIN);
+			return s[i];
+		}
+		float best_score_or_worst(bool is_test, size_t i) const {
+			const vector<float>& s = is_test ? best_test_scores : best_train_scores;
+			return i < s.size() ? s[i] : SCORE_MIN;
+		}
 		// Has inference run on this puzzle yet. It is the expensive half of a
 		// load and nothing reads it until the pane opens or the search starts,
 		// so it is done on demand and this says whether it has been.
@@ -615,8 +571,9 @@ namespace arc {
 			p.target_objects.assign(p.train.size(), puzzle::target_obj_slot{});
 			for (size_t i = 0; i < p.train.size(); ++i) {
 				auto& slot = p.target_objects[i];
-				slot.count = segment_objects_by_color_cpu(
-					p.train[i].output, slot.objs, MAX_TARGET_OBJECTS);
+				slot.count = find_objects_by_color(
+					p.train[i].output, p.inf.background.output_elected(),
+					slot.objs, MAX_TARGET_OBJECTS);
 			}
 		}
 

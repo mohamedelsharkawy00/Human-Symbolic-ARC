@@ -376,7 +376,7 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
     if (!pairs_overlay(train)) return rule;
 
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM];
-    int  queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     // Zeroed once here, then the used prefix is reset per blob below. The reset
     // is what the code relies on; this only says so where a reader starts.
     bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};  // blob footprint over its box
@@ -397,7 +397,7 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
 
             // One blob: same-color cells that touch, corners counting (this is
             // what the device's gpu_flood_fill does too).
-            queue_row[0] = start_row; queue_col[0] = start_col;
+            queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
             visited[start_row][start_col] = true;
             int left = start_col, top = start_row, right = start_col, bottom = start_row;
             const int blob_size = walk_out(in.height, in.width, queue_row, queue_col, 1,
@@ -555,6 +555,10 @@ inline color_diff_facts detect_color_diff(const vector<example>& train) {
     facts.valid = true;
     return facts;
 }
+
+// Every unordered pair of colors, 10 choose 2: how many variants the swap op
+// fans out to, and the size of the table that pins them.
+constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 
 // ──────────────────────────────────────────────────────────────────────────
 // COLOR SWAP · whether part of the change is two colors trading places

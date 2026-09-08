@@ -872,8 +872,8 @@ public:
     int max_depth = p.best_tree ? (int)p.best_tree->max_depth : 0;
 
     float best_score = 0.0f;
-    for (const auto &ex : p.train)
-      best_score += ex.best_score;
+    for (size_t i = 0; i < p.train.size(); ++i)
+      best_score += p.best_score_or_worst(false, i);
 
     string sol_str = p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : "";
 

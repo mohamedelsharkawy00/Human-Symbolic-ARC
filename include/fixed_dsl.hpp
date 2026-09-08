@@ -242,11 +242,54 @@ static inline void fixed_init_context(
     ctx.output.height = (int16_t)std::min((int)ctx.output.height, (int)GPU_MAX_GRID);
     ctx.output.clear_data();
 
-    // Convert distance maps
-    for (int color = 0; color < GPU_MAX_COLORS; ++color)
-        for (int r = 0; r < GPU_MAX_GRID; ++r)
-            for (int c = 0; c < GPU_MAX_GRID; ++c)
-                ctx.distance_maps[color][r][c] = (int8_t)std::min(ex.distance_maps[color][r][c], 127);
+    // HOW FAR EVERY CELL IS FROM THE NEAREST CELL OF EACH COLOR IN THE ANSWER,
+    // which is what lets a near miss score better than a wild one. Derived
+    // wholly from ex.output, so it is worked out here rather than stored on the
+    // example: one recipe, and it can never be stale against the pair it
+    // describes. Cells outside the answer stay 0, and the scorer never reads
+    // them -- it walks the target's own pixels and no further.
+    memset(ctx.distance_maps, 0, sizeof(ctx.distance_maps));
+    {
+        const int h = std::min(ex.output.height, (int)GPU_MAX_GRID);
+        const int w = std::min(ex.output.width, (int)GPU_MAX_GRID);
+        static constexpr int drs[] = {-1, 1, 0, 0};
+        static constexpr int dcs[] = {0, 0, -1, 1};
+        // BFS out from every cell of the color at once, so each map costs one
+        // sweep of the grid rather than one per pair of cells. Cells come off in
+        // the order they went on, so the first distance a cell is given is
+        // already its shortest and the guard below turns away every later one --
+        // which is what holds a cell to one place in the queue, and the queue to
+        // one cell per grid. On the stack, keeping this file free of the heap.
+        int16_t queue[GPU_GRID_CELLS];
+        for (int color = 0; color < GPU_MAX_COLORS; ++color) {
+            int tail = 0;
+            for (int r = 0; r < h; ++r)
+                for (int c = 0; c < w; ++c) {
+                    if (ex.output.data[r][c] == color) {
+                        ctx.distance_maps[color][r][c] = 0;
+                        queue[tail++] = (int16_t)(r * GPU_MAX_GRID + c);
+                    } else {
+                        // Stands for "no cell of this color anywhere near", and
+                        // is what every real distance is measured against below.
+                        ctx.distance_maps[color][r][c] = (int8_t)DISTANCE_MAX;
+                    }
+                }
+            for (int head = 0; head < tail; ++head) {
+                const int cr = queue[head] / GPU_MAX_GRID, cc = queue[head] % GPU_MAX_GRID;
+                // A cell is only ever queued once it holds a real distance, so
+                // this never counts up from the stand-in and cannot run past
+                // what an int8_t holds.
+                const int nd = ctx.distance_maps[color][cr][cc] + 1;
+                for (int i = 0; i < 4; ++i) {
+                    const int nr = cr + drs[i], nc = cc + dcs[i];
+                    if (nr < 0 || nr >= h || nc < 0 || nc >= w) continue;
+                    if (nd >= ctx.distance_maps[color][nr][nc]) continue;
+                    ctx.distance_maps[color][nr][nc] = (int8_t)nd;
+                    queue[tail++] = (int16_t)(nr * GPU_MAX_GRID + nc);
+                }
+            }
+        }
+    }
 
     // Segment objects from input for seeds/palette
     fixed_grid input_copy;

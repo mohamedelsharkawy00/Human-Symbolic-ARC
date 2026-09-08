@@ -695,8 +695,8 @@ inline bool draw_grid_view(
       draw_cell(ex.input, v->input, 0, cur_y);
       if (show_output)
         draw_cell(ex.output, v->output, 1, cur_y);
-      draw_cell(v->current, v->current.at, 2, cur_y, ex.cur_score);
-      draw_cell(v->best, v->best.at, 3, cur_y, ex.best_score);
+      draw_cell(v->current, v->current.at, 2, cur_y, v->current_score);
+      draw_cell(v->best, v->best.at, 3, cur_y, task.best_score_or_worst(is_test, i));
       cur_y += slot_h;
     }
   };

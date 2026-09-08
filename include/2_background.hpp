@@ -211,7 +211,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // A ground showing through is everywhere but always thin.
     // ADJACENCY, SO FOUR: a fraying measure asks what BORDERS this cell, and a
     // corner touch is not a border. Not the 8 that grouping uses — see the note
-    // beside NEIGHBOUR_ROW_4 in 0_core_types.hpp before making these agree.
+    // beside NEIGHBOUR_ROW_4 in 1_readings.hpp before making these agree.
     int touching[COLOR_COUNT] = {};
     color_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
@@ -261,11 +261,11 @@ inline blob_map label_blobs(const grid& one_grid) {
     blob_map blobs;
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) blobs.id[row][col] = -1;
-    int queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     walk_colored_cells(one_grid, TRANSPARENT, [&](int start_row, int start_col, int color) {
         if (blobs.id[start_row][start_col] >= 0) return;
         int16_t id = (int16_t)blobs.color.size();
-        queue_row[0] = start_row; queue_col[0] = start_col;
+        queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
         blobs.id[start_row][start_col] = id;
         bool on_border = false;
         int first_cell = (int)blobs.cells.size();
@@ -299,7 +299,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
     int blobs_of_color[COLOR_COUNT] = {}, backdrop_blobs_of_color[COLOR_COUNT] = {};
 
     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
-    int queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     // One vote box per blob, indexed by the blob's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
     // boxes this blob touched, so clearing costs what was used, not all of them.
@@ -319,7 +319,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
                     col != 0 && col != one_grid.width - 1) continue;
                 if (blobs.id[row][col] == blob || outside[row][col]) continue;
                 outside[row][col] = true;
-                queue_row[seeded] = row; queue_col[seeded] = col; seeded++;
+                queue_row[seeded] = (int16_t)row; queue_col[seeded] = (int16_t)col; seeded++;
             }
         walk_out(one_grid.height, one_grid.width, queue_row, queue_col, seeded,
             [&](int next_row, int next_col) {

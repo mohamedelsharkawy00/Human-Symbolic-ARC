@@ -384,62 +384,13 @@ inline constexpr bool needs_a_pick(node_type t) {
 static constexpr int GPU_KERNEL_MAX_OBJECTS = 32;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 
-// __host__ __device__ under nvcc, nothing under the host compiler (this header
-// is also included by MSVC-compiled .hpp files, which don't know those keywords).
-#ifdef __CUDACC__
-  #define GPU_MASK_HD __host__ __device__
-#else
-  #define GPU_MASK_HD
-#endif
-
-// DIAG: the proxy clamps an out-of-bounds packed-mask cell access to cell 0 so it
-// can't fault. If clamping makes the kernel illegal-access vanish, the bug is a
-// mask OOB. (printf here blows the ptxas budget under launch_bounds, so no log.)
-#define GPU_MASK_OOB(r, c, i) ((void)0)
-
-// 4-bit packed 30x30 cell mask: 2 cells/byte (450B vs 900B). Value v in [-1,9]
-// (GPU_TRANSPARENT..colors) stored as nibble (v+1) in [0,10]. Proxies expose
-// mask[r][c] read/write so lane-0 ops and all reads are unchanged. WARNING:
-// the proxy write is a byte read-modify-write, so it is ONLY safe single-
-// threaded; warp ops that write cells in parallel must write whole bytes via
-// .data[] directly (two cells/byte) to avoid the shared-byte race.
-struct gpu_packed_mask {
-    static constexpr int CELLS = GPU_MAX_GRID * GPU_MAX_GRID;
-    uint8_t data[(CELLS + 1) / 2];
-
-    struct cref {
-        uint8_t* b; int sh;
-        GPU_MASK_HD operator int8_t() const { return (int8_t)(((*b) >> sh) & 0xF) - 1; }
-        GPU_MASK_HD void operator=(int8_t v) {
-            uint8_t n = (uint8_t)((int)v + 1) & 0xF;
-            *b = (uint8_t)(((*b) & ~(0xF << sh)) | (n << sh));
-        }
-    };
-    struct ccref {
-        const uint8_t* b; int sh;
-        GPU_MASK_HD operator int8_t() const { return (int8_t)(((*b) >> sh) & 0xF) - 1; }
-    };
-    struct row  { uint8_t* base; int r;
-        GPU_MASK_HD cref  operator[](int c) const { int i = r * GPU_MAX_GRID + c;
-            if (i < 0 || i >= CELLS) { GPU_MASK_OOB(r, c, i); i = 0; }   // DIAG: clamp OOB to prevent the fault
-            return cref { base + (i >> 1), (i & 1) * 4 }; } };
-    struct crow { const uint8_t* base; int r;
-        GPU_MASK_HD ccref operator[](int c) const { int i = r * GPU_MAX_GRID + c;
-            if (i < 0 || i >= CELLS) { GPU_MASK_OOB(r, c, i); i = 0; }   // DIAG: clamp OOB to prevent the fault
-            return ccref{ base + (i >> 1), (i & 1) * 4 }; } };
-
-    GPU_MASK_HD row  operator[](int r)       { return row { data, r }; }
-    GPU_MASK_HD crow operator[](int r) const { return crow{ data, r }; }
-    GPU_MASK_HD void clear() { for (int i = 0; i < (int)sizeof(data); ++i) data[i] = 0; }  // all transparent
-    // Pack value v into cell (r,c) — for use inside a single byte by one lane.
-    GPU_MASK_HD static uint8_t enc(int8_t v) { return (uint8_t)((int)v + 1) & 0xF; }
-};
-
-// Pack an unpacked GPU_MAX_GRID^2 int8 grid into a packed mask, cell by cell.
-GPU_MASK_HD inline void gpu_mask_from_grid(gpu_packed_mask& m, const int8_t g[][GPU_MAX_GRID]) {
-    for (int r = 0; r < GPU_MAX_GRID; ++r)
-        for (int c = 0; c < GPU_MAX_GRID; ++c)
-            m[r][c] = g[r][c];
+// The packed cell store lives upstream in 1_readings.hpp, where both sides
+// can reach it: it holds no addresses, so the same bytes mean the same thing
+// on the host and on the device. These names are what the kernel calls it.
+using gpu_packed_mask = arc::packed_grid;
+#define GPU_MASK_HD ARC_HOST_DEVICE
+ARC_HOST_DEVICE inline void gpu_mask_from_grid(gpu_packed_mask& m, const int8_t g[][GPU_MAX_GRID]) {
+    arc::pack_grid(m, g);
 }
 
 // `selected` is the SELECT slot at object depth: one flag per object, not per
