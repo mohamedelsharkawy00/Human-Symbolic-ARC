@@ -6,7 +6,7 @@
 // with 3_correspondence.hpp in either direction, so the two are siblings.
 
 #pragma once
-#include "inference/1_readings.hpp"
+#include "1_readings.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <utility>
@@ -211,7 +211,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // A ground showing through is everywhere but always thin.
     // ADJACENCY, SO FOUR: a fraying measure asks what BORDERS this cell, and a
     // corner touch is not a border. Not the 8 that grouping uses — see the note
-    // beside NEIGHBOUR_ROW_4 in core_types.hpp before making these agree.
+    // beside NEIGHBOUR_ROW_4 in 0_core_types.hpp before making these agree.
     int touching[COLOR_COUNT] = {};
     color_box box[COLOR_COUNT];
     color_boxes(one_grid, box);

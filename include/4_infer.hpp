@@ -21,11 +21,11 @@
 // took ALL of itself along — facts, machinery, and the detector that fills
 // them. infer() calls in and gets its answer back:
 //
-//   inference/1_readings.hpp        the shared base: count it, box it, walk it
-//   inference/2_background.hpp      elect_background
-//   inference/3_correspondence.hpp  pick_split
-//   inference/5_sentences.hpp       say_the_reading
-//   inference/6_log.hpp             the per-puzzle readout
+//   1_readings.hpp        the shared base: count it, box it, walk it
+//   2_background.hpp      elect_background
+//   3_correspondence.hpp  pick_split
+//   5_sentences.hpp       say_the_reading
+//   6_log.hpp             the per-puzzle readout
 //
 // Facts, not verdicts: consumers fold and gate downstream. One exception —
 // background_hypotheses keeps its runners-up ranked, because something later
@@ -39,9 +39,9 @@
 // returns (detect_color_presence and friends, behind detect_color_facts).
 
 #pragma once
-#include "inference/1_readings.hpp"
-#include "inference/2_background.hpp"
-#include "inference/3_correspondence.hpp"
+#include "1_readings.hpp"
+#include "2_background.hpp"
+#include "3_correspondence.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>

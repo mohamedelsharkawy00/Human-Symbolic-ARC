@@ -47,12 +47,11 @@ SRC_FILES = ["main.cpp", "cuda_solver.cu"]
 # The Windows-only ones (gui, command_server, window_manager, vulkan_context,
 # screenshot, os_utilities) are excluded because gcc never sees them.
 INC_FILES = [
-    "core_types.hpp",
+    # The numbered ones in the order they build on each other, 0 first.
+    "0_core_types.hpp", "1_readings.hpp", "2_background.hpp",
+    "3_correspondence.hpp", "4_infer.hpp", "5_sentences.hpp", "6_log.hpp",
     "cuda_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
     "fixed_dsl.hpp", "global_app_state.hpp", "grid_buffer.hpp", "gui_stub.hpp",
-    "inference/1_readings.hpp", "inference/2_background.hpp",
-    "inference/3_correspondence.hpp", "inference/4_infer.hpp",
-    "inference/5_sentences.hpp", "inference/6_log.hpp",
     "logger.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
     "solver_executor.hpp", "sound_manager.hpp", "submission.hpp",
     "text_format.hpp",
@@ -69,13 +68,16 @@ def sync():
         shutil.copy2(os.path.join(ROOT, "src", f), os.path.join(PKG, "src", f))
     for f in INC_FILES:
         dst = os.path.join(PKG, "include", f)
-        # a listed header may sit in a subfolder (inference/), so make its home first
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(ROOT, "include", f), dst)
-    # A leftover third_party from an earlier push would still be uploaded.
-    tp_dst = os.path.join(PKG, "include", "third_party")
-    if os.path.exists(tp_dst):
-        shutil.rmtree(tp_dst)
+    # Every header is copied flat, so any folder still sitting in there is left
+    # over from an older push (third_party, inference) and would be uploaded
+    # with the rest. Named by what it is rather than one by one, so the next
+    # folder to go away needs no edit here.
+    inc = os.path.join(PKG, "include")
+    for entry in os.listdir(inc):
+        stale = os.path.join(inc, entry)
+        if os.path.isdir(stale):
+            shutil.rmtree(stale)
     print(f"synced {len(SRC_FILES)} src + {len(INC_FILES)} headers -> {os.path.relpath(PKG, ROOT)}")
 
 def remote_version():

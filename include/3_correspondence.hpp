@@ -8,7 +8,7 @@
 // Shaped like 2_background.hpp, its sibling.
 
 #pragma once
-#include "inference/1_readings.hpp"
+#include "1_readings.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -775,7 +775,7 @@ struct blank_patch {
 };
 
 // THE PATCHES OF NOTHING IN A GRID. Background cells joined side to side —
-// ADJACENCY IS 4, see core_types.hpp — each patch given a number, and every
+// ADJACENCY IS 4, see 0_core_types.hpp — each patch given a number, and every
 // cell told which patch it belongs to. A patch that reaches the border of the
 // grid is open to the outside; one that never does is closed in, and that is a
 // hole. Story in notes/1 - Overall Design/Inference Master.md, 3d.

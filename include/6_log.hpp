@@ -4,7 +4,7 @@
 // Last in the family: it reads every fact and writes none.
 
 #pragma once
-#include "inference/5_sentences.hpp"
+#include "5_sentences.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>

@@ -17,7 +17,7 @@
 // become a second solver.
 
 #pragma once
-#include "inference/4_infer.hpp"
+#include "4_infer.hpp"
 #include <string>
 #include <vector>
 

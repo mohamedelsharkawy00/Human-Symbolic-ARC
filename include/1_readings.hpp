@@ -5,7 +5,7 @@
 // the train pairs; these are the tools the questions get asked with.
 
 #pragma once
-#include "core_types.hpp"
+#include "0_core_types.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -109,7 +109,7 @@ inline int walk_out(int rows, int cols, int queue_row[], int queue_col[], int se
     return tail;
 }
 
-// The hash recipe lives in core_types.hpp (single home); this adapts a packed
+// The hash recipe lives in 0_core_types.hpp (single home); this adapts a packed
 // bool occupancy array to it.
 inline uint32_t shape_occupancy_hash(int width, int height, const bool* occupied) {
     return ::shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });

@@ -2107,7 +2107,7 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // Only what was picked is reduced to its unit; the rest ride through.
         if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int best_w, best_h;
-        // One finder for everyone (core_types.hpp). Loose evidence on purpose:
+        // One finder for everyone (0_core_types.hpp). Loose evidence on purpose:
         // naming the unit to continue with is a different question from proving
         // a grid repeats, and a motif that fits once and a bit is still the
         // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.
@@ -2892,7 +2892,7 @@ __device__ void gpu_rule_output_dims(int8_t rt, const int16_t* rp,
 // — plus a width<->height swap, keeping already-painted accumulator pixels
 // consistent with the rotated geometry.
 // ---- Canonical pose (NormalizeOrientation[1]) ----
-// What the eight poses mean is core_types.hpp's to say, and the card reads it
+// What the eight poses mean is 0_core_types.hpp's to say, and the card reads it
 // from there, so the two sides cannot drift. The card once kept its own
 // spelling with flip-rows and flip-cols on the opposite bits; nothing crossed
 // the boundary so nothing was wrong, and now nothing can be.

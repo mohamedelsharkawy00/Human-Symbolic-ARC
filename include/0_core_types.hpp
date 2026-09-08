@@ -11,7 +11,7 @@
 
 // FNV-1a fingerprint of a glyph's bbox occupancy (1 = glyph pixel, 0 = empty),
 // seeded with w,h. Single home of the recipe: the CPU hashes learned keys
-// (inference/1_readings.hpp) and the kernel hashes again at apply time
+// (1_readings.hpp) and the kernel hashes again at apply time
 // both call this, so learned keys cannot silently miss.
 // occ(i): is pixel i (row-major within the bbox) part of the glyph.
 template <typename OccupancyAt>
@@ -107,7 +107,7 @@ namespace arc {
 
 
 // Below both the engine and inference, so either can be read without the other.
-// Reached through inference/4_infer.hpp, the one door to everything below it.
+// Reached through 4_infer.hpp, the one door to everything below it.
 
 // The pieces a puzzle is made of: colors, grids, one train pair.
 enum class arc_color : int8_t {

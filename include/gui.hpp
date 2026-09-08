@@ -1,6 +1,6 @@
 #pragma once
 #include "environment.hpp"
-#include "inference/5_sentences.hpp"  // sentences_of: the pane says a program the way the log does
+#include "5_sentences.hpp"  // sentences_of: the pane says a program the way the log does
 #include "grid_buffer.hpp"
 #include "global_app_state.hpp"
 #include "cuda_dsl.cuh"
