@@ -146,60 +146,39 @@ __device__ void gpu_paint_objects(const gpu_object_list& src, int w, int h, gpu_
     }
 }
 
-// --- Flood fill (8-connected) for segment_objects ---
-__device__ void gpu_flood_fill(
-    const gpu_fixed_grid& g, int r, int c, int8_t seed_color,
-    bool visited[][GPU_MAX_GRID], gpu_fixed_object& obj,
-    bool any_color = false, int8_t bg_color = GPU_TRANSPARENT)
-{
-    int16_t queue_r[GPU_GRID_CELLS], queue_c[GPU_GRID_CELLS];
-    int head = 0, tail = 0;
-    queue_r[tail] = (int16_t)r; queue_c[tail] = (int16_t)c; tail++;
-    visited[r][c] = true;
+// Segmentation is not the kernel's own any more: arc::each_object in
+// 1_readings.hpp is the single home of "what counts as one object", and both
+// sides call it, so inference and execution cannot come to different answers.
+// What stays here is only the shape the answer is written into.
+//
+// A functor rather than a lambda: nvcc will not take a lambda into device code
+// without --expt-extended-lambda, and a struct needs no build flag.
+struct gpu_take_object {
+    gpu_object_list* out;
+    const gpu_fixed_grid* g;
 
-    while (head < tail) {
-        int cr = queue_r[head], cc = queue_c[head]; head++;
-
-        const int8_t dr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
-        const int8_t dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
-        for (int d = 0; d < 8; ++d) {
-            int nr = cr + dr[d], nc = cc + dc[d];
-            if (nr < 0 || nr >= g.height || nc < 0 || nc >= g.width) continue;
-            bool joins = any_color ? (g.data[nr][nc] != bg_color) : (g.data[nr][nc] == seed_color);
-            if (!joins || visited[nr][nc]) continue;
-            if (tail >= GPU_GRID_CELLS) continue;
-            visited[nr][nc] = true;
-            queue_r[tail] = (int16_t)nr; queue_c[tail] = (int16_t)nc; tail++;
+    __device__ void operator()(const arc::object_summary&, const int16_t* cells, int n) const {
+        if (out->count >= GPU_KERNEL_MAX_OBJECTS) return;
+        gpu_fixed_object& obj = out->objects[out->count++];
+        // Keep the full grid frame; segmentation never tightens (Trim is the only
+        // shrinker). The blob's cells sit at their grid position, rest transparent
+        // -- which is box-local too, the box just being the whole grid.
+        obj.x0 = 0; obj.y0 = 0;
+        obj.x1 = (int16_t)(g->width - 1); obj.y1 = (int16_t)(g->height - 1);
+        obj.width = g->width; obj.height = g->height;
+        obj.mask.clear();
+        for (int i = 0; i < n; ++i) {
+            const int r = cells[i] / arc::MAX_GRID_DIM, c = cells[i] % arc::MAX_GRID_DIM;
+            obj.mask[r][c] = g->data[r][c];
         }
     }
-
-    // Keep the full grid frame; segmentation never tightens (Trim is the only
-    // shrinker). The blob's cells sit at their grid position, rest transparent.
-    obj.x0 = 0; obj.y0 = 0;
-    obj.x1 = (int16_t)(g.width - 1); obj.y1 = (int16_t)(g.height - 1);
-    obj.width = g.width; obj.height = g.height;
-    obj.mask.clear();
-
-    for (int i = 0; i < tail; ++i)
-        obj.mask[queue_r[i]][queue_c[i]] = g.data[queue_r[i]][queue_c[i]];
-}
+};
 
 __device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& out, int8_t bg_color = GPU_TRANSPARENT, bool any_color = false) {
     out.count = 0;
     if (g.width <= 0 || g.height <= 0) return;
-    bool visited[GPU_MAX_GRID][GPU_MAX_GRID];
-    memset(visited, 0, sizeof(visited));
-    for (int r = 0; r < g.height; ++r) {
-        for (int c = 0; c < g.width; ++c) {
-            if (g.data[r][c] == bg_color || visited[r][c]) continue;
-            if (out.count >= GPU_KERNEL_MAX_OBJECTS) return;
-            gpu_fixed_object& obj = out.objects[out.count];
-            obj.x0 = (int16_t)c; obj.y0 = (int16_t)r;
-            obj.x1 = (int16_t)c; obj.y1 = (int16_t)r;
-            gpu_flood_fill(g, r, c, g.data[r][c], visited, obj, any_color, bg_color);
-            out.count++;
-        }
-    }
+    arc::object_walk_scratch scratch;
+    arc::each_object(g, (int)bg_color, any_color, scratch, gpu_take_object{ &out, &g });
 }
 
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {

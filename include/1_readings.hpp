@@ -19,8 +19,26 @@ namespace arc {
 using namespace std;
 
 // Grouping is 8, "is this one object?".
-constexpr int NEIGHBOUR_ROW_8[8] = {-1,-1,-1, 0, 0, 1, 1, 1};
-constexpr int NEIGHBOUR_COL_8[8] = {-1, 0, 1,-1, 1,-1, 0, 1};
+//
+// Worked out rather than written down, because a constexpr array lives in
+// host memory and device code cannot index one -- and the walk below runs on
+// both sides. The eight are the 3x3 around a cell with the cell itself left
+// out, so dir 0..7 steps over the missing middle and reads off row and column.
+ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
+}
+
+// Spelled out for host code that wants a plain table. Built FROM the two
+// above, so the table and the walk cannot come apart.
+constexpr int NEIGHBOUR_ROW_8[8] = {
+    neighbour_row_8(0), neighbour_row_8(1), neighbour_row_8(2), neighbour_row_8(3),
+    neighbour_row_8(4), neighbour_row_8(5), neighbour_row_8(6), neighbour_row_8(7) };
+constexpr int NEIGHBOUR_COL_8[8] = {
+    neighbour_col_8(0), neighbour_col_8(1), neighbour_col_8(2), neighbour_col_8(3),
+    neighbour_col_8(4), neighbour_col_8(5), neighbour_col_8(6), neighbour_col_8(7) };
 
 // Adjacency is 4, "what is beside this?".
 constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
@@ -109,8 +127,8 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
         ++head;
         see(row, col);
         for (int dir = 0; dir < 8; ++dir) {
-            const int next_row = row + NEIGHBOUR_ROW_8[dir];
-            const int next_col = col + NEIGHBOUR_COL_8[dir];
+            const int next_row = row + neighbour_row_8(dir);
+            const int next_col = col + neighbour_col_8(dir);
             if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
             if (!claim(next_row, next_col)) continue;
             queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
@@ -181,7 +199,7 @@ struct object {
     }
 };
 
-// Find every same-color touching group and hand each one to `take` as it is
+// Find every touching group and hand each one to `take` as it is
 // found: its summary, and its cells as a plain pointer and length. Both finders
 // below are this walk wearing different hats, so neither can drift from the
 // other on what counts as one object.
@@ -193,6 +211,11 @@ struct object {
 // allocating, and it is what lets the summary finder below run with no
 // allocation at all, which matters because it is called once per program the
 // solver tries.
+//
+// `any_color` picks WHICH RELATION joins two cells: false means they must wear
+// the same color, true means any two non-background cells that touch are one
+// group -- so a group can wear several colors, and its summary color is -1,
+// because it has no single one to report.
 //
 // `background` is the color this grid was ELECTED to sit on, which the caller
 // reads off inference -- not a guess. Black is the usual answer and not the
@@ -214,8 +237,8 @@ struct object_walk_scratch {
 // host, the GPU's own smaller grid in a kernel. One walk, so the two sides can
 // never come to different answers about what one object is.
 template <class Grid, class Take>
-ARC_HOST_DEVICE inline void each_object_by_color(const Grid& one_grid, int background,
-                                 object_walk_scratch& scratch, Take take) {
+ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
+                                 bool any_color, object_walk_scratch& scratch, Take take) {
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
     for (int r = 0; r < MAX_GRID_DIM; ++r)
@@ -235,7 +258,7 @@ ARC_HOST_DEVICE inline void each_object_by_color(const Grid& one_grid, int backg
             taken[row][col] = true;
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
             object_summary found;
-            found.color = (int8_t)color;
+            found.color = any_color ? (int8_t)-1 : (int8_t)color;
             int seen = 0;
             int x0 = col, y0 = row, x1 = col, y1 = row;
             // One flood fill for the whole project, so no two readings can
@@ -244,7 +267,9 @@ ARC_HOST_DEVICE inline void each_object_by_color(const Grid& one_grid, int backg
                 queue_row, queue_col, 1,
                 [&](int next_row, int next_col) {
                     if (taken[next_row][next_col]) return false;
-                    if (one_grid.data[next_row][next_col] != color) return false;
+                    const int there = one_grid.data[next_row][next_col];
+                    if (any_color ? (there < 0 || there == background)
+                                  : (there != color)) return false;
                     taken[next_row][next_col] = true;
                     return true;
                 },
@@ -270,7 +295,7 @@ ARC_HOST_DEVICE inline void each_object_by_color(const Grid& one_grid, int backg
 inline vector<object> find_objects(const grid& one_grid, int background) {
     vector<object> found;
     object_walk_scratch scratch;
-    each_object_by_color(one_grid, background, scratch, [&](const object_summary& one,
+    each_object(one_grid, background, /*any_color=*/false, scratch, [&](const object_summary& one,
                                        const int16_t* cells, int n) {
         found.push_back({});
         object& made = found.back();
@@ -291,7 +316,7 @@ inline int find_objects_by_color(const grid& one_grid, int background,
                                  object_summary* out, int max_out) {
     int found = 0;
     object_walk_scratch scratch;
-    each_object_by_color(one_grid, background, scratch, [&](const object_summary& one,
+    each_object(one_grid, background, /*any_color=*/false, scratch, [&](const object_summary& one,
                                        const int16_t*, int) {
         if (found < max_out) out[found++] = one;
     });
