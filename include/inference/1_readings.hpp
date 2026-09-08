@@ -44,9 +44,17 @@ inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT],
 }
 
 // The smallest box each color's cells fit in. A color with no cells keeps the
-// empty box it starts with, so read one only where that color was counted.
+// empty box it starts with, and empty() is how you ask.
 struct color_box {
     int row0, col0, row1, col1;
+
+    // Its own size, so no caller has to spell the +1 out and none can spell it
+    // differently. A box nobody wrote to has no cells, and says so itself
+    // rather than leaving the reader to check the tally beside it.
+    bool empty() const { return row1 < row0 || col1 < col0; }
+    int height() const { return empty() ? 0 : row1 - row0 + 1; }
+    int width()  const { return empty() ? 0 : col1 - col0 + 1; }
+    int area()   const { return width() * height(); }
 };
 
 inline void color_boxes(const grid& one_grid, color_box boxes[COLOR_COUNT],

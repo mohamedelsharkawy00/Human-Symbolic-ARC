@@ -226,7 +226,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     });
     for (int i = 0; i < COLOR_COUNT; ++i) {
         if (!cells_of_color[i]) { evidence.span[i] = 0; evidence.gaps[i] = 0; continue; }
-        int box_area = (box[i].row1 - box[i].row0 + 1) * (box[i].col1 - box[i].col0 + 1);
+        int box_area = box[i].area();
         evidence.span[i] = min(evidence.span[i], box_area * 1000 / area);
         evidence.gaps[i] = min(evidence.gaps[i], touching[i] * 1000 / cells_of_color[i]);
     }

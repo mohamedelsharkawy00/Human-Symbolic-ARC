@@ -322,19 +322,17 @@ inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
         const grid& in = ex.input;
         const grid& out = ex.output;
 
-        // Per-color box + pixel count over the input (background excluded).
-        int cells_of_color[COLOR_COUNT];
+        // Per-color box over the input (background excluded). An absent color
+        // leaves its box empty, so the boxes alone say who is here.
         color_box box[COLOR_COUNT];
-        count_colors(in, cells_of_color, background);
         color_boxes(in, box, background);
 
         // Key = the color with the smallest box, target = the largest.
         int key = -1, target = -1;
         int smallest_box = 1 << 30, largest_box = -1;
         for (int color = 0; color < COLOR_COUNT; ++color) {
-            if (cells_of_color[color] == 0) continue;
-            int box_area = (box[color].col1 - box[color].col0 + 1) *
-                           (box[color].row1 - box[color].row0 + 1);
+            if (box[color].empty()) continue;
+            int box_area = box[color].area();
             if (box_area < smallest_box) { smallest_box = box_area; key = color; }
             if (box_area > largest_box)  { largest_box = box_area; target = color; }
         }
@@ -350,8 +348,8 @@ inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
         if (!is_color(repainted_to)) return rule;
 
         // Hash the key glyph's occupancy.
-        const int key_width = box[key].col1 - box[key].col0 + 1;
-        const int key_height = box[key].row1 - box[key].row0 + 1;
+        const int key_width = box[key].width();
+        const int key_height = box[key].height();
         bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
         for (int row = 0; row < key_height; ++row)
             for (int col = 0; col < key_width; ++col)
