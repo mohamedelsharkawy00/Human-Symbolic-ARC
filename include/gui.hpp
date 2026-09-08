@@ -28,7 +28,7 @@ inline constexpr string_view font_data =
 constexpr int UI_COLOR_LINE = COLOR_COUNT;
 constexpr int UI_COLOR_PASTEL_START = COLOR_COUNT * 2;
 
-inline grid create_character_grid(uint32_t ch) {
+inline display_grid create_character_grid(uint32_t ch) {
   static map<uint32_t, int> glyphs;
   if (glyphs.empty()) {
     for (size_t i = 0; i < font_data.size(); i += 6) {
@@ -51,10 +51,10 @@ inline grid create_character_grid(uint32_t ch) {
     glyphs[0xE002] = 067773; // COPY  : two overlapping pages (back top-left corner, front bottom-right corner)
     glyphs[0xE003] = 027557; // PASTE : clipboard (clip tab on top, board below)
   }
-  grid g;
+  display_grid g;
   g.height = 5;
   g.width = 3;
-  g.stride = 3;
+  g.at.stride = 3;
   if (glyphs.count(ch)) {
     int v = glyphs[ch];
     for (int row_idx = 0; row_idx < 5; ++row_idx) {
@@ -68,9 +68,9 @@ inline grid create_character_grid(uint32_t ch) {
 }
 
 // Global cache for colored fonts: [ColorIdx][Codepoint] -> Grid
-inline map<int, map<uint32_t, grid>> colored_fonts;
+inline map<int, map<uint32_t, display_grid>> colored_fonts;
 // Global cache for solid color sheets: [ColorIdx] -> Grid
-inline map<int, grid> solid_sheets;
+inline map<int, display_grid> solid_sheets;
 
 inline int utf8_len(const string &s) {
   int len = 0;
@@ -90,7 +90,7 @@ inline int text_w(const string &s, int scale) {
   return utf8_len(s) * 4 * scale - scale;
 }
 
-inline void draw_text(vulkan_context *context, const map<uint32_t, grid> &font,
+inline void draw_text(vulkan_context *context, const map<uint32_t, display_grid> &font,
                       const string &text, int x, int y, int scale) {
   int cur_x = x;
   for (size_t i = 0; i < text.size(); ) {
@@ -106,16 +106,16 @@ inline void draw_text(vulkan_context *context, const map<uint32_t, grid> &font,
     }
 
     if (font.count(cp)) {
-      const grid &g = font.at(cp);
-      context->draw(g.offset, g.width, g.height, cur_x, y, scale, g.stride);
+      const display_grid &g = font.at(cp);
+      context->draw(g.at.offset, g.width, g.height, cur_x, y, scale, g.at.stride);
       cur_x += (g.width + 1) * scale;
     } else if (cp == ' ') {
       cur_x += 4 * scale;
     } else {
       uint32_t up = toupper((unsigned char)cp);
       if (font.count(up)) {
-        const grid &g = font.at(up);
-        context->draw(g.offset, g.width, g.height, cur_x, y, scale, g.stride);
+        const display_grid &g = font.at(up);
+        context->draw(g.at.offset, g.width, g.height, cur_x, y, scale, g.at.stride);
         cur_x += (g.width + 1) * scale;
       } else {
         cur_x += 4 * scale;
@@ -131,7 +131,7 @@ inline void draw_text(vulkan_context *context, const map<uint32_t, grid> &font,
 // Every fill wider than a glyph goes through here, so that cannot be forgotten.
 inline void fill_rect(vulkan_context *context, int color, int x, int y, int w, int h) {
   if (w <= 0 || h <= 0 || !solid_sheets.count(color)) return;
-  int off = solid_sheets[color].offset;
+  int off = solid_sheets[color].at.offset;
   const int tile = 200;   // comfortably inside the sheet
   for (int fx = 0; fx < w; fx += tile)
     context->draw(off, min(tile, w - fx), h, x + fx, y, 1, 1);
@@ -139,21 +139,21 @@ inline void fill_rect(vulkan_context *context, int color, int x, int y, int w, i
 
 // Draws a centered text label inside a colored background box.
 inline void draw_boxed_text(vulkan_context *context,
-                            const map<uint32_t, grid> &font, const string &text,
+                            const map<uint32_t, display_grid> &font, const string &text,
                             int x, int y, int scale, int box_w, int box_h,
                             int color_idx) {
   // Retrieve Pre-allocated Solid Sheets
   int pastel_idx = UI_COLOR_PASTEL_START + color_idx;
-  const grid *bg_grid = solid_sheets.count(pastel_idx)
+  const display_grid *bg_grid = solid_sheets.count(pastel_idx)
                             ? &solid_sheets[pastel_idx]
                             : &solid_sheets[color_idx];
 
-  context->draw(bg_grid->offset, box_w, box_h, x, y, 1, bg_grid->stride);
+  context->draw(bg_grid->at.offset, box_w, box_h, x, y, 1, bg_grid->at.stride);
 
   int text_x = x + (box_w - text_w(text, scale)) / 2;
   int text_y = y + (box_h - 5 * scale) / 2;
 
-  const map<uint32_t, grid> &box_font =
+  const map<uint32_t, display_grid> &box_font =
       colored_fonts.count(pastel_idx) ? colored_fonts[pastel_idx] : font;
   draw_text(context, box_font, text, text_x, text_y, scale);
 }
@@ -243,7 +243,7 @@ inline int count_pipeline_lines(node *root) {
 // bottom of the last line it needed, so what sits under it knows where to start.
 inline int draw_header_rows(
     vulkan_context *context,
-    const map<uint32_t, grid> &font,
+    const map<uint32_t, display_grid> &font,
     global_app_state &app_state,
     const frame_layout &lay,
     const puzzle &task,
@@ -478,8 +478,8 @@ inline int draw_header_rows(
       int cx = x + t + i * sw_side;
       int cy = y + t;
       if (solid_sheets.count(i)) {
-        const grid &sw = solid_sheets[i];
-        context->draw(sw.offset, sw_side, sw_side, cx, cy, 1, sw.stride);
+        const display_grid &sw = solid_sheets[i];
+        context->draw(sw.at.offset, sw_side, sw_side, cx, cy, 1, sw.at.stride);
       }
       // Index digit: white with a black outline, centered on the swatch.
       string num = to_text("%d", i);
@@ -505,7 +505,7 @@ inline int draw_header_rows(
 // elapsed timer.
 inline void draw_footer_rows(
     vulkan_context *context,
-    const map<uint32_t, grid> &font,
+    const map<uint32_t, display_grid> &font,
     global_app_state &app_state,
     const frame_layout &lay,
     const puzzle &task,
@@ -623,9 +623,10 @@ inline grid_place place_grid_cell(const grid &m, int col_idx, int row_y,
 // Returns false if there is no data to draw.
 inline bool draw_grid_view(
     vulkan_context *context,
-    const map<uint32_t, grid> &font,
-    const grid &background,
+    const map<uint32_t, display_grid> &font,
+    const display_grid &background,
     const puzzle &task,
+    const puzzle_views &views,
     const frame_layout &lay) {
 
   if (task.train.empty() && task.test.empty())
@@ -639,9 +640,11 @@ inline bool draw_grid_view(
   int col_w = lay.screen_w / 4;
   int cur_y = lay.grid_data_start_y;
 
-  auto draw_cell = [&](const grid &m, int col_idx, int row_y,
+  // The cells come from wherever they live -- the puzzle's own pair, or the
+  // display's picture of the search -- and `at` says where they were uploaded.
+  auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y,
                        float score_val = SCORE_MIN - 1.0f) {
-    if (m.width <= 0 || m.height <= 0 || !m.visible)
+    if (m.width <= 0 || m.height <= 0)
       return;
 
     bool is_scored_column = (col_idx >= 2);
@@ -659,9 +662,9 @@ inline bool draw_grid_view(
     int grid_w = m.width * scale, grid_h = m.height * scale;
     int x = p.x, y = p.y;
 
-    context->draw(background.offset, grid_w + outline * 2, grid_h + outline * 2,
-                  x - outline, y - outline, 1, background.stride);
-    context->draw(m.offset, m.width, m.height, x, y, scale, m.stride);
+    context->draw(background.at.offset, grid_w + outline * 2, grid_h + outline * 2,
+                  x - outline, y - outline, 1, background.at.stride);
+    context->draw(at.offset, m.width, m.height, x, y, scale, at.stride);
 
     int info_x = x + grid_w + outline * 2;
     draw_text(context, font, dim, info_x, y, lay.scale);
@@ -672,14 +675,28 @@ inline bool draw_grid_view(
     }
   };
 
-  auto draw_section = [&](const vector<example> &vec) {
+  // WHETHER THE ANSWER IS SHOWN is not a thing anyone stores: a training pair
+  // shows its output because that is what training means, and a test pair shows
+  // its output once the puzzle is solved and there is nothing left to spoil.
+  auto draw_section = [&](const vector<example> &vec, bool is_test) {
     if (vec.empty())
       return;
-    for (const auto &ex : vec) {
-      draw_cell(ex.input, 0, cur_y);
-      draw_cell(ex.output, 1, cur_y);
-      draw_cell(ex.current, 2, cur_y, ex.cur_score);
-      draw_cell(ex.best, 3, cur_y, ex.best_score);
+    const bool show_output = !is_test || task.is_solved;
+    for (size_t i = 0; i < vec.size(); ++i) {
+      const example &ex = vec[i];
+      const example_views *v = views.of(is_test, i);
+      // No view means the cells were never uploaded, so there is no placement to
+      // draw from -- and a placement of nothing is stride 0, which would read the
+      // start of the buffer over and over rather than draw an empty row.
+      if (!v) {
+        cur_y += slot_h;
+        continue;
+      }
+      draw_cell(ex.input, v->input, 0, cur_y);
+      if (show_output)
+        draw_cell(ex.output, v->output, 1, cur_y);
+      draw_cell(v->current, v->current.at, 2, cur_y, ex.cur_score);
+      draw_cell(v->best, v->best.at, 3, cur_y, ex.best_score);
       cur_y += slot_h;
     }
   };
@@ -693,8 +710,8 @@ inline bool draw_grid_view(
     draw_boxed_text(context, font, heads[i], header_label_x, lay.grid_labels_y, lay.scale, lw, lh, 5);
   }
 
-  draw_section(task.train);
-  draw_section(task.test);
+  draw_section(task.train, false);
+  draw_section(task.test, true);
   return true;
 }
 
@@ -719,7 +736,7 @@ inline int drawer_border_t(int scale) { return max(1, scale * 2); }
 inline void draw_border(vulkan_context *context, int x, int y, int w, int h, int t,
                         int color = UI_COLOR_LINE) {
   if (!solid_sheets.count(color)) return;
-  int off = solid_sheets[color].offset;
+  int off = solid_sheets[color].at.offset;
   context->draw(off, w, t, x, y, 1, 1);            // top
   context->draw(off, w, t, x, y + h - t, 1, 1);    // bottom
   context->draw(off, t, h, x, y, 1, 1);            // left
@@ -745,7 +762,7 @@ inline void draw_op_handle(vulkan_context *context, global_app_state &app_state,
   // into the drawer it is holding open.
   int hcol = (app_state.op_handle_hot.load() || app_state.show_op_list.load()) ? 5 : 11;
   if (solid_sheets.count(hcol)) {
-    int off = solid_sheets[hcol].offset;
+    int off = solid_sheets[hcol].at.offset;
     // Stacked rects, each ~step_h narrower per side -> shallow ~45deg wedge.
     for (int s = 0; s < steps; ++s) {
       int inset = s * step_h;
@@ -768,7 +785,7 @@ inline void draw_op_handle(vulkan_context *context, global_app_state &app_state,
 inline void draw_line(vulkan_context *context, int color,
                       int x0, int y0, int x1, int y1, int t) {
   if (!solid_sheets.count(color)) return;
-  int off = solid_sheets[color].offset;
+  int off = solid_sheets[color].at.offset;
   int dx = x1 - x0, dy = y1 - y0;
   int steps = max(abs(dx), abs(dy)) / max(1, t);
   for (int i = 0; i <= steps; ++i) {
@@ -1101,7 +1118,7 @@ inline void draw_selection(vulkan_context *context, const puzzle &task,
 // their colors mean, and the readout doubles as the controls: every row that
 // names a choice is the thing you click to change it. Parked over the
 // CURRENT/BEST columns, which are empty until solving.
-inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, grid> &font,
+inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, display_grid> &font,
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
                                 const reading_on_screen &walked,
@@ -1128,8 +1145,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
     // white outline first, swatch inset on top â€” so black reads on black.
     draw_border(context, x, y, sw, sw, t);
     if (color >= 0 && color < COLOR_COUNT && solid_sheets.count(color))
-      context->draw(solid_sheets[color].offset, sw - t * 2, sw - t * 2,
-                    x + t, y + t, 1, solid_sheets[color].stride);
+      context->draw(solid_sheets[color].at.offset, sw - t * 2, sw - t * 2,
+                    x + t, y + t, 1, solid_sheets[color].at.stride);
     else
       draw_text(context, font, "-", x + t, y + t, scale);
   };
@@ -1863,7 +1880,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, gri
   paint_the_facts();
 }
 
-inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &font,
+inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display_grid> &font,
                             global_app_state &app_state, const frame_layout &lay) {
   int scale = lay.scale;
   int pad = 2 * scale;
@@ -1973,7 +1990,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   // Borders: top at the panel top (may be above y=0), bottom at the visible
   // edge, sides spanning the visible slice.
   if (solid_sheets.count(UI_COLOR_LINE)) {
-    int t = drawer_border_t(scale), off = solid_sheets[UI_COLOR_LINE].offset;
+    int t = drawer_border_t(scale), off = solid_sheets[UI_COLOR_LINE].at.offset;
     if (panel_top >= 0)
       context->draw(off, lay.screen_w, t, 0, panel_top, 1, 1);        // top
     context->draw(off, lay.screen_w, t, 0, drawer_bottom - t, 1, 1);  // bottom
@@ -2034,7 +2051,7 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
   // --- Separator (equidistant below tabs) + ops -----------------------------
   int sep_y = tab_y + box_h + vgap;
   if (sep_y >= 0 && solid_sheets.count(5))
-    context->draw(solid_sheets[5].offset, lay.screen_w - 2 * hmargin, 1,
+    context->draw(solid_sheets[5].at.offset, lay.screen_w - 2 * hmargin, 1,
                   hmargin, sep_y, 1, 1);
   int list_top = sep_y + vgap;
   int avail = lay.screen_w - 2 * hmargin;
@@ -2070,8 +2087,8 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, grid> &
 }
 
 // Main frame draw - orchestrates header and content area
-inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
-                       const grid &background, const solver_state &state,
+inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid> &font,
+                       const display_grid &background, const solver_state &state,
                        global_app_state &app_state, const puzzle &task,
                        int screen_w, int screen_h, float fps, float aps, float gpu_ms,
                        int puzzle_idx, int puzzle_count,
@@ -2125,7 +2142,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
     draw_footer_rows(context, font, app_state, lay, task, state, elapsed);
   }
 
-  if (!draw_grid_view(context, font, background, task, lay))
+  if (!draw_grid_view(context, font, background, task, state.views, lay))
     return;
 
   // Hover preview: compute & draw the subtree output for every train+test
@@ -2268,7 +2285,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
         {
           int hdr_y = lay.grid_labels_y;
           int hdr_h = lay.grid_data_start_y - lay.grid_labels_y;
-          const grid &back_sheet = solid_sheets.count(0) ? solid_sheets[0] : background;
+          const display_grid &back_sheet = solid_sheets.count(0) ? solid_sheets[0] : background;
           // stride=1, not the sheet's real stride: the shader reads
           // cells[offset + row*stride + col], so a fill wider than the sheet
           // (back_w ~1256 vs the 256-wide solid sheet) walks past the block
@@ -2276,7 +2293,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
           // the area is big enough (2K, not 1080). With stride=1 every cell
           // reads offset+row+col, always inside the solid block; positions are
           // computed independently so the rectangle still fills correctly.
-          context->draw(back_sheet.offset, back_w, hdr_h,
+          context->draw(back_sheet.at.offset, back_w, hdr_h,
                         back_x, hdr_y, 1, 1);
 
           int grid_pad = 2 * lay.scale;
@@ -2289,7 +2306,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
         }
 
         for (int i = 0; i < n; ++i) {
-          const grid &m = state.preview_grids[i];
+          const display_grid &m = state.preview_grids[i];
           int row_y = lay.grid_data_start_y + i * slot_h;
           int back_y = row_y + pad;
           int back_h = slot_h - pad * 2;
@@ -2297,11 +2314,11 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
           // Black backdrop covers CURRENT + BEST for this row. Use color 0
           // (black in the ARC palette) rather than the cell-outline grid,
           // which is a non-black UI color.
-          const grid &back_sheet = solid_sheets.count(0) ? solid_sheets[0] : background;
+          const display_grid &back_sheet = solid_sheets.count(0) ? solid_sheets[0] : background;
           // stride=1: solid fill wider than the 256-wide sheet would otherwise
           // overrun into the next color sheet and leak a blue band (see header
           // backdrop above).
-          context->draw(back_sheet.offset, back_w, back_h,
+          context->draw(back_sheet.at.offset, back_w, back_h,
                         back_x, back_y, 1, 1);
 
           int x_inner = back_x + outline;
@@ -2318,9 +2335,9 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
             int cell_scale = min((inner_w - dim_w) / m.width, half_h / m.height);
             if (cell_scale < 1) cell_scale = 1;
             int gw = m.width * cell_scale, gh = m.height * cell_scale;
-            context->draw(background.offset, gw + outline * 2, gh + outline * 2,
-                          x_inner - outline, y_top - outline, 1, background.stride);
-            context->draw(m.offset, m.width, m.height, x_inner, y_top, cell_scale, m.stride);
+            context->draw(background.at.offset, gw + outline * 2, gh + outline * 2,
+                          x_inner - outline, y_top - outline, 1, background.at.stride);
+            context->draw(m.at.offset, m.width, m.height, x_inner, y_top, cell_scale, m.at.stride);
             draw_text(context, font, dim, x_inner + gw + outline * 2, y_top, lay.scale);
             y_used = y_top + gh + lay.v_gap * 2;
           }
@@ -2334,7 +2351,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
             int max_obj_h = 0;
             int sum_obj_w = 0;
             int n_obj = 0;
-            for (const grid &og : slots) {
+            for (const display_grid &og : slots) {
               if (og.width <= 0 || og.height <= 0) continue;
               max_obj_h = max(max_obj_h, (int)og.height);
               sum_obj_w += og.width;
@@ -2348,17 +2365,17 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
               int s_h = strip_h / max_obj_h;
               int cell_scale = max(1, min(s_w, s_h));
               int x_cur = x_inner;
-              const grid &line_sheet = solid_sheets.count(UI_COLOR_LINE)
+              const display_grid &line_sheet = solid_sheets.count(UI_COLOR_LINE)
                                           ? solid_sheets[UI_COLOR_LINE]
                                           : background;
               int line_th = max(1, lay.scale / 2);
               for (size_t bi = 0; bi < slots.size(); ++bi) {
-                const grid &og = slots[bi];
+                const display_grid &og = slots[bi];
                 if (og.width <= 0 || og.height <= 0) continue;
                 int gw = og.width * cell_scale, gh = og.height * cell_scale;
-                context->draw(background.offset, gw + outline * 2, gh + outline * 2,
-                              x_cur - outline, y_used - outline, 1, background.stride);
-                context->draw(og.offset, og.width, og.height, x_cur, y_used, cell_scale, og.stride);
+                context->draw(background.at.offset, gw + outline * 2, gh + outline * 2,
+                              x_cur - outline, y_used - outline, 1, background.at.stride);
+                context->draw(og.at.offset, og.width, og.height, x_cur, y_used, cell_scale, og.at.stride);
                 auto cache_it = state.preview_cache.find(h);
                 if (cache_it != state.preview_cache.end()
                     && bi < cache_it->second.object_bboxes[i].size()) {
@@ -2369,14 +2386,14 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
                   int bh = (bb.y1 - bb.y0 + 1) * cell_scale;
                   int t = min(line_th, min(bw, bh));
                   if (t > 0) {
-                    context->draw(line_sheet.offset, bw, t,
-                                  bx, by, 1, line_sheet.stride);
-                    context->draw(line_sheet.offset, bw, t,
-                                  bx, by + bh - t, 1, line_sheet.stride);
-                    context->draw(line_sheet.offset, t, bh,
-                                  bx, by, 1, line_sheet.stride);
-                    context->draw(line_sheet.offset, t, bh,
-                                  bx + bw - t, by, 1, line_sheet.stride);
+                    context->draw(line_sheet.at.offset, bw, t,
+                                  bx, by, 1, line_sheet.at.stride);
+                    context->draw(line_sheet.at.offset, bw, t,
+                                  bx, by + bh - t, 1, line_sheet.at.stride);
+                    context->draw(line_sheet.at.offset, t, bh,
+                                  bx, by, 1, line_sheet.at.stride);
+                    context->draw(line_sheet.at.offset, t, bh,
+                                  bx + bw - t, by, 1, line_sheet.at.stride);
                   }
                 }
                 x_cur += gw + gap;
@@ -2505,7 +2522,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, grid> &font,
   draw_op_handle(context, app_state, lay, op_open ? app_state.op_drawer_bottom.load() : 0);
 }
 
-inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars) {
+inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars) {
   string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZx.eE+ -() :<>,_/[ ]|";
   vector<uint32_t> cps;
   cps.reserve(128);
@@ -2519,9 +2536,9 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
 
   for (uint32_t cp : cps) {
     pad_buffer(gpu_buffer);
-    grid g = create_character_grid(cp);
-    g.offset = (int)gpu_buffer.size();
-    g.stride = 4;
+    display_grid g = create_character_grid(cp);
+    g.at.offset = (int)gpu_buffer.size();
+    g.at.stride = 4;
     for (int r = 0; r < 5; ++r) {
       for (int c = 0; c < 3; ++c)
         gpu_buffer.push_back(g.data[r][c]);
@@ -2540,18 +2557,18 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, grid> &chars)
 
   for (int c_idx : colors) {
     pad_buffer(gpu_buffer);
-    solid_sheets[c_idx] = grid{256, 256};
-    solid_sheets[c_idx].offset = (int)gpu_buffer.size();
-    solid_sheets[c_idx].stride = 256;
+    solid_sheets[c_idx] = display_grid{{256, 256}};
+    solid_sheets[c_idx].at.offset = (int)gpu_buffer.size();
+    solid_sheets[c_idx].at.stride = 256;
     gpu_buffer.insert(gpu_buffer.end(), 256 * 256, c_idx);
     for (auto const &[k, v] : chars) {
       if ((k < 32 || k > 126) && k != 0x25B2 && k != 0x25BC &&
           k != 0xE000 && k != 0xE001 && k != 0xE002 && k != 0xE003)
         continue;
       pad_buffer(gpu_buffer);
-      grid cv = v;
-      cv.offset = (int)gpu_buffer.size();
-      cv.stride = 4;
+      display_grid cv = v;
+      cv.at.offset = (int)gpu_buffer.size();
+      cv.at.stride = 4;
       for (int r = 0; r < cv.height; ++r) {
         for (int c = 0; c < cv.width; ++c) {
           if (c_idx < UI_COLOR_PASTEL_START) {

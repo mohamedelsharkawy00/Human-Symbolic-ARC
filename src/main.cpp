@@ -98,8 +98,8 @@ int main() {
 
 	// Data Buffers & Solver Setup
 	vector<int> gpu_buffer;
-	map<uint32_t, grid> chars;
-	grid bg_grid;
+	map<uint32_t, display_grid> chars;
+	display_grid bg_grid;
 	solver.init(gpu_buffer, chars, bg_grid);
 
 	// Restore the saved GUI settings. Datasets were already restored inside

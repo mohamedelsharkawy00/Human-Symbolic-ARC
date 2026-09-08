@@ -652,8 +652,8 @@ public:
   inline beam_solver(global_app_state &app_state)
       : m_app_state(app_state), m_log(app_state, m_solver_state) {}
 
-  inline void init(vector<int> &gpu_buffer, map<uint32_t, grid> &chars,
-                   grid &bg_grid) {
+  inline void init(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars,
+                   display_grid &bg_grid) {
     m_gpu_buffer = &gpu_buffer;
 
     init_gui_buffers(gpu_buffer, chars, bg_grid);
@@ -711,7 +711,7 @@ public:
       m_solver_state.puzzle_idx = min((int)m_puzzle_tasks.size() - 1, m_solver_state.puzzle_idx.load());
 
       const challenge_task &ct = m_puzzle_tasks[m_solver_state.puzzle_idx];
-      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
+      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, m_solver_state.views, gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
                                            m_solver_state.puzzle_idx, (int)m_puzzle_tasks.size(), m_dataset_flags.load());
       if (m_puzzle_loaded) {
         m_log.set_puzzle_id(m_puzzle.id);
@@ -735,11 +735,12 @@ public:
         if (p.is_solved) {
           active_example_count = (int)p.train.size();
         }
-        for (auto &ex : p.train) {
+        for (size_t i = 0; i < p.train.size(); ++i) {
           grid dummy;
           environment::score_tree_output(
-              p.best_tree, ex, dummy, p, p.best_node_count);
-          update_display_buffer(ex.current, dummy, *m_gpu_buffer);
+              p.best_tree, p.train[i], dummy, p, p.best_node_count);
+          if (example_views *v = m_solver_state.views.of(false, i))
+            update_display_buffer(v->current, dummy, *m_gpu_buffer);
         }
       }
     }
@@ -845,7 +846,7 @@ public:
         if (!p.inferred)
           infer_into_puzzle(p, m_solver_state.puzzle_idx,
                             (int)m_puzzle_tasks.size(), m_dataset_flags.load());
-        apply_solution(p, *m_gpu_buffer, sol_str, m_log);
+        apply_solution(p, m_solver_state.views, *m_gpu_buffer, sol_str, m_log);
         if (p.is_solved) {
           active_example_count = (int)p.train.size();
         }
@@ -969,7 +970,11 @@ private:
   void log_tree_record(node *tree, float score, long long attempts);
   void update_best_solution(int target_idx, puzzle &p, node *tree, int node_count, candidate_batch &res);
   void worker();
-  void update_example_results(vector<example> &examples, const vector<candidate_result> &results, int limit = -1);
+  // `views` is the display side matching `examples`, index for index, or null
+  // when there is nothing on screen. Passed rather than assumed: the function
+  // cannot tell the train side from the test side by looking at the vector.
+  void update_example_results(vector<example> &examples, vector<example_views> *views,
+                              const vector<candidate_result> &results, int limit = -1);
   void clear_test_current_views(puzzle &p);
   void update_test_current_views(puzzle &p, node *tree, int node_count, bool all_train_solved);
   bool check_old_tree_solves(puzzle &p, int active);
@@ -993,6 +998,7 @@ private:
   void finalize_full_train_solve(puzzle &p);
   bool evaluate_test_after_solve(node *tree, puzzle &p, int node_count);
   void reset_test_display(puzzle &p);
+  void clear_all_views(puzzle &p);
   void refresh_best_display_scores(puzzle &p, int active, int node_count);
   void try_update_current_display(int target_idx, puzzle &p, node *tree, int node_count, const candidate_batch &res);
 

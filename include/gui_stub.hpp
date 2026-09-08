@@ -11,6 +11,6 @@ namespace arc {
 using namespace std;
 
 // Font atlas is genuinely rendering-only; no-op on headless builds.
-inline void load_font_atlas(vector<int> &, map<uint32_t, grid> &) {}
+inline void load_font_atlas(vector<int> &, map<uint32_t, display_grid> &) {}
 
 }  // namespace arc

@@ -50,23 +50,16 @@ constexpr int MAX_GRID_DIM = 30;
 struct grid {
 	int width = 0, height = 0;
 	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
-
-	// The three below are only for drawing this grid on the GUI; the solver never
-	// reads them.
-
-	// Where its cells were put in the renderer's one big buffer.
-	int offset = 0;
-	// How far apart two rows sit in that buffer.
-	int stride = 0;
-	// Whether to draw it at all.
-	bool visible = true;
 };
 
 // The worst a score can be, so an untried example starts below every real one.
 constexpr float SCORE_MIN = -1000000.0f;
 
+// The pair, and how well the search is doing on it. What the search TRIED and
+// its BEST attempt are pictures for a person, so they are not here: the GUI
+// keeps them, beside the puzzle rather than inside it.
 struct example {
-	grid input, output, current, best;
+	grid input, output;
 	float best_score = SCORE_MIN, cur_score = SCORE_MIN;
 	int distance_maps[COLOR_COUNT][MAX_GRID_DIM][MAX_GRID_DIM]{};
 };

@@ -25,28 +25,32 @@ namespace arc {
     return false;
   }
 
-  static inline void update_grid_if_visible(grid& target, const grid& source,
-                                            vector<int>* gpu_buffer) {
-    if (gpu_buffer)
-      update_display_buffer(target, source, *gpu_buffer);
+  // The picture half of the four below. A null view is a headless run, or a
+  // puzzle whose views have not been built yet: there is simply nothing to paint.
+  static inline void update_one_view(display_grid* target, const grid& source,
+                                     vector<int>* gpu_buffer) {
+    if (target && gpu_buffer)
+      update_display_buffer(*target, source, *gpu_buffer);
   }
 
-  static inline void update_example_views(example& ex, const grid& source,
+  static inline void update_example_views(example_views* v, const grid& source,
                                           vector<int>* gpu_buffer) {
-    if (!gpu_buffer)
+    if (!v || !gpu_buffer)
       return;
-    update_display_buffer(ex.best, source, *gpu_buffer);
-    update_display_buffer(ex.current, source, *gpu_buffer);
+    update_display_buffer(v->best, source, *gpu_buffer);
+    update_display_buffer(v->current, source, *gpu_buffer);
   }
 
-  static inline void clear_current_view(example& ex) {
+  // The score is the search's own, so it is cleared either way; the grid is a
+  // picture, so it is only cleared where there is one.
+  static inline void clear_current_view(example& ex, example_views* v) {
     ex.cur_score = SCORE_MIN - 1.0f;
-    ex.current.width = 0;
+    if (v) v->current.width = 0;
   }
 
-  static inline void clear_best_view(example& ex) {
+  static inline void clear_best_view(example& ex, example_views* v) {
     ex.best_score = SCORE_MIN - 1.0f;
-    ex.best.width = 0;
+    if (v) v->best.width = 0;
   }
 
   static inline void set_example_scores(example& ex, float score) {
@@ -1298,7 +1302,7 @@ namespace arc {
 
       if (promotion_count == 0 && !is_train_finale && !is_test_solve) {
         if (!still_overrides && !still_score_better && !(still_score_same && still_nodes_better)) {
-          update_example_results(p.train, res.train);
+          update_example_results(p.train, &m_solver_state.views.train, res.train);
           bool full_train = res.all_train_solved && active == (int)p.train.size();
           update_test_current_views(p, tree, node_count, full_train);
           environment::remove(m_solver_state.current_tree);
@@ -1314,7 +1318,7 @@ namespace arc {
       // first (active - promotion_count) entries in res.train are valid.
       // try_promote_examples already populated views for the promoted ones,
       // so don't let update_example_results clobber them.
-      update_example_results(p.train, res.train, active - promotion_count);
+      update_example_results(p.train, &m_solver_state.views.train, res.train, active - promotion_count);
       {
         bool full_train = res.all_train_solved && active == (int)p.train.size();
         update_test_current_views(p, tree, node_count, full_train);
@@ -1359,7 +1363,6 @@ namespace arc {
           log_debug("!!!! TASK SOLVED ON TRAINING SET !!!");
           p.is_test_solved = is_test_solve;
           p.is_solved = true;
-          for (auto &ex : p.test) ex.output.visible = true;
         } else {
           log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", reduced_node_count, previous_node_count));
         }
@@ -1413,7 +1416,7 @@ namespace arc {
       // Infer at load only if the pane is already open, so a puzzle brought up
       // to look at is ready on the first frame. Otherwise it waits — see the
       // check by the pause gate.
-      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, *m_gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
+      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, m_solver_state.views, *m_gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
                                            puzzle_idx, (int)m_puzzle_tasks.size(), m_dataset_flags.load(),
                                            m_app_state.inference_view.load() != global_app_state::INFERENCE_OFF);
       if (m_puzzle_loaded) m_log.set_puzzle_id(m_puzzle.id);
@@ -1431,12 +1434,12 @@ namespace arc {
 
       if (m_puzzle_loaded) {
           puzzle &p = m_puzzle;
-          // Blank stale predicted-output views. load_single_puzzle reuses the
-          // m_puzzle object and overwrites input/target but NOT the CURRENT/BEST
-          // prediction views, so without this the previous puzzle's predicted grids
-          // persist on this one (and stay stuck if this puzzle never overwrites them).
-          for (auto &ex : p.train) { clear_current_view(ex); clear_best_view(ex); }
-          for (auto &ex : p.test)  { clear_current_view(ex); clear_best_view(ex); }
+          // The stale-prediction bug this used to guard against is gone by
+          // construction: the views are no longer part of the reused m_puzzle,
+          // and the loader rebuilds them from nothing on every load. What is left
+          // to do here is the scores, which live on the examples and are the
+          // search's own -- an example with no picture has nothing scored either.
+          clear_all_views(p);
           if (!p.is_solved) {
             if (active_example_count > (int)p.train.size())
               active_example_count = (int)p.train.size();
@@ -1563,7 +1566,6 @@ namespace arc {
             cuda_dsl_invalidate_examples();
             environment::remove(m_solver_state.current_tree);
             m_solver_state.current_tree = environment::copy(m_puzzle.best_tree);
-            for (auto &ex : m_puzzle.test) ex.output.visible = true;
             m_app_state.needs_upload = true;
           }
         }
@@ -1906,6 +1908,7 @@ namespace arc {
   }
 
   inline void beam_solver::update_example_results(vector<example> &examples,
+                                     vector<example_views> *views,
                                      const vector<beam_solver::candidate_result> &results,
                                      int limit) {
     if (!m_gpu_buffer)
@@ -1914,19 +1917,21 @@ namespace arc {
     if (limit >= 0) n = min(n, limit);
     for (int i = 0; i < n; ++i) {
       example &ex = examples[i];
+      example_views *v = (views && (size_t)i < views->size()) ? &(*views)[i] : nullptr;
       if (i < results.size() && results[i].valid) {
         const grid& g = results[i].state;
         ex.cur_score = results[i].score;
-        update_display_buffer(ex.current, g, *m_gpu_buffer);
+        update_one_view(v ? &v->current : nullptr, g, m_gpu_buffer);
       } else {
-        clear_current_view(ex);
+        clear_current_view(ex, v);
       }
     }
   }
 
   inline void beam_solver::clear_test_current_views(puzzle &p) {
     if (!m_gpu_buffer) return;
-    for (auto &ex : p.test) clear_current_view(ex);
+    for (size_t i = 0; i < p.test.size(); ++i)
+      clear_current_view(p.test[i], m_solver_state.views.of(true, i));
   }
 
   // When a candidate solves all train, run it on test inputs and show its
@@ -1938,10 +1943,13 @@ namespace arc {
                                                      bool all_train_solved) {
     if (!m_gpu_buffer) return;
     if (!all_train_solved || !tree) {
-      for (auto &ex : p.test) clear_current_view(ex);
+      for (size_t i = 0; i < p.test.size(); ++i)
+        clear_current_view(p.test[i], m_solver_state.views.of(true, i));
       return;
     }
-    for (auto &ex : p.test) {
+    for (size_t ei = 0; ei < p.test.size(); ++ei) {
+      example &ex = p.test[ei];
+      example_views *v = m_solver_state.views.of(true, ei);
       grid tg = {};
       if (ex.output.width > 0) {
         auto [ts, _slv] = environment::score_tree_output(
@@ -1951,11 +1959,11 @@ namespace arc {
         float _s = 0; bool _slv = false;
         bool ok = environment::execute_tree_via_flat(
             tree, ex, tg, p, node_count, _s, _slv);
-        if (!ok) { clear_current_view(ex); continue; }
+        if (!ok) { clear_current_view(ex, v); continue; }
         // No ground truth — match BEST's convention: leave score untouched
         // (will mirror best_score, set when the tree was first promoted).
       }
-      update_display_buffer(ex.current, tg, *m_gpu_buffer);
+      update_one_view(v ? &v->current : nullptr, tg, m_gpu_buffer);
     }
   }
 
@@ -2120,7 +2128,7 @@ namespace arc {
   inline bool beam_solver::try_what_inference_said(puzzle &p) {
     if (p.suggested_programs.empty() || !m_gpu_buffer) return false;
     for (const string &program : p.suggested_programs) {
-      apply_solution(p, *m_gpu_buffer, program, m_log);
+      apply_solution(p, m_solver_state.views, *m_gpu_buffer, program, m_log);
       if (p.is_solved) {
         log_debug("!!!! SOLVED BY WHAT INFERENCE SAID: " + program + " !!!!");
         return true;
@@ -2131,9 +2139,23 @@ namespace arc {
     p.best_tree = nullptr;
     invalidate_best_tree_cache(p);
     p.best_node_count = NODE_COUNT_MAX;
-    for (auto &ex : p.train) { clear_current_view(ex); clear_best_view(ex); }
-    for (auto &ex : p.test)  { clear_current_view(ex); clear_best_view(ex); }
+    clear_all_views(p);
     return false;
+  }
+
+  // Blank every picture of the search, both columns, both sides. The scores go
+  // with them: an example with nothing shown has nothing scored either.
+  inline void beam_solver::clear_all_views(puzzle &p) {
+    for (size_t i = 0; i < p.train.size(); ++i) {
+      example_views *v = m_solver_state.views.of(false, i);
+      clear_current_view(p.train[i], v);
+      clear_best_view(p.train[i], v);
+    }
+    for (size_t i = 0; i < p.test.size(); ++i) {
+      example_views *v = m_solver_state.views.of(true, i);
+      clear_current_view(p.test[i], v);
+      clear_best_view(p.test[i], v);
+    }
   }
 
   inline bool beam_solver::check_old_tree_solves(puzzle &p, int active) {
@@ -2153,7 +2175,7 @@ namespace arc {
           tree, p.train[active], temp, p, node_count);
 
       set_example_scores(p.train[active], s);
-      update_example_views(p.train[active], temp, m_gpu_buffer);
+      update_example_views(m_solver_state.views.of(false, active), temp, m_gpu_buffer);
       if (!solved) break;
 
       active++;
@@ -2186,7 +2208,6 @@ namespace arc {
     bool test_ok = evaluate_test_after_solve(p.best_tree, p, p.best_node_count);
     p.is_solved = true;
     p.is_test_solved = test_ok;
-    for (auto &ex : p.test) ex.output.visible = true;
     log_debug("!!!! TASK SOLVED ON TRAINING SET !!!");
     if (test_ok) log_debug("!!!! TEST SET SOLVED CORRECTLY !!!!");
     vector<pair<int, int>> seq;
@@ -2221,18 +2242,17 @@ namespace arc {
         // No ground truth (competition test set): can't confirm a solve.
         test_all_ok = false;
       }
-      p.test[i].output.visible = true;
-      update_example_views(p.test[i], tg, m_gpu_buffer);
+      update_example_views(m_solver_state.views.of(true, i), tg, m_gpu_buffer);
     }
     return test_all_ok;
   }
 
   inline void beam_solver::reset_test_display(puzzle &p) {
-    for (auto &ex : p.test) {
-      if (m_gpu_buffer) {
-        clear_current_view(ex);
-        clear_best_view(ex);
-      }
+    if (!m_gpu_buffer) return;
+    for (size_t i = 0; i < p.test.size(); ++i) {
+      example_views *v = m_solver_state.views.of(true, i);
+      clear_current_view(p.test[i], v);
+      clear_best_view(p.test[i], v);
     }
   }
 
@@ -2240,14 +2260,15 @@ namespace arc {
     bool all_train_perfect = true;
     for (int i = 0; i < (int)p.train.size(); ++i) {
       if (i >= active) {
-        if (m_gpu_buffer) clear_best_view(p.train[i]);
+        if (m_gpu_buffer) clear_best_view(p.train[i], m_solver_state.views.of(false, i));
         continue;
       }
       grid temp = {};
       auto [s, solved] = environment::score_tree_output(
           p.best_tree, p.train[i], temp, p, node_count);
       p.train[i].best_score = s;
-      update_grid_if_visible(p.train[i].best, temp, m_gpu_buffer);
+      if (example_views *v = m_solver_state.views.of(false, i))
+        update_one_view(&v->best, temp, m_gpu_buffer);
       if (!solved) all_train_perfect = false;
     }
 
@@ -2261,11 +2282,12 @@ namespace arc {
         auto [score, slv] = environment::score_tree_output(
             p.best_tree, p.test[i], tg, p, node_count);
         p.test[i].best_score = score;
-        update_grid_if_visible(p.test[i].best, tg, m_gpu_buffer);
+        if (example_views *v = m_solver_state.views.of(true, i))
+          update_one_view(&v->best, tg, m_gpu_buffer);
       }
     } else {
-      for (int i = 0; i < (int)p.test.size(); ++i) {
-        clear_best_view(p.test[i]);
+      for (size_t i = 0; i < p.test.size(); ++i) {
+        clear_best_view(p.test[i], m_solver_state.views.of(true, i));
       }
     }
   }
@@ -2274,7 +2296,7 @@ namespace arc {
     unique_lock<mutex> lock(m_solver_state.mtx, try_to_lock);
     if (lock.owns_lock()) {
       if (target_idx == m_solver_state.puzzle_idx) {
-        update_example_results(p.train, res.train);
+        update_example_results(p.train, &m_solver_state.views.train, res.train);
         int active = min(active_example_count, (int)p.train.size());
         bool full_train = res.all_train_solved && active == (int)p.train.size();
         update_test_current_views(p, tree, node_count, full_train);

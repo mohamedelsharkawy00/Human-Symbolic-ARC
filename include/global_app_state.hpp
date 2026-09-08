@@ -1,5 +1,6 @@
 #pragma once
 #include "environment.hpp"
+#include "grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -201,8 +202,12 @@ struct solver_state {
 		vector<vector<bbox>> object_bboxes; // [example][object] world bbox + tile canvas dims
 	};
 	mutable unordered_map<uint64_t, preview_payload> preview_cache;
-	mutable vector<grid> preview_grids;
-	mutable vector<vector<grid>> preview_object_grids;
+	mutable vector<display_grid> preview_grids;
+	mutable vector<vector<display_grid>> preview_object_grids;
+	// The current/best pictures, and where the puzzle's own pair was uploaded.
+	// Beside the puzzle, not inside it: core states the facts, the display keeps
+	// what it needs to paint them.
+	puzzle_views views;
 	mutable uint64_t preview_uploaded_hash = 0;
 	mutable int preview_last_puzzle_idx = -1;
 };

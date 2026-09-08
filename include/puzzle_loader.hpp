@@ -129,7 +129,7 @@ inline void compute_distance_maps(example &ex) {
   }
 }
 
-inline void apply_solution(puzzle &task,
+inline void apply_solution(puzzle &task, puzzle_views &views,
                            vector<int> &gpu_buffer, const string &sol_str, logger &log) {
   // Re-import (or import onto a puzzle that loaded with a solved tree) would
   // otherwise leak the whole prior node subtree.
@@ -160,7 +160,8 @@ inline void apply_solution(puzzle &task,
       log_score(i, terms, "import_train");
 
       ex.best_score = s;
-      update_display_buffer(ex.best, temp, gpu_buffer);
+      if (example_views *v = views.of(false, i))
+        update_display_buffer(v->best, temp, gpu_buffer);
       if (!solved)
         all_solved = false;
     }
@@ -175,8 +176,8 @@ inline void apply_solution(puzzle &task,
             task.best_tree, ex, temp, task, task.best_node_count, &terms);
         log_score(i, terms, "import_test");
         ex.best_score = s;
-        update_display_buffer(ex.best, temp, gpu_buffer);
-        ex.output.visible = true;
+        if (example_views *v = views.of(true, i))
+          update_display_buffer(v->best, temp, gpu_buffer);
         if (!solved) test_all_solved = false;
       }
       if (!task.test.empty() && test_all_solved) {
@@ -293,7 +294,8 @@ inline map<string, vector<grid>> load_solutions_json(const string &json_path) {
   return solutions;
 }
 
-inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, grid> &chars, grid &bg_grid) {
+inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars,
+                             display_grid &bg_grid) {
   // Sized for: font atlas + 800x800 bg + 32 preview grids + 32*64 object
   // preview slots + headroom for the largest puzzle's training data.
   // Pre-reserve so init never reallocates (no contiguous-block hunts during
@@ -302,8 +304,8 @@ inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, grid> &chars
   load_font_atlas(gpu_buffer, chars);
   bg_grid.width = 800;
   bg_grid.height = 800;
-  bg_grid.stride = 800;
-  bg_grid.offset = (int)gpu_buffer.size();
+  bg_grid.at.stride = 800;
+  bg_grid.at.offset = (int)gpu_buffer.size();
   gpu_buffer.resize(gpu_buffer.size() + 800 * 800, 11);
 }
 
@@ -352,13 +354,20 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
 // `id`. Shared by the per-file loader (load_single_puzzle) and the big
 // challenges-file loader (load_task_from_challenges). Returns true on success.
 inline bool load_task_from_content(const string &content, const string &id,
-                                   puzzle &out, vector<int> &gpu_buffer,
+                                   puzzle &out, puzzle_views &views,
+                                   vector<int> &gpu_buffer,
                                    size_t base_gpu_buffer_size,
                                    const vector<grid> *test_solutions = nullptr,
                                    int idx = -1, int count = 0, int dataset_flags = 0,
                                    bool with_inference = true) {
   // Truncate the GPU buffer back to the base size to drop any old puzzle data
   gpu_buffer.resize(base_gpu_buffer_size);
+  // The views point INTO the part just dropped, so they go with it -- here,
+  // beside the puzzle they describe, rather than further down where the parse
+  // starts: every early return between the two would leave them naming cells
+  // that are no longer in the buffer.
+  views.train.clear();
+  views.test.clear();
   // puzzle has a raw node* best_tree; the compiler-generated dtor won't free
   // it, so we have to release it explicitly before overwriting.
   if (out.best_tree) environment::remove(out.best_tree);
@@ -389,8 +398,10 @@ inline bool load_task_from_content(const string &content, const string &id,
       return content.size();
     };
 
-    auto parse_examples = [&](size_t start, size_t end,
-                              vector<example> &out_vec, bool is_train) {
+    // The pair goes into out_vec, where its cells landed goes into view_vec, one
+    // entry each, same index. Nothing about drawing reaches the example itself.
+    auto parse_examples = [&](size_t start, size_t end, vector<example> &out_vec,
+                              vector<example_views> &view_vec, bool is_train) {
       size_t csr = start;
       while (csr < end) {
         size_t in_pos = content.find("\"input\"", csr);
@@ -401,13 +412,15 @@ inline bool load_task_from_content(const string &content, const string &id,
 
         if (in_g.width > MAX_GRID_DIM || in_g.height > MAX_GRID_DIM) {
           out_vec.clear();
+          view_vec.clear();
           return;
         }
         csr = in_pos;
 
-        upload_grid(in_g, gpu_buffer);
         example ex;
+        example_views view;
         ex.input = in_g;
+        view.input = upload_grid(in_g, gpu_buffer);
 
         size_t out_pos = content.find("\"output\"", csr);
         bool has_output = (out_pos != string::npos && out_pos < end);
@@ -419,12 +432,11 @@ inline bool load_task_from_content(const string &content, const string &id,
           if (out_g.width > 0) {
             if (out_g.width > MAX_GRID_DIM || out_g.height > MAX_GRID_DIM) {
               out_vec.clear();
+              view_vec.clear();
               return;
             }
-            upload_grid(out_g, gpu_buffer);
             ex.output = out_g;
-
-            ex.output.visible = is_train;
+            view.output = upload_grid(out_g, gpu_buffer);
           } else {
             ex.output.width = 0;
           }
@@ -440,29 +452,26 @@ inline bool load_task_from_content(const string &content, const string &id,
         bool has_solution = false;
         if (!is_train && !has_output && test_solutions &&
             out_vec.size() < test_solutions->size()) {
-          // Copy before uploading: upload_grid rewrites stride/offset, and the
-          // solutions map is shared/persistent across loads — mutating it would
-          // leave a stale GPU offset behind on the next load of this task.
-          grid sol = (*test_solutions)[out_vec.size()];
+          const grid &sol = (*test_solutions)[out_vec.size()];
           if (sol.width > 0 && sol.width <= MAX_GRID_DIM && sol.height <= MAX_GRID_DIM) {
-            upload_grid(sol, gpu_buffer);
             ex.output = sol;
-            ex.output.visible = false;  // hidden like a normal test target
+            view.output = upload_grid(sol, gpu_buffer);
             has_solution = true;
           }
         }
 
-        ex.current = allocate_empty_grid(gpu_buffer);
-        ex.best = allocate_empty_grid(gpu_buffer);
+        view.current = allocate_empty_grid(gpu_buffer);
+        view.best = allocate_empty_grid(gpu_buffer);
 
         if (has_output || has_solution) compute_distance_maps(ex);
 
         out_vec.push_back(ex);
+        view_vec.push_back(view);
       }
     };
 
-    parse_examples(train_start, get_section_end(train_start), task.train, true);
-    parse_examples(test_start, get_section_end(test_start), task.test, false);
+    parse_examples(train_start, get_section_end(train_start), task.train, views.train, true);
+    parse_examples(test_start, get_section_end(test_start), task.test, views.test, false);
 
     // WHAT LOOKING AT THE PUZZLE SAID. infer() reads every invariant off the
     // examples and hands back one `inference` object, and the puzzle KEEPS it.
@@ -485,12 +494,12 @@ inline bool load_task_from_content(const string &content, const string &id,
 // (via load_challenges_json). Thin wrapper over load_task_from_content; no file
 // IO — the JSON was already read once when the whole task set was sliced.
 inline bool load_single_puzzle(const challenge_task &task, puzzle &out,
-                               vector<int> &gpu_buffer,
+                               puzzle_views &views, vector<int> &gpu_buffer,
                                size_t base_gpu_buffer_size,
                                const vector<grid> *test_solutions = nullptr,
                                int idx = -1, int count = 0, int dataset_flags = 0,
                                bool with_inference = true) {
-  return load_task_from_content(task.content, task.id, out, gpu_buffer,
+  return load_task_from_content(task.content, task.id, out, views, gpu_buffer,
                                 base_gpu_buffer_size, test_solutions,
                                 idx, count, dataset_flags, with_inference);
 }
