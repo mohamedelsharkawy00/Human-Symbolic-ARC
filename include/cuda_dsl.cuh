@@ -121,21 +121,31 @@ static constexpr float GPU_SCORE_W_COLOR_MATCH = 50.0f;
 // correct cell, no threshold cliff.
 static constexpr float GPU_SCORE_W_POSITION_MATCH = 80.0f;
 
-// --- Fixed-size object representation (CPU + GPU compatible) ---
-// No heap, no pointers, trivially copyable. Mirrors environment.hpp object/object_list
-// but with inline mask and fixed-size arrays.
-
-struct fixed_object {
-    int16_t x0 = 0, y0 = 0;      // bounding box top-left (world coords)
-    int16_t x1 = 0, y1 = 0;      // bounding box bottom-right (world coords)
+// `selected` lives before `mask` so gpu_warp_copy_header (which copies
+// everything ahead of the mask) carries it.
+// MSVC C4324: intentional padding; see object_cells in 1_readings.hpp.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+struct gpu_fixed_object {
+    int16_t x0 = 0, y0 = 0;
+    int16_t x1 = 0, y1 = 0;
     int16_t width = 0, height = 0;
-    gpu_packed_mask mask;  // pixel colors or GPU_TRANSPARENT(-1), two cells per byte
+    bool selected = false;
+    gpu_packed_mask mask;
 
-    void clear() {
+    ARC_HOST_DEVICE void clear() {
         x0 = y0 = x1 = y1 = width = height = 0;
+        selected = false;
         mask.clear();
     }
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+using fixed_object = gpu_fixed_object;
 
 struct fixed_object_list {
     fixed_object objects[GPU_MAX_OBJECTS];
@@ -400,26 +410,6 @@ static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 // object first (Split/Colors), then selecting it — not from marking cells.
 // The flag is always valid: host objects default it false, device pool objects
 // clear it at the gpu_acquire chokepoint.
-
-// `selected` lives before `mask` so gpu_warp_copy_header (which copies
-// everything ahead of the mask) carries it.
-// MSVC C4324: these hold an object_cells, which asks for 4-byte alignment so the
-// device can compare-and-swap the word a cell sits in. The few padding bytes
-// that buys are the point, not an accident.
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
-struct gpu_fixed_object {
-    int16_t x0 = 0, y0 = 0;
-    int16_t x1 = 0, y1 = 0;
-    int16_t width = 0, height = 0;
-    bool selected = false;
-    gpu_packed_mask mask;
-};
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 struct gpu_object_list {
     gpu_fixed_object objects[GPU_KERNEL_MAX_OBJECTS];

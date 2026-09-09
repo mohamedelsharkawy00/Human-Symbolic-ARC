@@ -30,6 +30,67 @@ ARC_HOST_DEVICE constexpr bool is_color(int value) {
     return value >= 0 && value < COLOR_COUNT;
 }
 
+// Grouping of cells into an object is 8 way, "is this one object?".
+//
+// Worked out rather than written down, because a constexpr array lives in
+// host memory and device code cannot index one -- and the walk below runs on
+// both sides. The eight are the 3x3 around a cell with the cell itself left
+// out, so dir 0..7 steps over the missing middle and reads off row and column.
+ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
+}
+
+// Adjacency between two cells is 4 way, "what shares an edge with this cell?".
+// Up, down, left, right. A diagonal cell touches only at a corner.
+//
+// Why four here and eight for grouping. Picture a ring of blocks meeting only
+// at their corners. Ask "is this one ring" and the answer is yes, corners
+// count, which is the eight. Ask "can the water inside get out" and corners
+// must not count, or the water escapes through the very tip just called a
+// wall and the ring has no inside at all. So anything measuring a border --
+// what frays against what, what surrounds what, whether background leaks to
+// the grid edge -- takes the four. Whatever the shapes use, the space around
+// them uses the other one. Let both use eight and no shape has an inside any
+// more, so holes stop existing.
+ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
+    return dir < 2 ? dir * 2 - 1 : 0;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
+    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
+}
+
+// Finds one group of connected cells by walking the given bounds, 8-way.
+// `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
+template <class Claim, class See>
+ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
+                    Claim claim, See see) {
+    int head = 0, tail = seeded;
+    while (head < tail) {
+        const int row = queue_row[head], col = queue_col[head];
+        ++head;
+        see(row, col);
+        for (int dir = 0; dir < 8; ++dir) {
+            const int next_row = row + neighbour_row_8(dir);
+            const int next_col = col + neighbour_col_8(dir);
+            if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
+            if (!claim(next_row, next_col)) continue;
+            queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
+            ++tail;
+        }
+    }
+    return tail;
+}
+
+// An object's bounding box and cell count, usable without storing its cells.
+struct object_summary {
+    int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
+    int8_t  w = 0, h = 0;    // box width and height
+    int16_t count = 0;       // number of cells in the object
+};
+
 // A cell is 4 bits, so two of them share a byte,
 // in fixed size storage held by both CPU and GPU.
 // This optimization is needed to lower the consumption
@@ -48,7 +109,14 @@ struct alignas(4) object_cells {
 
     // A cell occupies half a byte, so reads and writes need a proxy,
     // because C++ can't give a reference to half a byte.
-    struct const_cell_ref;
+    struct const_cell_ref {
+        const uint8_t* byte;
+        int shift;
+
+        ARC_HOST_DEVICE operator int8_t() const {
+            return (int8_t)((*byte >> shift) & 0xF) - 1;
+        }
+    };
 
     struct cell_ref {
         uint8_t* byte;
@@ -67,16 +135,7 @@ struct alignas(4) object_cells {
         // assignment and rebind the proxy -- moving where this cell_ref points
         // instead of writing a cell. Both spellings write the value through.
         ARC_HOST_DEVICE void operator=(const cell_ref& other) { *this = (int8_t)other; }
-        ARC_HOST_DEVICE inline void operator=(const const_cell_ref& other);
-    };
-
-    struct const_cell_ref {
-        const uint8_t* byte;
-        int shift;
-
-        ARC_HOST_DEVICE operator int8_t() const {
-            return (int8_t)((*byte >> shift) & 0xF) - 1;
-        }
+        ARC_HOST_DEVICE void operator=(const const_cell_ref& other) { *this = (int8_t)other; }
     };
 
     // Row proxies allow cells[row][col]; invalid flat indices fall back to cell 0.
@@ -125,20 +184,9 @@ struct alignas(4) object_cells {
     }
 };
 
-ARC_HOST_DEVICE inline void object_cells::cell_ref::operator=(const const_cell_ref& other) {
-    *this = (int8_t)other;
-}
-
-// An object's bounding box and cell count, usable without storing its cells.
-struct object_summary {
-    int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
-    int8_t  w = 0, h = 0;    // box width and height
-    int16_t count = 0;       // number of cells in the object
-};
-
-// MSVC C4324: these hold an object_cells, which asks for 4-byte alignment so the
-// device can compare-and-swap the word a cell sits in. The few padding bytes
-// that buys are the point, not an accident.
+// MSVC C4324: the device only grabs memory 4 bytes at a time, so object_cells
+// has to start where the 4s start. Lining it up leaves 2 bytes empty. The
+// compiler says "you left 2 empty". We say "yes, on purpose".
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -162,84 +210,14 @@ struct object {
         return color_at(row, col) != (int8_t)TRANSPARENT;
     }
 };
+
+// End of warning suppression
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
 
-// Grouping is 8, "is this one object?".
-//
-// Worked out rather than written down, because a constexpr array lives in
-// host memory and device code cannot index one -- and the walk below runs on
-// both sides. The eight are the 3x3 around a cell with the cell itself left
-// out, so dir 0..7 steps over the missing middle and reads off row and column.
-ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
-}
-
-// Adjacency is 4, "what is beside this?". up, down, left, right.
-ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
-    return dir < 2 ? dir * 2 - 1 : 0;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
-    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
-}
-
-// Walk out from the cells already sitting in the queue until nothing new can be
-// reached, corners always counting. `claim` both decides and marks: it answers
-// "is this cell part of the walk", and a yes means the walk has taken it, so the
-// caller's own mark is what keeps a cell from being queued twice. `see` gets
-// every cell once, in the order the walk reached it. Returns how many cells the
-// walk ended with, left in the queue for the caller to read back.
-template <class Claim, class See>
-ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
-                    Claim claim, See see) {
-    int head = 0, tail = seeded;
-    while (head < tail) {
-        const int row = queue_row[head], col = queue_col[head];
-        ++head;
-        see(row, col);
-        for (int dir = 0; dir < 8; ++dir) {
-            const int next_row = row + neighbour_row_8(dir);
-            const int next_col = col + neighbour_col_8(dir);
-            if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
-            if (!claim(next_row, next_col)) continue;
-            queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
-            ++tail;
-        }
-    }
-    return tail;
-}
-
-// Find every touching group and hand each one to `take` as it is
-// found: its summary, and its cells as a plain pointer and length. Both finders
-// below are this walk wearing different hats, so neither can drift from the
-// other on what counts as one object.
-//
-// The cells handed over live in scratch space that the next group overwrites,
-// so `take` must COPY anything it means to keep -- keeping the pointer itself
-// buys a view of whatever group comes next, and of dead stack once the walk
-// returns. Nothing enforces that: it is the price of handing out cells without
-// allocating, and it is what lets the summary finder below run with no
-// allocation at all, which matters because it is called once per program the
-// solver tries.
-//
-// `any_color` picks WHICH RELATION joins two cells: false means they must wear
-// the same color, true means any two non-background cells that touch are one
-// group -- so a group can wear several colors.
-//
-// `background` is the color this grid was ELECTED to sit on, which the caller
-// reads off inference -- not a guess. Black is the usual answer and not the
-// only one: a puzzle can put black figures on a colored ground, and assuming
-// otherwise loses them. Pass -1 to exclude nothing but TRANSPARENT.
-// Touching is the 8-way kind (see neighbour_row_8 above): a shape joined only
-// at a corner is still one shape.
-// The room the walk needs while it works. The caller owns it because the device
-// has no stack to spare for ten kilobytes: on the host this is a local like any
-// other, but a kernel would hand over a slice of memory it already holds.
+// Caller-owned so host and device can lend memory they already hold.
 struct object_walk_scratch {
     bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM];
@@ -247,9 +225,15 @@ struct object_walk_scratch {
     int16_t cells[MAX_GRID_DIM * MAX_GRID_DIM];
 };
 
-// Grid is any type with width, height and data[row][col] -- arc::grid on the
-// host, the GPU's own smaller grid in a kernel. One walk, so the two sides can
-// never come to different answers about what one object is.
+// Find every touching group and hand it to `take`: summary, cells as pointer
+// and length. Grid is anything with width, height and data[row][col], so host
+// and device share one answer about what one object is.
+//
+// The cells point into `scratch`, which the next group overwrites -- `take`
+// must COPY anything it keeps. That is what lets this run without allocating.
+//
+// `background` is the color the grid was found to sit on, read off inference,
+// not assumed. Pass -1 to exclude nothing but TRANSPARENT.
 template <class Grid, class Take>
 ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
                                  bool any_color, object_walk_scratch& scratch, Take take) {
@@ -336,16 +320,7 @@ inline int find_objects_by_color(const grid& one_grid, int background,
     return found;
 }
 
-// TALLIES · how much of each color, and where it sits
-
-// Human reading order.
-// Plural S = whole train set; no S = one pair.
-enum class direction {
-    across_input_output,
-    across_inputs,
-    across_outputs,
-    across_inputs_outputs,
-};
+// Tallies; how much of each color, and where it sits
 
 // Every cell wearing a color, in reading order, with one color left out if
 // asked. Single home of the walk: the bounds are the grid's own, held to what a
@@ -412,7 +387,7 @@ inline bool pairs_overlay(const vector<example>& train) {
 
 // THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
 // bits, pose 0 being the grid as given.
-//   1  rows and columns trade places
+//   1  rows and columns trade places, transpose
 //   2  flipped top to bottom
 //   4  flipped left to right
 // Single home of what the bits mean. Every reader of a pose goes through the

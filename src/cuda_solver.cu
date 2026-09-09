@@ -3590,9 +3590,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
 // --- Cached per-example device data (uploaded once per puzzle) ---
 static constexpr int MAX_CACHED_EXAMPLES = 16;
 
-// MSVC C4324: these hold an object_cells, which asks for 4-byte alignment so the
-// device can compare-and-swap the word a cell sits in. The few padding bytes
-// that buys are the point, not an accident.
+// MSVC C4324: intentional padding; see object_cells in 1_readings.hpp.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)

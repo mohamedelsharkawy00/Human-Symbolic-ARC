@@ -29,56 +29,6 @@ static inline void grid_to_fixed(const int src[][30], int w, int h, fixed_grid& 
             dst.data[r][c] = (int8_t)src[r][c];
 }
 
-// --- Flood fill for segment_objects (8-connected) ---
-// Uses a fixed-size queue instead of vector. Max 900 pixels on a 30x30 grid.
-// TODO: remove once fixed_init_context is replaced by GPU-side segmentation.
-static inline void fixed_flood_fill(
-    const fixed_grid& g, int r, int c, int8_t seed_color,
-    bool visited[][GPU_MAX_GRID], fixed_object& obj)
-{
-    static constexpr int MAX_QUEUE = GPU_MAX_GRID * GPU_MAX_GRID;
-    int16_t queue_r[MAX_QUEUE], queue_c[MAX_QUEUE];
-    int head = 0, tail = 0;
-
-    queue_r[tail] = (int16_t)r;
-    queue_c[tail] = (int16_t)c;
-    tail++;
-    visited[r][c] = true;
-
-    while (head < tail) {
-        int cr = queue_r[head], cc = queue_c[head];
-        head++;
-
-        if (cc < obj.x0) obj.x0 = (int16_t)cc;
-        if (cr < obj.y0) obj.y0 = (int16_t)cr;
-        if (cc > obj.x1) obj.x1 = (int16_t)cc;
-        if (cr > obj.y1) obj.y1 = (int16_t)cr;
-
-        static constexpr int8_t dr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
-        static constexpr int8_t dc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
-        for (int d = 0; d < 8; ++d) {
-            int nr = cr + dr[d], nc = cc + dc[d];
-            if (nr < 0 || nr >= g.height || nc < 0 || nc >= g.width) continue;
-            if (g.data[nr][nc] != seed_color || visited[nr][nc]) continue;
-            if (tail >= MAX_QUEUE) continue;
-            visited[nr][nc] = true;
-            queue_r[tail] = (int16_t)nr;
-            queue_c[tail] = (int16_t)nc;
-            tail++;
-        }
-    }
-
-    obj.width = (int16_t)std::min((int)(obj.x1 - obj.x0 + 1), (int)GPU_MAX_GRID);
-    obj.height = (int16_t)std::min((int)(obj.y1 - obj.y0 + 1), (int)GPU_MAX_GRID);
-    obj.mask.clear();
-
-    for (int i = 0; i < tail; ++i) {
-        int pr = queue_r[i] - obj.y0, pc = queue_c[i] - obj.x0;
-        if (pr < 0 || pr >= obj.height || pc < 0 || pc >= obj.width) continue;
-        obj.mask[pr][pc] = g.data[queue_r[i]][queue_c[i]];
-    }
-}
-
 // Scan an object's mask for the first non-transparent pixel color.
 // Returns GPU_TRANSPARENT if the mask is empty.
 static inline int8_t fixed_obj_first_color(const fixed_object& o) {
@@ -91,25 +41,25 @@ static inline int8_t fixed_obj_first_color(const fixed_object& o) {
 // --- segment_objects: connected-component segmentation (8-connected) ---
 static inline void fixed_segment_objects(const fixed_grid& g, fixed_object_list& out, int8_t bg_color = GPU_TRANSPARENT) {
     out.clear();
-    if (g.width <= 0 || g.height <= 0) return;
-
-    bool visited[GPU_MAX_GRID][GPU_MAX_GRID]{};
-    for (int r = 0; r < g.height; ++r) {
-        for (int c = 0; c < g.width; ++c) {
-            if (g.data[r][c] == bg_color || visited[r][c]) continue;
-
-            fixed_object obj;
-            obj.x0 = (int16_t)c; obj.y0 = (int16_t)r;
-            obj.x1 = (int16_t)c; obj.y1 = (int16_t)r;
-            fixed_flood_fill(g, r, c, g.data[r][c], visited, obj);
-
-            if (!out.push(obj)) return; // full
-        }
-    }
+    object_walk_scratch scratch;
+    each_object(g, bg_color, /*any_color=*/false, scratch,
+        [&](const object_summary& box, const int16_t* cells, int n) {
+            if (out.count >= GPU_MAX_OBJECTS) return;
+            fixed_object& obj = out.objects[out.count++];
+            obj.clear();
+            obj.x0 = box.x0; obj.y0 = box.y0;
+            obj.width = box.w; obj.height = box.h;
+            obj.x1 = (int16_t)(obj.x0 + obj.width - 1);
+            obj.y1 = (int16_t)(obj.y0 + obj.height - 1);
+            for (int i = 0; i < n; ++i) {
+                const int row = cells[i] / MAX_GRID_DIM, col = cells[i] % MAX_GRID_DIM;
+                obj.mask[row - obj.y0][col - obj.x0] = g.data[row][col];
+            }
+        });
 }
 
-// --- segment_by_color: one object per color ---
-static inline void fixed_segment_by_color(const fixed_grid& g, fixed_object_list& out, int8_t bg_color = GPU_TRANSPARENT) {
+// One layer per color, including disconnected cells.
+static inline void fixed_segment_color_layers(const fixed_grid& g, fixed_object_list& out, int8_t bg_color = GPU_TRANSPARENT) {
     out.clear();
     if (g.width <= 0 || g.height <= 0) return;
 
@@ -183,13 +133,7 @@ static inline void sort_objects_by_area_asc(fixed_object_list& list) {
 static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
     gpu_object_list dst;
     dst.count = std::min(src.count, GPU_KERNEL_MAX_OBJECTS);
-    for (int i = 0; i < dst.count; ++i) {
-        auto& d = dst.objects[i];
-        const auto& s = src.objects[i];
-        d.x0 = s.x0; d.y0 = s.y0; d.x1 = s.x1; d.y1 = s.y1;
-        d.width = s.width; d.height = s.height;
-        d.mask = s.mask;
-    }
+    for (int i = 0; i < dst.count; ++i) dst.objects[i] = src.objects[i];
     return dst;
 }
 
@@ -284,7 +228,8 @@ static inline void fixed_init_context(
         }
     }
 
-    // Segment objects from input for seeds/palette
+    // Seeds retain every color here: the rule below drops the largest box,
+    // after removing invariant colors, rather than excluding elected background.
     fixed_grid input_copy;
     grid_to_fixed(ex.input.data, ex.input.width, ex.input.height, input_copy);
 

@@ -27,4 +27,13 @@ struct example {
 	grid input, output;
 };
 
+// Human reading order.
+// Plural S = whole train set; no S = one pair.
+// enum class direction {
+//	across_input_output,
+//	across_inputs,
+//	across_outputs,
+//	across_inputs_outputs,
+// };
+
 }
