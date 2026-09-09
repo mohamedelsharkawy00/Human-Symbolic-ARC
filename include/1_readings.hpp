@@ -1,4 +1,4 @@
-// This file describes how to read a grid at all
+// This file describes how to read a grid.
 #pragma once
 #include "0_core.hpp"
 #include <algorithm>
@@ -6,9 +6,7 @@
 #include <vector>
 #include <utility>
 
-// This is a tag that makes code visible
-// to a CUDA device and CUDA host,
-// otherwise it is host-only.
+// Allow a function to run on both CPU and GPU when compiled with CUDA.
 #ifdef __CUDACC__
 #define ARC_HOST_DEVICE __host__ __device__
 #else
@@ -17,6 +15,118 @@
 
 namespace arc {
 using namespace std;
+
+// An object is a related group of cells.
+// Humans mostly decompose an ARC grid into objects when reading the grid,
+// so the code will match that level of abstraction
+// vs carrying each cell as its own entity.
+
+// A sentinel for an empty non-colored cell,
+// that will be used for masks and marks later.
+constexpr int TRANSPARENT = -1;
+
+// A cell is 4 bits, so two of them share a byte,
+// in fixed size storage held by both CPU and GPU.
+// This optimization is needed to lower the consumption
+// of registers and the spilling to memory, which hurts performance.
+// Also, parallel writes by GPU lanes must
+// take separate whole bytes each to avoid racing.
+struct object_cells {
+    static constexpr int CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
+    uint8_t data[(CELLS + 1) / 2];
+
+    // A cell occupies half a byte, so reads and writes need a proxy,
+    // because C++ can't give a reference to half a byte.
+    struct cell_ref {
+        uint8_t* byte;
+        int shift;
+
+        ARC_HOST_DEVICE operator int8_t() const {
+            return (int8_t)((*byte >> shift) & 0xF) - 1;
+        }
+
+        ARC_HOST_DEVICE void operator=(int8_t value) {
+            const uint8_t encoded = object_cells::enc(value);
+            *byte = (uint8_t)((*byte & ~(0xF << shift)) | (encoded << shift));
+        }
+    };
+
+    struct const_cell_ref {
+        const uint8_t* byte;
+        int shift;
+
+        ARC_HOST_DEVICE operator int8_t() const {
+            return (int8_t)((*byte >> shift) & 0xF) - 1;
+        }
+    };
+
+    // Row proxies allow cells[row][col]; invalid flat indices fall back to cell 0.
+    struct row_ref {
+        uint8_t* base;
+        int row_index;
+
+        ARC_HOST_DEVICE cell_ref operator[](int col) const {
+            int index = row_index * MAX_GRID_DIM + col;
+            if (index < 0 || index >= CELLS) index = 0;
+            return { base + (index >> 1), (index & 1) * 4 };
+        }
+    };
+
+    struct const_row_ref {
+        const uint8_t* base;
+        int row_index;
+
+        ARC_HOST_DEVICE const_cell_ref operator[](int col) const {
+            int index = row_index * MAX_GRID_DIM + col;
+            if (index < 0 || index >= CELLS) index = 0;
+            return { base + (index >> 1), (index & 1) * 4 };
+        }
+    };
+
+    ARC_HOST_DEVICE row_ref operator[](int row) { return { data, row }; }
+    ARC_HOST_DEVICE const_row_ref operator[](int row) const { return { data, row }; }
+
+    ARC_HOST_DEVICE void clear() {
+        const uint8_t empty = enc(TRANSPARENT);
+        const uint8_t empty_byte = (uint8_t)(empty | (empty << 4));
+        for (int i = 0; i < (int)sizeof(data); ++i) data[i] = empty_byte;
+    }
+
+    // Four bits are unsigned, so TRANSPARENT (-1) has nowhere to stay. What goes
+    // in the byte is therefore the real value plus one: TRANSPARENT becomes 0,
+    // black becomes 1, and so on.
+    ARC_HOST_DEVICE static uint8_t enc(int8_t value) {
+        return (uint8_t)((int)value + 1) & 0xF;
+    }
+};
+
+// An object's bounding box and cell count, usable without storing its cells.
+struct object_summary {
+    int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
+    int8_t  w = 0, h = 0;    // box width and height
+    int16_t count = 0;       // number of cells in the object
+};
+
+// Cells are stored relative to the box's top-left; gaps are transparent.
+// color_at and holds take grid coordinates.
+struct object {
+    object_summary summary;
+    object_cells cells;
+
+    // The object's color here, or TRANSPARENT outside its shape (including holes).
+    ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
+        const int local_row = row - summary.y0;
+        const int local_col = col - summary.x0;
+        if (local_row < 0 || local_row >= summary.h ||
+            local_col < 0 || local_col >= summary.w) return (int8_t)TRANSPARENT;
+        return cells[local_row][local_col];
+    }
+
+    ARC_HOST_DEVICE bool holds(int row, int col) const {
+        return color_at(row, col) != (int8_t)TRANSPARENT;
+    }
+};
+
 
 // Grouping is 8, "is this one object?".
 //
@@ -44,66 +154,13 @@ constexpr int NEIGHBOUR_COL_8[8] = {
 constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
 constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
 
-// Not an ARC colour: a cell of the real puzzle is 0..9. This is our own
-// stand-in for "nothing here", which masks and glyphs need and the grids
-// ARC ships never do.
-constexpr int TRANSPARENT = -1;
-
-// ...which is what the >= 0 turns away here.
+// Only puzzle colors count; TRANSPARENT is excluded.
 ARC_HOST_DEVICE constexpr bool is_color(int value) {
     return value >= 0 && value < COLOR_COUNT;
 }
 
-// A WHOLE GRID OF CELLS IN HALF THE ROOM, and the one cell store both the CPU
-// and the GPU can read. A cell is 4 bits, two to a byte, so a 30x30 grid costs
-// 450 bytes instead of 900. It holds no addresses, which is what lets the same
-// bytes be handed to the device and still mean what they meant here.
-//
-// DIAG: the proxy clamps an out-of-bounds packed-mask cell access to cell 0 so it
-// can't fault. If clamping makes the kernel illegal-access vanish, the bug is a
-// mask OOB. (printf here blows the ptxas budget under launch_bounds, so no log.)
-#define PACKED_GRID_OOB(r, c, i) ((void)0)
-
-// 4-bit packed 30x30 cell mask: 2 cells/byte (450B vs 900B). Value v in [-1,9]
-// (GPU_TRANSPARENT..colors) stored as nibble (v+1) in [0,10]. Proxies expose
-// mask[r][c] read/write so lane-0 ops and all reads are unchanged. WARNING:
-// the proxy write is a byte read-modify-write, so it is ONLY safe single-
-// threaded; warp ops that write cells in parallel must write whole bytes via
-// .data[] directly (two cells/byte) to avoid the shared-byte race.
-struct packed_grid {
-    static constexpr int CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
-    uint8_t data[(CELLS + 1) / 2];
-
-    struct cref {
-        uint8_t* b; int sh;
-        ARC_HOST_DEVICE operator int8_t() const { return (int8_t)(((*b) >> sh) & 0xF) - 1; }
-        ARC_HOST_DEVICE void operator=(int8_t v) {
-            uint8_t n = (uint8_t)((int)v + 1) & 0xF;
-            *b = (uint8_t)(((*b) & ~(0xF << sh)) | (n << sh));
-        }
-    };
-    struct ccref {
-        const uint8_t* b; int sh;
-        ARC_HOST_DEVICE operator int8_t() const { return (int8_t)(((*b) >> sh) & 0xF) - 1; }
-    };
-    struct row  { uint8_t* base; int r;
-        ARC_HOST_DEVICE cref  operator[](int c) const { int i = r * MAX_GRID_DIM + c;
-            if (i < 0 || i >= CELLS) { PACKED_GRID_OOB(r, c, i); i = 0; }   // DIAG: clamp OOB to prevent the fault
-            return cref { base + (i >> 1), (i & 1) * 4 }; } };
-    struct crow { const uint8_t* base; int r;
-        ARC_HOST_DEVICE ccref operator[](int c) const { int i = r * MAX_GRID_DIM + c;
-            if (i < 0 || i >= CELLS) { PACKED_GRID_OOB(r, c, i); i = 0; }   // DIAG: clamp OOB to prevent the fault
-            return ccref{ base + (i >> 1), (i & 1) * 4 }; } };
-
-    ARC_HOST_DEVICE row  operator[](int r)       { return row { data, r }; }
-    ARC_HOST_DEVICE crow operator[](int r) const { return crow{ data, r }; }
-    ARC_HOST_DEVICE void clear() { for (int i = 0; i < (int)sizeof(data); ++i) data[i] = 0; }  // all transparent
-    // Pack value v into cell (r,c) — for use inside a single byte by one lane.
-    ARC_HOST_DEVICE static uint8_t enc(int8_t v) { return (uint8_t)((int)v + 1) & 0xF; }
-};
-
 // Pack an unpacked MAX_GRID_DIM^2 int8 grid into a packed grid, cell by cell.
-ARC_HOST_DEVICE inline void pack_grid(packed_grid& m, const int8_t g[][MAX_GRID_DIM]) {
+ARC_HOST_DEVICE inline void pack_grid(object_cells& m, const int8_t g[][MAX_GRID_DIM]) {
     for (int r = 0; r < MAX_GRID_DIM; ++r)
         for (int c = 0; c < MAX_GRID_DIM; ++c)
             m[r][c] = g[r][c];
@@ -138,67 +195,6 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
     return tail;
 }
 
-// AN OBJECT IS A RELATED GROUP OF CELLS. That much never changes. What changes
-// from puzzle to puzzle is what RELATED means, and there are several answers:
-// same color and touching; any non-background cells touching, so one object may
-// wear several colors; same color anywhere on the grid, touching or not; or one
-// period of a repeating block. Those relations are split_kind in
-// 3_correspondence.hpp, and choosing between them is inference's job. What is
-// below uses one of them: same color, touching.
-
-// A STRUCT OF ITS OWN, AND NOT JUST FIELDS INSIDE `object`, BECAUSE IT HAS TO
-// GO WHERE CELLS CANNOT. The scorer keeps an array of these in every puzzle
-// and ships them to the GPU; a group that owned its cells would carry a
-// vector there, which means a heap allocation for each one and a struct that
-// can no longer be copied as plain bytes. So the half without cells is its
-// own thing, free to be copied about and uploaded by the thousand.
-//
-// What it keeps is a color, the box its cells fit in, and how many there are.
-// Two different groups sharing those three are equal as far as this can tell,
-// which is all the scorer needs: it only asks whether a group this shape and
-// this size exists in the answer.
-//
-// It is written above `object` because a thing must be declared before it can
-// be used as part of another, not because it is the more important of the two.
-struct object_summary {
-    int8_t  color = -1;      // 0..9; -1 would mean a group of mixed colors
-    int8_t  x0 = 0, y0 = 0;  // top-left of its box, in grid coordinates
-    int8_t  w = 0, h = 0;    // how big that box is
-    int16_t count = 0;       // cells in the group, which is <= w * h
-};
-
-// THE GROUP ITSELF: the summary above, and the cells it is actually made of,
-// kept in a packed_grid so the whole thing is plain bytes -- no addresses, so
-// an object means the same on the host and on the device, and one segmenter can
-// one day serve both.
-//
-// The cells are BOX-LOCAL: cell (row, col) of the grid lives at
-// cells[row - summary.y0][col - summary.x0], and everything outside the group is
-// TRANSPARENT. That is the same convention fixed_object uses on the GPU side.
-// Use color_at / holds rather than reaching into `cells`, and pass them ordinary
-// grid coordinates.
-//
-// Knowing the cells and not just the box is what lets `holds` exist at all. A
-// box cannot answer it: a ring's box holds the ring's own hole, so anything
-// sitting in the hole looks like it is part of the ring.
-struct object {
-    object_summary summary;
-    packed_grid cells;
-
-    // What this group puts at that place on the grid, or TRANSPARENT if the
-    // group is not there at all -- which covers both outside its box and inside
-    // the box but not part of the shape.
-    ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
-        const int r = row - summary.y0, c = col - summary.x0;
-        if (r < 0 || r >= summary.h || c < 0 || c >= summary.w) return (int8_t)TRANSPARENT;
-        return cells[r][c];
-    }
-
-    ARC_HOST_DEVICE bool holds(int row, int col) const {
-        return color_at(row, col) != (int8_t)TRANSPARENT;
-    }
-};
-
 // Find every touching group and hand each one to `take` as it is
 // found: its summary, and its cells as a plain pointer and length. Both finders
 // below are this walk wearing different hats, so neither can drift from the
@@ -214,8 +210,7 @@ struct object {
 //
 // `any_color` picks WHICH RELATION joins two cells: false means they must wear
 // the same color, true means any two non-background cells that touch are one
-// group -- so a group can wear several colors, and its summary color is -1,
-// because it has no single one to report.
+// group -- so a group can wear several colors.
 //
 // `background` is the color this grid was ELECTED to sit on, which the caller
 // reads off inference -- not a guess. Black is the usual answer and not the
@@ -258,7 +253,6 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
             taken[row][col] = true;
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
             object_summary found;
-            found.color = any_color ? (int8_t)-1 : (int8_t)color;
             int seen = 0;
             int x0 = col, y0 = row, x1 = col, y1 = row;
             // One flood fill for the whole project, so no two readings can

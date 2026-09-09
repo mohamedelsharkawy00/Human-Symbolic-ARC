@@ -57,7 +57,6 @@ namespace arc {
 			                                   tobjs, MAX_TARGET_OBJECTS);
 			gpu_object_summary* dst = ex_data.target_objs; // ei=0
 			for (int k = 0; k < tcount; ++k) {
-				dst[k].color = tobjs[k].color;
 				dst[k].w = tobjs[k].w;
 				dst[k].h = tobjs[k].h;
 				dst[k].x0 = tobjs[k].x0;

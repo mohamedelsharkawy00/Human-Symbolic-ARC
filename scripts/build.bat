@@ -42,8 +42,8 @@ if not exist "kaggle\input\competitions\arc-prize-2026-arc-agi-2\arc-agi_trainin
     python "scripts\fetch_data.py"
     if errorlevel 1 echo [!] Fetch failed. Run "python scripts\fetch_data.py" once you are online.
 ) else (
-    :: Only reports; updating stays a deliberate act because changing the data
-    :: makes benchmark numbers before and after incomparable. Silent offline.
+    REM Only reports; updating stays a deliberate act because changing the data
+    REM makes benchmark numbers before and after incomparable. Silent offline.
     python "scripts\fetch_data.py" --check
 )
 
@@ -52,6 +52,9 @@ if not exist "kaggle\input\competitions\arc-prize-2026-arc-agi-2\arc-agi_trainin
 python "scripts\session_check.py"
 
 :: Ensure MSVC environment if not already present
+:: VsDevCmd invokes vswhere by name; make it discoverable without current-directory lookup.
+:: SETLOCAL above keeps this PATH change confined to the build.
+if not defined DevEnvDir set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
 if not defined DevEnvDir (
     call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul
 )

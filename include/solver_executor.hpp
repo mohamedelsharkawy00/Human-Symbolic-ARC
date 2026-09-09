@@ -1168,7 +1168,6 @@ namespace arc {
       if (tc > GPU_MAX_TARGET_OBJECTS) tc = GPU_MAX_TARGET_OBJECTS;
       for (int k = 0; k < tc; ++k) {
         const auto& s = p.target_objects[ei].objs[k];
-        dst[k].color = s.color;
         dst[k].w = s.w;
         dst[k].h = s.h;
         dst[k].x0 = s.x0;

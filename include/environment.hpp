@@ -253,17 +253,17 @@ namespace arc {
 		return !tail->sel_waiting && !tail->work_unlanded;
 	}
 
-	// Compact summary of one connected component in a grid: color, bbox size,
+	// Compact summary of one connected component in a grid: bbox size,
 	// position, pixel count. This is all the CC-match score needs — no per-cell mask.
 	// Multiset match: for each attempt CC, find an unused target CC that matches
-	// by (w,h,count); count it as shape match. If color also matches, count it
-	// as color match too. Position score is the continuous bonus per shape-
+	// by (w,h,count); count it as shape match.
+	// Position score is the continuous bonus per shape-
 	// matched pair, normalized to [0,1] by max_dim and summed across all matches.
-	// Returns {shape_matches, color_matches, position_score}. O(N*M) with
+	// Returns {shape_matches, position_score}. O(N*M) with
 	// N,M ≤ MAX_TARGET_OBJECTS — fine.
 	//
 	// Known limitation: shape match is exact on (w,h,count). A near-miss CC
-	// (e.g. a 2x3 blob where the target is 3x3) earns 0 shape/color/position
+	// (e.g. a 2x3 blob where the target is 3x3) earns 0 shape/position
 	// reward and the score collapses back to the per-pixel terms. That's why
 	// the pre-CC-term score function happily settled on outputs like puzzle
 	// 09629e4f's wide-rectangle near-miss: right colors + right approximate
@@ -275,7 +275,6 @@ namespace arc {
 	// "same shape exists" semantics by design.
 	struct cc_match_result {
 		int shape_matches = 0;
-		int color_matches = 0;
 		float position_score = 0.0f;  // sum over matched pairs, each in [0,1]
 	};
 	static inline cc_match_result match_object_summaries(
@@ -287,23 +286,15 @@ namespace arc {
 		cc_match_result r;
 		for (int i = 0; i < an; ++i) {
 			int best_j = -1;
-			bool best_color_match = false;
 			for (int j = 0; j < tn; ++j) {
 				if (used[j]) continue;
 				if (a[i].w != t[j].w || a[i].h != t[j].h || a[i].count != t[j].count) continue;
-				bool cm = (a[i].color == t[j].color);
-				// Prefer a target CC that matches color too, so color credit is
-				// granted whenever possible without depending on iteration order.
-				if (best_j < 0 || (cm && !best_color_match)) {
-					best_j = j;
-					best_color_match = cm;
-					if (cm) break;
-				}
+				best_j = j;
+				break;
 			}
 			if (best_j >= 0) {
 				used[best_j] = true;
 				r.shape_matches++;
-				if (best_color_match) r.color_matches++;
 				// Continuous position reward, normalized by the target CC's own
 				// footprint (max(w,h)) — not by grid size. A 1px miss on a 3x3
 				// block scores ~0.83 (mostly right); the same miss on a 1x1 dot

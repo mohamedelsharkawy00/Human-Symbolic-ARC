@@ -387,7 +387,7 @@ static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 // The packed cell store lives upstream in 1_readings.hpp, where both sides
 // can reach it: it holds no addresses, so the same bytes mean the same thing
 // on the host and on the device. These names are what the kernel calls it.
-using gpu_packed_mask = arc::packed_grid;
+using gpu_packed_mask = arc::object_cells;
 #define GPU_MASK_HD ARC_HOST_DEVICE
 ARC_HOST_DEVICE inline void gpu_mask_from_grid(gpu_packed_mask& m, const int8_t g[][GPU_MAX_GRID]) {
     arc::pack_grid(m, g);
@@ -541,10 +541,9 @@ static constexpr int MAX_UPLOAD_EXAMPLES = 16;
 // Max distinct target CC summaries we carry per example (matches host MAX_TARGET_OBJECTS).
 static constexpr int GPU_MAX_TARGET_OBJECTS = 16;
 
-// Compact CC summary: color, bbox dims, pixel count. Matches host
+// Compact CC summary: bbox dims and pixel count. Matches host
 // object_summary layout but kept in this header so device code can include it.
 struct gpu_object_summary {
-    int8_t color;
     int8_t w;
     int8_t h;
     int8_t x0;

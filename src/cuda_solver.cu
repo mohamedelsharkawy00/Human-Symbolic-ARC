@@ -3563,36 +3563,29 @@ struct gpu_example_template {
 };
 
 // MULTISET MATCH, one home. Each attempt summary claims at most one target
-// summary by (w,h,count); a same-color target is preferred so color credit is
-// granted whenever feasible. Position bonus is a continuous
+// summary by (w,h,count). Position bonus is a continuous
 // (1 - chebyshev/target_size) per matched pair, normalized by the target's own
 // footprint rather than the grid. The canvas asks this about its components and
 // the hand asks it about its objects, so the two are judged by one rule.
 __device__ inline void gpu_match_summaries(const gpu_object_summary* attempt, int attempt_count,
                                            const gpu_example_template& tmpl,
-                                           int& shape_matches, int& color_matches,
+                                           int& shape_matches,
                                            float& position_score) {
     bool used[GPU_MAX_TARGET_OBJECTS];
     for (int j = 0; j < GPU_MAX_TARGET_OBJECTS; ++j) used[j] = false;
     for (int i = 0; i < attempt_count; ++i) {
         int best_j = -1;
-        bool best_color = false;
         for (int j = 0; j < tmpl.target_obj_count; ++j) {
             if (used[j]) continue;
             if (attempt[i].w != tmpl.target_objs[j].w) continue;
             if (attempt[i].h != tmpl.target_objs[j].h) continue;
             if (attempt[i].count != tmpl.target_objs[j].count) continue;
-            bool cm = (attempt[i].color == tmpl.target_objs[j].color);
-            if (best_j < 0 || (cm && !best_color)) {
-                best_j = j;
-                best_color = cm;
-                if (cm) break;
-            }
+            best_j = j;
+            break;
         }
         if (best_j < 0) continue;
         used[best_j] = true;
         shape_matches++;
-        if (best_color) color_matches++;
         int acx = attempt[i].x0 * 2 + (attempt[i].w - 1);
         int acy = attempt[i].y0 * 2 + (attempt[i].h - 1);
         int tcx = tmpl.target_objs[best_j].x0 * 2 + (tmpl.target_objs[best_j].w - 1);
@@ -4131,7 +4124,6 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         __shared__ int16_t sh_y1[GPU_MAX_TARGET_OBJECTS];
         int attempt_count = 0;
         int shape_matches = 0;
-        int color_matches = 0;
         float position_score = 0.0f;
         if (tmpl.target_obj_count > 0) {
             // Single row-major pass: components appear in the same order the old
@@ -4153,7 +4145,6 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                     if (attempt_count >= GPU_MAX_TARGET_OBJECTS) continue;
                     slot = attempt_count++;
                     sh_root[slot] = (int16_t)root;
-                    attempt_summaries[slot].color = (int8_t)v;
                     attempt_summaries[slot].x0 = (int8_t)c;
                     attempt_summaries[slot].y0 = (int8_t)r;
                     sh_x1[slot] = (int16_t)c;
@@ -4171,12 +4162,11 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                 attempt_summaries[s].h = (int8_t)(sh_y1[s] - attempt_summaries[s].y0 + 1);
             }
             // Multiset match: each attempt CC claims at most one target CC by
-            // (w,h,count). Prefer a same-color target slot when available so
-            // color credit is granted whenever feasible. Position bonus is a
+            // (w,h,count). Position bonus is a
             // continuous (1 - chebyshev/target_size) per matched pair —
             // normalized by the target CC's own footprint, not the grid.
             gpu_match_summaries(attempt_summaries, attempt_count, tmpl,
-                                shape_matches, color_matches, position_score);
+                                shape_matches, position_score);
         }
 
         // THE HAND, JUDGED BY THE SAME RULE AS THE CANVAS. A sentence that only
@@ -4184,7 +4174,7 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         // nothing; asking the held objects the same question is what makes the
         // preparation visible. Boxes come from the paint, not the declared bbox,
         // because a Colors layer carries the whole source frame.
-        int hand_shape = 0, hand_color = 0;
+        int hand_shape = 0;
         float hand_position = 0.0f;
         {
             __shared__ gpu_object_summary hand_summaries[GPU_MAX_TARGET_OBJECTS];
@@ -4196,23 +4186,15 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                     const gpu_fixed_object& obj = held->objects[i];
                     const gpu_painted_box box = gpu_box_of_paint(obj);
                     if (box.width <= 0 || box.height <= 0) continue;
-                    // Dominant painted color, so a mixed object still says one
-                    // thing; it simply forfeits color credit when it disagrees.
-                    int tally[GPU_MAX_COLORS];
-                    for (int k = 0; k < GPU_MAX_COLORS; ++k) tally[k] = 0;
                     int painted = 0;
                     for (int r = 0; r < box.height; ++r)
                         for (int c = 0; c < box.width; ++c) {
                             int8_t v = obj.mask[box.y0 + r][box.x0 + c];
                             if (v == GPU_TRANSPARENT) continue;
                             painted++;
-                            if (v >= 0 && v < GPU_MAX_COLORS) tally[v]++;
                         }
                     if (painted <= 0) continue;
-                    int top = 0;
-                    for (int k = 1; k < GPU_MAX_COLORS; ++k) if (tally[k] > tally[top]) top = k;
                     gpu_object_summary& sum = hand_summaries[hand_count++];
-                    sum.color = (int8_t)top;
                     sum.w = (int8_t)box.width;
                     sum.h = (int8_t)box.height;
                     sum.x0 = (int8_t)(obj.x0 + box.x0);
@@ -4222,7 +4204,7 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
             }
             if (hand_count > 0)
                 gpu_match_summaries(hand_summaries, hand_count, tmpl,
-                                    hand_shape, hand_color, hand_position);
+                                    hand_shape, hand_position);
         }
 
         // Focus term (GPU-only, like lookahead): correct cells of the focus
@@ -4237,10 +4219,8 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
                     - my_dist_err * GPU_SCORE_W_DISTANCE_MAP
                     + rarity_score * GPU_SCORE_W_RARITY_MATCH
                     + shape_matches * GPU_SCORE_W_SHAPE_MATCH
-                    + color_matches * GPU_SCORE_W_COLOR_MATCH
                     + position_score * GPU_SCORE_W_POSITION_MATCH
                     + hand_shape * GPU_SCORE_W_SHAPE_MATCH
-                    + hand_color * GPU_SCORE_W_COLOR_MATCH
                     + hand_position * GPU_SCORE_W_POSITION_MATCH
                     // EXPERIMENT: lookahead removed. It scores what a chain is
                     // still HOLDING as if it were about to paint it -- the answer
@@ -4300,10 +4280,9 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
         terms.distance          = -my_dist_err * GPU_SCORE_W_DISTANCE_MAP;
         terms.rarity            = rarity_score * GPU_SCORE_W_RARITY_MATCH;
         terms.shape             = shape_matches * GPU_SCORE_W_SHAPE_MATCH;
-        terms.color             = color_matches * GPU_SCORE_W_COLOR_MATCH;
+        terms.color             = 0.0f;
         terms.position          = position_score * GPU_SCORE_W_POSITION_MATCH;
         terms.hand              = hand_shape * GPU_SCORE_W_SHAPE_MATCH
-                                + hand_color * GPU_SCORE_W_COLOR_MATCH
                                 + hand_position * GPU_SCORE_W_POSITION_MATCH;
         terms.node_penalty      = -(nc * GPU_SCORE_W_NODE_PENALTY);
         terms.dimension_penalty = -dim_pen;
