@@ -93,8 +93,8 @@ inline void report_background(ostream& report, const background_hypotheses& back
       << " across_inputs=" << (int)background_hypotheses::top(background.across_inputs)
       << " across_outputs=" << (int)background_hypotheses::top(background.across_outputs)
       << " across_inputs_outputs=" << (int)background_hypotheses::top(background.across_inputs_outputs)
-      << "  per_pair";
-    for (int8_t color : background.per_pair) report << ' ' << (int)color;
+      << "  across_input_output";
+    for (int8_t color : background.across_input_output) report << ' ' << (int)color;
     report << "\n";
     auto dump = [&](const char* name, const vector<background_hypotheses::hypothesis>& ranked) {
         report << "  " << name << " (color embeds dom in_out SCORE span gaps under):\n";

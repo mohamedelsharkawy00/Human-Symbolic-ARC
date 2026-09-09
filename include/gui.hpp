@@ -1770,7 +1770,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     named_row({{"VETOED", bg.input_vetoed ? "YES" : "NO"}});
     {
       string pp;
-      for (int8_t c : bg.per_pair) pp += to_text(" %d", (int)c);
+      for (int8_t c : bg.across_input_output) pp += to_text(" %d", (int)c);
       named_row({{"PER PAIR", pp}});
       ty += line_h;  // blank line after
     }

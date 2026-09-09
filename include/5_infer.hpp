@@ -10,7 +10,7 @@
 //
 //   SIZE            what decides the output's width and height
 //   COLORS          which colors appear where, and in what order
-//   BACKGROUND      which color is the canvas, elected per side
+//   BACKGROUND      which color the figures sit on, elected per side
 //   CORRESPONDENCE  where each piece went, and how to cut the grid up
 //   UNCHANGED       how much of the input survives untouched   ┐ only when
 //   COLOR DIFF      which cells each color gained and lost     │ input and
@@ -31,7 +31,7 @@
 //
 // COLORS is the one channel still here rather than in a file of its own, and it
 // is also the one that cannot sit in one place: the presence facts need no
-// canvas, while by_size ranks only once the election has named one.
+// background, while by_size ranks only once the election has named one.
 //
 // Facts, not verdicts: consumers fold and gate downstream. One exception —
 // background_hypotheses keeps its runners-up ranked, because something later
@@ -95,7 +95,7 @@ struct color_facts {
     // In at least one train grid
     bool in_any_grid[COLOR_COUNT]   = {};
     
-    // Background is a ROLE, not a statistic: the canvas figures sit on.
+    // Background is a ROLE, not a statistic: the ground figures sit on.
     // Elected by elect_background, NOT computed here.
     // -1 = "no background" is a legitimate verdict — tiny full grids are all
     // figure — and segmentation then excludes nothing.
@@ -564,7 +564,7 @@ inline inference infer(const vector<example>& train) {
     inf.colors = detect_color_facts(train);  // rule-independent
     // Background: input-side and output-side elected independently by role,
     // ranked lists kept alive (see step 2 note on background_hypotheses).
-    // background_color is the INPUT canvas — what segmentation excludes.
+    // background_color is the INPUT side's verdict — what segmentation excludes.
     inf.background = elect_background(train);
     inf.colors.background_color = inf.background.input_elected();
     // by_size excludes the background, so it can only rank after the election.

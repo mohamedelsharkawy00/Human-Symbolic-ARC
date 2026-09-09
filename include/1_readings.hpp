@@ -248,7 +248,7 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
         for (int col = 0; col < one_grid.width; ++col) {
             if (taken[row][col]) continue;
             const int color = one_grid.data[row][col];
-            // TRANSPARENT is not a color at all; `background` is the canvas this
+            // TRANSPARENT is not a color at all; `background` is the ground this
             // grid was found to sit on, and -1 from the election means the grid
             // is all figure and nothing is excluded.
             if (color < 0 || color == background) { taken[row][col] = true; continue; }

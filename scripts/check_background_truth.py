@@ -52,7 +52,7 @@ def main():
         time.sleep(0.2)
         txt = open(ROOT + "logs/inference/%s.txt" % pid).read()
         m = re.search(r"input=(-?\d+)\s+output=(-?\d+)(\s+MODE=PER-PAIR)?", txt)
-        pp = re.search(r"per_pair([ \-\d]+)", txt)
+        pp = re.search(r"across_input_output([ \-\d]+)", txt)
         vin, vout, mode = m.group(1), m.group(2), bool(m.group(3))
         per_pair = pp.group(1).split()
         ok_in = side_ok(exp_in, vin, mode, per_pair)

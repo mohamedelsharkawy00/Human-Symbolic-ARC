@@ -3,7 +3,6 @@
 // but in the puzzles where it is found,
 // it is important to be distinguished from the rest of the puzzle.
 // Background is elected per grid role: inputs and outputs are judged separately.
-
 #pragma once
 #include "1_readings.hpp"
 #include <algorithm>
@@ -13,12 +12,10 @@
 
 namespace arc {
 using namespace std;
-
 // Several colors may look like the background, so we keep a list of candidates,
 // with the best candidate first. Inputs and outputs have separate lists:
 // a puzzle may change the background color between input and output.
 // Keeping the other candidates lets us try another background later.
-
 // These values control how we compare candidates. They were chosen to match
 // the examples in tests/background_truth.txt. Reuse them when adding rules.
 // Shares use a scale of 0 to 1000: 500 means 50%, and 1000 means 100%.
@@ -51,7 +48,6 @@ inline constexpr int BG_PERSIST_BONUS = 50;
 // Hypotheses: plural.
 struct background_hypotheses {
     struct hypothesis {
-
         // -1 = "no background"
         int8_t color = -1;
 
@@ -65,7 +61,7 @@ struct background_hypotheses {
 
         // Did this input color also appear in at least one output?
         // A transformation may delete or recolor the figures, so a figure's
-        // color can vanish from the output. The canvas it sat on usually stays.
+        // color can vanish from the output. The background it sat on usually stays.
         // Worth a small bonus (BG_PERSIST_BONUS, 50 against a floor of 700), so
         // it only separates two candidates that area already left nearly tied.
         bool appears_in_any_output = true;
@@ -86,14 +82,16 @@ struct background_hypotheses {
         // takes the top score if it clears BG_FLOOR, else abstains.
         int score = 0;
     };
+    
     // Background is a per-DIRECTION fact, like every other fact in this file:
     // the same election over different grid sets gives legitimately different
-    // canvases, and the disagreement IS information. Best canvas first in each.
+    // backgrounds, and the disagreement IS information. Best background first
+    // in each.
+    // One elected color per train pair, from that pair's INPUT alone
+    vector<int8_t> across_input_output;
     vector<hypothesis> across_inputs;          // input grids only
     vector<hypothesis> across_outputs;         // output grids only
     vector<hypothesis> across_inputs_outputs;  // all grids pooled
-    // Per-pair (across_input_output): one elected color per train pair
-    vector<int8_t> per_pair;
     static int8_t top(const vector<hypothesis>& ranked) {
         return ranked.empty() ? (int8_t)-1 : ranked[0].color;
     }
@@ -102,9 +100,9 @@ struct background_hypotheses {
     // notes/4 - To Do/Background Per-Side Split.md). There is deliberately NO
     // one-answer merge; ask the side you mean.
 
-    // INPUT-side verdict: the canvas the input figures sit on — what
+    // INPUT-side verdict: the background the input figures sit on — what
     // segmentation excludes. Walks input-derived evidence STRONGEST -> WEAKEST
-    // and takes the first real canvas; -1 = backgroundless or per-pair.
+    // and takes the first real background; -1 = backgroundless or per-pair.
     int8_t input_elected() const {
         // A ground showing through beats the area winner by definition, since
         // the pattern covering it is what wins the area.
@@ -114,7 +112,7 @@ struct background_hypotheses {
         // transformation — unless a confident pair contradicts it.
         if (int8_t color = top(across_inputs); color >= 0 && !input_vetoed) return color;
         // Agreeing pairs name a global color; differing real pairs mean
-        // MODE=PER-PAIR (-1 here, per_pair holds the colors).
+        // MODE=PER-PAIR (-1 here, across_input_output holds the colors).
         if (int8_t color = per_pair_majority(); color >= 0) return color;
         if (is_per_pair_raw()) return -1;
         // Pooled inputs+outputs, weaker but still needs input agreement
@@ -122,56 +120,57 @@ struct background_hypotheses {
         return -1;
     }
 
-    // OUTPUT-side verdict: the canvas the output figures sit on. A canvas that
-    // PERSISTS wins before any confidence gate; without input support the
-    // winner must be dominance-CONFIDENT. NOT the embeds gate — embeds is a
+    // OUTPUT-side verdict: the background the output figures sit on. One that
+    // PERSISTS from the input wins before any confidence gate; without that
+    // support the winner must be dominance-CONFIDENT. NOT the embeds gate — embeds is a
     // worst-grid number and one grid zeroes it.
     int8_t output_elected() const {
-        int8_t input_canvas = input_elected();
-        if (input_canvas >= 0)
+        int8_t input_background = input_elected();
+        if (input_background >= 0)
             for (const auto& candidate : across_outputs)
-                if (candidate.color == input_canvas) return input_canvas;
+                if (candidate.color == input_background) return input_background;
         if (across_outputs.empty() || across_outputs[0].color < 0) return -1;
         return across_outputs[0].dominance >= BG_HALF
              ? across_outputs[0].color : (int8_t)-1;
     }
 
-    // A color DECISIVELY beaten inside some pair cannot be the global canvas:
+    // A color DECISIVELY beaten inside some pair cannot be the global background:
     // there it is a figure sitting ON another ground. Set by elect_background,
     // where each pair's dominances are on hand.
     bool input_vetoed = false;
 
-    // A strict MAJORITY of confident pair grounds names the canvas — learn from
+    // A strict MAJORITY of confident pair grounds names the background — learn from
     // the clear pairs, extend to the flipped ones. Unanimity is the special
     // case; truly distinct pairs have no majority and stay per-pair.
     int8_t per_pair_majority() const {
         int wins[COLOR_COUNT] = {};
-        for (int8_t color : per_pair) if (color >= 0) ++wins[color];
+        for (int8_t color : across_input_output) if (color >= 0) ++wins[color];
         for (int color = 0; color < COLOR_COUNT; ++color)
-            if (wins[color] * 2 > (int)per_pair.size()) return (int8_t)color;
+            if (wins[color] * 2 > (int)across_input_output.size()) return (int8_t)color;
         return -1;
     }
 
     // Per-pair test that does NOT consult input_elected() (avoids recursion
     // with the global tier). Same logic as is_per_pair minus that guard.
     bool is_per_pair_raw() const {
-        if (per_pair.size() < 2) return false;
+        if (across_input_output.size() < 2) return false;
         bool all_real = true, any_differ = false;
-        for (int8_t color : per_pair) all_real = all_real && (color >= 0);
-        for (size_t i = 1; i < per_pair.size(); ++i)
-            any_differ = any_differ || (per_pair[i] != per_pair[0]);
+        for (int8_t color : across_input_output) all_real = all_real && (color >= 0);
+        for (size_t i = 1; i < across_input_output.size(); ++i)
+            any_differ = any_differ || (across_input_output[i] != across_input_output[0]);
         return all_real && any_differ;
     }
 
     // PER-PAIR background mode: the global election abstains, yet EVERY pair
     // has its own real background that DIFFERS across pairs. Constant WITHIN a
-    // pair, varying ACROSS pairs. per_pair holds the colors; this just flags
-    // that the mode applies. Detect-only for now — nothing segments per-pair.
+    // pair, varying ACROSS pairs. across_input_output holds the colors; this
+    // just flags that the mode applies. Detect-only for now — nothing
+    // segments per-pair.
     bool is_per_pair() const {
         // Matches input_elected()'s order, so the output-influenced directions
         // cannot suppress a strong per-pair input signal.
         if (int8_t color = top(across_inputs); color >= 0 && !input_vetoed) return false;
-        if (per_pair_majority() >= 0) return false;  // majority per_pair = global
+        if (per_pair_majority() >= 0) return false;  // a majority = global
         return is_per_pair_raw();
     }
 };
@@ -186,19 +185,19 @@ inline int background_rank(int color) {
 }
 
 // What the side's grids say about each color. Every share is folded WORST-GRID:
-// a canvas has to hold up everywhere, so one bad grid is the honest number.
-struct canvas_evidence {
+// a background has to hold up everywhere, so one bad grid is the honest number.
+struct background_evidence {
     // Worst grid, out of 1000
     int embeds[COLOR_COUNT], dominance[COLOR_COUNT], span[COLOR_COUNT], gaps[COLOR_COUNT];
     // In EVERY grid: the quietest color present, showing only as enclosed windows
     bool only_windows[COLOR_COUNT];
-    // Grids where this color was the standout canvas, and how many grids voted
+    // Grids where this color was the standout background, and how many grids voted
     int standout_wins[COLOR_COUNT] = {};
     int grid_count = 0;
     // Total cells per color over the whole side
     long long global_cells[COLOR_COUNT] = {};
 
-    canvas_evidence() {
+    background_evidence() {
         for (int i = 0; i < COLOR_COUNT; ++i) {
             embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
             only_windows[i] = true;
@@ -218,9 +217,9 @@ inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every
 }
 
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
-// which color reads as the canvas here.
+// which color reads as the background here.
 inline void measure_area_and_reach(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
-                                   canvas_evidence& evidence) {
+                                   background_evidence& evidence) {
     const int area = one_grid.width * one_grid.height;
     for (int i = 0; i < COLOR_COUNT; ++i) evidence.global_cells[i] += cells_of_color[i];
     for (int i = 0; i < COLOR_COUNT; ++i)
@@ -251,10 +250,10 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
         evidence.gaps[i] = min(evidence.gaps[i], touching[i] * 1000 / cells_of_color[i]);
     }
 
-    // Standout in this grid: the canvas among the SUBSTANTIAL colors — those
+    // Standout in this grid: the background among the SUBSTANTIAL colors — those
     // co-dominant with the leader — where the background-ness prior picks the
     // quieter one. Not raw-most-cells: a separator grid inflates a foreground
-    // color's area past the true canvas. Then the corpus VOTES, not unanimity.
+    // color's area past the true background. Then the corpus VOTES, not unanimity.
     int most_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) most_cells = max(most_cells, cells_of_color[i]);
     int winner = -1;
@@ -313,7 +312,7 @@ inline blob_map label_blobs(const grid& one_grid) {
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
 inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
-                              canvas_evidence& evidence) {
+                              background_evidence& evidence) {
     const blob_map blobs = label_blobs(one_grid);
     int figure_area = 0, embedded_area[COLOR_COUNT] = {};
     int blobs_of_color[COLOR_COUNT] = {}, backdrop_blobs_of_color[COLOR_COUNT] = {};
@@ -399,7 +398,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
 // STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The
 // coverer is the global area leader; if it is solid, no color may claim
 // underneath.
-inline void close_underneath(canvas_evidence& evidence) {
+inline void close_underneath(background_evidence& evidence) {
     int coverer = -1;
     for (int i = 0; i < COLOR_COUNT; ++i)
         if (evidence.global_cells[i] > 0 &&
@@ -412,10 +411,10 @@ inline void close_underneath(canvas_evidence& evidence) {
 // STAGE 4 — weighted signals sum to a confidence per color. No single rule is a
 // hard gate. Area leads, standout corroborates, prior is a light tiebreak,
 // punched-through and embeds are graded votes.
-// KNOWN GAP: a canvas that is a MINORITY in MOST grids is not findable by area
+// KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
 inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
-                             const canvas_evidence& evidence, const bool in_every[COLOR_COUNT]) {
+                             const background_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
 
@@ -445,8 +444,8 @@ inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
     }
 }
 
-// STAGE 5 — best canvas first. The top score elects IF it clears BG_FLOOR, else
-// the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
+// STAGE 5 — best background first. The top score elects IF it clears BG_FLOOR,
+// else the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
 inline void rank_candidates(vector<background_hypotheses::hypothesis>& ranked) {
     stable_sort(ranked.begin(), ranked.end(), [&](const auto& left, const auto& right) {
         const bool left_electable  = (left.color >= 0 && left.score >= BG_FLOOR);
@@ -460,7 +459,7 @@ inline void rank_candidates(vector<background_hypotheses::hypothesis>& ranked) {
     });
 }
 
-// Elect the canvas of ONE side (a set of same-role grids) by ROLE alone.
+// Elect the background of ONE side (a set of same-role grids) by ROLE alone.
 // Candidates: any color present in EVERY grid on the side, plus -1 ("no
 // background"). persists[c] = does color c survive into the outputs (nullptr =
 // assume all persist, e.g. when electing outputs); it only breaks ties.
@@ -472,7 +471,7 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
     bool in_every[COLOR_COUNT];
     colors_in_every_grid(grids, in_every);
 
-    canvas_evidence evidence;
+    background_evidence evidence;
     for (const grid* grid_ptr : grids) {
         const grid& one_grid = *grid_ptr;
         if (one_grid.width <= 0 || one_grid.height <= 0) continue;
@@ -498,13 +497,13 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
     return ranked;
 }
 
-// Elect the canvas in every DIRECTION: across inputs, across outputs, across
+// Elect the background in every DIRECTION: across inputs, across outputs, across
 // all grids pooled, and per pair. Same election, different grid sets — they
 // legitimately disagree, and the disagreement IS information.
 // Priority among directions is decided by consumers, later.
 inline background_hypotheses elect_background(const vector<example>& train) {
     background_hypotheses out;
-    // Persistence: a color surviving into some output — the canvas stays,
+    // Persistence: a color surviving into some output — the background stays,
     // content is consumed. Feeds the input election's tiebreak.
     bool persists[COLOR_COUNT] = {};
     for (const auto& ex : train)
@@ -526,7 +525,7 @@ inline background_hypotheses elect_background(const vector<example>& train) {
     // the transformation can flood the output with a new color, so pooling ties
     // and abstains. Background is given by the input and constant within the
     // pair, so the input is the honest source.
-    out.per_pair.clear();
+    out.across_input_output.clear();
     for (const auto& ex : train) {
         const vector<const grid*> just_this_input = { &ex.input };
         const vector<background_hypotheses::hypothesis> local =
@@ -559,10 +558,10 @@ inline background_hypotheses elect_background(const vector<example>& train) {
                 break;
             }
         }
-        out.per_pair.push_back(pair_background);
+        out.across_input_output.push_back(pair_background);
         // Veto check (see input_vetoed): the global input winner is DECISIVELY
         // beaten in this pair when the local ground has at least twice its local
-        // area — then the global winner is a figure here, not canvas. Unless it
+        // area — then the global winner is a figure here, not background. Unless it
         // still HOLDS THE FIGURES locally.
         const int8_t global_background = background_hypotheses::top(out.across_inputs);
         if (global_background >= 0 && pair_background >= 0 &&
