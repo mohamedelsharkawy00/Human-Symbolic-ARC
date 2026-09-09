@@ -1,4 +1,4 @@
-// 4_infer.hpp — read the examples like a human.
+// 5_infer.hpp — read the examples like a human.
 // Design story, rationale, and experiment records
 // in notes/1 - Overall Design/Inference Master.md
 //
@@ -17,15 +17,21 @@
 //   COLOR SWAP      whether part of the change is two trading  │ output
 //   SHAPE -> COLOR  which shape says to paint which color      ┘ overlay
 //
-// THE FAMILY. Two channels grew big enough to want their own file, and each
-// took ALL of itself along — facts, machinery, and the detector that fills
-// them. infer() calls in and gets its answer back:
+// THE FAMILY. A channel that grew big enough took ALL of itself into a file —
+// facts, machinery, and the detector that fills them. infer() calls in and gets
+// its answer back. The numbers ARE the reading order above, as far as the files
+// go: each may include only what is numbered below it.
 //
 //   1_readings.hpp        the shared base: count it, box it, walk it
-//   2_background.hpp      elect_background
-//   3_correspondence.hpp  pick_split
-//   5_sentences.hpp       say_the_reading
-//   6_log.hpp             the per-puzzle readout
+//   2_size.hpp            infer_rule
+//   3_background.hpp      elect_background
+//   4_correspondence.hpp  pick_split
+//   6_sentences.hpp       say_the_reading
+//   7_log.hpp             the per-puzzle readout
+//
+// COLORS is the one channel still here rather than in a file of its own, and it
+// is also the one that cannot sit in one place: the presence facts need no
+// canvas, while by_size ranks only once the election has named one.
 //
 // Facts, not verdicts: consumers fold and gate downstream. One exception —
 // background_hypotheses keeps its runners-up ranked, because something later
@@ -40,8 +46,9 @@
 
 #pragma once
 #include "1_readings.hpp"
-#include "2_background.hpp"
-#include "3_correspondence.hpp"
+#include "2_size.hpp"
+#include "3_background.hpp"
+#include "4_correspondence.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -53,74 +60,6 @@
 
 namespace arc {
 using namespace std;
-
-// ──────────────────────────────────────────────────────────────────────────
-// SIZE · what decides the output's width and height
-// ──────────────────────────────────────────────────────────────────────────
-// What decides the output size: read off the train pairs by infer_rule(),
-// then read by the engine and uploaded to the kernel.
-struct output_dimension_rule {
-    enum : int8_t {
-        NotInferredYet,
-        Identity,
-        Fixed,
-        Scale,
-        BoundingBox
-    } Chosen = NotInferredYet;
-
-    // What the chosen case learned, 0 = that case never uses this number
-    int width = 0, height = 0;
-    int width_numerator = 0, width_denominator = 0;
-    int height_numerator = 0, height_denominator = 0;
-
-    // Picks how output size is decided, first match wins
-    static output_dimension_rule infer_rule(const vector<example>& train) {
-        if (train.empty())
-            return { .Chosen = BoundingBox };
-
-        // Lowest terms (3/7 not 9/21), so a no-change ratio is always exactly
-        // 1/1 — the Identity-vs-Scale check below depends on that
-        auto reduce = [](int numerator, int denominator) -> std::pair<int, int> {
-            if (numerator <= 0 || denominator <= 0)
-                return { 0, 0 };
-            const int shared = std::gcd(numerator, denominator);
-            return { numerator / shared, denominator / shared };
-        };
-        
-        // Separate ratios: a transposed 12x16 -> 16x12 has equal area, so one
-        // combined number would wrongly call it "same size"
-        auto [width_numerator, width_denominator] = reduce(train[0].output.width,  train[0].input.width);
-        auto [height_numerator, height_denominator] = reduce(train[0].output.height, train[0].input.height);
-
-        const bool has_ratio = width_denominator != 0 && height_denominator != 0 &&
-                               ranges::all_of(train, [&](const example& ex) {
-            // Cross-multiplied: division would truncate and false-confirm the
-            // ratio on non-ratio puzzles (e.g. 7->3 then 10->4 "passes" 3/7)
-            return ex.input.width > 0 && ex.input.height > 0 &&
-                   ex.output.width  * width_denominator == ex.input.width  * width_numerator &&
-                   ex.output.height * height_denominator == ex.input.height * height_numerator;
-        });
-
-        // Every pair keeps its size
-        if (has_ratio && width_numerator == width_denominator && height_numerator == height_denominator)
-            return { .Chosen = Identity };
-
-        // Every pair scales by the same fraction
-        if (has_ratio)
-            return { .Chosen = Scale,
-                     .width_numerator = width_numerator, .width_denominator = width_denominator,
-                     .height_numerator = height_numerator, .height_denominator = height_denominator };
-
-        // Every output lands on one size, whatever the input was
-        const int width = train[0].output.width, height = train[0].output.height;
-        if (ranges::all_of(train, [&](const example& ex) {
-                return ex.output.width == width && ex.output.height == height; }))
-            return { .Chosen = Fixed, .width = width, .height = height };
-            
-        // Nothing held, so the size comes from what the program draws
-        return { .Chosen = BoundingBox };
-    }
-};
 
 // ──────────────────────────────────────────────────────────────────────────
 // COLORS · which colors appear where, and in what order

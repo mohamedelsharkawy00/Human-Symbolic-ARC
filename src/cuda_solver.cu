@@ -2129,7 +2129,7 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // Only what was picked is reduced to its unit; the rest ride through.
         if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int best_w, best_h;
-        // One finder for everyone (3_correspondence.hpp). Loose evidence on purpose:
+        // One finder for everyone (4_correspondence.hpp). Loose evidence on purpose:
         // naming the unit to continue with is a different question from proving
         // a grid repeats, and a motif that fits once and a bit is still the
         // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.

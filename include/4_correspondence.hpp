@@ -1,11 +1,11 @@
-// 3_correspondence.hpp — where each piece went, and how to cut the grid up.
+// 4_correspondence.hpp — where each piece went, and how to cut the grid up.
 // Design story in notes/1 - Overall Design/Inference Master.md, sections 3d-3e.
 //
 // The whole channel: the facts, the machinery that finds them — pose a glyph,
 // find it somewhere, cut a grid into pieces, then fit the matches together over
 // the other grid — and at the bottom the detector, pick_split, that reads it
 // all off the train pairs. infer() calls that one name and nothing else here.
-// Shaped like 2_background.hpp, its sibling.
+// Shaped like 3_background.hpp, its sibling.
 
 #pragma once
 #include "1_readings.hpp"

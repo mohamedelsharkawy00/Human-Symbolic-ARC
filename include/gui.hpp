@@ -1,6 +1,6 @@
 #pragma once
 #include "environment.hpp"
-#include "5_sentences.hpp"  // sentences_of: the pane says a program the way the log does
+#include "6_sentences.hpp"  // sentences_of: the pane says a program the way the log does
 #include "grid_buffer.hpp"
 #include "global_app_state.hpp"
 #include "cuda_dsl.cuh"
@@ -1201,6 +1201,23 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     ty += line_h;
   };
   const int right_x = x0 + panel_w - margin;
+  // A RULE ACROSS THE PANE AND AIR EITHER SIDE OF IT. No title: a block that
+  // needs a heading to be understood has under-named its own rows, and the
+  // heading then says twice what the rows should have said once. The break
+  // itself is all the sectioning needed. Spacing lives here alone, so every
+  // block is parted from the next by the same gap whatever it holds.
+  auto divide = [&]() {
+    // EQUAL AIR EITHER SIDE, WHICH IS NOT THE SAME AS EQUAL NUMBERS HERE.
+    // A row leaves `ty` a whole line below its own text, so that trailing
+    // line is already part of the gap above the rule — matching the two
+    // numbers made the gap above a line and a half bigger than the gap below.
+    // Below therefore gets one line more than above, and they draw even.
+    ty += block_gap;
+    if (right_x > tx)
+      fill_rect(context, UI_COLOR_LINE, tx, ty, right_x - tx, max(1, scale / 2));
+    ty += block_gap + row_h - 5 * scale;
+  };
+
   auto line = [&](const string& s) {
     if (!measuring) draw_text(context, font, s, tx, ty, scale);
     ty += line_h;
@@ -1282,22 +1299,6 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         app_state.slider_zones.push_back({run_x, ty, run_w, box_h, which, stops, knob_w});
       };
 
-      // A RULE ACROSS THE PANE AND AIR EITHER SIDE OF IT. No title: a block that
-      // needs a heading to be understood has under-named its own rows, and the
-      // heading then says twice what the rows should have said once. The break
-      // itself is all the sectioning needed. Spacing lives here alone, so every
-      // block is parted from the next by the same gap whatever it holds.
-      auto divide = [&]() {
-        // EQUAL AIR EITHER SIDE, WHICH IS NOT THE SAME AS EQUAL NUMBERS HERE.
-        // A row leaves `ty` a whole line below its own text, so that trailing
-        // line is already part of the gap above the rule — matching the two
-        // numbers made the gap above a line and a half bigger than the gap below.
-        // Below therefore gets one line more than above, and they draw even.
-        ty += block_gap;
-        if (right_x > tx)
-          fill_rect(context, UI_COLOR_LINE, tx, ty, right_x - tx, max(1, scale / 2));
-        ty += block_gap + row_h - 5 * scale;
-      };
 
       // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
       // nothing above this one to part it from.
@@ -1752,7 +1753,11 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       if (by_size.empty()) named_row({{"OUTPUT COLORS", all}});
       else named_row({{"OUTPUT COLORS", all}, {"BY SIZE", by_size}});
     }
-    ty += line_h;
+
+    // BACKGROUND IS ITS OWN SECTOR: the elected canvases, then the ranked
+    // hypotheses each election ran on. Ruled off at both ends, so the numbers
+    // in the tables are never read as belonging to the color facts above them.
+    divide();
     {
       if (bg.is_per_pair())
         named_row({{"BG INPUT", to_text("%d", (int)bg.input_elected())},
@@ -1795,9 +1800,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     draw_dir("ACROSS INPUTS", bg.across_inputs);
     draw_dir("ACROSS OUTPUTS", bg.across_outputs);
     draw_dir("ACROSS IN+OUT", bg.across_inputs_outputs);
+    divide();
 
     // What changed between the two sides.
-    ty += line_h / 2;
     if (task.inf.unchanged.valid)
       line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
                    task.inf.unchanged.min_kept_fraction * 100.0f));

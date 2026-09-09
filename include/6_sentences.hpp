@@ -1,4 +1,4 @@
-// 5_sentences.hpp — the reading, said in the solver's own words.
+// 6_sentences.hpp — the reading, said in the solver's own words.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // THE LOOKING AND THE SEARCHING SHARE ONE VOCABULARY, and this is where that
@@ -17,7 +17,7 @@
 // become a second solver.
 
 #pragma once
-#include "4_infer.hpp"
+#include "5_infer.hpp"
 #include <string>
 #include <vector>
 
