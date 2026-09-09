@@ -25,6 +25,11 @@ using namespace std;
 // that will be used for masks and marks later.
 constexpr int TRANSPARENT = -1;
 
+// Only puzzle colors count; TRANSPARENT is excluded.
+ARC_HOST_DEVICE constexpr bool is_color(int value) {
+    return value >= 0 && value < COLOR_COUNT;
+}
+
 // A cell is 4 bits, so two of them share a byte,
 // in fixed size storage held by both CPU and GPU.
 // This optimization is needed to lower the consumption
@@ -107,13 +112,13 @@ struct object_summary {
     int16_t count = 0;       // number of cells in the object
 };
 
-// Cells are stored relative to the box's top-left; gaps are transparent.
-// color_at and holds take grid coordinates.
 struct object {
     object_summary summary;
+    // Stored relative to the box's top-left.
     object_cells cells;
 
-    // The object's color here, or TRANSPARENT outside its shape (including holes).
+    // Object cell accessors here take grid coordinates, not box-local coordinates; they do the shift.
+    // Gaps or holes within the box read as TRANSPARENT, and so does anything outside it.
     ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
         const int local_row = row - summary.y0;
         const int local_col = col - summary.x0;
@@ -141,22 +146,13 @@ ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
     return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
 }
 
-// Spelled out for host code that wants a plain table. Built FROM the two
-// above, so the table and the walk cannot come apart.
-constexpr int NEIGHBOUR_ROW_8[8] = {
-    neighbour_row_8(0), neighbour_row_8(1), neighbour_row_8(2), neighbour_row_8(3),
-    neighbour_row_8(4), neighbour_row_8(5), neighbour_row_8(6), neighbour_row_8(7) };
-constexpr int NEIGHBOUR_COL_8[8] = {
-    neighbour_col_8(0), neighbour_col_8(1), neighbour_col_8(2), neighbour_col_8(3),
-    neighbour_col_8(4), neighbour_col_8(5), neighbour_col_8(6), neighbour_col_8(7) };
-
-// Adjacency is 4, "what is beside this?".
-constexpr int NEIGHBOUR_ROW_4[4] = {-1, 1, 0, 0};
-constexpr int NEIGHBOUR_COL_4[4] = { 0, 0,-1, 1};
-
-// Only puzzle colors count; TRANSPARENT is excluded.
-ARC_HOST_DEVICE constexpr bool is_color(int value) {
-    return value >= 0 && value < COLOR_COUNT;
+// Adjacency is 4, "what is beside this?". Worked out for the same reason as
+// the eight. The order is up, down, left, right.
+ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
+    return dir < 2 ? dir * 2 - 1 : 0;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
+    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
 }
 
 // Pack an unpacked MAX_GRID_DIM^2 int8 grid into a packed grid, cell by cell.
@@ -216,7 +212,7 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
 // reads off inference -- not a guess. Black is the usual answer and not the
 // only one: a puzzle can put black figures on a colored ground, and assuming
 // otherwise loses them. Pass -1 to exclude nothing but TRANSPARENT.
-// Touching is the 8-way kind (see NEIGHBOUR_ROW_8 above): a shape joined only
+// Touching is the 8-way kind (see neighbour_row_8 above): a shape joined only
 // at a corner is still one shape.
 // The room the walk needs while it works. The caller owns it because the device
 // has no stack to spare for ten kilobytes: on the host this is a local like any

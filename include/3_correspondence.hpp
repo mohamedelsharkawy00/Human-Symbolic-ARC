@@ -804,8 +804,8 @@ inline void find_blanks(const grid& one_grid, int8_t background,
                 open = open || at_row == 0 || at_col == 0 ||
                        at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
                 for (int side = 0; side < 4; ++side) {
-                    const int next_row = at_row + NEIGHBOUR_ROW_4[side];
-                    const int next_col = at_col + NEIGHBOUR_COL_4[side];
+                    const int next_row = at_row + neighbour_row_4(side);
+                    const int next_col = at_col + neighbour_col_4(side);
                     if (next_row < 0 || next_row >= one_grid.height ||
                         next_col < 0 || next_col >= one_grid.width) continue;
                     if (one_grid.data[next_row][next_col] != background) continue;
