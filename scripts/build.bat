@@ -67,7 +67,17 @@ del /q "out\%PRESET%\*.old" 2>nul
 :: renaming it, so the path frees up for the linker while another session keeps
 :: driving the old binary. The random suffix keeps a second build from colliding
 :: with an .old that is still held open.
-if exist "out\%PRESET%\ARC.exe" ren "out\%PRESET%\ARC.exe" "ARC.exe.%RANDOM%.old" 2>nul
+:: ...but only when it is actually locked, i.e. a copy is running. Renaming
+:: unconditionally left ninja with no ARC.exe every single time, so it redid the
+:: LTCG link on builds where nothing had changed -- most of a no-op build, spent
+:: producing the same bytes again (2026-09-09). The test is an append of nothing,
+:: which opens the file for writing without touching its bytes and fails exactly
+:: when the linker would.
+if exist "out\%PRESET%\ARC.exe" (
+    2>nul ( >>"out\%PRESET%\ARC.exe" call ) || (
+        ren "out\%PRESET%\ARC.exe" "ARC.exe.%RANDOM%.old" 2>nul
+    )
+)
 
 :: Run configuration if build directory is missing
 if not exist "out\%PRESET%" (

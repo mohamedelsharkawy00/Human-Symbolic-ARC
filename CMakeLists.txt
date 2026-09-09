@@ -1,5 +1,16 @@
 ﻿cmake_minimum_required(VERSION 3.18)
 set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr -Wreorder -Wmissing-launch-bounds -Wdefault-stream-launch -Wext-lambda-captures-this -Xcompiler /W4" CACHE STRING "" FORCE)
+# Tried --Ofast-compile=min (nvcc 13.2) on 2026-09-09: it cut a fresh Release
+# build to well under half, almost all of it out of the CUDA compile, where both
+# cicc and ptxas came down by roughly four times. It does not go in the line
+# above as it stands: fast-compile switches device code to per-function
+# compilation, and ptxas then rejects the whole-program enable_smem_spilling
+# pragma in cuda_solver.cu ("Pragma 'enable_smem_spilling' is not allowed for
+# per-function compilation modes"). That measurement therefore came from a build
+# with the pragma commented out, so it also gives up the shared-memory spilling
+# the occupancy cap relies on. Solving looked the same speed by eye, unmeasured.
+# If it is wanted, it belongs in a separate dev preset with the pragma behind an
+# #if, never in Release.
 project(ARC LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -41,6 +52,10 @@ find_package(Python REQUIRED COMPONENTS Interpreter)
 # Shaders
 set(SHADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders")
 set(SHADERS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/out")
+if(ARC_BUILD_TIMING_DIR)
+    # Keep the profiling build's shaders fresh and isolated too.
+    set(SHADERS_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 
 add_custom_command(
     OUTPUT "${SHADERS_OUT_DIR}/vert.spv"
@@ -74,11 +89,22 @@ set(SOURCES
     "${CMAKE_CURRENT_BINARY_DIR}/app.rc"
 )
 add_executable(ARC WIN32 ${SOURCES})
+# Off since 2026-09-09: nothing calls it yet and building it costs roughly a
+# third of every clean build. The reasoning sits above the kernel in cuda_solver.cu.
+option(ARC_ENABLE_CUDA_PIECES "Build the currently unused CUDA pieces extraction API" OFF)
+target_compile_definitions(ARC PRIVATE ARC_ENABLE_CUDA_PIECES=$<BOOL:${ARC_ENABLE_CUDA_PIECES}>)
 
 # Backup
+set(ARC_BACKUP_COMMAND Python::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py")
+if(ARC_BUILD_TIMING_DIR)
+    set(ARC_BACKUP_COMMAND Python::Interpreter
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/profile_build.py" --time-command
+        "${ARC_BUILD_TIMING_DIR}" backup --
+        "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py")
+endif()
 add_custom_command(
     TARGET ARC POST_BUILD
-    COMMAND Python::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py"
+    COMMAND ${ARC_BACKUP_COMMAND}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Running backup..."
 )

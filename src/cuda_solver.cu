@@ -4302,6 +4302,18 @@ static void capture_cuda_err(const char* where, cudaError_t e, int slot, int n) 
         g_cuda_err_set = true;
     }
 }
+// NOT BUILT by default since 2026-09-09, and this guard is why: building it
+// costs about a third of every clean build. Measured back to back that day
+// with scripts/build.bat over a deleted out/, with it and without. Trust the
+// ratio and never a stopwatch reading: the same pair, run twice the same
+// morning, moved by about half in absolute terms while the ratio held.
+// It inlines the whole op evaluator a second time, lands at 255 registers, and
+// warns about its missing __launch_bounds__ on every build, which only teaches
+// us to ignore that warning. Nothing calls it yet, so today we pay all of that
+// for nothing. It stays here, reasoning and all, rather than being deleted and
+// guessed at again later: build it with -DARC_ENABLE_CUDA_PIECES=ON the day
+// inference asks the ops for pieces instead of segmenting grids on the CPU.
+#if !defined(ARC_ENABLE_CUDA_PIECES) || ARC_ENABLE_CUDA_PIECES
 // --- Ask an op what the pieces of a grid are ---------------------------------
 // The ops are the single home of "what is an object", so nothing on the CPU
 // segments a grid itself. This runs ONE op through the same evaluator the
@@ -4397,6 +4409,8 @@ void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
     cudaMemcpy(out, d_out, (size_t)grid_count * sizeof(dsl_pieces), cudaMemcpyDeviceToHost);
     cudaFree(d_ctx); cudaFree(d_grids); cudaFree(d_out);
 }
+
+#endif // ARC_ENABLE_CUDA_PIECES
 
 bool cuda_dsl_take_error(char* out, int outsz) {
     if (!g_cuda_err_set) return false;

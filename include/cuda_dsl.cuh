@@ -478,9 +478,11 @@ struct dsl_pieces {
 // op's annotation (Split's depth: 0 blob with colors mixed, 1 blob of one
 // color, 2 single pixels); ignored by ops that take none. The op itself is
 // untouched — this runs it through the same evaluator the solver uses.
+#if !defined(ARC_ENABLE_CUDA_PIECES) || ARC_ENABLE_CUDA_PIECES
 void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
                      node_type op, int8_t variant, int8_t background,
                      dsl_pieces* out);
+#endif
 
 // Per-job execution context living in device global memory.
 // ~2MB per job with current limits.

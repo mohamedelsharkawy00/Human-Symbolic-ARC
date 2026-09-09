@@ -19,6 +19,7 @@ Usage:
     python scripts/session_check.py --all    # print every answer, quiet or not
 """
 import argparse, os, socket, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRST_PORT = 2026
@@ -37,14 +38,30 @@ def other_worktrees():
     return [f for f in folders if os.path.normcase(os.path.normpath(f)) != here]
 
 
+# A port nobody listens on should refuse at once, but the firewall here drops
+# the packets instead, so a dead port costs the whole timeout. Asked one after
+# another, three dead ports were most of what every build spent on this check
+# (2026-09-09). An app that IS listening on this machine answers far faster than
+# any timeout worth setting, so the wait buys nothing; the ports are now asked
+# all at once and given a fraction of a second.
+PORT_TIMEOUT = 0.25
+
+
 def app_on_port(port):
     """The state line if an app answers, otherwise None. Refused means nobody."""
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1) as link:
+        with socket.create_connection(("127.0.0.1", port), timeout=PORT_TIMEOUT) as link:
             link.sendall(b"state\n")
             return link.recv(512).decode(errors="replace").strip() or None
     except OSError:
         return None
+
+
+def apps_running(ports):
+    """Ask every port at once; the slowest answer is one timeout, not all of them."""
+    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+        states = pool.map(app_on_port, ports)
+    return [(port, state) for port, state in zip(ports, states) if state]
 
 
 def main():
@@ -54,8 +71,7 @@ def main():
     args = parser.parse_args()
 
     worktrees = other_worktrees()
-    running = [(p, s) for p in (FIRST_PORT, FIRST_PORT + 1, FIRST_PORT + 2)
-               if (s := app_on_port(p))]
+    running = apps_running((FIRST_PORT, FIRST_PORT + 1, FIRST_PORT + 2))
     uncommitted = [l for l in run_git("status", "--porcelain").splitlines() if l]
 
     said = False

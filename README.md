@@ -14,6 +14,28 @@
 7. The headless one is what produces a submission. `scripts\kaggle_push.py` copies the headless source up as a Kaggle dataset, then the notebook in `kaggle\src\arc_build\` compiles it on Kaggle's GPU and runs it.
 8. Predictions are written to `kaggle\working\submission.json`, locally and on Kaggle alike.
 
+To measure build time, run `scripts\profile_build.bat` (Release), or pass
+`x64-RelWithDebInfo` or `x64-Debug`. Each run creates a fresh directory under
+`out/build-profile-*`, including fresh shaders, without launching ARC. It writes
+`report.txt`, `report.json`, and logs for setup, configuration, and compilation.
+Compiler, linker, and backup timings are recorded separately; parallel job times
+overlap and should not be added together. Installed tools, existing puzzle data,
+and OS disk caches are reused. The normal post-build backup still runs. This
+measures the clean-build workflow, not the existing-output rename/cleanup path.
+
+For CUDA compiler internals, run `scripts\profile_build.bat --cuda` (CUDA 12.8+).
+This adds NVCC phase timings and a device compiler timeline, summarized in
+`cuda-report.txt` and `cuda-report.json`. When installed, CUDA Compile Time
+Advisor also writes `cuda-advisor.txt`. Load the `timings/cuda-*.trace.json`
+file in `edge://tracing` or `chrome://tracing` to explore nested compiler events.
+Tracing adds overhead; compare runs using the same profiling mode. To regenerate
+only the CUDA analysis, run `python scripts/summarize_cuda_build.py out/build-profile-...`.
+
+CMake builds leave the CUDA pieces extraction API out by default, because
+nothing calls it yet and compiling it costs about a third of a clean build. Turn
+it back on with `cmake --preset x64-Release -DARC_ENABLE_CUDA_PIECES=ON`. Direct
+NVCC builds, which define nothing, keep the API.
+
 # 3. Logs
 1. Nothing in `logs/` accumulates. Each file is the current one of its kind, cleared by whatever starts the next.
 
