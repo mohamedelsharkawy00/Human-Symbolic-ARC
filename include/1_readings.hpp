@@ -36,12 +36,20 @@ ARC_HOST_DEVICE constexpr bool is_color(int value) {
 // of registers and the spilling to memory, which hurts performance.
 // Also, parallel writes by GPU lanes must
 // take separate whole bytes each to avoid racing.
-struct object_cells {
+// Four-byte aligned, and the store rounded up to a whole number of words, so
+// that the 32-bit word holding any cell lies wholly inside `bytes`. The device
+// has no byte-wide atomic, so a lane painting a cell that shares its byte with
+// another lane's cell has to compare-and-swap the enclosing word; without this
+// that word could reach past the store into whatever field sits next door.
+struct alignas(4) object_cells {
     static constexpr int CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
-    uint8_t data[(CELLS + 1) / 2];
+    static constexpr int BYTES = ((CELLS + 1) / 2 + 3) / 4 * 4;
+    uint8_t bytes[BYTES];
 
     // A cell occupies half a byte, so reads and writes need a proxy,
     // because C++ can't give a reference to half a byte.
+    struct const_cell_ref;
+
     struct cell_ref {
         uint8_t* byte;
         int shift;
@@ -54,6 +62,12 @@ struct object_cells {
             const uint8_t encoded = object_cells::enc(value);
             *byte = (uint8_t)((*byte & ~(0xF << shift)) | (encoded << shift));
         }
+
+        // Without these, `a[r][c] = b[r][c]` would take the compiler-written copy
+        // assignment and rebind the proxy -- moving where this cell_ref points
+        // instead of writing a cell. Both spellings write the value through.
+        ARC_HOST_DEVICE void operator=(const cell_ref& other) { *this = (int8_t)other; }
+        ARC_HOST_DEVICE inline void operator=(const const_cell_ref& other);
     };
 
     struct const_cell_ref {
@@ -88,22 +102,32 @@ struct object_cells {
         }
     };
 
-    ARC_HOST_DEVICE row_ref operator[](int row) { return { data, row }; }
-    ARC_HOST_DEVICE const_row_ref operator[](int row) const { return { data, row }; }
-
-    ARC_HOST_DEVICE void clear() {
-        const uint8_t empty = enc(TRANSPARENT);
-        const uint8_t empty_byte = (uint8_t)(empty | (empty << 4));
-        for (int i = 0; i < (int)sizeof(data); ++i) data[i] = empty_byte;
-    }
+    ARC_HOST_DEVICE row_ref operator[](int row) { return { bytes, row }; }
+    ARC_HOST_DEVICE const_row_ref operator[](int row) const { return { bytes, row }; }
 
     // Four bits are unsigned, so TRANSPARENT (-1) has nowhere to stay. What goes
     // in the byte is therefore the real value plus one: TRANSPARENT becomes 0,
     // black becomes 1, and so on.
-    ARC_HOST_DEVICE static uint8_t enc(int8_t value) {
-        return (uint8_t)((int)value + 1) & 0xF;
+    ARC_HOST_DEVICE static constexpr uint8_t enc(int8_t value) {
+        return (uint8_t)(((int)value + 1) & 0xF);
+    }
+
+    // A byte of two TRANSPARENT cells. Named because clearing by whole bytes is
+    // how lanes wipe a canvas without two of them ever sharing one. A function
+    // rather than a constant: its body is compiled once the class is complete,
+    // where a member initializer could not yet call enc.
+    ARC_HOST_DEVICE static constexpr uint8_t empty_byte() {
+        return (uint8_t)(enc(TRANSPARENT) | (enc(TRANSPARENT) << 4));
+    }
+
+    ARC_HOST_DEVICE void clear() {
+        for (int i = 0; i < (int)sizeof(bytes); ++i) bytes[i] = empty_byte();
     }
 };
+
+ARC_HOST_DEVICE inline void object_cells::cell_ref::operator=(const const_cell_ref& other) {
+    *this = (int8_t)other;
+}
 
 // An object's bounding box and cell count, usable without storing its cells.
 struct object_summary {
@@ -112,6 +136,13 @@ struct object_summary {
     int16_t count = 0;       // number of cells in the object
 };
 
+// MSVC C4324: these hold an object_cells, which asks for 4-byte alignment so the
+// device can compare-and-swap the word a cell sits in. The few padding bytes
+// that buys are the point, not an accident.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 struct object {
     object_summary summary;
     // Stored relative to the box's top-left.
@@ -131,6 +162,9 @@ struct object {
         return color_at(row, col) != (int8_t)TRANSPARENT;
     }
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 
 // Grouping is 8, "is this one object?".
@@ -146,24 +180,13 @@ ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
     return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
 }
 
-// Adjacency is 4, "what is beside this?". Worked out for the same reason as
-// the eight. The order is up, down, left, right.
+// Adjacency is 4, "what is beside this?". up, down, left, right.
 ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
     return dir < 2 ? dir * 2 - 1 : 0;
 }
 ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
     return dir < 2 ? 0 : (dir - 2) * 2 - 1;
 }
-
-// Pack an unpacked MAX_GRID_DIM^2 int8 grid into a packed grid, cell by cell.
-ARC_HOST_DEVICE inline void pack_grid(object_cells& m, const int8_t g[][MAX_GRID_DIM]) {
-    for (int r = 0; r < MAX_GRID_DIM; ++r)
-        for (int c = 0; c < MAX_GRID_DIM; ++c)
-            m[r][c] = g[r][c];
-}
-
-
-// OBJECTS · the related groups of cells a grid breaks into
 
 // Walk out from the cells already sitting in the queue until nothing new can be
 // reached, corners always counting. `claim` both decides and marks: it answers

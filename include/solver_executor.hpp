@@ -1143,17 +1143,16 @@ namespace arc {
     for (int ei = 0; ei < active; ++ei) {
       fixed_init_context(*init_ctx, p.train[ei], p.rule, p.invariant_colors);
 
-      int8_t* ig = ex.input_grids + ei * GPU_GRID_CELLS;
-      memcpy(ig, init_ctx->input.data, GPU_GRID_CELLS);
+      ex.input_grids[ei] = init_ctx->input.data;
       ex.input_dims[ei * 2 + 0] = (int8_t)init_ctx->input.width;
       ex.input_dims[ei * 2 + 1] = (int8_t)init_ctx->input.height;
 
-      int8_t* tg = ex.target_grids + ei * GPU_GRID_CELLS;
+      gpu_packed_mask& tg = ex.target_grids[ei];
       const auto& out = p.train[ei].output;
-      memset(tg, GPU_TRANSPARENT, GPU_GRID_CELLS);
+      tg.clear();
       for (int r = 0; r < out.height; ++r)
         for (int c = 0; c < out.width; ++c)
-          tg[r * GPU_MAX_GRID + c] = (int8_t)out.data[r][c];
+          tg[r][c] = (int8_t)out.data[r][c];
       ex.target_dims[ei * 2 + 0] = (int8_t)out.width;
       ex.target_dims[ei * 2 + 1] = (int8_t)out.height;
 

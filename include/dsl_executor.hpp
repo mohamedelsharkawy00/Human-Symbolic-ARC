@@ -31,15 +31,15 @@ namespace arc {
 		fixed_init_context(*init_ctx, ex, p.rule, p.invariant_colors);
 
 		ex_data.count = 1;
-		memcpy(ex_data.input_grids, init_ctx->input.data, GPU_GRID_CELLS);
+		ex_data.input_grids[0] = init_ctx->input.data;
 		ex_data.input_dims[0] = (int8_t)init_ctx->input.width;
 		ex_data.input_dims[1] = (int8_t)init_ctx->input.height;
 
-		int8_t* tg = ex_data.target_grids;
-		memset(tg, GPU_TRANSPARENT, GPU_GRID_CELLS);
+		gpu_packed_mask& tg = ex_data.target_grids[0];
+		tg.clear();
 		for (int r = 0; r < ex.output.height; ++r)
 			for (int c = 0; c < ex.output.width; ++c)
-				tg[r * GPU_MAX_GRID + c] = (int8_t)ex.output.data[r][c];
+				tg[r][c] = (int8_t)ex.output.data[r][c];
 		ex_data.target_dims[0] = (int8_t)ex.output.width;
 		ex_data.target_dims[1] = (int8_t)ex.output.height;
 

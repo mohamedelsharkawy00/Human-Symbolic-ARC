@@ -14,23 +14,14 @@
 
 namespace arc {
 
-// --- Fixed-size grid (int8_t pixels, no heap) ---
-struct fixed_grid {
-    int8_t data[GPU_MAX_GRID][GPU_MAX_GRID];
-    int16_t width = 0, height = 0;
+// --- Fixed-size grid, no heap ---
+// The same struct the kernel holds a grid in, under the name the host code has
+// always used. One type, one layout: a grid crosses to the device as a copy.
+using fixed_grid = gpu_fixed_grid;
 
-    void clear() {
-        memset(data, GPU_TRANSPARENT, sizeof(data));
-        width = height = 0;
-    }
-
-    void clear_data() {
-        memset(data, GPU_TRANSPARENT, sizeof(data));
-    }
-};
-
-// --- Convert from environment grid (int pixels) to fixed_grid (int8_t pixels) ---
+// --- Convert from environment grid (int pixels) to the packed fixed_grid ---
 static inline void grid_to_fixed(const int src[][30], int w, int h, fixed_grid& dst) {
+    dst.data.clear();
     dst.width = (int16_t)w;
     dst.height = (int16_t)h;
     for (int r = 0; r < h; ++r)
@@ -79,7 +70,7 @@ static inline void fixed_flood_fill(
 
     obj.width = (int16_t)std::min((int)(obj.x1 - obj.x0 + 1), (int)GPU_MAX_GRID);
     obj.height = (int16_t)std::min((int)(obj.y1 - obj.y0 + 1), (int)GPU_MAX_GRID);
-    memset(obj.mask, GPU_TRANSPARENT, sizeof(obj.mask));
+    obj.mask.clear();
 
     for (int i = 0; i < tail; ++i) {
         int pr = queue_r[i] - obj.y0, pc = queue_c[i] - obj.x0;
@@ -145,7 +136,7 @@ static inline void fixed_segment_by_color(const fixed_grid& g, fixed_object_list
         obj.x0 = x0; obj.y0 = y0; obj.x1 = x1; obj.y1 = y1;
         obj.width = (int16_t)std::min((int)(x1 - x0 + 1), (int)GPU_MAX_GRID);
         obj.height = (int16_t)std::min((int)(y1 - y0 + 1), (int)GPU_MAX_GRID);
-        memset(obj.mask, GPU_TRANSPARENT, sizeof(obj.mask));
+        obj.mask.clear();
 
         for (int r = 0; r < g.height; ++r) {
             for (int c = 0; c < g.width; ++c) {
@@ -186,7 +177,9 @@ static inline void sort_objects_by_area_asc(fixed_object_list& list) {
     }
 }
 
-// Convert fixed_object_list (CPU, 900 objs) -> gpu_object_list (GPU kernel, 64 objs)
+// Narrow fixed_object_list (CPU, 900 objs) -> gpu_object_list (GPU kernel, 64 objs).
+// Only the count changes: both sides hold their cells in the same packed bytes,
+// so the mask moves across as a plain copy.
 static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
     gpu_object_list dst;
     dst.count = std::min(src.count, GPU_KERNEL_MAX_OBJECTS);
@@ -195,7 +188,7 @@ static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
         const auto& s = src.objects[i];
         d.x0 = s.x0; d.y0 = s.y0; d.x1 = s.x1; d.y1 = s.y1;
         d.width = s.width; d.height = s.height;
-        gpu_mask_from_grid(d.mask, s.mask);  // pack int8 grid -> 4-bit mask
+        d.mask = s.mask;
     }
     return dst;
 }
@@ -240,7 +233,7 @@ static inline void fixed_init_context(
     }
     ctx.output.width = (int16_t)std::min((int)ctx.output.width, (int)GPU_MAX_GRID);
     ctx.output.height = (int16_t)std::min((int)ctx.output.height, (int)GPU_MAX_GRID);
-    ctx.output.clear_data();
+    ctx.output.clear_cells();
 
     // HOW FAR EVERY CELL IS FROM THE NEAREST CELL OF EACH COLOR IN THE ANSWER,
     // which is what lets a near miss score better than a wild one. Derived

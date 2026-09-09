@@ -94,6 +94,14 @@ static constexpr int GPU_MAX_OPS = 64;
 static constexpr int GPU_MAX_OBJECTS = 900;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
+
+// The packed cell store lives upstream in 1_readings.hpp, where both sides can
+// reach it: it holds no addresses, so the same bytes mean the same thing on the
+// host and on the device. This name is what the DSL calls it, and there is only
+// one — CPU and GPU objects hold their cells in exactly these bytes, so handing
+// an object to the device is a copy, never a conversion.
+using gpu_packed_mask = arc::object_cells;
+#define GPU_MASK_HD ARC_HOST_DEVICE
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
 // debug/analysis breakdown in environment.hpp.
@@ -121,11 +129,11 @@ struct fixed_object {
     int16_t x0 = 0, y0 = 0;      // bounding box top-left (world coords)
     int16_t x1 = 0, y1 = 0;      // bounding box bottom-right (world coords)
     int16_t width = 0, height = 0;
-    int8_t  mask[GPU_MAX_GRID][GPU_MAX_GRID]; // pixel colors or GPU_TRANSPARENT(-1)
+    gpu_packed_mask mask;  // pixel colors or GPU_TRANSPARENT(-1), two cells per byte
 
     void clear() {
         x0 = y0 = x1 = y1 = width = height = 0;
-        memset(mask, GPU_TRANSPARENT, sizeof(mask));
+        mask.clear();
     }
 };
 
@@ -384,15 +392,6 @@ inline constexpr bool needs_a_pick(node_type t) {
 static constexpr int GPU_KERNEL_MAX_OBJECTS = 32;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 
-// The packed cell store lives upstream in 1_readings.hpp, where both sides
-// can reach it: it holds no addresses, so the same bytes mean the same thing
-// on the host and on the device. These names are what the kernel calls it.
-using gpu_packed_mask = arc::object_cells;
-#define GPU_MASK_HD ARC_HOST_DEVICE
-ARC_HOST_DEVICE inline void gpu_mask_from_grid(gpu_packed_mask& m, const int8_t g[][GPU_MAX_GRID]) {
-    arc::pack_grid(m, g);
-}
-
 // `selected` is the SELECT slot at object depth: one flag per object, not per
 // cell. Selection works like Excel: nothing is selected at birth, selectors
 // ADD whole objects, InvertSelection flips membership, SelectAll marks all.
@@ -404,6 +403,13 @@ ARC_HOST_DEVICE inline void gpu_mask_from_grid(gpu_packed_mask& m, const int8_t 
 
 // `selected` lives before `mask` so gpu_warp_copy_header (which copies
 // everything ahead of the mask) carries it.
+// MSVC C4324: these hold an object_cells, which asks for 4-byte alignment so the
+// device can compare-and-swap the word a cell sits in. The few padding bytes
+// that buys are the point, not an accident.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 struct gpu_fixed_object {
     int16_t x0 = 0, y0 = 0;
     int16_t x1 = 0, y1 = 0;
@@ -411,6 +417,9 @@ struct gpu_fixed_object {
     bool selected = false;
     gpu_packed_mask mask;
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 struct gpu_object_list {
     gpu_fixed_object objects[GPU_KERNEL_MAX_OBJECTS];
@@ -447,9 +456,19 @@ inline ARC_HOST_DEVICE uint32_t gpu_shape_hash_of_paint(const gpu_fixed_object& 
     });
 }
 
+// Cells packed exactly like an object's, so a grid and an object hold the same
+// bytes and moving between them is a copy. Lanes painting the canvas in
+// parallel must go through gpu_paint_cell, never the plain cell proxy: two
+// side-by-side cells share a byte.
 struct gpu_fixed_grid {
-    int8_t data[GPU_MAX_GRID][GPU_MAX_GRID];
+    // Named `data` because that is what a grid is expected to answer to: the
+    // shared object walk in 1_readings.hpp and gpu_object_view both index a
+    // grid as data[row][col], and a packed store indexes exactly that way.
+    gpu_packed_mask data;
     int16_t width = 0, height = 0;
+
+    ARC_HOST_DEVICE void clear_cells() { data.clear(); }
+    ARC_HOST_DEVICE void clear() { data.clear(); width = height = 0; }
 };
 
 // --- What the DSL thinks the pieces of a grid are, read back to the CPU ---
@@ -537,6 +556,9 @@ struct gpu_exec_context {
     // Safe to share across ops: the lane-0 op switch runs one op at a time.
     int8_t op_scratch[GPU_GRID_CELLS];
 };
+// Ops overlay a packed mask on op_scratch, so it must have room for one.
+static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(gpu_packed_mask),
+              "op_scratch must hold a packed mask");
 
 // Per-example data uploaded once per puzzle (not per batch).
 static constexpr int MAX_UPLOAD_EXAMPLES = 16;
@@ -555,9 +577,9 @@ struct gpu_object_summary {
 
 struct cuda_dsl_example_data {
     int count = 0;
-    int8_t input_grids[MAX_UPLOAD_EXAMPLES * GPU_GRID_CELLS];
+    gpu_packed_mask input_grids[MAX_UPLOAD_EXAMPLES];
     int8_t input_dims[MAX_UPLOAD_EXAMPLES * 2];
-    int8_t target_grids[MAX_UPLOAD_EXAMPLES * GPU_GRID_CELLS];
+    gpu_packed_mask target_grids[MAX_UPLOAD_EXAMPLES];
     int8_t target_dims[MAX_UPLOAD_EXAMPLES * 2];
     int8_t distance_maps[MAX_UPLOAD_EXAMPLES * GPU_MAX_COLORS * GPU_GRID_CELLS];
     gpu_object_list seed_lists[MAX_UPLOAD_EXAMPLES];
