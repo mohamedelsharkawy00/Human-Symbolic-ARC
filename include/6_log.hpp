@@ -97,10 +97,10 @@ inline void report_background(ostream& report, const background_hypotheses& back
     for (int8_t color : background.per_pair) report << ' ' << (int)color;
     report << "\n";
     auto dump = [&](const char* name, const vector<background_hypotheses::hypothesis>& ranked) {
-        report << "  " << name << " (color embeds dom persists SCORE span gaps under):\n";
+        report << "  " << name << " (color embeds dom in_out SCORE span gaps under):\n";
         for (const auto& candidate : ranked)
             report << "    " << (int)candidate.color << "  " << candidate.embeds << "  "
-              << candidate.dominance << "  " << candidate.persists
+              << candidate.dominance << "  " << candidate.appears_in_any_output
               << "  " << candidate.score << "  " << candidate.span
               << "  " << candidate.gaps << "  " << candidate.underneath << "\n";
     };

@@ -1,9 +1,8 @@
-// 2_background.hpp — which color is the canvas, elected per side.
-// Design story for everything below, said here so nothing below repeats it:
-// notes/1 - Overall Design/Inference Master.md, section 3g.
-//
-// Self-contained: the election reads grids and nothing else. It shares no name
-// with 3_correspondence.hpp in either direction, so the two are siblings.
+// This file tackles the concept of a background in ARC,
+// which is frequent but not in all puzzles,
+// but in the puzzles where it is found,
+// it is important to be distinguished from the rest of the puzzle.
+// Background is elected per grid role: inputs and outputs are judged separately.
 
 #pragma once
 #include "1_readings.hpp"
@@ -15,56 +14,77 @@
 namespace arc {
 using namespace std;
 
-// Background · across_inputs — the RANKED surviving background hypotheses,
-// judged by ROLE. The two sides are elected INDEPENDENTLY. Ranked[0] per side is
-// what load-time consumers use; the rest stay alive. Do not collapse this to a
-// scalar: the list is the revisability hook, and a switch is just another
-// infer() call under ranked[i].
+// Several colors may look like the background, so we keep a list of candidates,
+// with the best candidate first. Inputs and outputs have separate lists:
+// a puzzle may change the background color between input and output.
+// Keeping the other candidates lets us try another background later.
 
-// The background election's FITTED CONVENTIONS — fitted to
-// tests/background_truth.txt, not derived. Every threshold in the election
-// must be one of these (or a verdict needing none); do not mint new numbers.
-// HALF: an absolute claim (dominance, confidence, majority-of-cells) holds
-// when it covers at least half. Shares here are out of 1000, not out of 100.
+// These values control how we compare candidates. They were chosen to match
+// the examples in tests/background_truth.txt. Reuse them when adding rules.
+// Shares use a scale of 0 to 1000: 500 means 50%, and 1000 means 100%.
+
+// At least half of the measured amount.
 inline constexpr int BG_HALF = 500;
-// DECISIVE: one quantity beats another beyond co-dominance when it at least
-// doubles it — a ratio, used as a * BG_DECISIVE >= b.
+
+// A clear lead means having at least twice as much as the other candidate.
 inline constexpr int BG_DECISIVE = 2;
-// NEAR-TIE: two quantities are co-dominant when the smaller is within 20% of
-// the larger — used as small * 5 >= large * 4. The one convention still
-// lacking a verdict-form replacement.
-inline constexpr int BG_NEAR_TIE_NUM = 4, BG_NEAR_TIE_DEN = 5;
-// FLOOR: the scored election elects only above this confidence, else abstains.
+
+// Treat two amounts as nearly tied when the smaller is at least 4/5 (80%)
+// of the larger. Compare small * 5 >= large * 4 to avoid division.
+inline constexpr int BG_NEAR_TIE_NUM = 4;
+inline constexpr int BG_NEAR_TIE_DEN = 5;
+
+// The score must reach 700 for a candidate to qualify as a background.
 inline constexpr int BG_FLOOR = 700;
-// Score weights (shares out of 1000 in, one confidence out).
-inline constexpr double BG_W_AREA = 1.0, BG_W_STANDOUT = 0.3,
-                        BG_W_PRIOR = 0.15, BG_W_EMBEDS = 0.25,
-                        BG_W_PUNCHED = 0.2;
+
+// Each kind of evidence contributes to the score. A larger weight gives
+// that evidence more influence.
+inline constexpr double BG_W_AREA = 1.0;      // How much area the color covers.
+inline constexpr double BG_W_STANDOUT = 0.3;  // How often it wins in individual grids.
+inline constexpr double BG_W_PRIOR = 0.15;    // The preference for this color as a background.
+inline constexpr double BG_W_EMBEDS = 0.25;   // How much figure area sits inside this color.
+inline constexpr double BG_W_PUNCHED = 0.2;   // Evidence of a background showing through gaps.
+
+// Extra points if the color also appears in the outputs.
 inline constexpr int BG_PERSIST_BONUS = 50;
 
+// Hypotheses: plural.
 struct background_hypotheses {
     struct hypothesis {
+
         // -1 = "no background"
         int8_t color = -1;
-        // Share of figure area EMBEDDED IN this color (worst grid, out of 1000)
+
+        // Per mille of all foreground figure area that sits embedded in this
+        // hypothesised background color, for the worst example grid
         int embeds = 0;
-        // Area share (worst grid, out of 1000)
+
+        // Per mille of all cells in the grid painted in this hypothesised
+        // background color, for the worst example grid
         int dominance = 0;
-        // Does this color survive into the outputs? The canvas persists;
-        // figures may be consumed. Breaks a tie between two big colors.
-        bool persists = true;
-        // Weighted confidence that this color is the background. The election
-        // takes the top score if it clears BG_FLOOR, else abstains.
-        int score = 0;
-        // Share of the grid covered by the color's bounding box (worst grid,
-        // out of 1000); everywhere = ~1000
+
+        // Did this input color also appear in at least one output?
+        // A transformation may delete or recolor the figures, so a figure's
+        // color can vanish from the output. The canvas it sat on usually stays.
+        // Worth a small bonus (BG_PERSIST_BONUS, 50 against a floor of 700), so
+        // it only separates two candidates that area already left nearly tied.
+        bool appears_in_any_output = true;
+
+        // Per mille of all cells in the grid falling inside this color's
+        // bounding box, for the worst example grid; everywhere = ~1000
         int span = 0;
-        // Share of the color's cells touching another color (worst grid,
-        // out of 1000); a thin web = ~1000, a solid mass = low
+
+        // Per mille of this color's own cells that touch a different color,
+        // for the worst example grid; a thin web = ~1000, a solid mass = low
         int gaps = 0;
+
         // In EVERY grid this color is the quietest present and appears ONLY as
         // multiple enclosed windows — the ground showing through.
         bool underneath = false;
+
+        // Weighted confidence that this color is the background. The election
+        // takes the top score if it clears BG_FLOOR, else abstains.
+        int score = 0;
     };
     // Background is a per-DIRECTION fact, like every other fact in this file:
     // the same election over different grid sets gives legitimately different
@@ -416,7 +436,7 @@ inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
         const double from_area     = global_area    * BG_W_AREA;
         const double from_standout = standout_share * BG_W_STANDOUT;
         const double from_prior    = prior          * BG_W_PRIOR;
-        const double from_persists = candidate.persists ? BG_PERSIST_BONUS : 0;
+        const double from_persists = candidate.appears_in_any_output ? BG_PERSIST_BONUS : 0;
         const double from_punched  = punched * BG_W_PUNCHED * prior / 1000;
         const double from_embeds   = candidate.embeds * BG_W_EMBEDS;
 
@@ -463,14 +483,14 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
     }
     close_underneath(evidence);
 
-    ranked.push_back({ (int8_t)-1, 0, 0, false, 0, 0, 0, false });  // "none" always a candidate
+    ranked.push_back({ (int8_t)-1, 0, 0, false, 0, 0, false, 0 });  // "none" always a candidate
     for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
         if (!in_every[candidate]) continue;
         bool survives = persists ? persists[candidate] : true;
         ranked.push_back({ (int8_t)candidate, evidence.embeds[candidate],
-                           evidence.dominance[candidate], survives, 0,
+                           evidence.dominance[candidate], survives,
                            evidence.span[candidate], evidence.gaps[candidate],
-                           evidence.only_windows[candidate] });
+                           evidence.only_windows[candidate], 0 });
     }
 
     score_candidates(ranked, evidence, in_every);
