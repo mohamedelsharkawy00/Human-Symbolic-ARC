@@ -25,7 +25,7 @@
 //   1_readings.hpp        the shared base: count it, box it, walk it
 //   2_size.hpp            infer_rule
 //   3_background.hpp      elect_background
-//   4_correspondence.hpp  pick_split
+//   4_correspondence.hpp  select_segmentation
 //   6_sentences.hpp       say_the_reading
 //   7_log.hpp             the per-puzzle readout
 //
@@ -571,7 +571,7 @@ inline inference infer(const vector<example>& train) {
     detect_output_colors_by_size(train, inf.colors.background_color, inf.colors);
     // Edge level of correspondence, under the elected background, with the way
     // of cutting the grid up chosen by what it manages to explain.
-    inf.correspondence = pick_split(train, inf.colors.background_color);
+    inf.correspondence = select_segmentation(train, inf.colors.background_color);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).

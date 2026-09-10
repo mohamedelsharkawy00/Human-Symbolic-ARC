@@ -33,19 +33,19 @@ struct said_reading {
     vector<string> no_word_for;
     // OPENINGS THE READING COULD NOT RULE OUT. Only the first sentence can be
     // said more than one way -- everything after it hangs off the chosen
-    // reading's own pieces, so a rival cut has no follow-on to go with it.
+    // reading's own pieces, so a rival segmentation has no follow-on to go with it.
     vector<string> other_openings;
 };
 
-// WHAT AN OBJECT IS, as the word that cuts the same way. Split's argument is
+// WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
 // the any-color flag, so Split[0] keeps colors together and Split[1] does not.
-inline const char* word_for_cut(split_kind cut) {
-    switch (cut) {
-        case split_kind::touching_8:         return "Split[1]";
-        case split_kind::touching_any_color: return "Split[0]";
-        case split_kind::one_per_color:      return "Colors";
-        case split_kind::repeating_motif:    return "Pattern";
-        case split_kind::repeating_step:     return "Pattern";
+inline const char* word_for_segmentation(segmentation_method segmentation) {
+    switch (segmentation) {
+        case segmentation_method::touching_8:         return "Split[1]";
+        case segmentation_method::touching_any_color: return "Split[0]";
+        case segmentation_method::one_per_color:      return "Colors";
+        case segmentation_method::repeating_motif:    return "Pattern";
+        case segmentation_method::repeating_step:     return "Pattern";
         default:                             return nullptr;
     }
 }
@@ -129,16 +129,16 @@ inline said_reading say_the_reading(const inference& inf) {
     const match_mode allowed = facts.chosen < (int8_t)facts.readings.size()
                              ? facts.readings[facts.chosen].match_kind : match_mode{};
 
-    if (const char* cut = word_for_cut(facts.cut_kind)) say(cut);
-    else said.no_word_for.push_back(string("the cut ") + split_name((int)facts.cut_kind));
+    if (const char* segmentation = word_for_segmentation(facts.segmentation)) say(segmentation);
+    else said.no_word_for.push_back(string("the segmentation ") + segmentation_name((int)facts.segmentation));
 
-    // The cuts that explained just as much. Said as openings of their own so a
+    // The segmentation methods that explained just as much. Said as openings of their own so a
     // search can try each, rather than trusting the order they were declared in.
     for (int8_t cell : facts.tied_with_chosen) {
         if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
-        const char* cut = word_for_cut(facts.readings[cell].cut_kind);
-        if (!cut) continue;
-        string opening = string("Input SelectAll ") + cut + " " + combine;
+        const char* segmentation = word_for_segmentation(facts.readings[cell].segmentation);
+        if (!segmentation) continue;
+        string opening = string("Input SelectAll ") + segmentation + " " + combine;
         bool already = !said.sentences.empty() && said.sentences.front() == opening;
         for (const string& seen : said.other_openings) already = already || seen == opening;
         if (!already) said.other_openings.push_back(opening);

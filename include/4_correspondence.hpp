@@ -1,5 +1,5 @@
 // This file explores correspondence;
-// how to cut the grid into objects,
+// how to segment the grid into objects,
 // and where each object went across grids.
 #pragma once
 #include "1_readings.hpp"
@@ -14,41 +14,28 @@
 namespace arc {
 using namespace std;
 
-// Before looking for an object in another grid, we need to decide which cells
-// belong together. A "split" is a way of grouping the grid's cells into objects.
-// We try several ways, then compare how well each explains the training pairs.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3e, which also
-// records the cuts that were tried and dropped.
-enum class split_kind : int8_t {
+// The grid can be divided into objects in several ways.
+// Dividing a grid into objects is called segmentation.
+// Segmentation methods are compared by how well they explain the training pairs.
+enum class segmentation_method : int8_t {
     touching_8, touching_any_color, one_per_color,
-    repeating_motif, repeating_step, split_count
+    repeating_motif, repeating_step, method_count
 };
 
-// THE CUTS, EACH SAYING WHAT AN OBJECT IS. They complete the sentence "AN
-// OBJECT IS ..." — which is what the reader wants to know and the only thing
-// the cut decides. NO COUNT IS WRITTEN ANYWHERE HERE: one is a fact the list
-// already carries, and every time the list changed the count stayed behind and
-// lied. Nothing here is understood by comparing it with its neighbours either:
-// a name that only means something beside the others is a name you have to
-// hold the whole list in your head to read.
-// ONE HOME, and one list: a short form beside a long one was the same fact in
-// two cases, and a rename only ever fixed one of them. The font atlas carries
-// no lowercase, so uppercase is the form that serves the log and the pane both.
-// CORNERS ARE NOT MENTIONED. Every cut groups through walk_out, which is
-// 8-connected and has no alternative, so saying it would offer a choice that
-// does not exist. See notes/4 - To Do/Connectivity Is Two Questions.md.
-inline constexpr const char* const split_names[] = {
+// Each description says which cells form one object under that method.
+// The log and screen share these labels; the font atlas requires uppercase.
+inline constexpr const char* const segmentation_names[] = {
     "A GROUP OF CELLS THAT TOUCH, ALL ONE COLOR",
     "A GROUP OF CELLS THAT TOUCH, ANY COLORS",
     "EVERY CELL OF ONE COLOR, WHEREVER IT EXISTS",
     "THE SMALLEST REPEATING MOTIF",
     "A MOTIF THE SIZE OF THE SMALLER GRID" };
 // The sentence every one of them finishes.
-inline constexpr const char* split_names_lead = "AN OBJECT IS";
-// Beside the list it reads from, so everyone who names a cut names it once.
-inline const char* split_name(int cut_kind) { return split_names[cut_kind]; }
-static_assert(sizeof(split_names) / sizeof(char*) ==
-              (size_t)split_kind::split_count);
+inline constexpr const char* segmentation_names_lead = "AN OBJECT IS";
+// Beside the list it reads from, so everyone who names a segmentation names it once.
+inline const char* segmentation_name(int segmentation) { return segmentation_names[segmentation]; }
+static_assert(sizeof(segmentation_names) / sizeof(char*) ==
+              (size_t)segmentation_method::method_count);
 
 // Once we have objects, we can look for them in the other grid. A match may
 // allow an object to move, turn or flip, change color, or extend past the grid's
@@ -58,7 +45,7 @@ struct match_mode {
     bool pose = true;
     bool recolor = true;
     // HANGING OFF THE EDGE IS A FREEDOM LIKE THE REST, not a property of the
-    // cut. Granted to everything, one object was free to sit mostly outside the
+    // segmentation method. Granted to everything, one object was free to sit mostly outside the
     // grid, recolored and flipped, and claim whatever few cells were left
     // showing — a claim that costs nothing to make and cannot be checked.
     // Withheld from everything, every copy a wall cut in half went unexplained.
@@ -143,7 +130,7 @@ struct correspondence_facts {
         int8_t recolored_to = -1;
         // WHAT TURNED INTO WHAT, by glyph colour; -1 = that colour is not in the
         // glyph. The matcher knows the whole map and used to hand over one entry
-        // of it, indexed by the object's own colour -- so a cut that labels its
+        // of it, indexed by the object's own colour -- so a segmentation that labels its
         // objects -1 (a motif block, anything mixed) threw the answer away. How an
         // object was carved and what colour it became are different questions.
         int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
@@ -215,8 +202,8 @@ struct correspondence_facts {
         "IT OVERLAPS AN OBJECT THAT WAS KEPT",
         "THE OTHER EXAMPLES DID NOT AGREE" };
     struct pair_info {
-        // The objects the chosen split finds, named by the grid they sit on. Both
-        // grids are cut the same way and on the same block, which is what lets
+        // The objects the chosen segmentation finds, named by the grid they sit on. Both
+        // grids are segmented the same way and on the same block, which is what lets
         // the two directions be read into one list of edges.
         vector<object_info> input_objects;
         vector<object_info> output_objects;
@@ -252,7 +239,7 @@ struct correspondence_facts {
         // another pair, where the move itself is a different number.
         struct moved_together { int8_t down, across, color; int16_t objects; };
         vector<moved_together> agreed_moves;
-        // What the cut saves on this pair's FROM grid, as a share of saying the
+        // What the segmentation saves on this pair's FROM grid, as a share of saying the
         // grid plainly — see describe_cost. Free here because the objects already
         // exist, and it owes nothing to the matching, which is the point of it.
         double describe_cost = 1.0;
@@ -285,25 +272,25 @@ struct correspondence_facts {
     // not account for says nothing without the size of what it failed at.
     int cells = 0;
     // The way of cutting up that explained most, judged over the WHOLE train
-    // set. FOR NOW one split serves every pair: a transformation that cuts the
+    // set. FOR NOW one segmentation serves every pair: a transformation that segments the
     // grid up differently from pair to pair would be a strange puzzle, and
     // holding it fixed is the stronger claim. Revisit if a puzzle needs it.
-    split_kind cut_kind = split_kind::touching_8;
-    // EVERY READING THERE IS, IN THE ORDER THE TABLE IS DRAWN: one row per cut,
+    segmentation_method segmentation = segmentation_method::touching_8;
+    // EVERY READING THERE IS, IN THE ORDER THE TABLE IS DRAWN: one row per segmentation,
     // one column per freedom, so a reading's place in this list IS its cell —
-    // cut_kind * match_mode::COUNT + match_kind. Every cut is looked at and every
+    // segmentation * match_mode::COUNT + match_kind. Every segmentation is looked at and every
     // freedom searched, so the table has no holes and a cell never has to be
-    // looked up. Do not collapse this to the winner: a cut cannot tell that it
-    // read too coarsely, and only a consumer coming up empty finds out. The cut
+    // looked up. Do not collapse this to the winner: a segmentation cannot tell that it
+    // read too coarsely, and only a consumer coming up empty finds out. The segmentation
     // ITSELF is recorded alongside the numbers, because two readings can tie on
     // every number and differ.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     struct reading {
-        // Which cut, and what a match was allowed to change
-        split_kind cut_kind = split_kind::touching_8;
+        // Which segmentation, and what a match was allowed to change
+        segmentation_method segmentation = segmentation_method::touching_8;
         match_mode match_kind;
-        // How many objects the cut FOUND, and how many it USED — the log prints
-        // them as "cut into X, used Y"
+        // How many objects the segmentation FOUND, and how many it USED — the log prints
+        // them as "segmented into X, used Y"
         int objects_found = 0, objects_used = 0;
         int left_over = 0, box_cells = 0;
         // Of the left over, how many were MADE — nothing on the other grid is
@@ -316,7 +303,7 @@ struct correspondence_facts {
         // cost, and shares add up to nothing meaningful. Owes nothing to the
         // matching, so it is had BEFORE any search — see describe_cost.
         double describe_cost = 1.0;
-        // FALSE MEANS THE SECOND GLANCE KILLED IT: not one object this cut makes
+        // FALSE MEANS THE SECOND GLANCE KILLED IT: not one object this segmentation makes
         // would fit on the other grid, so no match can exist and searching it
         // would be paying to be told so. Read off the two grids' sizes.
         bool objects_can_fit = true;
@@ -329,7 +316,7 @@ struct correspondence_facts {
     int8_t chosen = 0;
     // THE ONES THE ELECTION COULD NOT SEPARATE FROM THE WINNER, as places in
     // `readings`. Saying only the winner claims a distinction the reading never
-    // made -- on 009d5c81 three cuts explain exactly as much and declaration
+    // made -- on 009d5c81 three segmentation methods explain exactly as much and declaration
     // order picked between them.
     vector<int8_t> tied_with_chosen;
     // THE OBJECTS AND EDGES OF EVERY READING, in `readings` order, so the work is
@@ -573,24 +560,24 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
 // < 0 means "unknown" -> nothing excluded). Emits object_info with canonical
 // shape hashes and, when asked, the glyphs (each object cut out of its own
 // box, -1 = empty).
-inline void cut_into_objects(const grid& one_grid, int8_t background, split_kind cut_kind,
+inline void segment_into_objects(const grid& one_grid, int8_t background, segmentation_method segmentation,
                                 vector<correspondence_facts::object_info>& objects,
                                 vector<grid>* glyphs,
                                 int step_width = 0, int step_height = 0) {
     // As many objects as an object index can name — edges carry it in one signed
-    // byte. The finest cut is one object per cell, so a small grid must be able
+    // byte. The finest segmentation is one object per cell, so a small grid must be able
     // to come apart completely; past this a reading simply cannot be written
     // down, and it sinks on its own by leaving the rest unexplained.
     // AS MANY OBJECTS AS THERE ARE CELLS. Every cell its own object is the most a
-    // grid can ever be cut into, so that is the only honest ceiling; any
-    // number below it stops a cut part way and hands back a corner of the
+    // grid can ever be segmented into, so that is the only honest ceiling; any
+    // number below it stops a segmentation part way and hands back a corner of the
     // grid as though it were the whole of it.
     static constexpr int MAX_OBJECTS = MAX_GRID_DIM * MAX_GRID_DIM;
 
     // Cut on a fixed step: equal blocks, one object each, cells of any color kept
     // together. Blocks with no colored cells at all are not objects.
-    if (cut_kind == split_kind::repeating_step ||
-        cut_kind == split_kind::repeating_motif) {
+    if (segmentation == segmentation_method::repeating_step ||
+        segmentation == segmentation_method::repeating_motif) {
         if (step_width <= 0 || step_height <= 0) return;
         bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
         for (int block_top = 0; block_top < one_grid.height; block_top += step_height)
@@ -621,9 +608,9 @@ inline void cut_into_objects(const grid& one_grid, int8_t background, split_kind
             if (glyphs) glyphs->push_back(glyph);
         }
         // A CUT THAT DOES NOT CUT IS NOT A READING — one object means there is no
-        // motif, and it would win the election for free. The step cut is exempt.
+        // motif, and it would win the election for free. The step segmentation is exempt.
         // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-        if (cut_kind != split_kind::repeating_step && objects.size() < 2) {
+        if (segmentation != segmentation_method::repeating_step && objects.size() < 2) {
             objects.clear();
             if (glyphs) glyphs->clear();
         }
@@ -631,7 +618,7 @@ inline void cut_into_objects(const grid& one_grid, int8_t background, split_kind
     }
     // Whether an object has to be one color is a question of its OWN, asked apart
     // from what counts as joined: the one walk answers both.
-    const bool same_color = (cut_kind != split_kind::touching_any_color);
+    const bool same_color = (segmentation != segmentation_method::touching_any_color);
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
@@ -650,7 +637,7 @@ inline void cut_into_objects(const grid& one_grid, int8_t background, split_kind
         int left = start_col, top = start_row, right = start_col, bottom = start_row;
         // One object per color takes every cell of the color at once, wherever
         // it is; the touching kinds walk out from this cell only.
-        const bool whole_color = (cut_kind == split_kind::one_per_color);
+        const bool whole_color = (segmentation == segmentation_method::one_per_color);
         if (whole_color) {
             for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
                 for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
@@ -722,7 +709,7 @@ inline int glyphs_apart(const grid& left, const grid& right) {
 }
 
 // COPIES OF ONE THING, AND WHICH OF THEM SPEAKS FOR THE SET. Objects sharing a
-// canonical shape are copies of each other; when the cut ran on a VERIFIED
+// canonical shape are copies of each other; when the segmentation ran on a VERIFIED
 // period the whole grid is one set, stub at the edge included, because cutting
 // on a period is what makes them copies and the stub is the motif cut short.
 // The set's exemplar is its MEDOID — see object_info::medoid.
@@ -816,11 +803,11 @@ inline void find_blanks(const grid& one_grid, int8_t background,
 // Cut it up, then put the objects in the order a person reads them: BIGGEST
 // FIRST, then down the grid. The glyphs ride along — they are the objects.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
-inline void segment_for_correspondence(const grid& one_grid, int8_t background, split_kind cut_kind,
+inline void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_method segmentation,
                                 vector<correspondence_facts::object_info>& objects,
                                 vector<grid>* glyphs,
                                 int step_width = 0, int step_height = 0) {
-    cut_into_objects(one_grid, background, cut_kind, objects, glyphs, step_width, step_height);
+    segment_into_objects(one_grid, background, segmentation, objects, glyphs, step_width, step_height);
     vector<int> reading_order(objects.size());
     iota(reading_order.begin(), reading_order.end(), 0);
     stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
@@ -842,10 +829,10 @@ inline void segment_for_correspondence(const grid& one_grid, int8_t background, 
     }
 }
 
-// WHAT THE CUT SAVES YOU. Saying the grid under a cut means spelling each
+// WHAT SEGMENTATION SAVES YOU. Saying the grid under a segmentation means spelling each
 // different shape out once, then saying where each copy goes. One object per cell
 // spells nothing out and then pays a position for every cell; the whole grid
-// as one object pays for every cell at once. The cut that tells you the most is
+// as one object pays for every cell at once. The segmentation that tells you the most is
 // the cheap one in between.
 //
 // COUNTED IN BITS, so neither price is a matter of taste: a cell has to name a
@@ -853,9 +840,9 @@ inline void segment_for_correspondence(const grid& one_grid, int8_t background, 
 //
 // THEN DIVIDED BY WHAT THE GRID COSTS SAID PLAINLY, cell by cell. A bit total on
 // its own answers nothing, and totals off two grids of different size are not
-// the same question — a 2x2 is cheap to describe however you cut it, so it beats
+// the same question — a 2x2 is cheap to describe however you segment it, so it beats
 // a 6x6 on size alone and the reading gets taken from the side with no structure
-// on it. As a share of plain cost the size cancels: under 1 the cut earned its
+// on it. As a share of plain cost the size cancels: under 1 the segmentation earned its
 // place, over 1 it made things worse, and a small grid can no longer win by
 // being small.
 //
@@ -872,7 +859,7 @@ inline double describe_cost(const grid& one_grid, int8_t background,
     // Nothing on the grid, so there is nothing to save and nothing to lose.
     const double plain = colored * cell_bits;
     if (plain <= 0.0) return 1.0;
-    // A cut that finds nothing has said nothing: you still spell the grid out
+    // A segmentation that finds nothing has said nothing: you still spell the grid out
     // cell by cell, and you paid a position for the privilege. Never the cheap
     // answer, because it is over 1 by construction.
     if (objects.empty()) return (plain + place_bits) / plain;
@@ -1212,7 +1199,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         // where it came from and a set where it landed. 045e512c's key shape has
         // no twin of its own — its copies are all on the other side — and asking
         // only its own grid refused every one of them.
-        // The block cuts do not come through here: a grid of blocks says where
+        // The block segmentation methods do not come through here: a grid of blocks says where
         // every copy sits, so a block cut short by the wall is already placed.
         if (match.translate)
             keep_positional(
@@ -1753,13 +1740,13 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
     }
 }
 
-// The step to cut on, when the sizes name one: one side a whole number of the
+// The step to segment on, when the sizes name one: one side a whole number of the
 // other across and down, by the SAME count in every pair, and actually bigger.
 // Then the small side is one block and the big side is a grid of them. WHICH
 // side is small is not fixed — a grid tiled out and a tiling read back are
 // the same fact seen from two ends, and a step that only knew how to grow would
 // have nothing to say about the second. 0,0 = no step, so the repeating_step
-// split has nothing to offer and loses on its own.
+// segmentation method has nothing to offer and loses on its own.
 inline pair<int, int> repeating_step_of(const vector<example>& train) {
     if (train.empty()) return { 0, 0 };
     // The block is whichever side is smaller, decided once on the first pair
@@ -1787,7 +1774,7 @@ inline pair<int, int> repeating_step_of(const vector<example>& train) {
 // across it, and of rows that repeats down it. A grid that repeats nothing gets
 // back its own width and height. Grid needs width, height, and data[row][col].
 // Single home of the recipe: the Pattern op reads the unit by it and inference
-// cuts by it (split_kind::repeating_motif), so the two can never read a
+// segments by it (segmentation_method::repeating_motif), so the two can never read a
 // different period off the same grid.
 // `background` is don't care one way round only: a colored cell must be what the
 // block puts there, a background cell where the block has a color is forgiven.
@@ -1829,7 +1816,7 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     height = smallest_period(g.height, false);
 }
 
-// The block one pair is cut on under this cut. ONE BLOCK FOR THE PAIR — not for
+// The block size used to segment one pair with this method. ONE BLOCK FOR THE PAIR — not for
 // a side. Objects of different size cannot correspond, so the two grids must come
 // apart on the same block; and a reading that runs both ways round would have
 // the two directions cutting differently the moment the block was measured on
@@ -1837,7 +1824,7 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
 //
 // WHICH grid it is measured on is itself a question for the looking: measure on
 // each, keep whichever describes its own grid more cheaply. A noisy grid and
-// its clean counterpart both get cut on the clean one's block, which is the
+// its clean counterpart are both segmented on the clean one's block, which is the
 // whole reason a denoise puzzle reads at all.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
 inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
@@ -1866,8 +1853,8 @@ inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
 // risk, not a settled thing. If Pattern ever reads a motif nobody believes,
 // this is the first place to look.
 inline pair<int, int> block_of(const grid& input, const grid& output, int8_t background,
-                               split_kind cut_kind, int sizes_width, int sizes_height) {
-    if (cut_kind != split_kind::repeating_motif)
+                               segmentation_method segmentation, int sizes_width, int sizes_height) {
+    if (segmentation != segmentation_method::repeating_motif)
         return { sizes_width, sizes_height };
     const auto from_input =
         block_measured_on(input, background, sizes_width, sizes_height);
@@ -1877,7 +1864,7 @@ inline pair<int, int> block_of(const grid& input, const grid& output, int8_t bac
     // cheaper block is the one that found real repetition rather than noise.
     auto cost_of = [&](const grid& one_grid, pair<int, int> block) {
         vector<correspondence_facts::object_info> objects;
-        segment_for_correspondence(one_grid, background, cut_kind, objects, nullptr,
+        segment_for_correspondence(one_grid, background, segmentation, objects, nullptr,
                                    block.first, block.second);
         return describe_cost(one_grid, background, objects);
     };
@@ -1888,7 +1875,7 @@ inline pair<int, int> block_of(const grid& input, const grid& output, int8_t bac
 // THE DETECTOR · the one pass that reads all of the above off the train pairs.
 
 
-// Fills correspondence_facts: cut both sides of each train pair ONCE, then read
+// Fills correspondence_facts: segment both sides of each train pair ONCE, then read
 // the correspondence BOTH WAYS ROUND and keep the edges of both. No same-size
 // gate: every edge source works across any output size.
 //
@@ -1899,17 +1886,17 @@ inline pair<int, int> block_of(const grid& input, const grid& output, int8_t bac
 // Story in notes/1 - Overall Design/Inference Master.md, sections 3d-3e.
 inline correspondence_facts detect_correspondence(const vector<example>& train,
                                                   int8_t background,
-                                                  split_kind cut_kind,
+                                                  segmentation_method segmentation,
                                                   match_mode match = {}) {
     correspondence_facts facts;
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
     if (train.empty()) return facts;
     facts.pairs.resize(train.size());
-    facts.cut_kind = cut_kind;
+    facts.segmentation = segmentation;
 
     // The glyphs are wanted twice — once to match on, and again to read the
     // numbers off after the pairs have been set beside one another — so they
-    // are cut once and kept.
+    // are segmented once and kept.
     vector<vector<grid>> input_glyphs_of(train.size()), output_glyphs_of(train.size());
 
     auto pair_was_read = [&](size_t which) {
@@ -1921,8 +1908,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     // HANGING OFF THE EDGE IS NOT WHAT SEPARATES THEM — every reading may do
     // that now, because a wall cutting a copy in half is a fact about the grid
     // and not about the object.
-    const bool pattern_reading = (cut_kind == split_kind::repeating_motif ||
-                                  cut_kind == split_kind::repeating_step);
+    const bool pattern_reading = (segmentation == segmentation_method::repeating_motif ||
+                                  segmentation == segmentation_method::repeating_step);
     vector<int> step_width_of(train.size(), 0), step_height_of(train.size(), 0);
 
     // THE CUTTING, ONCE. The objects owe nothing to what any other pair said, so
@@ -1937,22 +1924,22 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         // off the same objects — measured per direction the two would disagree
         // about what an object is, and their edges could not be put in one list.
         const auto [step_width, step_height] = block_of(input, output, background,
-                                                        cut_kind, sizes_step_width,
+                                                        segmentation, sizes_step_width,
                                                         sizes_step_height);
         vector<grid>& input_glyphs = input_glyphs_of[pair_index];
         vector<grid>& output_glyphs = output_glyphs_of[pair_index];
-        segment_for_correspondence(input, background, cut_kind, pair.input_objects,
+        segment_for_correspondence(input, background, segmentation, pair.input_objects,
                                    &input_glyphs, step_width, step_height);
-        segment_for_correspondence(output, background, cut_kind, pair.output_objects,
+        segment_for_correspondence(output, background, segmentation, pair.output_objects,
                                    &output_glyphs, step_width, step_height);
         // Which objects are copies of one another, and which speaks for each
         // set. Here, where the cells still exist — a shape hash and a cell count
         // cannot tell one block from another, and downstream that is all there
         // is left of them.
-        const bool one_set_for_the_grid = (cut_kind == split_kind::repeating_motif);
+        const bool one_set_for_the_grid = (segmentation == segmentation_method::repeating_motif);
         find_copies(pair.input_objects, input_glyphs, one_set_for_the_grid);
         find_copies(pair.output_objects, output_glyphs, one_set_for_the_grid);
-        // What the cut cost to say, on each grid. The pair is described by both.
+        // What the segmentation cost to say, on each grid. The pair is described by both.
         pair.describe_cost =
             0.5 * (describe_cost(input, background, pair.input_objects) +
                    describe_cost(output, background, pair.output_objects));
@@ -2046,7 +2033,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         pair.edges.swap(kept);
 
         // IN THE ORDER THE SCREEN READS: the input grid first, then down it.
-        // WHERE AN OBJECT SITS, not its place in the cut — the cut is biggest
+        // WHERE AN OBJECT SITS, not its place in the segmentation — the segmentation is biggest
         // first, so walking by place hopped up and down the grid.
         // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
         stable_sort(pair.edges.begin(), pair.edges.end(),
@@ -2373,21 +2360,21 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
 //
 // FIRST GLANCE, at one grid: how does this grid come apart, and which side
 // is worth reading from? Both are questions about the GRIDS, so looking
-// answers them — cut each grid every way and keep the cut that says the most in
+// answers them — segment each grid every way and keep the segmentation that says the most in
 // the least (describe_cost). 14 cheap looks, no matching of any kind.
 //
 // SECOND GLANCE, at the other grid: could the objects I just made even BE over
 // there? An object taller or wider than the other grid can never be found on it,
-// so that cut is dead before it costs anything. Two grid sizes, no search.
+// so that segmentation is dead before it costs anything. Two grid sizes, no search.
 //
 // THEN MATCH, and only then: what an object was ALLOWED TO DO to get where it went
 // is invisible in either grid. So the freedoms alone are searched — 8, for the
-// one cut the glances chose. Among them the old judge stands:
+// one segmentation the glances chose. Among them the old judge stands:
 // fewest cells left unexplained on both grids, fewest objects to break a tie.
 //
 // THEN LOOK AGAIN. A reading that leaves the grid unexplained has said
-// "wrong cut" as loudly as it can, so the glance goes back and takes the next
-// cut down. Only a cut that accounts for the WHOLE pair ends the walk; anything
+// "wrong segmentation" as loudly as it can, so the glance goes back and takes the next
+// segmentation method down. Only a segmentation that accounts for the WHOLE pair ends the walk; anything
 // short of that keeps looking and lets the matching pick between what it found.
 //
 // EVERY READING KEPT WAS MATCHED AND SCORED. There is no second class
@@ -2396,7 +2383,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
 //
 // This is the one name infer() calls from this file; everything above feeds it.
-inline correspondence_facts pick_split(const vector<example>& train, int8_t background) {
+inline correspondence_facts select_segmentation(const vector<example>& train, int8_t background) {
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
 
     // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
@@ -2406,14 +2393,14 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         for (const grid* one : { &train_pair.input, &train_pair.output })
             walk_colored_cells(*one, background, [&](int, int, int) { ++facts_cells; });
 
-    // THE LOOKING. One number per cut, off the grids alone. Scored on BOTH
-    // grids: the cut has to make sense of the pair, and comparing a total taken
+    // THE LOOKING. One number per segmentation, off the grids alone. Scored on BOTH
+    // grids: the segmentation has to make sense of the pair, and comparing a total taken
     // on one grid against a total taken on the other was never a fair
     // question — which is why direction is not decided here, or anywhere.
     vector<correspondence_facts::reading> looks;
-    for (int cut_kind = 0; cut_kind < (int)split_kind::split_count; ++cut_kind) {
+    for (int segmentation = 0; segmentation < (int)segmentation_method::method_count; ++segmentation) {
         correspondence_facts::reading look;
-        look.cut_kind = (split_kind)cut_kind;
+        look.segmentation = (segmentation_method)segmentation;
         double shares = 0.0;
         int counted = 0;
         for (const auto& train_pair : train) {
@@ -2422,25 +2409,25 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
             if (input.width <= 0 || input.height <= 0 ||
                 output.width <= 0 || output.height <= 0) continue;
             const auto [step_width, step_height] =
-                block_of(input, output, background, look.cut_kind,
+                block_of(input, output, background, look.segmentation,
                          sizes_step_width, sizes_step_height);
             vector<correspondence_facts::object_info> input_objects, output_objects;
-            segment_for_correspondence(input, background, look.cut_kind, input_objects,
+            segment_for_correspondence(input, background, look.segmentation, input_objects,
                                        nullptr, step_width, step_height);
-            segment_for_correspondence(output, background, look.cut_kind, output_objects,
+            segment_for_correspondence(output, background, look.segmentation, output_objects,
                                        nullptr, step_width, step_height);
             shares += 0.5 * (describe_cost(input, background, input_objects) +
                              describe_cost(output, background, output_objects));
             ++counted;
             look.objects_found += (int)(input_objects.size() + output_objects.size());
             // THE SECOND GLANCE, at the grid the objects would have to turn up
-            // on. One that fits somewhere is all this asks for — a cut where not
+            // on. One that fits somewhere is all this asks for — a segmentation where not
             // one object could sit on the other grid cannot match, and no amount
             // of freedom rescues it. Asked both ways, because both are read.
             // IT IS NOW STRICTER THAN THE MATCHING IT GUARDS, and here is what
             // it would cost: a pair whose grids are a turn of each other, say a
             // 10-wide 2-tall input against a 2-wide 10-tall output. Neither
-            // object fits the other grid as it sits, so the cut is killed here —
+            // object fits the other grid as it sits, so the segmentation is killed here —
             // and yet a quarter turn lands it exactly, which is the whole answer
             // to that puzzle. This asks about the object as it sits, while the
             // matching may turn it and may hang it off the edge.
@@ -2459,8 +2446,8 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         looks.push_back(look);
     }
     // Cheapest look first, but everything the second glance killed sinks to the
-    // bottom — still there, because a dead cut is the only honest answer when
-    // every cut is dead.
+    // bottom — still there, because a dead segmentation is the only honest answer when
+    // every segmentation is dead.
     stable_sort(looks.begin(), looks.end(),
                 [](const correspondence_facts::reading& left,
                    const correspondence_facts::reading& right) {
@@ -2468,9 +2455,9 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         return left.describe_cost < right.describe_cost;
     });
 
-    // THE MATCHING, and going back round. One pass = one cut's eight freedoms.
-    // A pass that found nothing is the signal to take the next cut, so the walk
-    // stops the moment a cut actually says something.
+    // THE MATCHING, and going back round. One pass = one segmentation's eight freedoms.
+    // A pass that found nothing is the signal to take the next segmentation, so the walk
+    // stops the moment a segmentation actually says something.
     // A reading and the pairs it was scored from, kept together so nothing has
     // to be read a second time to get at the edges.
     struct scored_reading {
@@ -2482,9 +2469,9 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         for (int match_kind = 0; match_kind < match_mode::COUNT; ++match_kind) {
             const match_mode match = match_mode::from_index(match_kind);
             correspondence_facts tried = detect_correspondence(
-                train, background, look.cut_kind, match);
+                train, background, look.segmentation, match);
             correspondence_facts::reading scored;
-            scored.cut_kind = look.cut_kind;
+            scored.segmentation = look.segmentation;
             scored.match_kind = match;
             scored.objects_can_fit = look.objects_can_fit;
             double shares = 0.0;
@@ -2532,16 +2519,16 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     for (const auto& look : looks) passes.push_back(search_one(look));
 
     // WHAT A READING FAILS TO EXPLAIN, IT STILL HAS TO SPELL OUT. So there is
-    // ONE number and not two keys: what the cut costs to say, plus a plain
+    // ONE number and not two keys: what the segmentation costs to say, plus a plain
     // cell's price for every cell it could not account for.
     //
     // TWO KEYS ALWAYS BREAK, whichever goes first, because the winner is then
-    // whoever ignores the other one. Fewest left over first: cut into single
+    // whoever ignores the other one. Fewest left over first: segment into single
     // cells and every cell finds a cell, so nothing is ever left over and a
-    // reading twice as long as the grid wins. Cheapest to say first: a cut that
+    // reading twice as long as the grid wins. Cheapest to say first: a segmentation that
     // explains almost nothing wins by being a few percent cheaper to describe.
     // Priced together neither trick pays. The flood pays for its words, and the
-    // silent cut pays for its silence.
+    // silent segmentation pays for its silence.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     //
     // A MARGIN, because these are ratios and two readings that cost the same
@@ -2563,7 +2550,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // that had already learned the map, and the search spent 4.3 seconds
     // finding a word inference was holding.
     // At half, both readings behave. The drawn half is not called a failure,
-    // and no cut can buy a cheaper description by drawing more out of thin air.
+    // and no segmentation can buy a cheaper description by drawing more out of thin air.
     const double half_said = 0.5;
     auto price_of = [&](const correspondence_facts::reading& one) {
         const double unsaid = (one.left_over - one.made - one.gone)
@@ -2583,7 +2570,7 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
         }
     }
 
-    // KEPT IN THE ORDER THE TABLE IS DRAWN, one row per cut and one column per
+    // KEPT IN THE ORDER THE TABLE IS DRAWN, one row per segmentation and one column per
     // freedom, so a reading's place IS its cell. Score order put the winner
     // first and everything after it in an order nothing on screen shows, so
     // stepping the pane hopped about a table sitting right there. Which one won
@@ -2591,11 +2578,11 @@ inline correspondence_facts pick_split(const vector<example>& train, int8_t back
     // winner's pairs are the ones the election already had.
     correspondence_facts facts;
     facts.cells = facts_cells;
-    facts.cut_kind = passes[elected].front().summary.cut_kind;
+    facts.segmentation = passes[elected].front().summary.segmentation;
     auto cell_of = [](const correspondence_facts::reading& one) {
-        return (int)one.cut_kind * match_mode::COUNT + one.match_kind.index();
+        return (int)one.segmentation * match_mode::COUNT + one.match_kind.index();
     };
-    facts.readings.resize((int)split_kind::split_count * match_mode::COUNT);
+    facts.readings.resize((int)segmentation_method::method_count * match_mode::COUNT);
     facts.reading_pairs.resize(facts.readings.size());
     for (auto& pass : passes)
         for (auto& one : pass) {

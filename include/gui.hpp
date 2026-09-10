@@ -1239,7 +1239,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // column and the value field are fixed widths that don't depend on what they
       // say, so every control begins at the same place and none of them moves. The
       // value field holds only "WHICH OF HOW MANY", the widest of which is a track
-      // saying OFF or ALL of some hundreds. What the split IS gets a line of its
+      // saying OFF or ALL of some hundreds. What the segmentation IS gets a line of its
       // own below, because saying it properly takes a sentence and a sentence
       // would push every control off the panel.
       const int value_chars = (int)string("OFF OF 9999").size();
@@ -1302,7 +1302,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
 
       // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
       // nothing above this one to part it from.
-      // Which reading of the split is on screen, and how many there are. THE
+      // Which reading of the segmentation is on screen, and how many there are. THE
       // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
       // along that table and never a jump off it.
       // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
@@ -1351,9 +1351,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // WHICH READING THIS IS, in words. The table below says it too, but only by
       // where the boxed cell sits, and hunting for it is work the reader should
       // not have to do to know what is on screen.
-      detail(to_text("%s %s  ---  %s", split_names_lead,
-                     split_names[clamp((int)R.cut_kind, 0,
-                                       (int)split_kind::split_count - 1)],
+      detail(to_text("%s %s  ---  %s", segmentation_names_lead,
+                     segmentation_names[clamp((int)R.segmentation, 0,
+                                       (int)segmentation_method::method_count - 1)],
                      R.match_kind.label().c_str()));
       static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
       // The pieces the reading cut out, and the matches it threw away. Neither is
@@ -1507,7 +1507,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // What this reading COST, the whole reason it leads or trails: pieces it
       // used and output cells no edge of any kind accounts for, over the train
       // set. Without it the coarseness steps are unnamed preferences.
-      // EVERY READING AT ONCE: how the grid was cut and which way round down
+      // EVERY READING AT ONCE: how the grid was segmented and which way round down
       // the side, what the pieces were allowed to do across the top. Stepping
       // them one at a time never says how they relate — the table says it in one
       // look, and the number in a cell is what that correspondence could not
@@ -1515,30 +1515,30 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // read for them without being told.
       divide();
       {
-        const int cuts = (int)split_kind::split_count;
+        const int segmentation_methods = (int)segmentation_method::method_count;
         // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
         // edge became one of them, and sixteen columns ran off the panel and off
         // the screen. So the table says the other three across the top, as it
-        // always did, and says this one by drawing the whole block of cuts twice:
+        // always did, and says this one by drawing the whole block of segmentation methods twice:
         // once for pieces that must stay on the grid, once for pieces that may
         // hang off it. Same reading in the same place either way — a cell is
         // still its reading's own cell, the block just says which half it is in.
         const int modes = match_mode::COUNT / 2;
         // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
-        // cut and one column per freedom, so a cell knows which reading it stands
+        // segmentation method and one column per freedom, so a cell knows which reading it stands
         // for without anything having to be looked up — and stepping the reading
         // walks the table you are looking at.
         // A ROW IS NAMED BY WHAT IT COST TO LOOK AT, because that is what decided
         // whether it got searched at all. Said in the label, not in a column of
         // its own: it is one number per row, and a column would repeat it eight
         // times as though the freedoms changed it.
-        // NO COST COLUMN. What a cut costs to say orders the walk and breaks a
-        // dead tie, and nothing else — the rows here are in cut order, not cost
+        // NO COST COLUMN. What a segmentation costs to say orders the walk and breaks a
+        // dead tie, and nothing else — the rows here are in segmentation method order, not cost
         // order, so a number beside them read as a ranking that ranks nothing.
         // It is still in the log, where a diagnostic belongs.
-        int label_w = text_w(split_names_lead, scale);
-        for (int c = 0; c < cuts; ++c)
-          label_w = max(label_w, text_w(split_names[c], scale));
+        int label_w = text_w(segmentation_names_lead, scale);
+        for (int c = 0; c < segmentation_methods; ++c)
+          label_w = max(label_w, text_w(segmentation_names[c], scale));
         // EVERY CELL IS THE SAME BOX, as wide as the widest thing a column ever
         // holds — a freedom's name, or the biggest number. Cut to its own text a
         // single digit read as a smaller thing than three, and the boxes down a
@@ -1595,7 +1595,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         for (int freedom = 0; freedom < across; ++freedom) {
           // On the last line, so it sits against the sentences it names.
           if (freedom == across - 1)
-            centred(split_names_lead, tx, label_w);
+            centred(segmentation_names_lead, tx, label_w);
           for (int m = 0; m < modes; ++m)
             column_chip(match_mode::from_index(m).may(freedom)
                             ? match_mode::freedom_names[freedom] : "-", m, true);
@@ -1610,8 +1610,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
             centred(match_mode::freedom_names[across], cell_x(0), modes * cell_w);
             ty += row_h;
           }
-          for (int c = 0; c < cuts; ++c) {
-            label_chip(split_names[c], ty);
+          for (int c = 0; c < segmentation_methods; ++c) {
+            label_chip(segmentation_names[c], ty);
             for (int m = 0; m < modes; ++m) {
               const int i = c * match_mode::COUNT + m + half * modes;
               if (i >= readings) continue;

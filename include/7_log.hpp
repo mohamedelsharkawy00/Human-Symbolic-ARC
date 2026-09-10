@@ -156,16 +156,16 @@ inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
 // and still differ here.
 inline void report_correspondence_readings(ostream& report, const correspondence_facts& correspondence) {
     report << "[correspondence] valid " << correspondence.valid
-      << "  split " << split_name((int)correspondence.cut_kind) << "\n";
+      << "  segmentation " << segmentation_name((int)correspondence.segmentation) << "\n";
     // Which readings were actually in the election. Everything else below was
-    // run for the table and never competed — see pick_split.
+    // run for the table and never competed — see select_segmentation.
     report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
               " competed and are shown only so the table can be read\n";
     for (size_t i = 0; i < correspondence.readings.size(); ++i) {
         const auto& reading = correspondence.readings[i];
         report << "  reading " << i
           << "  says it in " << (int)(reading.describe_cost * 100.0 + 0.5)
-          << "% of plain  cut into " << reading.objects_found;
+          << "% of plain  segmented into " << reading.objects_found;
         report << ", used " << reading.objects_used
           << " (" << reading.exact << " exact, " << reading.recolored << " recolored, "
           << reading.sits_on << " sits on), " << reading.made << " made, "
@@ -173,7 +173,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
           << (reading.left_over - reading.made - reading.gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
         if (!reading.objects_can_fit) report << "  (no object fits the other grid)";
-        report << "   " << split_name((int)reading.cut_kind)
+        report << "   " << segmentation_name((int)reading.segmentation)
           << "  [" << reading.match_kind.label() << "]";
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
@@ -205,7 +205,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
         if (ranges::all_of(pairs, [](const auto& pair) {
                 return pair.agreed_moves.empty(); })) continue;
         report << "  reading " << i << " moved together   "
-          << split_name((int)correspondence.readings[i].cut_kind)
+          << segmentation_name((int)correspondence.readings[i].segmentation)
           << "  [" << correspondence.readings[i].match_kind.label() << "]\n";
         for (size_t which = 0; which < pairs.size(); ++which) {
             report << "    pair " << which << " read pose " << (int)pairs[which].pose;
@@ -221,7 +221,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
 }
 
 // WHAT EACH READING ACTUALLY CUT AND WHERE EACH PIECE WENT, every reading, both
-// sides. The numbers above can agree while the cuts disagree, and only the
+// sides. The numbers above can agree while the segmentation methods disagree, and only the
 // pieces say how; and a reading that leaves a cell over is only readable next
 // to the edges it did draw. Read straight off the readings -- it used to be
 // handed a screen-shaped copy of them, and could only say what that copy kept.
@@ -229,7 +229,7 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
     const char* newline = "\n";
     for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
         report << "  reading " << i << " pieces   "
-          << split_name((int)correspondence.readings[i].cut_kind)
+          << segmentation_name((int)correspondence.readings[i].segmentation)
           << "  [" << correspondence.readings[i].match_kind.label() << "]" << newline;
         const auto& pairs = correspondence.reading_pairs[i];
         for (size_t which = 0; which < pairs.size(); ++which)
