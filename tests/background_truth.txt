@@ -96,7 +96,7 @@
 # dips to 49.5% beside a big magenta region. TWO FIXES: pair confidence also
 # accepts holding-the-figures (local embeds >= 500), and the embeds sea test
 # treats a FRAMED canvas (off the border but within one cell of every side)
-# as sea, not as a figure sitting on its own blobs.
+# as sea, not as a figure sitting on its own objects.
 5b37cb25  per-pair:1,4  none
 
 # TEXTURE ground: the canvas is a repeating multicolor pattern (no single

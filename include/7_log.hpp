@@ -165,14 +165,14 @@ inline void report_correspondence_readings(ostream& report, const correspondence
         const auto& reading = correspondence.readings[i];
         report << "  reading " << i
           << "  says it in " << (int)(reading.describe_cost * 100.0 + 0.5)
-          << "% of plain  cut into " << reading.pieces_found;
-        report << ", used " << reading.pieces_used
+          << "% of plain  cut into " << reading.objects_found;
+        report << ", used " << reading.objects_used
           << " (" << reading.exact << " exact, " << reading.recolored << " recolored, "
           << reading.sits_on << " sits on), " << reading.made << " made, "
           << reading.gone << " gone, "
           << (reading.left_over - reading.made - reading.gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
-        if (!reading.pieces_can_fit) report << "  (no piece fits the other grid)";
+        if (!reading.objects_can_fit) report << "  (no object fits the other grid)";
         report << "   " << split_name((int)reading.cut_kind)
           << "  [" << reading.match_kind.label() << "]";
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
@@ -211,7 +211,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
             report << "    pair " << which << " read pose " << (int)pairs[which].pose;
             for (const auto& agreed : pairs[which].agreed_moves) {
                 report << "   down " << (int)agreed.down << " across " << (int)agreed.across
-                  << " said by " << agreed.pieces;
+                  << " said by " << agreed.objects;
                 if (agreed.color >= 0) report << " all color " << (int)agreed.color;
                 else                   report << " mixed colors";
             }

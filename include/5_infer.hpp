@@ -11,7 +11,7 @@
 //   SIZE            what decides the output's width and height
 //   COLORS          which colors appear where, and in what order
 //   BACKGROUND      which color the figures sit on, elected per side
-//   CORRESPONDENCE  where each piece went, and how to cut the grid up
+//   CORRESPONDENCE  where each object went, and how to cut the grid up
 //   UNCHANGED       how much of the input survives untouched   ┐ only when
 //   COLOR DIFF      which cells each color gained and lost     │ input and
 //   COLOR SWAP      whether part of the change is two trading  │ output
@@ -316,9 +316,9 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
 
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    // Zeroed once here, then the used prefix is reset per blob below. The reset
+    // Zeroed once here, then the used prefix is reset per object below. The reset
     // is what the code relies on; this only says so where a reader starts.
-    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};  // blob footprint over its box
+    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};  // object footprint over its box
     bool outside[MAX_GRID_DIM * MAX_GRID_DIM] = {};   // box cells reachable from the rim
 
     for (const auto& ex : train) {
@@ -334,12 +334,12 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
                 visited[start_row][start_col] = true; continue;
             }
 
-            // One blob: same-color cells that touch, corners counting (this is
+            // One object: same-color cells that touch, corners counting (this is
             // what the device's gpu_flood_fill does too).
             queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
             visited[start_row][start_col] = true;
             int left = start_col, top = start_row, right = start_col, bottom = start_row;
-            const int blob_size = walk_out(in.height, in.width, queue_row, queue_col, 1,
+            const int object_size = walk_out(in.height, in.width, queue_row, queue_col, 1,
                 [&](int next_row, int next_col) {
                     if (visited[next_row][next_col] ||
                         in.data[next_row][next_col] != color) return false;
@@ -352,7 +352,7 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
             const int width = right - left + 1, height = bottom - top + 1;
 
             for (int i = 0; i < width * height; ++i) { occupied[i] = false; outside[i] = false; }
-            for (int i = 0; i < blob_size; ++i)
+            for (int i = 0; i < object_size; ++i)
                 occupied[(queue_row[i] - top) * width + (queue_col[i] - left)] = true;
 
             // Outside = empty cells you can reach from the box's rim without
@@ -394,8 +394,8 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
             }
             if (!any_painted) continue;                            // nothing painted -> skip
 
-            uint32_t blob_shape = shape_occupancy_hash(width, height, occupied);
-            if (!learn_shape_color(rule, blob_shape, (int8_t)fill)) return rule;
+            uint32_t object_shape = shape_occupancy_hash(width, height, occupied);
+            if (!learn_shape_color(rule, object_shape, (int8_t)fill)) return rule;
         }
     }
     rule.valid = (rule.count > 0);

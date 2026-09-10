@@ -93,11 +93,11 @@ def download_tasks():
     """Return {"training": {id: task}, "evaluation": {id: task}} from the zip."""
     print(f"[*] Downloading {ARCHIVE}")
     with urllib.request.urlopen(ARCHIVE) as response:
-        blob = response.read()
-    print(f"[*] Got {len(blob) / 1024 / 1024:.1f} MB, reading tasks")
+        downloaded = response.read()
+    print(f"[*] Got {len(downloaded) / 1024 / 1024:.1f} MB, reading tasks")
 
     splits = {"training": {}, "evaluation": {}}
-    with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+    with zipfile.ZipFile(io.BytesIO(downloaded)) as archive:
         for entry in archive.namelist():
             parts = entry.split("/")
             # <repo>-main/data/<split>/<task_id>.json

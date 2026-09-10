@@ -265,10 +265,10 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     evidence.grid_count++;
 }
 
-// The pieces of one grid — same-color cells that touch, corners counting —
+// The objects of one grid — same-color cells that touch, corners counting —
 // labelled once (the same walk gpu_flood_fill does). `cells` holds every
-// piece's cells, piece by piece, with first_cell naming where each starts.
-struct blob_map {
+// object's cells, object by object, with first_cell naming where each starts.
+struct object_map {
     int16_t id[MAX_GRID_DIM][MAX_GRID_DIM];
     vector<int> color, size, first_cell;
     vector<char> on_border;
@@ -276,59 +276,61 @@ struct blob_map {
     int count() const { return (int)color.size(); }
 };
 
-inline blob_map label_blobs(const grid& one_grid) {
-    blob_map blobs;
+inline object_map label_objects(const grid& one_grid) {
+    object_map objects;
     for (int row = 0; row < one_grid.height; ++row)
-        for (int col = 0; col < one_grid.width; ++col) blobs.id[row][col] = -1;
+        for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     walk_colored_cells(one_grid, TRANSPARENT, [&](int start_row, int start_col, int color) {
-        if (blobs.id[start_row][start_col] >= 0) return;
-        int16_t id = (int16_t)blobs.color.size();
+        if (objects.id[start_row][start_col] >= 0) return;
+        int16_t id = (int16_t)objects.color.size();
         queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
-        blobs.id[start_row][start_col] = id;
+        objects.id[start_row][start_col] = id;
         bool on_border = false;
-        int first_cell = (int)blobs.cells.size();
+        int first_cell = (int)objects.cells.size();
         const int size = walk_out(one_grid.height, one_grid.width, queue_row, queue_col, 1,
             [&](int next_row, int next_col) {
-                if (blobs.id[next_row][next_col] >= 0 ||
+                if (objects.id[next_row][next_col] >= 0 ||
                     one_grid.data[next_row][next_col] != color) return false;
-                blobs.id[next_row][next_col] = id; return true;
+                objects.id[next_row][next_col] = id; return true;
             },
             [&](int row, int col) {
-                blobs.cells.push_back({ (int8_t)row, (int8_t)col });
+                objects.cells.push_back({ (int8_t)row, (int8_t)col });
                 if (row == 0 || row == one_grid.height - 1 ||
                     col == 0 || col == one_grid.width - 1)
                     on_border = true;
             });
-        blobs.color.push_back(color); blobs.size.push_back(size);
-        blobs.first_cell.push_back(first_cell); blobs.on_border.push_back(on_border);
+        objects.color.push_back(color); objects.size.push_back(size);
+        objects.first_cell.push_back(first_cell); objects.on_border.push_back(on_border);
     });
-    return blobs;
+    return objects;
 }
 
 // STAGE 2 — each figure votes for the color it sits in, weighted by its own
-// cells. FIGURE = a blob whose outer contour is majority-owned by ONE other
-// blob; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
+// cells. FIGURE = an object whose outer contour is majority-owned by ONE other
+// object; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
 inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               background_evidence& evidence) {
-    const blob_map blobs = label_blobs(one_grid);
+    const object_map objects = label_objects(one_grid);
     int figure_area = 0, embedded_area[COLOR_COUNT] = {};
-    int blobs_of_color[COLOR_COUNT] = {}, backdrop_blobs_of_color[COLOR_COUNT] = {};
+    int objects_of_color[COLOR_COUNT] = {}, backdrop_objects_of_color[COLOR_COUNT] = {};
 
     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    // One vote box per blob, indexed by the blob's own id — no lookup table to
+    // One vote box per object, indexed by the object's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
-    // boxes this blob touched, so clearing costs what was used, not all of them.
-    vector<int> votes(blobs.count(), 0);
+    // boxes this object touched, so clearing costs what was used, not all of them.
+    vector<int> votes(objects.count(), 0);
     vector<int> voted;
-    for (int blob = 0; blob < blobs.count(); ++blob) {
-        blobs_of_color[blobs.color[blob]]++;
-        if (blobs.on_border[blob]) { backdrop_blobs_of_color[blobs.color[blob]]++; continue; }
+    for (int this_object = 0; this_object < objects.count(); ++this_object) {
+        objects_of_color[objects.color[this_object]]++;
+        if (objects.on_border[this_object]) {
+            backdrop_objects_of_color[objects.color[this_object]]++; continue;
+        }
         // Flood "outside" = everything reachable from the border without
-        // entering this blob
+        // entering this object
         for (int row = 0; row < one_grid.height; ++row)
             for (int col = 0; col < one_grid.width; ++col) outside[row][col] = false;
         int seeded = 0;
@@ -336,36 +338,36 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
             for (int col = 0; col < one_grid.width; ++col) {
                 if (row != 0 && row != one_grid.height - 1 &&
                     col != 0 && col != one_grid.width - 1) continue;
-                if (blobs.id[row][col] == blob || outside[row][col]) continue;
+                if (objects.id[row][col] == this_object || outside[row][col]) continue;
                 outside[row][col] = true;
                 queue_row[seeded] = (int16_t)row; queue_col[seeded] = (int16_t)col; seeded++;
             }
         walk_out(one_grid.height, one_grid.width, queue_row, queue_col, seeded,
             [&](int next_row, int next_col) {
                 if (outside[next_row][next_col] ||
-                    blobs.id[next_row][next_col] == blob) return false;
+                    objects.id[next_row][next_col] == this_object) return false;
                 outside[next_row][next_col] = true; return true;
             },
             [](int, int) {});
-        // Outer contour = the outside cells directly beside this blob (edges
+        // Outer contour = the outside cells directly beside this object (edges
         // only, not corners). Every such cell
-        // votes for the blob it belongs to; a majority makes this a figure
-        // sitting in that blob.
+        // votes for the object it belongs to; a majority makes this a figure
+        // sitting in that object.
         int contour_votes_total = 0;
         voted.clear();
-        for (int nth = 0; nth < blobs.size[blob]; ++nth) {
-            int row = blobs.cells[blobs.first_cell[blob] + nth].first;
-            int col = blobs.cells[blobs.first_cell[blob] + nth].second;
+        for (int nth = 0; nth < objects.size[this_object]; ++nth) {
+            int row = objects.cells[objects.first_cell[this_object] + nth].first;
+            int col = objects.cells[objects.first_cell[this_object] + nth].second;
             for (int dir = 0; dir < 4; ++dir) {
                 int next_row = row + neighbour_row_4(dir);
                 int next_col = col + neighbour_col_4(dir);
                 if (next_row < 0 || next_row >= one_grid.height ||
                     next_col < 0 || next_col >= one_grid.width) continue;
                 if (!outside[next_row][next_col]) continue;
-                int owner_blob = blobs.id[next_row][next_col];
-                if (owner_blob < 0) continue;
-                if (votes[owner_blob] == 0) voted.push_back(owner_blob);
-                votes[owner_blob]++;
+                int owner_object = objects.id[next_row][next_col];
+                if (owner_object < 0) continue;
+                if (votes[owner_object] == 0) voted.push_back(owner_object);
+                votes[owner_object]++;
                 contour_votes_total++;
             }
         }
@@ -374,17 +376,17 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
             if (votes[owner] > best_votes) { best_votes = votes[owner]; best_owner = owner; }
         for (int owner : voted) votes[owner] = 0;
         bool is_figure = best_owner >= 0 && best_votes * 2 > contour_votes_total;
-        if (!is_figure) { backdrop_blobs_of_color[blobs.color[blob]]++; continue; }
-        figure_area += blobs.size[blob];
-        embedded_area[blobs.color[best_owner]] += blobs.size[blob];
+        if (!is_figure) { backdrop_objects_of_color[objects.color[this_object]]++; continue; }
+        figure_area += objects.size[this_object];
+        embedded_area[objects.color[best_owner]] += objects.size[this_object];
     }
     for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.embeds[i] = min(evidence.embeds[i],
                                  figure_area ? embedded_area[i] * 1000 / figure_area : 0);
 
     // UNDERNEATH for this grid: quietest color present, and only enclosed
-    // windows (>= 2 blobs, none touching the border). One enclosed blob is an
-    // object; many windows are the ground showing through.
+    // windows (>= 2 objects, none touching the border). One enclosed object is
+    // just an object; many windows are the ground showing through.
     int quietest = -1;
     for (int i = 0; i < COLOR_COUNT; ++i)
         if (cells_of_color[i] > 0 &&
@@ -392,7 +394,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
             quietest = i;
     for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.only_windows[i] = evidence.only_windows[i] && i == quietest &&
-                                   blobs_of_color[i] >= 2 && backdrop_blobs_of_color[i] == 0;
+                                   objects_of_color[i] >= 2 && backdrop_objects_of_color[i] == 0;
 }
 
 // STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The

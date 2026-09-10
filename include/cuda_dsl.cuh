@@ -484,7 +484,7 @@ struct dsl_pieces {
 };
 
 // Run ONE op over each grid and hand back the pieces it made. `variant` is the
-// op's annotation (Split's depth: 0 blob with colors mixed, 1 blob of one
+// op's annotation (Split's depth: 0 object with colors mixed, 1 object of one
 // color, 2 single pixels); ignored by ops that take none. The op itself is
 // untouched — this runs it through the same evaluator the solver uses.
 #if !defined(ARC_ENABLE_CUDA_PIECES) || ARC_ENABLE_CUDA_PIECES

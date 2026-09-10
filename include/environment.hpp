@@ -263,7 +263,7 @@ namespace arc {
 	// N,M ≤ MAX_TARGET_OBJECTS — fine.
 	//
 	// Known limitation: shape match is exact on (w,h,count). A near-miss CC
-	// (e.g. a 2x3 blob where the target is 3x3) earns 0 shape/position
+	// (e.g. a 2x3 object where the target is 3x3) earns 0 shape/position
 	// reward and the score collapses back to the per-pixel terms. That's why
 	// the pre-CC-term score function happily settled on outputs like puzzle
 	// 09629e4f's wide-rectangle near-miss: right colors + right approximate
@@ -271,7 +271,7 @@ namespace arc {
 	// correct shape was several pixel-edits away through a per-pixel-penalty
 	// valley. Loosening this to a fuzzy shape match (e.g. IoU-style) would
 	// extend the gradient to these near-misses but risks rewarding "right
-	// colors in any blob" — out of scope here; the score reflects the strict
+	// colors in any object" — out of scope here; the score reflects the strict
 	// "same shape exists" semantics by design.
 	struct cc_match_result {
 		int shape_matches = 0;

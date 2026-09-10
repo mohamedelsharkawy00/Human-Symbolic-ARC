@@ -189,7 +189,7 @@ struct gpu_take_object {
         if (out->count >= GPU_KERNEL_MAX_OBJECTS) return;
         gpu_fixed_object& obj = out->objects[out->count++];
         // Keep the full grid frame; segmentation never tightens (Trim is the only
-        // shrinker). The blob's cells sit at their grid position, rest transparent
+        // shrinker). The object's cells sit at their grid position, rest transparent
         // -- which is box-local too, the box just being the whole grid.
         obj.x0 = 0; obj.y0 = 0;
         obj.x1 = (int16_t)(g->width - 1); obj.y1 = (int16_t)(g->height - 1);
@@ -337,8 +337,8 @@ __device__ gpu_object_list& gpu_exec_output(gpu_exec_context& ctx) {
 
 __device__ gpu_object_list& gpu_exec_seeds(gpu_exec_context& ctx) { return ctx.seed_objs; }
 
-// Split[depth]: segmentation depth, coarse to fine. [0] = connected blob,
-// colors mixed. [1] = connected blob of one color. [2] = single pixels.
+// Split[depth]: segmentation depth, coarse to fine. [0] = connected object,
+// colors mixed. [1] = connected object of one color. [2] = single pixels.
 __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_object_list& src, int8_t mode) {
     auto& res = gpu_acquire(ctx);
     gpu_fixed_grid temp;
