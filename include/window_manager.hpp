@@ -283,6 +283,9 @@ private:
       case ui_action::toggle_ds_test:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_TEST);
         break;
+      case ui_action::toggle_ds_custom:
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_CUSTOM);
+        break;
       case ui_action::exit_app:       PostQuitMessage(0); break;
       case ui_action::minimize_app:   ShowWindow(m_hwnd, SW_MINIMIZE); break;
       default: break;

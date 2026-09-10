@@ -395,14 +395,14 @@ inline int draw_header_rows(
     button_at(">|", x, y, ui_action::last_puzzle, 1);
   }
 
-  // Dataset checkmarks: TRN / EVL / TST. Each toggles whether that set's tasks
+  // Dataset checkmarks: TRN / EVL / TST / CUS. Each toggles whether that set's tasks
   // are concatenated into the loaded list; clicking reloads the merged list live
   // (handled by the worker). On = lit box with a '+' prefix, off = dim with '-'.
   // (The font has '+'/'-' but no tick glyph, so the +/- reads the state.)
   {
     int ds = app_state.dataset_flags.load();
     int w = box_w("+TRN");
-    int x = spot(w * 3 + pad * 2), y = fy;
+    int x = spot(w * 4 + pad * 3), y = fy;
     auto draw_ds = [&](const char *name, int flag, ui_action act) {
       bool on = (ds & flag) != 0;
       box_at(string(on ? "+" : "-") + name, x, y, w, on ? 4 : 1, act);
@@ -411,6 +411,7 @@ inline int draw_header_rows(
     draw_ds("TRN", 1 /*DS_TRAIN*/, ui_action::toggle_ds_train);
     draw_ds("EVL", 2 /*DS_EVAL*/,  ui_action::toggle_ds_eval);
     draw_ds("TST", 4 /*DS_TEST*/,  ui_action::toggle_ds_test);
+    draw_ds("CUS", 8 /*DS_CUSTOM*/, ui_action::toggle_ds_custom);
   }
 
   // Clickable ID field: click to edit (type/paste an ID + Enter to jump), and it

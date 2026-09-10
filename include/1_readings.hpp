@@ -62,19 +62,20 @@ ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
     return dir < 2 ? 0 : (dir - 2) * 2 - 1;
 }
 
-// Finds one group of connected cells by walking the given bounds, 8-way.
+// Walks connected cells: eight directions for objects, four for surrounding space.
 // `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
-template <class Claim, class See>
+template <int Directions = 8, class Claim, class See>
 ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
                     Claim claim, See see) {
+    static_assert(Directions == 4 || Directions == 8);
     int head = 0, tail = seeded;
     while (head < tail) {
         const int row = queue_row[head], col = queue_col[head];
         ++head;
         see(row, col);
-        for (int dir = 0; dir < 8; ++dir) {
-            const int next_row = row + neighbour_row_8(dir);
-            const int next_col = col + neighbour_col_8(dir);
+        for (int dir = 0; dir < Directions; ++dir) {
+            const int next_row = row + (Directions == 4 ? neighbour_row_4(dir) : neighbour_row_8(dir));
+            const int next_col = col + (Directions == 4 ? neighbour_col_4(dir) : neighbour_col_8(dir));
             if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
             if (!claim(next_row, next_col)) continue;
             queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;

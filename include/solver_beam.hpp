@@ -514,8 +514,8 @@ private:
   atomic<int> m_queued_dataset_flags{-1};
 
 public:
-  // Dataset selection bitmask. Each set is one challenges/solutions JSON pair.
-  enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4 };
+  // Dataset selection bitmask. CUSTOM reads local per-puzzle JSON files.
+  enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4, DS_CUSTOM = 8 };
   inline int get_dataset_flags() const { return m_dataset_flags.load(); }
   // Queue a new dataset selection (bitmask). Applied by the worker; ignored if
   // empty so the list is never blanked out from under the solver.
@@ -525,12 +525,13 @@ public:
   }
 
   // Build m_puzzle_tasks + m_solutions from every checked dataset, concatenated.
-  // The three sets share the same {"id":{"train":[...],"test":[...]}} shape, so
+  // The three competition sets share the same {"id":{"train":[...],"test":[...]}} shape, so
   // we just slice each selected challenges JSON in-memory (taken as-is) and load
   // its sibling _solutions file for ground truth. Each set:
   //   - training:   1000 tasks (has answer keys) — dev / mining.
   //   - evaluation:  120 tasks (unseen, has answer keys) — honest local score.
   //   - test:        240 tasks (the competition set, no solutions) — submission.
+  // Custom fixtures from tests/puzzles precede competition sets when selected.
   // Duplicate ids across sets are dropped (first checked set wins) so puzzle_idx
   // stays a clean 1:1 index. Records the applied selection in m_dataset_flags.
   inline void load_dataset(int flags) {
@@ -546,6 +547,10 @@ public:
     vector<challenge_task> tasks;
     map<string, vector<grid>> solutions;
     set<string> seen;
+    if (flags & DS_CUSTOM) {
+      for (auto &task : load_custom_puzzles("tests/puzzles"))
+        if (seen.insert(task.id).second) tasks.push_back(std::move(task));
+    }
     for (const set_info &s : sets) {
       if (!(flags & s.flag)) continue;
       string challenges_json = kaggle_dir + s.stem;
@@ -682,7 +687,7 @@ public:
     // The saved selection, restored before the saved puzzle index is read below
     // so the index lands in the same list it came from. TRAIN when nothing is
     // saved: a person is looking at the screen and can check another box.
-    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_TRAIN | DS_EVAL | DS_TEST);
+    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_TRAIN | DS_EVAL | DS_TEST | DS_CUSTOM);
     if (initial <= 0) initial = DS_TRAIN;
 #else
     // The notebook says which, because nothing here can ask. NO DEFAULT, ON
@@ -694,9 +699,10 @@ public:
       if (want == "test") initial = DS_TEST;
       else if (want == "eval") initial = DS_EVAL;
       else if (want == "train") initial = DS_TRAIN;
+      else if (want == "custom") initial = DS_CUSTOM;
     }
     if (initial == 0) {
-      std::fprintf(stderr, "ARC_DATASET must be test, eval or train. Refusing to guess.
+      std::fprintf(stderr, "ARC_DATASET must be test, eval, train or custom. Refusing to guess.
 ");
       std::exit(1);
     }

@@ -233,11 +233,20 @@ inline vector<challenge_task> load_challenges_json(const string &json_path) {
   return tasks;
 }
 
-// Reads an ARC solutions JSON ({"task_id": [grid, grid, ...], ...}) into a map
-// from task id to its list of ground-truth test-output grids, in order. These
-// answers are absent from the challenges file; load_single_puzzle attaches them
-// to the matching test examples so the test row can be scored / "solved".
-// Returns an empty map if the file is missing (caller treats that as no answers).
+// Local synthetic puzzles use ordinary per-puzzle ARC JSON with inline answers.
+inline vector<challenge_task> load_custom_puzzles(const string &directory) {
+  vector<challenge_task> tasks;
+  if (!filesystem::exists(directory)) return tasks;
+  for (const auto &entry : filesystem::directory_iterator(directory)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+    tasks.push_back({entry.path().stem().string(), read_whole_file(entry.path().string())});
+  }
+  sort(tasks.begin(), tasks.end(),
+       [](const challenge_task &a, const challenge_task &b) { return a.id < b.id; });
+  return tasks;
+}
+
+// Reads separate test answers, keyed by puzzle id. Missing files yield no answers.
 inline map<string, vector<grid>> load_solutions_json(const string &json_path) {
   map<string, vector<grid>> solutions;
   string content = read_whole_file(json_path);

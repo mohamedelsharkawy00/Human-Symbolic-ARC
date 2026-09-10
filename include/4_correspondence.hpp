@@ -16,20 +16,20 @@ using namespace std;
 
 // The grid can be divided into objects in several ways.
 // Dividing a grid into objects is called segmentation.
+// Connected objects use 8-way connectivity: edges or corners.
+// Surrounding space and holes use 4-way connectivity: edges only.
 // Segmentation methods are compared by how well they explain the training pairs.
 enum class segmentation_method : int8_t {
     touching_8, touching_any_color, one_per_color,
     repeating_motif, repeating_step, method_count
 };
 
-// Each description says which cells form one object under that method.
-// The log and screen share these labels; the font atlas requires uppercase.
 inline constexpr const char* const segmentation_names[] = {
-    "A GROUP OF CELLS THAT TOUCH, ALL ONE COLOR",
-    "A GROUP OF CELLS THAT TOUCH, ANY COLORS",
-    "EVERY CELL OF ONE COLOR, WHEREVER IT EXISTS",
-    "THE SMALLEST REPEATING MOTIF",
-    "A MOTIF THE SIZE OF THE SMALLER GRID" };
+    "8-Connected Monochrome Cells",
+    "8-Connected Multicolor Cells",
+    "All Cells of One Color",
+    "Minimal Repeating Set of Cells",
+    "Smallest of the Two Grids" };
 // The sentence every one of them finishes.
 inline constexpr const char* segmentation_names_lead = "AN OBJECT IS";
 // Beside the list it reads from, so everyone who names a segmentation names it once.

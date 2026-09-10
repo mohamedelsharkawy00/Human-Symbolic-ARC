@@ -50,7 +50,7 @@ inline void report_header(ostream& report, const string& id,
     if (dataset_flags) {
         report << "  ";
         bool first = true;
-        for (auto [flag, chip] : {pair{1, "TRN"}, {2, "EVL"}, {4, "TST"}}) {
+        for (auto [flag, chip] : {pair{1, "TRN"}, {2, "EVL"}, {4, "TST"}, {8, "CUS"}}) {
             if (!(dataset_flags & flag)) continue;
             if (!first) report << '+';
             report << chip;

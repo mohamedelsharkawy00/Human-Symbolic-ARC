@@ -330,7 +330,8 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
             backdrop_objects_of_color[objects.color[this_object]]++; continue;
         }
         // Flood "outside" = everything reachable from the border without
-        // entering this object
+        // entering this object. Four-way space cannot leak through corners
+        // joined by the object's eight-way connectivity.
         for (int row = 0; row < one_grid.height; ++row)
             for (int col = 0; col < one_grid.width; ++col) outside[row][col] = false;
         int seeded = 0;
@@ -342,7 +343,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
                 outside[row][col] = true;
                 queue_row[seeded] = (int16_t)row; queue_col[seeded] = (int16_t)col; seeded++;
             }
-        walk_out(one_grid.height, one_grid.width, queue_row, queue_col, seeded,
+        walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, seeded,
             [&](int next_row, int next_col) {
                 if (outside[next_row][next_col] ||
                     objects.id[next_row][next_col] == this_object) return false;
