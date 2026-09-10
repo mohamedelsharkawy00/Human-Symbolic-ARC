@@ -2,47 +2,9 @@
 // Design story, rationale, and experiment records
 // in notes/1 - Overall Design/Inference Master.md
 //
-// ONE CHANNEL PER QUESTION about the train pairs. Each channel owns a rule (what
-// it claims; some can fail) and a detector (the one pass that reads that rule
-// off the pairs), and nothing else.
-//
-// THE READING ORDER, the one every file number and every include follows:
-//
-//   SIZE            what decides the output's width and height
-//   COLORS          which colors appear where, and in what order
-//   BACKGROUND      which color the figures sit on, elected per side
-//   CORRESPONDENCE  where each object went, and how to cut the grid up
-//   UNCHANGED       how much of the input survives untouched   ┐ only when
-//   COLOR DIFF      which cells each color gained and lost     │ input and
-//   COLOR SWAP      whether part of the change is two trading  │ output
-//   SHAPE -> COLOR  which shape says to paint which color      ┘ overlay
-//
-// THE FAMILY. A channel that grew big enough took ALL of itself into a file —
-// facts, machinery, and the detector that fills them. infer() calls in and gets
-// its answer back. The numbers ARE the reading order above, as far as the files
-// go: each may include only what is numbered below it.
-//
-//   1_readings.hpp        the shared base: count it, box it, walk it
-//   2_size.hpp            infer_rule
-//   3_background.hpp      elect_background
-//   4_correspondence.hpp  select_segmentation
-//   6_sentences.hpp       say_the_reading
-//   7_log.hpp             the per-puzzle readout
-//
-// COLORS is the one channel still here rather than in a file of its own, and it
-// is also the one that cannot sit in one place: the presence facts need no
-// background, while by_size ranks only once the election has named one.
-//
-// Facts, not verdicts: consumers fold and gate downstream. One exception —
-// background_hypotheses keeps its runners-up ranked, because something later
-// revises the choice.
-//
-// A DETECTOR RETURNS ITS FACT. Read the call and you know where the answer came
-// out; nothing you passed in is quietly rewritten. The only functions taking a
-// non-const reference are the ones whose whole job is to write it, and they say
-// so in their names — count_edges_leaving, measure_area_and_reach — or they are
-// the several passes that fill ONE shared fact, whose public entry still
-// returns (detect_color_presence and friends, behind detect_color_facts).
+// infer() lives here, and so do the channels small enough to have no file of
+// their own. Each thing is explained where it is defined; infer() at the bottom
+// carries the reading order and the family of files.
 
 #pragma once
 #include "1_readings.hpp"
@@ -64,6 +26,9 @@ using namespace std;
 // ──────────────────────────────────────────────────────────────────────────
 // COLORS · which colors appear where, and in what order
 // ──────────────────────────────────────────────────────────────────────────
+// The one channel with no file of its own, and the one that cannot sit in one
+// place: the presence facts need no background, while by_size ranks only once
+// the election has named one.
 // Color facts — each answers exactly one question along one direction.
 // A bool[COLOR_COUNT] is a color set.
 struct color_facts {
@@ -212,6 +177,13 @@ inline void detect_output_colors_by_size(const vector<example>& train,
 
 // Runs the two color detectors that need nothing but the pairs. by_size is not
 // among them: it needs the elected background, so infer() calls it later.
+//
+// A DETECTOR RETURNS ITS FACT. Read the call and you know where the answer came
+// out; nothing you passed in is quietly rewritten. The only functions taking a
+// non-const reference are the ones whose whole job is to write it, and they say
+// so in their names — count_edges_leaving, measure_area_and_reach — or they are
+// the several passes that fill ONE shared fact, whose public entry still
+// returns: these two, behind this one.
 inline color_facts detect_color_facts(const vector<example>& train) {
     color_facts facts;
     detect_color_presence(train, facts);
@@ -545,6 +517,14 @@ inline color_swap_rule detect_color_swaps(const vector<example>& train,
 // ──────────────────────────────────────────────────────────────────────────
 // The product of infer(): one facts struct per channel, plus the engine's
 // size rule read straight off the train pairs.
+//
+// ONE CHANNEL PER QUESTION about the train pairs. Each channel owns a rule (what
+// it claims; some can fail) and a detector (the one pass that reads that rule
+// off the pairs), and nothing else — one field below apiece.
+//
+// FACTS, NOT VERDICTS: consumers fold and gate downstream. One exception —
+// background_hypotheses keeps its runners-up ranked, because something later
+// revises the choice.
 struct inference {
     output_dimension_rule size;
     color_facts colors;
@@ -558,6 +538,30 @@ struct inference {
 
 // infer() is PURE: train pairs in, inference out. Engine reads via puzzle_loader
 // bridge. Analysis phase, called once at puzzle load. propose() deferred (see notes).
+//
+// THE READING ORDER, the one every file number and every include follows, and
+// the one the body below walks top to bottom:
+//
+//   SIZE            what decides the output's width and height
+//   COLORS          which colors appear where, and in what order
+//   BACKGROUND      which color the figures sit on, elected per side
+//   CORRESPONDENCE  where each object went, and how to cut the grid up
+//   UNCHANGED       how much of the input survives untouched   ┐ only when
+//   COLOR DIFF      which cells each color gained and lost     │ input and
+//   COLOR SWAP      whether part of the change is two trading  │ output
+//   SHAPE -> COLOR  which shape says to paint which color      ┘ overlay
+//
+// THE FAMILY. A channel that grew big enough took ALL of itself into a file —
+// facts, machinery, and the detector that fills them. infer() calls in and gets
+// its answer back. The numbers ARE the reading order above, as far as the files
+// go: each may include only what is numbered below it.
+//
+//   1_readings.hpp        the shared base: count it, box it, walk it
+//   2_size.hpp            infer_rule
+//   3_background.hpp      elect_background
+//   4_correspondence.hpp  select_segmentation
+//   6_sentences.hpp       say_the_reading
+//   7_log.hpp             the per-puzzle readout
 inline inference infer(const vector<example>& train) {
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);
