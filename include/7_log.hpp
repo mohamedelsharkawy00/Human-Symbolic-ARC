@@ -156,7 +156,7 @@ inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
 // and still differ here.
 inline void report_correspondence_readings(ostream& report, const correspondence_facts& correspondence) {
     report << "[correspondence] valid " << correspondence.valid
-      << "  segmentation " << segmentation_name((int)correspondence.segmentation) << "\n";
+      << "  segmentation " << segmentation_names[(int)correspondence.segmentation] << "\n";
     // Which readings were actually in the election. Everything else below was
     // run for the table and never competed — see select_segmentation.
     report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
@@ -173,8 +173,8 @@ inline void report_correspondence_readings(ostream& report, const correspondence
           << (reading.left_over - reading.made - reading.gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
         if (!reading.objects_can_fit) report << "  (no object fits the other grid)";
-        report << "   " << segmentation_name((int)reading.segmentation)
-          << "  [" << reading.match_kind.label() << "]";
+        report << "   " << segmentation_names[(int)reading.segmentation]
+          << "  [" << reading.allowed.label() << "]";
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
 }
@@ -205,8 +205,8 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
         if (ranges::all_of(pairs, [](const auto& pair) {
                 return pair.agreed_moves.empty(); })) continue;
         report << "  reading " << i << " moved together   "
-          << segmentation_name((int)correspondence.readings[i].segmentation)
-          << "  [" << correspondence.readings[i].match_kind.label() << "]\n";
+          << segmentation_names[(int)correspondence.readings[i].segmentation]
+          << "  [" << correspondence.readings[i].allowed.label() << "]\n";
         for (size_t which = 0; which < pairs.size(); ++which) {
             report << "    pair " << which << " read pose " << (int)pairs[which].pose;
             for (const auto& agreed : pairs[which].agreed_moves) {
@@ -229,8 +229,8 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
     const char* newline = "\n";
     for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
         report << "  reading " << i << " pieces   "
-          << segmentation_name((int)correspondence.readings[i].segmentation)
-          << "  [" << correspondence.readings[i].match_kind.label() << "]" << newline;
+          << segmentation_names[(int)correspondence.readings[i].segmentation]
+          << "  [" << correspondence.readings[i].allowed.label() << "]" << newline;
         const auto& pairs = correspondence.reading_pairs[i];
         for (size_t which = 0; which < pairs.size(); ++which)
             for (int side = 0; side < 2; ++side) {

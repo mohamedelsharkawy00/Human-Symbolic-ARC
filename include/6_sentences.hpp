@@ -39,14 +39,14 @@ struct said_reading {
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
 // the any-color flag, so Split[0] keeps colors together and Split[1] does not.
-inline const char* word_for_segmentation(segmentation_method segmentation) {
+inline const char* word_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
-        case segmentation_method::touching_8:         return "Split[1]";
-        case segmentation_method::touching_any_color: return "Split[0]";
-        case segmentation_method::one_per_color:      return "Colors";
-        case segmentation_method::repeating_motif:    return "Pattern";
-        case segmentation_method::repeating_step:     return "Pattern";
-        default:                             return nullptr;
+        case segmentation_methods::connected_monochrome:   return "Split[1]";
+        case segmentation_methods::connected_multicolor:   return "Split[0]";
+        case segmentation_methods::all_cells_of_one_color: return "Colors";
+        case segmentation_methods::minimal_repeating_set:  return "Pattern";
+        case segmentation_methods::smallest_of_two_grids:  return "Pattern";
+        default:                                          return nullptr;
     }
 }
 
@@ -126,11 +126,11 @@ inline said_reading say_the_reading(const inference& inf) {
                                  + " SelectAll " + act + " " + combine);
     };
 
-    const match_mode allowed = facts.chosen < (int8_t)facts.readings.size()
-                             ? facts.readings[facts.chosen].match_kind : match_mode{};
+    const degrees_of_freedom allowed = facts.chosen < (int8_t)facts.readings.size()
+                             ? facts.readings[facts.chosen].allowed : degrees_of_freedom{};
 
     if (const char* segmentation = word_for_segmentation(facts.segmentation)) say(segmentation);
-    else said.no_word_for.push_back(string("the segmentation ") + segmentation_name((int)facts.segmentation));
+    else said.no_word_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
 
     // The segmentation methods that explained just as much. Said as openings of their own so a
     // search can try each, rather than trusting the order they were declared in.

@@ -19,28 +19,24 @@ using namespace std;
 // Connected objects use 8-way connectivity: edges or corners.
 // Surrounding space and holes use 4-way connectivity: edges only.
 // Segmentation methods are compared by how well they explain the training pairs.
-enum class segmentation_method : int8_t {
-    touching_8, touching_any_color, one_per_color,
-    repeating_motif, repeating_step, method_count
+enum class segmentation_methods : int8_t {
+    connected_monochrome, connected_multicolor, all_cells_of_one_color,
+    minimal_repeating_set, smallest_of_two_grids, count
 };
 
+inline constexpr const char* segmentation_names_lead = "An Object Is";
 inline constexpr const char* const segmentation_names[] = {
     "8-Connected Monochrome Cells",
     "8-Connected Multicolor Cells",
-    "All Cells of One Color",
-    "Minimal Repeating Set of Cells",
-    "Smallest of the Two Grids" };
-// The sentence every one of them finishes.
-inline constexpr const char* segmentation_names_lead = "AN OBJECT IS";
-// Beside the list it reads from, so everyone who names a segmentation names it once.
-inline const char* segmentation_name(int segmentation) { return segmentation_names[segmentation]; }
-static_assert(sizeof(segmentation_names) / sizeof(char*) ==
-              (size_t)segmentation_method::method_count);
+    "All Cells Of One Color",
+    "Minimal Repeating Set Of Cells",
+    "Smallest Of The Two Grids"
+};
 
 // Once we have objects, we can look for them in the other grid. A match may
 // allow an object to move, turn or flip, change color, or extend past the grid's
 // border. Each combination of these permissions is tried as a candidate too.
-struct match_mode {
+struct degrees_of_freedom {
     bool translate = true;
     bool pose = true;
     bool recolor = true;
@@ -53,8 +49,13 @@ struct match_mode {
     // in the list and the judge decides it per puzzle, the way MOVE and TURN and
     // COLOR already are.
     bool hang_off = true;
-    static constexpr int COUNT = 16;
-    static constexpr match_mode from_index(int packed) {
+    // FOUR SWITCHES, SO SIXTEEN WAYS TO SET THEM. FREEDOMS is the four, and the
+    // sixteen is derived from it and never typed out, so a fifth freedom cannot
+    // leave a stale count behind. Two names because they are two numbers: a
+    // reading is one of the sixteen, and it is drawn as four words.
+    static constexpr int FREEDOMS = 4;
+    static constexpr int COMBINATIONS = 1 << FREEDOMS;
+    static constexpr degrees_of_freedom from_index(int packed) {
         return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0,
                  (packed & 8) != 0 };
     }
@@ -66,7 +67,6 @@ struct match_mode {
     // the screen cannot drift apart. Words and not initials: initials read as
     // noise, and R could be taken for either turning or recoloring.
     // They finish the sentence "AND IT MAY".
-    static constexpr int FREEDOMS = 4;
     static constexpr const char* const freedom_names[FREEDOMS] =
         { "MOVE", "TURN", "COLOR", "HANG OFF" };
     constexpr bool may(int freedom) const {
@@ -275,20 +275,21 @@ struct correspondence_facts {
     // set. FOR NOW one segmentation serves every pair: a transformation that segments the
     // grid up differently from pair to pair would be a strange puzzle, and
     // holding it fixed is the stronger claim. Revisit if a puzzle needs it.
-    segmentation_method segmentation = segmentation_method::touching_8;
+    segmentation_methods segmentation = segmentation_methods::connected_monochrome;
     // EVERY READING THERE IS, IN THE ORDER THE TABLE IS DRAWN: one row per segmentation,
     // one column per freedom, so a reading's place in this list IS its cell —
-    // segmentation * match_mode::COUNT + match_kind. Every segmentation is looked at and every
-    // freedom searched, so the table has no holes and a cell never has to be
-    // looked up. Do not collapse this to the winner: a segmentation cannot tell that it
-    // read too coarsely, and only a consumer coming up empty finds out. The segmentation
+    // segmentation * degrees_of_freedom::COMBINATIONS + allowed.index(). Every
+    // segmentation is looked at and every freedom searched, so the table has no
+    // holes and a cell never has to be looked up. Do not collapse this to the
+    // winner: a segmentation cannot tell that it read too coarsely, and only a
+    // consumer coming up empty finds out. The segmentation
     // ITSELF is recorded alongside the numbers, because two readings can tie on
     // every number and differ.
     // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
     struct reading {
         // Which segmentation, and what a match was allowed to change
-        segmentation_method segmentation = segmentation_method::touching_8;
-        match_mode match_kind;
+        segmentation_methods segmentation = segmentation_methods::connected_monochrome;
+        degrees_of_freedom allowed;
         // How many objects the segmentation FOUND, and how many it USED — the log prints
         // them as "segmented into X, used Y"
         int objects_found = 0, objects_used = 0;
@@ -560,7 +561,7 @@ inline object_matches find_in(const grid& glyph, const grid& where, int8_t backg
 // < 0 means "unknown" -> nothing excluded). Emits object_info with canonical
 // shape hashes and, when asked, the glyphs (each object cut out of its own
 // box, -1 = empty).
-inline void segment_into_objects(const grid& one_grid, int8_t background, segmentation_method segmentation,
+inline void segment_into_objects(const grid& one_grid, int8_t background, segmentation_methods segmentation,
                                 vector<correspondence_facts::object_info>& objects,
                                 vector<grid>* glyphs,
                                 int step_width = 0, int step_height = 0) {
@@ -576,8 +577,8 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
 
     // Cut on a fixed step: equal blocks, one object each, cells of any color kept
     // together. Blocks with no colored cells at all are not objects.
-    if (segmentation == segmentation_method::repeating_step ||
-        segmentation == segmentation_method::repeating_motif) {
+    if (segmentation == segmentation_methods::smallest_of_two_grids ||
+        segmentation == segmentation_methods::minimal_repeating_set) {
         if (step_width <= 0 || step_height <= 0) return;
         bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
         for (int block_top = 0; block_top < one_grid.height; block_top += step_height)
@@ -610,7 +611,7 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
         // A CUT THAT DOES NOT CUT IS NOT A READING — one object means there is no
         // motif, and it would win the election for free. The step segmentation is exempt.
         // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-        if (segmentation != segmentation_method::repeating_step && objects.size() < 2) {
+        if (segmentation != segmentation_methods::smallest_of_two_grids && objects.size() < 2) {
             objects.clear();
             if (glyphs) glyphs->clear();
         }
@@ -618,7 +619,7 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
     }
     // Whether an object has to be one color is a question of its OWN, asked apart
     // from what counts as joined: the one walk answers both.
-    const bool same_color = (segmentation != segmentation_method::touching_any_color);
+    const bool same_color = (segmentation != segmentation_methods::connected_multicolor);
     bool visited[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
@@ -637,7 +638,7 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
         int left = start_col, top = start_row, right = start_col, bottom = start_row;
         // One object per color takes every cell of the color at once, wherever
         // it is; the touching kinds walk out from this cell only.
-        const bool whole_color = (segmentation == segmentation_method::one_per_color);
+        const bool whole_color = (segmentation == segmentation_methods::all_cells_of_one_color);
         if (whole_color) {
             for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
                 for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
@@ -803,7 +804,7 @@ inline void find_blanks(const grid& one_grid, int8_t background,
 // Cut it up, then put the objects in the order a person reads them: BIGGEST
 // FIRST, then down the grid. The glyphs ride along — they are the objects.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
-inline void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_method segmentation,
+inline void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_methods segmentation,
                                 vector<correspondence_facts::object_info>& objects,
                                 vector<grid>* glyphs,
                                 int step_width = 0, int step_height = 0) {
@@ -952,9 +953,9 @@ inline fit_verdict collect_motif_edges(
         const vector<grid>& from_glyphs,
         const vector<correspondence_facts::object_info>& into_objects,
         const grid& into, int8_t background, int step_w, int step_h,
-        vector<correspondence_facts::edge>& edges, match_mode match = {}) {
+        vector<correspondence_facts::edge>& edges, degrees_of_freedom allowed = {}) {
     if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
-    const int poses = match.pose ? 8 : 1;
+    const int poses = allowed.pose ? 8 : 1;
 
     // Does this from block sit at that place on the other grid? The answer is
     // the same question both sweeps ask, so it is written once.
@@ -969,7 +970,7 @@ inline fit_verdict collect_motif_edges(
         // about the same two blocks.
         const object_match* best = nullptr;
         for (const object_match& hit : matches.hits) {
-            if (!match.recolor && !hit.exact) continue;
+            if (!allowed.recolor && !hit.exact) continue;
             if (!best || (hit.exact && !best->exact)) best = &hit;
             if (best->exact) break;
         }
@@ -1098,7 +1099,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         const vector<correspondence_facts::object_info>& into_objects,
         const grid& into, int8_t background, bool may_hang_off,
         vector<correspondence_facts::edge>* discarded,
-        vector<int8_t>* discard_why, match_mode match) {
+        vector<int8_t>* discard_why, degrees_of_freedom allowed) {
     double share[COLOR_COUNT];
     color_shares(into, share);
 
@@ -1124,7 +1125,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         // Positional: own place first, then anywhere only if it was not there.
         auto keep_positional = [&](const object_matches& found_here, bool stationary) {
         for (const object_match& hit : found_here.hits) {
-            if (!match.recolor && !hit.exact) continue;
+            if (!allowed.recolor && !hit.exact) continue;
             if (!stationary && hit.pose == 0 &&
                 hit.row == one_object.top && hit.col == one_object.left)
                 continue;
@@ -1179,7 +1180,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         // whole layer is for. Both questions are asked now, and the judges that
         // already exist decide: a lucky landing dies to beats_chance, and one
         // that explains nothing new dies in the fitting.
-        const int poses = match.pose ? 8 : 1;
+        const int poses = allowed.pose ? 8 : 1;
         keep_positional(
             find_in(glyph, into, background, false,
                     one_object.top, one_object.left, false, poses), true);
@@ -1201,7 +1202,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         // only its own grid refused every one of them.
         // The block segmentation methods do not come through here: a grid of blocks says where
         // every copy sits, so a block cut short by the wall is already placed.
-        if (match.translate)
+        if (allowed.translate)
             keep_positional(
                 find_in(glyph, into, background,
                         may_hang_off && (one_object.motif >= 0 ||
@@ -1210,7 +1211,7 @@ inline vector<correspondence_facts::edge> gather_matches(
 
         // Source 2 — shape: objects there with the same canonical hash (count
         // equality guards hash collisions). Skip placements source 1 found.
-        if (!match.translate) continue;
+        if (!allowed.translate) continue;
         for (size_t into_index = 0; into_index < into_objects.size(); ++into_index) {
             const auto& landing = into_objects[into_index];
             if (landing.shape != one_object.shape || landing.count != one_object.count) continue;
@@ -1234,7 +1235,7 @@ inline vector<correspondence_facts::edge> gather_matches(
             edge.to = (int16_t)into_index;
             edge.row = landing.top; edge.col = landing.left;
             edge.exact = (landing.color == one_object.color);
-            if (!match.recolor && !edge.exact) continue;
+            if (!allowed.recolor && !edge.exact) continue;
             edge.recolored_to = (!edge.exact && one_object.color >= 0) ? landing.color : (int8_t)-1;
             if (!edge.exact && is_color(one_object.color))
                 edge.color_map[one_object.color] = landing.color;
@@ -1591,11 +1592,11 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
                           vector<correspondence_facts::edge>& edges,
                           vector<correspondence_facts::edge>* discarded = nullptr,
                           vector<int8_t>* discard_why = nullptr,
-                          match_mode match = {},
+                          degrees_of_freedom allowed = {},
                           const what_the_pairs_agreed* agreed = nullptr) {
     vector<correspondence_facts::edge> found =
         gather_matches(from_objects, from_glyphs, into_objects, into,
-                       background, may_hang_off, discarded, discard_why, match);
+                       background, may_hang_off, discarded, discard_why, allowed);
 
     // WHAT THE OTHER EXAMPLES DISAGREE WITH IS NEVER OFFERED. It has to go
     // BEFORE the fitting and not after: the fitting uses every candidate to
@@ -1745,8 +1746,9 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
 // Then the small side is one block and the big side is a grid of them. WHICH
 // side is small is not fixed — a grid tiled out and a tiling read back are
 // the same fact seen from two ends, and a step that only knew how to grow would
-// have nothing to say about the second. 0,0 = no step, so the repeating_step
-// segmentation method has nothing to offer and loses on its own.
+// have nothing to say about the second. 0,0 = no step, so the
+// smallest_of_two_grids segmentation method has nothing to offer and loses on
+// its own.
 inline pair<int, int> repeating_step_of(const vector<example>& train) {
     if (train.empty()) return { 0, 0 };
     // The block is whichever side is smaller, decided once on the first pair
@@ -1774,8 +1776,8 @@ inline pair<int, int> repeating_step_of(const vector<example>& train) {
 // across it, and of rows that repeats down it. A grid that repeats nothing gets
 // back its own width and height. Grid needs width, height, and data[row][col].
 // Single home of the recipe: the Pattern op reads the unit by it and inference
-// segments by it (segmentation_method::repeating_motif), so the two can never read a
-// different period off the same grid.
+// segments by it (segmentation_methods::minimal_repeating_set), so the two can
+// never read a different period off the same grid.
 // `background` is don't care one way round only: a colored cell must be what the
 // block puts there, a background cell where the block has a color is forgiven.
 // Pass a value no cell can hold (-2) to compare raw.
@@ -1853,8 +1855,8 @@ inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
 // risk, not a settled thing. If Pattern ever reads a motif nobody believes,
 // this is the first place to look.
 inline pair<int, int> block_of(const grid& input, const grid& output, int8_t background,
-                               segmentation_method segmentation, int sizes_width, int sizes_height) {
-    if (segmentation != segmentation_method::repeating_motif)
+                               segmentation_methods segmentation, int sizes_width, int sizes_height) {
+    if (segmentation != segmentation_methods::minimal_repeating_set)
         return { sizes_width, sizes_height };
     const auto from_input =
         block_measured_on(input, background, sizes_width, sizes_height);
@@ -1886,8 +1888,8 @@ inline pair<int, int> block_of(const grid& input, const grid& output, int8_t bac
 // Story in notes/1 - Overall Design/Inference Master.md, sections 3d-3e.
 inline correspondence_facts detect_correspondence(const vector<example>& train,
                                                   int8_t background,
-                                                  segmentation_method segmentation,
-                                                  match_mode match = {}) {
+                                                  segmentation_methods segmentation,
+                                                  degrees_of_freedom allowed = {}) {
     correspondence_facts facts;
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
     if (train.empty()) return facts;
@@ -1908,8 +1910,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     // HANGING OFF THE EDGE IS NOT WHAT SEPARATES THEM — every reading may do
     // that now, because a wall cutting a copy in half is a fact about the grid
     // and not about the object.
-    const bool pattern_reading = (segmentation == segmentation_method::repeating_motif ||
-                                  segmentation == segmentation_method::repeating_step);
+    const bool pattern_reading = (segmentation == segmentation_methods::minimal_repeating_set ||
+                                  segmentation == segmentation_methods::smallest_of_two_grids);
     vector<int> step_width_of(train.size(), 0), step_height_of(train.size(), 0);
 
     // THE CUTTING, ONCE. The objects owe nothing to what any other pair said, so
@@ -1936,7 +1938,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
         // set. Here, where the cells still exist — a shape hash and a cell count
         // cannot tell one block from another, and downstream that is all there
         // is left of them.
-        const bool one_set_for_the_grid = (segmentation == segmentation_method::repeating_motif);
+        const bool one_set_for_the_grid = (segmentation == segmentation_methods::minimal_repeating_set);
         find_copies(pair.input_objects, input_glyphs, one_set_for_the_grid);
         find_copies(pair.output_objects, output_glyphs, one_set_for_the_grid);
         // What the segmentation cost to say, on each grid. The pair is described by both.
@@ -1975,12 +1977,12 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             if (pattern_reading) {
                 verdict = collect_motif_edges(from_objects, from_glyphs, into_objects,
                                               into, background, step_width, step_height,
-                                              edges, match);
+                                              edges, allowed);
             } else {
                 verdict = collect_edges(from_objects, from_glyphs, into_objects,
                                         into_glyphs, from_input ? input : output, into,
-                                        background, match.hang_off,
-                                        edges, &discarded, &discard_why, match, agreed);
+                                        background, allowed.hang_off,
+                                        edges, &discarded, &discard_why, allowed, agreed);
                 sit_on_top(from_objects, from_glyphs, into_objects, into_glyphs, edges);
             }
             for (auto& edge : edges) edge.from_input = from_input;
@@ -2398,9 +2400,9 @@ inline correspondence_facts select_segmentation(const vector<example>& train, in
     // on one grid against a total taken on the other was never a fair
     // question — which is why direction is not decided here, or anywhere.
     vector<correspondence_facts::reading> looks;
-    for (int segmentation = 0; segmentation < (int)segmentation_method::method_count; ++segmentation) {
+    for (int segmentation = 0; segmentation < (int)segmentation_methods::count; ++segmentation) {
         correspondence_facts::reading look;
-        look.segmentation = (segmentation_method)segmentation;
+        look.segmentation = (segmentation_methods)segmentation;
         double shares = 0.0;
         int counted = 0;
         for (const auto& train_pair : train) {
@@ -2466,13 +2468,13 @@ inline correspondence_facts select_segmentation(const vector<example>& train, in
     };
     auto search_one = [&](const correspondence_facts::reading& look) {
         vector<scored_reading> pass;
-        for (int match_kind = 0; match_kind < match_mode::COUNT; ++match_kind) {
-            const match_mode match = match_mode::from_index(match_kind);
+        for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
+            const degrees_of_freedom allowed = degrees_of_freedom::from_index(packed);
             correspondence_facts tried = detect_correspondence(
-                train, background, look.segmentation, match);
+                train, background, look.segmentation, allowed);
             correspondence_facts::reading scored;
             scored.segmentation = look.segmentation;
-            scored.match_kind = match;
+            scored.allowed = allowed;
             scored.objects_can_fit = look.objects_can_fit;
             double shares = 0.0;
             for (const auto& pair : tried.pairs) {
@@ -2580,9 +2582,9 @@ inline correspondence_facts select_segmentation(const vector<example>& train, in
     facts.cells = facts_cells;
     facts.segmentation = passes[elected].front().summary.segmentation;
     auto cell_of = [](const correspondence_facts::reading& one) {
-        return (int)one.segmentation * match_mode::COUNT + one.match_kind.index();
+        return (int)one.segmentation * degrees_of_freedom::COMBINATIONS + one.allowed.index();
     };
-    facts.readings.resize((int)segmentation_method::method_count * match_mode::COUNT);
+    facts.readings.resize((int)segmentation_methods::count * degrees_of_freedom::COMBINATIONS);
     facts.reading_pairs.resize(facts.readings.size());
     for (auto& pass : passes)
         for (auto& one : pass) {

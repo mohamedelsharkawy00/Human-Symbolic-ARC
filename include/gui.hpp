@@ -1354,8 +1354,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // not have to do to know what is on screen.
       detail(to_text("%s %s  ---  %s", segmentation_names_lead,
                      segmentation_names[clamp((int)R.segmentation, 0,
-                                       (int)segmentation_method::method_count - 1)],
-                     R.match_kind.label().c_str()));
+                                       (int)segmentation_methods::count - 1)],
+                     R.allowed.label().c_str()));
       static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
       // The pieces the reading cut out, and the matches it threw away. Neither is
       // reachable through the lines: a piece with no edge draws nothing, and a
@@ -1516,7 +1516,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // read for them without being told.
       divide();
       {
-        const int segmentation_methods = (int)segmentation_method::method_count;
+        const int methods = (int)segmentation_methods::count;
         // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
         // edge became one of them, and sixteen columns ran off the panel and off
         // the screen. So the table says the other three across the top, as it
@@ -1524,7 +1524,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // once for pieces that must stay on the grid, once for pieces that may
         // hang off it. Same reading in the same place either way — a cell is
         // still its reading's own cell, the block just says which half it is in.
-        const int modes = match_mode::COUNT / 2;
+        const int modes = degrees_of_freedom::COMBINATIONS / 2;
         // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
         // segmentation method and one column per freedom, so a cell knows which reading it stands
         // for without anything having to be looked up — and stepping the reading
@@ -1538,7 +1538,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // order, so a number beside them read as a ranking that ranks nothing.
         // It is still in the log, where a diagnostic belongs.
         int label_w = text_w(segmentation_names_lead, scale);
-        for (int c = 0; c < segmentation_methods; ++c)
+        for (int c = 0; c < methods; ++c)
           label_w = max(label_w, text_w(segmentation_names[c], scale));
         // EVERY CELL IS THE SAME BOX, as wide as the widest thing a column ever
         // holds — a freedom's name, or the biggest number. Cut to its own text a
@@ -1548,8 +1548,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // name, the one that has no column — it titles the second block instead —
         // still set the width of all of them, and the table ran off the panel.
         int widest = text_w("9999", scale);
-        for (int freedom = 0; freedom < match_mode::FREEDOMS - 1; ++freedom)
-          widest = max(widest, text_w(match_mode::freedom_names[freedom], scale));
+        for (int freedom = 0; freedom < degrees_of_freedom::FREEDOMS - 1; ++freedom)
+          widest = max(widest, text_w(degrees_of_freedom::freedom_names[freedom], scale));
         const int cell_w = widest + pad * 2;
         const int chip_w = widest + pad;
         // THE LABEL ENDS IN A NUMBER, so a one-character gap made that number read
@@ -1592,14 +1592,14 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // could be taken for either of two freedoms. A dash where a word would
         // be says the freedom was withheld — a blank would look like a gap.
         // The freedoms that have a column of their own: everything but the last.
-        const int across = match_mode::FREEDOMS - 1;
+        const int across = degrees_of_freedom::FREEDOMS - 1;
         for (int freedom = 0; freedom < across; ++freedom) {
           // On the last line, so it sits against the sentences it names.
           if (freedom == across - 1)
             centred(segmentation_names_lead, tx, label_w);
           for (int m = 0; m < modes; ++m)
-            column_chip(match_mode::from_index(m).may(freedom)
-                            ? match_mode::freedom_names[freedom] : "-", m, true);
+            column_chip(degrees_of_freedom::from_index(m).may(freedom)
+                            ? degrees_of_freedom::freedom_names[freedom] : "-", m, true);
           ty += row_h;
         }
         // THE SAME ROWS, TWICE, THE SECOND TIME WITH THE LAST FREEDOM GRANTED.
@@ -1608,13 +1608,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // hang off the edge.
         for (int half = 0; half < 2; ++half) {
           if (half) {
-            centred(match_mode::freedom_names[across], cell_x(0), modes * cell_w);
+            centred(degrees_of_freedom::freedom_names[across], cell_x(0), modes * cell_w);
             ty += row_h;
           }
-          for (int c = 0; c < segmentation_methods; ++c) {
+          for (int c = 0; c < methods; ++c) {
             label_chip(segmentation_names[c], ty);
             for (int m = 0; m < modes; ++m) {
-              const int i = c * match_mode::COUNT + m + half * modes;
+              const int i = c * degrees_of_freedom::COMBINATIONS + m + half * modes;
               if (i >= readings) continue;
               const string s = to_string(correspondence.readings[i].left_over);
               // The one inference chose reads inverted; the one on screen is boxed.
