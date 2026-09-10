@@ -1,12 +1,6 @@
-// 4_correspondence.hpp — where each object went, and how to cut the grid up.
-// Design story in notes/1 - Overall Design/Inference Master.md, sections 3d-3e.
-//
-// The whole channel: the facts, the machinery that finds them — pose a glyph,
-// find it somewhere, cut a grid into objects, then fit the matches together over
-// the other grid — and at the bottom the detector, pick_split, that reads it
-// all off the train pairs. infer() calls that one name and nothing else here.
-// Shaped like 3_background.hpp, its sibling.
-
+// This file explores correspondence;
+// how to cut the grid into objects,
+// and where each object went across grids.
 #pragma once
 #include "1_readings.hpp"
 #include <algorithm>
@@ -20,27 +14,11 @@
 namespace arc {
 using namespace std;
 
-// correspondence · across_input_output — the EDGE level of correspondence.
-// One edge = "this object appears there on the other side", read both ways and
-// at two levels (whole grid, then objects). Facts only, evidence not verdicts.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
-
-// The ways a grid can be cut into objects. Every kind is a CANDIDATE, not a
-// setting — pick_split judges them.
-// EVERY CELL ITS OWN OBJECT is gone (2026-08-26). A single cell is found
-// wherever its color is found, so that cut answered every cell of every grid
-// and left nothing over anywhere — a perfect score, said by nobody, on every
-// puzzle at once. It only ever lost on price, and it won the moment a real
-// reading was a few percent dearer to say. What it was for — a grid whose
-// cells behave one at a time — the color cuts already say, and they say it
-// without claiming the whole grid.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-// The BIGGEST repeating patch is gone (2026-08-12). Periods behave like
-// multiples: once a grid repeats every p it repeats every multiple of p, so
-// asking for the biggest is asking for a greatest common multiple, which does
-// not exist. It only had an answer at all under an added rule — must divide the
-// grid exactly — and what it then found was always a whole number of the
-// smallest one. A coarser view of the same fact, bought with a caveat.
+// Before looking for an object in another grid, we need to decide which cells
+// belong together. A "split" is a way of grouping the grid's cells into objects.
+// We try several ways, then compare how well each explains the training pairs.
+// Story in notes/1 - Overall Design/Inference Master.md, section 3e, which also
+// records the cuts that were tried and dropped.
 enum class split_kind : int8_t {
     touching_8, touching_any_color, one_per_color,
     repeating_motif, repeating_step, split_count
@@ -72,6 +50,9 @@ inline const char* split_name(int cut_kind) { return split_names[cut_kind]; }
 static_assert(sizeof(split_names) / sizeof(char*) ==
               (size_t)split_kind::split_count);
 
+// Once we have objects, we can look for them in the other grid. A match may
+// allow an object to move, turn or flip, change color, or extend past the grid's
+// border. Each combination of these permissions is tried as a candidate too.
 struct match_mode {
     bool translate = true;
     bool pose = true;
@@ -116,7 +97,14 @@ struct match_mode {
     }
 };
 
+// Correspondence records where objects from one grid appear in the other.
+// We look in both directions: where did an input object go, and where did an
+// output object come from? We compare the whole picture as well as its objects.
+// These records are evidence for later inference about the puzzle's rule.
+// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
 struct correspondence_facts {
+    // An "edge" is one link from an object to a place in the other grid.
+    // It records the match, or an overlap when the shape was not found.
     struct edge {
         // WHICH GRID THIS EDGE STARTS ON. A reading runs both ways round and
         // keeps the edges of both, so the side is a property of the edge and
@@ -2406,6 +2394,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
 // of reading here and nothing in the table that never competed — the winner
 // beat all of them on the same numbers.
 // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
+//
+// This is the one name infer() calls from this file; everything above feeds it.
 inline correspondence_facts pick_split(const vector<example>& train, int8_t background) {
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
 
