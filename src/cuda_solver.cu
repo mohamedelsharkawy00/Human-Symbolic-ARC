@@ -1778,6 +1778,7 @@ __device__ void gpu_exec_move_warp(gpu_exec_context& ctx, int16_t delta, bool ho
     if (lane == 0) {
         for (int i = 0; i < n; ++i) {
             gpu_fixed_object& obj = res->objects[i];
+            if (!obj.selected) continue;
             if (horizontal) { obj.x0 += delta; obj.x1 += delta; }
             else { obj.y0 += delta; obj.y1 += delta; }
         }
