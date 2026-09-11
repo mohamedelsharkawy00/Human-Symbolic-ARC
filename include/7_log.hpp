@@ -234,8 +234,8 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
         const auto& pairs = correspondence.reading_pairs[i];
         for (size_t which = 0; which < pairs.size(); ++which)
             for (int side = 0; side < 2; ++side) {
-                const auto& list = side ? pairs[which].output_objects
-                                        : pairs[which].input_objects;
+                const auto& list = side ? pairs[which].output_info
+                                        : pairs[which].input_info;
                 for (const auto& piece : list)
                     report << "    pair " << which << (side ? " out" : " in ")
                       << "  color " << (int)piece.color
@@ -246,10 +246,10 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
             }
         for (size_t which = 0; which < pairs.size(); ++which)
             for (const auto& edge : pairs[which].edges) {
-                const auto& mine = edge.from_input ? pairs[which].input_objects
-                                                   : pairs[which].output_objects;
-                const auto& theirs = edge.from_input ? pairs[which].output_objects
-                                                     : pairs[which].input_objects;
+                const auto& mine = edge.from_input ? pairs[which].input_info
+                                                   : pairs[which].output_info;
+                const auto& theirs = edge.from_input ? pairs[which].output_info
+                                                     : pairs[which].input_info;
                 const auto& piece = mine[edge.from];
                 const int landed_w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
                 const int landed_h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
@@ -271,8 +271,8 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
 inline void report_one_pair(ostream& report, size_t pair_index,
                             const correspondence_facts::pair_info& pair) {
     report << "pair " << pair_index
-      << "  in_objects " << pair.input_objects.size()
-      << "  out_objects " << pair.output_objects.size()
+      << "  in_objects " << pair.input_info.size()
+      << "  out_objects " << pair.output_info.size()
       << "  class " << pair.most_sources << '-' << pair.most_landings
       << "  went nowhere " << pair.deleted << " one " << pair.persisted
       << " many " << pair.copied
@@ -286,16 +286,16 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << "  unexplained " << ranges::count_if(pair.left_over, [](const auto& c) { return !c.made_or_gone; })
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
-    for (size_t i = 0; i < pair.input_objects.size(); ++i) {
-        const auto& piece = pair.input_objects[i];
+    for (size_t i = 0; i < pair.input_info.size(); ++i) {
+        const auto& piece = pair.input_info[i];
         report << "  in[" << i << "] color " << (int)piece.color
           << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
           << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
           << " px " << piece.summary.count << " shape " << piece.shape
           << " edges " << piece.edges_touching << "\n";
     }
-    for (size_t i = 0; i < pair.output_objects.size(); ++i) {
-        const auto& landing = pair.output_objects[i];
+    for (size_t i = 0; i < pair.output_info.size(); ++i) {
+        const auto& landing = pair.output_info[i];
         report << "  out[" << i << "] color " << (int)landing.color
           << " at " << (int)landing.summary.x0 << ',' << (int)landing.summary.y0
           << " " << (int)landing.summary.w << 'x' << (int)landing.summary.h

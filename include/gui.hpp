@@ -826,7 +826,7 @@ struct row_place {
 inline const correspondence_facts::object_info& piece_in(
     const vector<correspondence_facts::pair_info>& pairs, const piece_place& at) {
   const auto& pair = pairs[at.pair];
-  return (at.from_input ? pair.input_objects : pair.output_objects)[at.which];
+  return (at.from_input ? pair.input_info : pair.output_info)[at.which];
 }
 
 // WHERE ONE EDGE RUNS, in cells: the box the piece sits in, and the box it
@@ -840,8 +840,8 @@ struct line_ends {
 };
 inline line_ends ends_of(const correspondence_facts::pair_info& pair,
                          const correspondence_facts::edge& edge) {
-  const auto& mine = edge.from_input ? pair.input_objects : pair.output_objects;
-  const auto& theirs = edge.from_input ? pair.output_objects : pair.input_objects;
+  const auto& mine = edge.from_input ? pair.input_info : pair.output_info;
+  const auto& theirs = edge.from_input ? pair.output_info : pair.input_info;
   const auto& piece = mine[edge.from];
   const int8_t w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
   const int8_t h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
@@ -865,7 +865,7 @@ inline vector<piece_place> pieces_of(const vector<correspondence_facts::pair_inf
   vector<piece_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (int side = 0; side < 2; ++side) {
-      const auto& list = side ? pairs[pair].output_objects : pairs[pair].input_objects;
+      const auto& list = side ? pairs[pair].output_info : pairs[pair].input_info;
       for (size_t i = 0; i < list.size(); ++i)
         all.push_back({ (int8_t)pair, side == 0, (int16_t)i });
     }
@@ -927,8 +927,8 @@ inline vector<row_place> refusals_of(const vector<correspondence_facts::pair_inf
   stable_sort(all.begin(), all.end(), [&](const row_place& a, const row_place& b) {
     const auto& one = pairs[a.pair].discarded[a.which];
     const auto& two = pairs[b.pair].discarded[b.which];
-    const auto& mine = one.from_input ? pairs[a.pair].input_objects : pairs[a.pair].output_objects;
-    const auto& theirs = two.from_input ? pairs[b.pair].input_objects : pairs[b.pair].output_objects;
+    const auto& mine = one.from_input ? pairs[a.pair].input_info : pairs[a.pair].output_info;
+    const auto& theirs = two.from_input ? pairs[b.pair].input_info : pairs[b.pair].output_info;
     return tuple{ a.pair, !one.from_input, mine[one.from].summary.y0, mine[one.from].summary.x0 } <
            tuple{ b.pair, !two.from_input, theirs[two.from].summary.y0, theirs[two.from].summary.x0 };
   });
@@ -1379,8 +1379,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           const row_place& at = lines[step];
           const auto& edge = pairs[at.pair].edges[at.which];
           const line_ends ends = ends_of(pairs[at.pair], edge);
-          const auto& mine = edge.from_input ? pairs[at.pair].input_objects
-                                             : pairs[at.pair].output_objects;
+          const auto& mine = edge.from_input ? pairs[at.pair].input_info
+                                             : pairs[at.pair].output_info;
           const int8_t color = mine[edge.from].color;
           said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
                          (int)at.pair, (color < 0 ? string("MIXED") : to_string(color)).c_str(),
@@ -1679,9 +1679,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         // Places one piece went is an input-side question, pieces meeting at one
         // landing an output-side one. Both ends are read, so both are counted.
         int most_landings = 0, most_sources = 0;
-        for (const auto& piece : pr.input_objects)
+        for (const auto& piece : pr.input_info)
           most_landings = max(most_landings, piece.edges_touching);
-        for (const auto& landing : pr.output_objects)
+        for (const auto& landing : pr.output_info)
           most_sources = max(most_sources, landing.edges_touching);
         pair_row(to_string(i), how_name[clamp((int)pr.verdict, 0, 2)],
                  to_text("%d-%d", most_sources, most_landings),

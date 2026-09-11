@@ -206,7 +206,10 @@ __device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& ou
     out.count = 0;
     if (g.width <= 0 || g.height <= 0) return;
     arc::object_walk_scratch scratch;
-    arc::each_object(g, (int)bg_color, any_color, scratch, gpu_take_object{ &out, &g });
+    arc::each_object(g, (int)bg_color,
+                     any_color ? arc::grouping::touching_any_color
+                               : arc::grouping::touching_same_color,
+                     scratch, gpu_take_object{ &out, &g });
 }
 
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {

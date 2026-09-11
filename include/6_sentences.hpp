@@ -173,8 +173,8 @@ inline said_reading say_the_reading(const inference& inf) {
         };
         for (const auto& edge : pair.edges) {
             if (!edge.from_input || !edge.same_shape) continue;
-            if (edge.from < 0 || edge.from >= (int16_t)pair.input_objects.size()) continue;
-            const auto& piece = pair.input_objects[edge.from];
+            if (edge.from < 0 || edge.from >= (int16_t)pair.input_info.size()) continue;
+            const auto& piece = pair.input_info[edge.from];
             note(piece.color, act_turn,   edge.pose);
             note(piece.color, act_down,   (int8_t)(edge.row - piece.summary.y0));
             note(piece.color, act_across, (int8_t)(edge.col - piece.summary.x0));

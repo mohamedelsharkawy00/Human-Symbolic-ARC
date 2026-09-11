@@ -210,6 +210,19 @@ struct object {
     ARC_HOST_DEVICE bool holds(int row, int col) const {
         return color_at(row, col) != (int8_t)TRANSPARENT;
     }
+
+    // The object on its own, as a grid just big enough to hold it: its own
+    // colors where it reaches, TRANSPARENT in the gaps and nowhere else's cells.
+    // The cells are already this, packed four bits each; this spells them out
+    // for the code that walks a grid row by row. Host only -- it allocates a
+    // whole grid, which is what the packing exists to avoid on the device.
+    grid drawn() const {
+        grid out(summary.w, summary.h);
+        for (int row = 0; row < summary.h; ++row)
+            for (int col = 0; col < summary.w; ++col)
+                out.data[row][col] = cells[row][col];
+        return out;
+    }
 };
 
 // End of warning suppression
@@ -217,6 +230,17 @@ struct object {
 #pragma warning(pop)
 #endif
 
+
+// What counts as one object. The walk answers all three the same way, so no
+// two readings can disagree about which cells belong together.
+enum class grouping : int8_t {
+    // Cells that touch, all of them the same color. The usual object.
+    touching_same_color,
+    // Cells that touch, whatever their colors. One object may be many colors.
+    touching_any_color,
+    // Every cell of a color at once, touching or not. One object per color.
+    all_of_one_color,
+};
 
 // Caller-owned so host and device can lend memory they already hold.
 struct object_walk_scratch {
@@ -237,7 +261,11 @@ struct object_walk_scratch {
 // not assumed. Pass -1 to exclude nothing but TRANSPARENT.
 template <class Grid, class Take>
 ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
-                                 bool any_color, object_walk_scratch& scratch, Take take) {
+                                 grouping how, object_walk_scratch& scratch, Take take) {
+    const bool any_color = (how == grouping::touching_any_color);
+    // One object per color takes every cell of the color at once, wherever it
+    // is; the touching kinds walk out from the seed cell only.
+    const bool whole_color = (how == grouping::all_of_one_color);
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
     for (int r = 0; r < MAX_GRID_DIM; ++r)
@@ -258,13 +286,26 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
             object_summary found;
             int seen = 0;
+            int seeded = 1;
             int x0 = col, y0 = row, x1 = col, y1 = row;
+            // Every other cell of this color joins before the walk starts, and
+            // the walk below then claims nothing, so the group is the color.
+            if (whole_color)
+                for (int other_row = 0; other_row < one_grid.height; ++other_row)
+                    for (int other_col = 0; other_col < one_grid.width; ++other_col) {
+                        if (taken[other_row][other_col] ||
+                            one_grid.data[other_row][other_col] != color) continue;
+                        taken[other_row][other_col] = true;
+                        queue_row[seeded] = (int16_t)other_row;
+                        queue_col[seeded] = (int16_t)other_col;
+                        ++seeded;
+                    }
             // One flood fill for the whole project, so no two readings can
             // disagree about which cells belong to one group.
             found.count = (int16_t)walk_out(one_grid.height, one_grid.width,
-                queue_row, queue_col, 1,
+                queue_row, queue_col, seeded,
                 [&](int next_row, int next_col) {
-                    if (taken[next_row][next_col]) return false;
+                    if (whole_color || taken[next_row][next_col]) return false;
                     const int there = one_grid.data[next_row][next_col];
                     if (any_color ? (there < 0 || there == background)
                                   : (there != color)) return false;
@@ -293,7 +334,7 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
 inline vector<object> find_objects(const grid& one_grid, int background) {
     vector<object> found;
     object_walk_scratch scratch;
-    each_object(one_grid, background, /*any_color=*/false, scratch, [&](const object_summary& one,
+    each_object(one_grid, background, grouping::touching_same_color, scratch, [&](const object_summary& one,
                                        const int16_t* cells, int n) {
         found.push_back({});
         object& made = found.back();
@@ -314,7 +355,7 @@ inline int find_objects_by_color(const grid& one_grid, int background,
                                  object_summary* out, int max_out) {
     int found = 0;
     object_walk_scratch scratch;
-    each_object(one_grid, background, /*any_color=*/false, scratch, [&](const object_summary& one,
+    each_object(one_grid, background, grouping::touching_same_color, scratch, [&](const object_summary& one,
                                        const int16_t*, int) {
         if (found < max_out) out[found++] = one;
     });

@@ -42,7 +42,7 @@ static inline int8_t fixed_obj_first_color(const fixed_object& o) {
 static inline void fixed_segment_objects(const fixed_grid& g, fixed_object_list& out, int8_t bg_color = GPU_TRANSPARENT) {
     out.clear();
     object_walk_scratch scratch;
-    each_object(g, bg_color, /*any_color=*/false, scratch,
+    each_object(g, bg_color, grouping::touching_same_color, scratch,
         [&](const object_summary& box, const int16_t* cells, int n) {
             if (out.count >= GPU_MAX_OBJECTS) return;
             fixed_object& obj = out.objects[out.count++];
