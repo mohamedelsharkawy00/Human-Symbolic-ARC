@@ -843,9 +843,9 @@ inline line_ends ends_of(const correspondence_facts::pair_info& pair,
   const auto& mine = edge.from_input ? pair.input_objects : pair.output_objects;
   const auto& theirs = edge.from_input ? pair.output_objects : pair.input_objects;
   const auto& piece = mine[edge.from];
-  const int8_t w = edge.to >= 0 ? theirs[edge.to].width : piece.width;
-  const int8_t h = edge.to >= 0 ? theirs[edge.to].height : piece.height;
-  return { piece.left, piece.top, piece.width, piece.height,
+  const int8_t w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
+  const int8_t h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
+  return { piece.summary.x0, piece.summary.y0, piece.summary.w, piece.summary.h,
            edge.col, edge.row, w, h };
 }
 
@@ -872,8 +872,8 @@ inline vector<piece_place> pieces_of(const vector<correspondence_facts::pair_inf
   stable_sort(all.begin(), all.end(), [&](const piece_place& a, const piece_place& b) {
     const auto& one = piece_in(pairs, a);
     const auto& two = piece_in(pairs, b);
-    return tuple{ a.pair, !a.from_input, one.top, one.left } <
-           tuple{ b.pair, !b.from_input, two.top, two.left };
+    return tuple{ a.pair, !a.from_input, one.summary.y0, one.summary.x0 } <
+           tuple{ b.pair, !b.from_input, two.summary.y0, two.summary.x0 };
   });
   return all;
 }
@@ -929,8 +929,8 @@ inline vector<row_place> refusals_of(const vector<correspondence_facts::pair_inf
     const auto& two = pairs[b.pair].discarded[b.which];
     const auto& mine = one.from_input ? pairs[a.pair].input_objects : pairs[a.pair].output_objects;
     const auto& theirs = two.from_input ? pairs[b.pair].input_objects : pairs[b.pair].output_objects;
-    return tuple{ a.pair, !one.from_input, mine[one.from].top, mine[one.from].left } <
-           tuple{ b.pair, !two.from_input, theirs[two.from].top, theirs[two.from].left };
+    return tuple{ a.pair, !one.from_input, mine[one.from].summary.y0, mine[one.from].summary.x0 } <
+           tuple{ b.pair, !two.from_input, theirs[two.from].summary.y0, theirs[two.from].summary.x0 };
   });
   return all;
 }
@@ -1428,8 +1428,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
             if (!piece_is_in(pc, at, set)) continue;
             ++members;
             if (!pc.medoid) continue;
-            leader_w = pc.width; leader_h = pc.height;
-            leader_x = pc.left;  leader_y = pc.top;
+            leader_w = pc.summary.w; leader_h = pc.summary.h;
+            leader_x = pc.summary.x0;  leader_y = pc.summary.y0;
           }
           said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
                          (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
@@ -1466,8 +1466,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
                                silence, (int)at.pair,
                                (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
-                               (int)pc.width, (int)pc.height, (int)pc.left, (int)pc.top,
-                               (int)pc.count);
+                               (int)pc.summary.w, (int)pc.summary.h, (int)pc.summary.x0, (int)pc.summary.y0,
+                               (int)pc.summary.count);
           if (pc.blank_width > 0)
             blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
                                  pc.blank_enclosed ? "FILLS A HOLE"
@@ -1585,7 +1585,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                     s, cell_x(m) + (cell_w - text_w(s, scale)) / 2, ty, scale);
           return chip_x;
         };
-        centred("AND IT MAY", cell_x(0), modes * cell_w);
+        centred(degrees_of_freedom::freedom_names_lead, cell_x(0), modes * cell_w);
         ty += row_h;
         // ONE FREEDOM PER LINE, IN ITS OWN WORD. Three initials side by side
         // needed a legend under the table to be read at all, and one of them
@@ -2484,7 +2484,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         if (motif_at != SHOW_ALL &&
             !(motif_at < (int)sets.size() && piece_is_in(pc, at, sets[motif_at]))) continue;
         draw_selection(context, task, lay, at.pair, at.from_input,
-                       pc.left, pc.top, pc.width, pc.height, false, 0, 0, 0, 0,
+                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, false, 0, 0, 0, 0,
                        (int)(pc.medoid ? arc_color::magenta : arc_color::blue),
                        rings);
       }
@@ -2497,7 +2497,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         const piece_place &at = alone[i];
         const auto &pc = piece_in(pairs, at);
         draw_selection(context, task, lay, at.pair, at.from_input,
-                       pc.left, pc.top, pc.width, pc.height, pc.blank_width > 0,
+                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, pc.blank_width > 0,
                        pc.blank_left, pc.blank_top, pc.blank_width, pc.blank_height,
                        (int)arc_color::gray, rings);
       }

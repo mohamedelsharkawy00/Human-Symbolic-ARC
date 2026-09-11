@@ -33,26 +33,17 @@ inline constexpr const char* const segmentation_names[] = {
     "Smallest Of The Two Grids"
 };
 
-// Once we have objects, we can look for them in the other grid. A match may
-// allow an object to move, turn or flip, change color, or extend past the grid's
-// border. Each combination of these permissions is tried as a candidate too.
+// After segmentation, objects can be matched across grids.
+// A match between an input and an output object may allow an object to:
+// move, turn, flip, change color, extend past the grid's border.
+// A segmentation, paired with a combination of these permissions, is one reading.
 struct degrees_of_freedom {
     bool translate = true;
     bool pose = true;
     bool recolor = true;
-    // HANGING OFF THE EDGE IS A FREEDOM LIKE THE REST, not a property of the
-    // segmentation method. Granted to everything, one object was free to sit mostly outside the
-    // grid, recolored and flipped, and claim whatever few cells were left
-    // showing — a claim that costs nothing to make and cannot be checked.
-    // Withheld from everything, every copy a wall cut in half went unexplained.
-    // Neither is true of all puzzles, which is what makes it a freedom: it goes
-    // in the list and the judge decides it per puzzle, the way MOVE and TURN and
-    // COLOR already are.
+    // Allow part of an object to extend beyond the target grid's border.
     bool hang_off = true;
-    // FOUR SWITCHES, SO SIXTEEN WAYS TO SET THEM. FREEDOMS is the four, and the
-    // sixteen is derived from it and never typed out, so a fifth freedom cannot
-    // leave a stale count behind. Two names because they are two numbers: a
-    // reading is one of the sixteen, and it is drawn as four words.
+    // Each of the four permissions can be on or off, giving 2^4 = 16 combinations.
     static constexpr int FREEDOMS = 4;
     static constexpr int COMBINATIONS = 1 << FREEDOMS;
     static constexpr degrees_of_freedom from_index(int packed) {
@@ -63,12 +54,10 @@ struct degrees_of_freedom {
         return (translate ? 1 : 0) | (pose ? 2 : 0) | (recolor ? 4 : 0) |
                (hang_off ? 8 : 0);
     }
-    // THE FREEDOMS, IN THE WORDS EVERYTHING USES. Said once here so the log and
-    // the screen cannot drift apart. Words and not initials: initials read as
-    // noise, and R could be taken for either turning or recoloring.
-    // They finish the sentence "AND IT MAY".
+    // Heading and permission labels used to describe a reading.
+    static constexpr const char* freedom_names_lead = "And It May";
     static constexpr const char* const freedom_names[FREEDOMS] =
-        { "MOVE", "TURN", "COLOR", "HANG OFF" };
+        { "Move", "Turn", "Color", "Hang Off" };
     constexpr bool may(int freedom) const {
         return freedom == 0 ? translate : freedom == 1 ? pose
              : freedom == 2 ? recolor   : hang_off;
@@ -80,67 +69,71 @@ struct degrees_of_freedom {
             if (!words.empty()) words += ", ";
             words += freedom_names[freedom];
         }
-        return words.empty() ? "AS IS" : words;
+        return words.empty() ? "As Is" : words;
     }
 };
 
-// Correspondence records where objects from one grid appear in the other.
-// We look in both directions: where did an input object go, and where did an
-// output object come from? We compare the whole picture as well as its objects.
-// These records are evidence for later inference about the puzzle's rule.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// Trying a reading means segmenting each training pair and matching its objects
+// using the allowed permissions. These matches are called correspondences.
+// One reading can produce many correspondences, in both directions: where did
+// an input object go, and where did an output object come from?
+//
+// Searching for an object from one grid in the other produces an object_match:
+// where it was found, with what rotation and colors.
+// It does not store which objects correspond.
+struct object_match {
+    // Top-left corner of the object's placement in the target grid.
+    int row = 0, col = 0;
+    // Rotation or reflection, numbered 0 to 7; 0 means unchanged.
+    int pose = 0;
+    // Whether the correspondence preserves the object's colors.
+    bool exact = false;
+    // Number of cells covered by another object; 0 means fully visible.
+    int hidden = 0;
+    // Number of cells extending beyond the target grid's border.
+    int outside = 0;
+    // Target color for each source color; -1 means that source color is absent.
+    int8_t color_map[COLOR_COUNT];
+};
+
+// This structure collects the correspondences and summaries of the readings tried.
 struct correspondence_facts {
-    // An "edge" is one link from an object to a place in the other grid.
-    // It records the match, or an overlap when the shape was not found.
+    // An edge connects a source object to an object or position in the target grid.
+    // It records which objects correspond, along with the position, rotation,
+    // and colors recorded by object_match during the search.
+    // If the shape was not found, it records an overlap instead.
     struct edge {
-        // WHICH GRID THIS EDGE STARTS ON. A reading runs both ways round and
-        // keeps the edges of both, so the side is a property of the edge and
-        // never of the reading. True: `from` indexes input_objects and the
-        // landing is on the output. False: the other way about.
+        // True: input to output. False: output to input.
         bool from_input = true;
-        // Object the edge starts from, indexed on its OWN side
+        // Index of the source object in its grid's object list.
         int16_t from = -1;
-        // Matched object on the other side; -1 = positional hit, no object there
+        // Index of the target object; -1 means a position without an object link.
         int16_t to = -1;
-        // Placement on the other side (glyph top-left / the object's box corner)
+        // Top-left corner of the object's placement in the target grid.
         int8_t row = 0, col = 0;
-        // Which of the eight ways round it was sitting; 0 = as it started
+        // Rotation or reflection, numbered 0 to 7; 0 means unchanged.
         int8_t pose = 0;
-        // False = same shape, different color
+        // Whether the correspondence preserves the object's colors.
         bool exact = true;
-        // FOUND WHERE IT ALREADY WAS. The plainest thing a match can say, and
-        // the one thing "found exactly, somewhere" could never be told apart
-        // from before: an object at its own place asks for no freedom at all.
+        // Whether the object was found at its original position.
         bool stayed_put = false;
-        // False = the shape itself changed, so this is not a find at all but the
-        // object it sits on top of the most (see sit_on_top).
+        // False means only an overlap with the target object, not the same shape.
         bool same_shape = true;
-        // Cells of the object another object is drawn on top of; 0 = all of it
-        // shows. Those cells are painted by the thing on top, not by this edge.
-        // WIDER THAN A BYTE ON PURPOSE: an object can run to 900 cells, and
-        // landing_shows reads this as "is any of me covered" — a count that
-        // wrapped to exactly 0 would silently call a buried object fully visible.
+        // Number of cells covered by another object; 0 means fully visible.
+        // Cell counts use 16 bits because a grid can contain up to 900 cells.
         int16_t hidden = 0;
-        // Cells of a pattern window that continue beyond the displayed grid.
-        // Same reason: a block hanging off the edge can leave hundreds outside.
+        // Number of cells extending beyond the target grid's border.
         int16_t outside = 0;
-        // The uniform target color when !exact; -1 for multi-color glyphs.
-        // A VIEW OF THE MAP BELOW, kept because most callers only ever want the
-        // one-colour case and asking for a whole map to read one entry is worse.
+        // Target color for a recolored single-color object; -1 if not applicable.
         int8_t recolored_to = -1;
-        // WHAT TURNED INTO WHAT, by glyph colour; -1 = that colour is not in the
-        // glyph. The matcher knows the whole map and used to hand over one entry
-        // of it, indexed by the object's own colour -- so a segmentation that labels its
-        // objects -1 (a motif block, anything mixed) threw the answer away. How an
-        // object was carved and what colour it became are different questions.
+        // Target color for each source color; -1 means that source color is absent.
         int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     };
     struct object_info {
         // Component color; -1 = the whole-grid object
         int8_t color = -1;
-        // Its box: top-left corner, then how big
-        int8_t left = 0, top = 0, width = 0, height = 0;
-        int16_t count = 0;
+        // Bounding box and cell count, defined in 1_readings.hpp.
+        object_summary summary;
         // Canonical shape hash (orientationless, positionless)
         uint32_t shape = 0;
         // How many edges touch it. That one count reads as "how many places
@@ -227,10 +220,7 @@ struct correspondence_facts {
         // thing: a count nobody can point at is a claim you cannot check.
         vector<left_over_cell> left_over;
         int objects_used = 0;
-        // THE WAY UP THIS PAIR IS READ, so a move here can be set beside a move
-        // in another pair — see best_pose.
-        int8_t pose = 0;
-        // OBJECTS THAT MOVED AS ONE, in that frame. A move said by several
+        // Objects with the same input-to-output movement. A move said by several
         // objects at once is the only thing two objects in this layer ever agree
         // about; said by one it is a coincidence with nobody to back it. Kept
         // as a fact and judged by nobody yet.
@@ -330,39 +320,14 @@ struct correspondence_facts {
     bool valid = false;
 };
 
-// The "first look" primitive — "where does this OBJECT turn up in that grid,
-// maybe recolored?" Not a fact itself; detectors in any direction may call it,
-// either way round (an input object looked for in the output, an output object
-// looked for in the input). Objects only: the glyph is the object cut out of
-// its own box, with
-// TRANSPARENT in the holes, and holes match anything. The whole-grid reading
-// (a color as "empty") is gone — it was a per-puzzle hypothesis nobody made.
-struct object_match {
-    // The glyph's top-left corner where it was found
-    int row = 0, col = 0;
-    // Which of the eight ways it was sitting when it matched
-    int pose = 0;
-    // Matched cells color-identical
-    bool exact = false;
-    // Cells of the glyph another object is sitting on top of; 0 = all of it shows
-    int hidden = 0;
-    // Cells that fell off the edge of the grid — never shown, so no evidence
-    int outside = 0;
-    // Glyph color -> found color; -1 = unused
-    int8_t color_map[COLOR_COUNT];
-};
-
-// THE MOVE AN EDGE NAMES, in the way up its pair is read. Said once, because
-// the clusters are counted from it and the sieve then asks it again, and two
-// spellings of one question is how the two ends of a sieve come to disagree.
-inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
-                              const correspondence_facts::object_info& one_object,
-                              const grid& from_grid, const grid& into_grid) {
-    const auto was = posed_place(pose, from_grid.width, from_grid.height,
-                                 one_object.top, one_object.left);
-    const auto now = posed_place(pose, into_grid.width, into_grid.height,
-                                 edge.row, edge.col);
-    return { now.first - was.first, now.second - was.second };
+// Movement from input to output in the original grid coordinates.
+// Reverse an output-to-input correspondence so both directions agree.
+inline pair<int, int> move_of(const correspondence_facts::edge& edge,
+                              const correspondence_facts::object_info& one_object) {
+    const int down = edge.row - one_object.summary.y0;
+    const int across = edge.col - one_object.summary.x0;
+    return edge.from_input ? pair<int, int>{down, across}
+                           : pair<int, int>{-down, -across};
 }
 
 // WHAT THE PAIRS AGREED, in the form one pair's matching can be asked about.
@@ -370,7 +335,6 @@ inline pair<int, int> move_of(const correspondence_facts::edge& edge, int pose,
 // to many places has no agreement at all, and a rule that cannot see it must
 // never be allowed to empty it.
 struct what_the_pairs_agreed {
-    int8_t pose = 0;
     bool color_speaks[COLOR_COUNT] = {};
     int8_t down[COLOR_COUNT] = {}, across[COLOR_COUNT] = {};
 };
@@ -381,15 +345,17 @@ struct what_the_pairs_agreed {
 // color no pair could pin down speaks for nothing.
 inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
                                const correspondence_facts::edge& edge,
-                               const correspondence_facts::object_info& one_object,
-                               const grid& from_grid, const grid& into_grid) {
+                               const correspondence_facts::object_info& one_object) {
     if (!edge.same_shape) return false;
-    const auto went = move_of(edge, agreed.pose, one_object, from_grid, into_grid);
+    const auto went = move_of(edge, one_object);
     if (!went.first && !went.second) return false;
-    if (one_object.color < 0 || one_object.color >= 10) return true;
-    if (!agreed.color_speaks[one_object.color]) return true;
-    return agreed.down[one_object.color] != went.first ||
-           agreed.across[one_object.color] != went.second;
+    int input_color = one_object.color;
+    if (!is_color(input_color)) return true;
+    // A backward recoloring maps the output color back to the input color.
+    if (!edge.from_input && !edge.exact) input_color = edge.color_map[input_color];
+    if (!is_color(input_color) || !agreed.color_speaks[input_color]) return true;
+    return agreed.down[input_color] != went.first ||
+           agreed.across[input_color] != went.second;
 }
 
 // The glyph drawn out in one of the eight ways round (1_readings.hpp).
@@ -405,33 +371,6 @@ inline grid posed_glyph(const grid& glyph, int pose) {
     return posed;
 }
 
-// THE WAY UP A GRID READS SMALLEST. Two pairs of one puzzle can be drawn a
-// quarter turn apart — 05a7bcf2 pair 0 stands the whole scene on its side, its
-// line running down the grid while the other pairs' run across — and no move in
-// one frame can be compared with a move in the other until both are read the
-// same way up. So the whole grid votes: of the eight ways round, the one whose
-// cells read smallest in row order. A vote and not a shape rule, because every
-// grid here is square and a shape rule is blind to that.
-inline int best_pose(const grid& one_grid) {
-    auto read_out = [&](int pose) {
-        const grid view = posed_glyph(one_grid, pose);
-        vector<int8_t> stream;
-        stream.reserve((size_t)view.width * view.height);
-        for (int row = 0; row < view.height; ++row)
-            for (int col = 0; col < view.width; ++col)
-                // A cell is a colour 0..9 or TRANSPARENT, so the narrowing is
-                // safe and saying so stops the compiler asking every build.
-                stream.push_back((int8_t)view.data[row][col]);
-        return stream;
-    };
-    int best = 0;
-    vector<int8_t> smallest = read_out(0);
-    for (int pose = 1; pose < POSE_COUNT; ++pose) {
-        const vector<int8_t> here = read_out(pose);
-        if (here < smallest) { best = pose; smallest = here; }
-    }
-    return best;
-}
 
 // Every place the glyph turns up, tried every way round, plus how many ways
 // there were to try — the two numbers belong together, because a shape that
@@ -601,9 +540,9 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
             if (!lit) continue;
             correspondence_facts::object_info one_object;
             one_object.color = -1;
-            one_object.left = (int8_t)block_left; one_object.top = (int8_t)block_top;
-            one_object.width = (int8_t)block_width; one_object.height = (int8_t)block_height;
-            one_object.count = (int16_t)lit;
+            one_object.summary.x0 = (int8_t)block_left; one_object.summary.y0 = (int8_t)block_top;
+            one_object.summary.w = (int8_t)block_width; one_object.summary.h = (int8_t)block_height;
+            one_object.summary.count = (int16_t)lit;
             one_object.shape = canonical_shape_hash(block_width, block_height, occupied);
             objects.push_back(one_object);
             if (glyphs) glyphs->push_back(glyph);
@@ -667,21 +606,21 @@ inline void segment_into_objects(const grid& one_grid, int8_t background, segmen
             one_color = (one_grid.data[queue_row[i]][queue_col[i]] == color);
         correspondence_facts::object_info one_object;
         one_object.color = one_color ? (int8_t)color : (int8_t)-1;
-        one_object.left = (int8_t)left; one_object.top = (int8_t)top;
-        one_object.width = (int8_t)(right - left + 1);
-        one_object.height = (int8_t)(bottom - top + 1);
-        one_object.count = (int16_t)size;
-        for (int i = 0; i < one_object.width * one_object.height; ++i) occupied[i] = false;
+        one_object.summary.x0 = (int8_t)left; one_object.summary.y0 = (int8_t)top;
+        one_object.summary.w = (int8_t)(right - left + 1);
+        one_object.summary.h = (int8_t)(bottom - top + 1);
+        one_object.summary.count = (int16_t)size;
+        for (int i = 0; i < one_object.summary.w * one_object.summary.h; ++i) occupied[i] = false;
         for (int i = 0; i < size; ++i)
-            occupied[(queue_row[i] - top) * one_object.width + (queue_col[i] - left)] = true;
-        one_object.shape = canonical_shape_hash(one_object.width, one_object.height, occupied);
+            occupied[(queue_row[i] - top) * one_object.summary.w + (queue_col[i] - left)] = true;
+        one_object.shape = canonical_shape_hash(one_object.summary.w, one_object.summary.h, occupied);
         objects.push_back(one_object);
         if (glyphs) {
             // Each cell keeps its own color, so an object of several reads as it
             // looks. For a one-color object that is the color it already had.
-            grid glyph(one_object.width, one_object.height);
-            for (int row = 0; row < one_object.height; ++row)
-                for (int col = 0; col < one_object.width; ++col) glyph.data[row][col] = TRANSPARENT;
+            grid glyph(one_object.summary.w, one_object.summary.h);
+            for (int row = 0; row < one_object.summary.h; ++row)
+                for (int col = 0; col < one_object.summary.w; ++col) glyph.data[row][col] = TRANSPARENT;
             for (int i = 0; i < size; ++i)
                 glyph.data[queue_row[i] - top][queue_col[i] - left] =
                     one_grid.data[queue_row[i]][queue_col[i]];
@@ -722,7 +661,7 @@ inline void find_copies(vector<correspondence_facts::object_info>& objects,
         const bool has_company = one_set_for_the_grid ||
             ranges::any_of(objects, [&](const auto& other) {
                 return &other != &objects[i] && other.shape == objects[i].shape &&
-                       other.count == objects[i].count; });
+                       other.summary.count == objects[i].summary.count; });
         if (!has_company) continue;
         auto at = ranges::find(sets, key);
         if (at == sets.end()) { sets.push_back(key); at = sets.end() - 1; }
@@ -812,11 +751,11 @@ inline void segment_for_correspondence(const grid& one_grid, int8_t background, 
     vector<int> reading_order(objects.size());
     iota(reading_order.begin(), reading_order.end(), 0);
     stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
-        if (objects[left].count != objects[right].count)
-            return objects[left].count > objects[right].count;
-        if (objects[left].top != objects[right].top)
-            return objects[left].top < objects[right].top;
-        return objects[left].left < objects[right].left;
+        if (objects[left].summary.count != objects[right].summary.count)
+            return objects[left].summary.count > objects[right].summary.count;
+        if (objects[left].summary.y0 != objects[right].summary.y0)
+            return objects[left].summary.y0 < objects[right].summary.y0;
+        return objects[left].summary.x0 < objects[right].summary.x0;
     });
     vector<correspondence_facts::object_info> sorted;
     sorted.reserve(objects.size());
@@ -871,7 +810,7 @@ inline double describe_cost(const grid& one_grid, int8_t background,
         bool said_before = false;
         for (size_t j = 0; j < i && !said_before; ++j)
             said_before = (objects[j].shape == objects[i].shape);
-        if (!said_before) cost += objects[i].count * cell_bits;
+        if (!said_before) cost += objects[i].summary.count * cell_bits;
     }
     return cost / plain;
 }
@@ -963,7 +902,7 @@ inline fit_verdict collect_motif_edges(
                        object_match& found) {
         const object_matches matches =
             find_in(from_glyphs[from_index], into, background, true,
-                    target.top, target.left, true, poses);
+                    target.summary.y0, target.summary.x0, true, poses);
         // ITSELF BEATS ITSELF-IN-ANOTHER-COLOR. The hits come back in pose order,
         // so the first one can be a recolor of an early pose while a later pose
         // sits there exactly — and taking the first would report the weaker claim
@@ -983,12 +922,12 @@ inline fit_verdict collect_motif_edges(
         correspondence_facts::edge edge;
         edge.from = (int16_t)from_index;
         edge.to = (int16_t)target_index;
-        edge.row = (int8_t)target.top;
-        edge.col = (int8_t)target.left;
+        edge.row = (int8_t)target.summary.y0;
+        edge.col = (int8_t)target.summary.x0;
         edge.pose = (int8_t)hit.pose;
         edge.exact = hit.exact;
-        edge.stayed_put = (from_objects[from_index].top == target.top &&
-                           from_objects[from_index].left == target.left);
+        edge.stayed_put = (from_objects[from_index].summary.y0 == target.summary.y0 &&
+                           from_objects[from_index].summary.x0 == target.summary.x0);
         edge.outside = (int16_t)hit.outside;
         edge.recolored_to =
             (!hit.exact && from_objects[from_index].color >= 0)
@@ -1006,7 +945,7 @@ inline fit_verdict collect_motif_edges(
         int source = -1;
         object_match hit;
         for (int i = 0; i < (int)from_objects.size(); ++i)
-            if (from_objects[i].top == target.top && from_objects[i].left == target.left &&
+            if (from_objects[i].summary.y0 == target.summary.y0 && from_objects[i].summary.x0 == target.summary.x0 &&
                 sits_at(i, target, hit)) { source = i; break; }
         for (int i = 0; source < 0 && i < (int)from_objects.size(); ++i)
             if (sits_at(i, target, hit)) source = i;
@@ -1127,7 +1066,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         for (const object_match& hit : found_here.hits) {
             if (!allowed.recolor && !hit.exact) continue;
             if (!stationary && hit.pose == 0 &&
-                hit.row == one_object.top && hit.col == one_object.left)
+                hit.row == one_object.summary.y0 && hit.col == one_object.summary.x0)
                 continue;
             // Odds of this landing: every cell the grid SHOWED had to find the
             // color it actually found there. A hidden cell found nothing —
@@ -1183,7 +1122,7 @@ inline vector<correspondence_facts::edge> gather_matches(
         const int poses = allowed.pose ? 8 : 1;
         keep_positional(
             find_in(glyph, into, background, false,
-                    one_object.top, one_object.left, false, poses), true);
+                    one_object.summary.y0, one_object.summary.x0, false, poses), true);
         // HANGING OFF THE EDGE IS ONLY HONEST ON AN OBJECT YOU ALREADY KNOW. Most
         // of an object sitting outside the grid is a claim about cells nobody can
         // see, and it costs nothing to make. What makes it checkable is knowing
@@ -1214,33 +1153,33 @@ inline vector<correspondence_facts::edge> gather_matches(
         if (!allowed.translate) continue;
         for (size_t into_index = 0; into_index < into_objects.size(); ++into_index) {
             const auto& landing = into_objects[into_index];
-            if (landing.shape != one_object.shape || landing.count != one_object.count) continue;
-            if (landing.top == one_object.top && landing.left == one_object.left) continue;
+            if (landing.shape != one_object.shape || landing.summary.count != one_object.summary.count) continue;
+            if (landing.summary.y0 == one_object.summary.y0 && landing.summary.x0 == one_object.summary.x0) continue;
             bool seen = false;
             for (const auto& edge : found)
                 if (edge.from == (int16_t)from_index &&
-                    edge.row == landing.top && edge.col == landing.left) { seen = true; break; }
+                    edge.row == landing.summary.y0 && edge.col == landing.summary.x0) { seen = true; break; }
             if (seen) continue;
             // Same odds, read off the object that was matched: a single-color
             // body is `count` cells all wearing its color; the whole-grid
             // object is the grid itself.
             double odds = 1.0;
             if (landing.color >= 0)
-                for (int i = 0; i < landing.count; ++i) odds *= share[landing.color];
+                for (int i = 0; i < landing.summary.count; ++i) odds *= share[landing.color];
             else
                 walk_colored_cells(into, TRANSPARENT,
                                    [&](int, int, int color) { odds *= share[color]; });
             correspondence_facts::edge edge;
             edge.from = (int16_t)from_index;
             edge.to = (int16_t)into_index;
-            edge.row = landing.top; edge.col = landing.left;
+            edge.row = landing.summary.y0; edge.col = landing.summary.x0;
             edge.exact = (landing.color == one_object.color);
             if (!allowed.recolor && !edge.exact) continue;
             edge.recolored_to = (!edge.exact && one_object.color >= 0) ? landing.color : (int8_t)-1;
             if (!edge.exact && is_color(one_object.color))
                 edge.color_map[one_object.color] = landing.color;
             const bool stands_alone = beats_chance(
-                (into.width - landing.width + 1) * (into.height - landing.height + 1), odds);
+                (into.width - landing.summary.w + 1) * (into.height - landing.summary.h + 1), odds);
             // Same bar as source 1: a recolor is the weaker claim either way it
             // was found, so it earns its place alone or not at all.
             if (!edge.exact && !stands_alone) {
@@ -1587,7 +1526,7 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
                           const vector<grid>& from_glyphs,
                           const vector<correspondence_facts::object_info>& into_objects,
                           const vector<grid>& into_glyphs,
-                          const grid& from, const grid& into,
+                          const grid& into, bool from_input,
                           int8_t background, bool may_hang_off,
                           vector<correspondence_facts::edge>& edges,
                           vector<correspondence_facts::edge>* discarded = nullptr,
@@ -1597,6 +1536,7 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
     vector<correspondence_facts::edge> found =
         gather_matches(from_objects, from_glyphs, into_objects, into,
                        background, may_hang_off, discarded, discard_why, allowed);
+    for (auto& edge : found) edge.from_input = from_input;
 
     // WHAT THE OTHER EXAMPLES DISAGREE WITH IS NEVER OFFERED. It has to go
     // BEFORE the fitting and not after: the fitting uses every candidate to
@@ -1606,7 +1546,7 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
     if (agreed)
         for (size_t i = found.size(); i-- > 0; ) {
             const auto& one_object = from_objects[found[i].from];
-            if (!the_pairs_disagree(*agreed, found[i], one_object, from, into)) continue;
+            if (!the_pairs_disagree(*agreed, found[i], one_object)) continue;
             throw_away(found, i, correspondence_facts::the_other_examples_disagreed,
                        discarded, discard_why);
             found.erase(found.begin() + i);
@@ -1661,14 +1601,14 @@ inline void sit_on_top(const vector<correspondence_facts::object_info>& from_obj
         int best = -1, most_shared = 0;
         for (size_t into_index = 0; into_index < into_objects.size(); ++into_index) {
             const auto& landing = into_objects[into_index];
-            if (landing.color != one_object.color || landing.count < one_object.count) continue;
+            if (landing.color != one_object.color || landing.summary.count < one_object.summary.count) continue;
             const grid& landing_glyph = into_glyphs[into_index];
             int shared = 0;
             for (int row = 0; row < glyph.height; ++row)
                 for (int col = 0; col < glyph.width; ++col) {
                     if (glyph.data[row][col] == TRANSPARENT) continue;
-                    int in_landing_row = one_object.top + row - landing.top;
-                    int in_landing_col = one_object.left + col - landing.left;
+                    int in_landing_row = one_object.summary.y0 + row - landing.summary.y0;
+                    int in_landing_col = one_object.summary.x0 + col - landing.summary.x0;
                     if (in_landing_row < 0 || in_landing_row >= landing_glyph.height ||
                         in_landing_col < 0 || in_landing_col >= landing_glyph.width) continue;
                     shared += (landing_glyph.data[in_landing_row][in_landing_col] != TRANSPARENT);
@@ -1679,8 +1619,8 @@ inline void sit_on_top(const vector<correspondence_facts::object_info>& from_obj
         correspondence_facts::edge edge;
         edge.from = (int16_t)from_index;
         edge.to = (int16_t)best;
-        edge.row = into_objects[best].top;
-        edge.col = into_objects[best].left;
+        edge.row = into_objects[best].summary.y0;
+        edge.col = into_objects[best].summary.x0;
         edge.exact = false;
         edge.same_shape = false;
         edges.push_back(edge);
@@ -1718,8 +1658,8 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
             for (int row = 0; row < landing_glyph.height && !touches; ++row)
                 for (int col = 0; col < landing_glyph.width; ++col) {
                     if (landing_glyph.data[row][col] == TRANSPARENT) continue;
-                    int in_footprint_row = landing.top + row - edge.row;
-                    int in_footprint_col = landing.left + col - edge.col;
+                    int in_footprint_row = landing.summary.y0 + row - edge.row;
+                    int in_footprint_col = landing.summary.x0 + col - edge.col;
                     if (in_footprint_row < 0 || in_footprint_row >= footprint.height ||
                         in_footprint_col < 0 || in_footprint_col >= footprint.width) continue;
                     if (footprint.data[in_footprint_row][in_footprint_col] != TRANSPARENT) {
@@ -1947,7 +1887,6 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                    describe_cost(output, background, pair.output_objects));
         step_width_of[pair_index] = step_width;
         step_height_of[pair_index] = step_height;
-        pair.pose = (int8_t)best_pose(input);
     }
 
     // ASKED ONCE, THEN ASKED AGAIN. Once to hear what each pair says on its
@@ -1980,7 +1919,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                                               edges, allowed);
             } else {
                 verdict = collect_edges(from_objects, from_glyphs, into_objects,
-                                        into_glyphs, from_input ? input : output, into,
+                                        into_glyphs, into, from_input,
                                         background, allowed.hang_off,
                                         edges, &discarded, &discard_why, allowed, agreed);
                 sit_on_top(from_objects, from_glyphs, into_objects, into_glyphs, edges);
@@ -2046,16 +1985,33 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                                                   : pair.output_objects;
             const auto& here = objects[left.from];
             const auto& there = objects[right.from];
-            if (here.top != there.top)   return here.top < there.top;
-            if (here.left != there.left) return here.left < there.left;
+            if (here.summary.y0 != there.summary.y0)   return here.summary.y0 < there.summary.y0;
+            if (here.summary.x0 != there.summary.x0) return here.summary.x0 < there.summary.x0;
             if (left.row != right.row)   return left.row < right.row;
             return left.col < right.col;
         });
 
-        // WHAT SEVERAL OBJECTS SAY AT ONCE. Read in the pair's own way up, so
-        // that a pair drawn a quarter turn from its neighbours can still be set
-        // beside them. A sits-on edge is skipped: it names no move.
-        pair.pose = (int8_t)best_pose(input);
+        // Group equal input-to-output movements within this pair.
+        // Count each input object once per movement, using its input color.
+        // A backward positional correspondence needs an identifiable input object.
+        auto input_object_of = [&](const correspondence_facts::edge& edge) {
+            if (edge.from_input) return (int)edge.from;
+            if (edge.to >= 0) return (int)edge.to;
+            if (edge.hidden || edge.outside) return -1;
+            const auto& source = pair.output_objects[edge.from];
+            const auto [width, height] = posed_size(edge.pose, source.summary.w, source.summary.h);
+            int found = -1;
+            for (size_t i = 0; i < pair.input_objects.size(); ++i) {
+                const auto& target = pair.input_objects[i];
+                if (target.summary.y0 != edge.row || target.summary.x0 != edge.col ||
+                    target.summary.w != width || target.summary.h != height ||
+                    target.summary.count != source.summary.count || target.shape != source.shape)
+                    continue;
+                if (found >= 0) return -1;
+                found = (int)i;
+            }
+            return found;
+        };
         vector<correspondence_facts::pair_info::moved_together> moves;
         vector<vector<int>> who_moved;
         for (const auto& edge : pair.edges) {
@@ -2063,24 +2019,22 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
             const auto& objects = edge.from_input ? pair.input_objects : pair.output_objects;
             if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
             const auto& one_object = objects[edge.from];
-            const auto went = move_of(edge, pair.pose, one_object,
-                                      edge.from_input ? input : output,
-                                      edge.from_input ? output : input);
+            const auto went = move_of(edge, one_object);
             const int8_t down = (int8_t)went.first, across = (int8_t)went.second;
-            // An object is named by its side and its index, so the same index on
-            // the two grids is not mistaken for one object speaking twice.
-            const int speaker = edge.from_input ? (edge.from + 1) : -(edge.from + 1);
+            const int speaker = input_object_of(edge);
+            if (speaker < 0 || (size_t)speaker >= pair.input_objects.size()) continue;
+            const int8_t input_color = pair.input_objects[speaker].color;
             size_t at = 0;
             while (at < moves.size() &&
                    (moves[at].down != down || moves[at].across != across)) ++at;
             if (at == moves.size()) {
-                moves.push_back({ down, across, one_object.color, 0 });
+                moves.push_back({ down, across, input_color, 0 });
                 who_moved.push_back({});
             }
             if (ranges::find(who_moved[at], speaker) == who_moved[at].end()) {
                 who_moved[at].push_back(speaker);
                 moves[at].objects++;
-                if (moves[at].color != one_object.color) moves[at].color = -1;
+                if (moves[at].color != input_color) moves[at].color = -1;
             }
         }
         for (const auto& move : moves)
@@ -2136,7 +2090,6 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     if (anything_agreed)
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
             if (!pair_was_read(which)) continue;
-            agreed[which].pose = facts.pairs[which].pose;
             // NOTHING TO TAKE BACK, NOTHING TO ASK AGAIN. A pair whose every
             // match already agrees would be read a second time to the same
             // answer, and the matching is the expensive half of this file.
@@ -2146,11 +2099,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                 const auto& objects = edge.from_input ? pair.input_objects
                                                       : pair.output_objects;
                 if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
-                if (!the_pairs_disagree(agreed[which], edge, objects[edge.from],
-                                        edge.from_input ? train[which].input
-                                                        : train[which].output,
-                                        edge.from_input ? train[which].output
-                                                        : train[which].input)) continue;
+                if (!the_pairs_disagree(agreed[which], edge, objects[edge.from])) continue;
                 any_disagrees = true;
                 break;
             }
@@ -2226,7 +2175,7 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                 for (int row = 0; row < glyphs[i].height; ++row)
                     for (int col = 0; col < glyphs[i].width; ++col) {
                         if (glyphs[i].data[row][col] == TRANSPARENT) continue;
-                        const int at_row = one.top + row, at_col = one.left + col;
+                        const int at_row = one.summary.y0 + row, at_col = one.summary.x0 + col;
                         if (at_row < 0 || at_row >= other.height ||
                             at_col < 0 || at_col >= other.width) continue;
                         const int16_t which = patch_of[at_row][at_col];
@@ -2310,20 +2259,20 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
                 if (!edge.same_shape || edge.outside != 0) continue;
                 if (edge.from < 0 || (size_t)edge.from >= ours.size()) continue;
                 const auto& one_object = ours[edge.from];
-                for (int row = 0; row < one_object.height; ++row)
-                    for (int col = 0; col < one_object.width; ++col)
+                for (int row = 0; row < one_object.summary.h; ++row)
+                    for (int col = 0; col < one_object.summary.w; ++col)
                         if (our_glyphs[edge.from].data[row][col] != TRANSPARENT)
-                            carried[one_object.top + row][one_object.left + col] = true;
+                            carried[one_object.summary.y0 + row][one_object.summary.x0 + col] = true;
             }
             // Which object each cell belongs to, so a cell can be asked about
             // the object it is part of.
             int16_t object_at[MAX_GRID_DIM][MAX_GRID_DIM];
             for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
             for (size_t i = 0; i < ours.size() && i < our_glyphs.size(); ++i)
-                for (int row = 0; row < ours[i].height; ++row)
-                    for (int col = 0; col < ours[i].width; ++col)
+                for (int row = 0; row < ours[i].summary.h; ++row)
+                    for (int col = 0; col < ours[i].summary.w; ++col)
                         if (our_glyphs[i].data[row][col] != TRANSPARENT)
-                            object_at[ours[i].top + row][ours[i].left + col] = (int16_t)i;
+                            object_at[ours[i].summary.y0 + row][ours[i].summary.x0 + col] = (int16_t)i;
             walk_colored_cells(one_grid, background, [&](int row, int col, int) {
                 if (carried[row][col]) return;
                 // MADE, or UNEXPLAINED. Nothing over there is this object, so
@@ -2439,7 +2388,7 @@ inline correspondence_facts select_segmentation(const vector<example>& train, in
             auto any_fits = [](const vector<correspondence_facts::object_info>& objects,
                                const grid& other) {
                 return ranges::any_of(objects, [&](const auto& one_object) {
-                    return one_object.width <= other.width && one_object.height <= other.height; });
+                    return one_object.summary.w <= other.width && one_object.summary.h <= other.height; });
             };
             if (!any_fits(input_objects, output) && !any_fits(output_objects, input))
                 look.objects_can_fit = false;
@@ -2491,9 +2440,9 @@ inline correspondence_facts select_segmentation(const vector<example>& train, in
                 scored.recolored += pair.found_recolored;
                 scored.sits_on += pair.sits_on;
                 for (const auto& one_object : pair.input_objects)
-                    scored.box_cells += one_object.width * one_object.height;
+                    scored.box_cells += one_object.summary.w * one_object.summary.h;
                 for (const auto& landing : pair.output_objects)
-                    scored.box_cells += landing.width * landing.height;
+                    scored.box_cells += landing.summary.w * landing.summary.h;
             }
             if (!tried.pairs.empty())
                 scored.describe_cost = shares / tried.pairs.size();

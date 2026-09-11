@@ -208,7 +208,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
           << segmentation_names[(int)correspondence.readings[i].segmentation]
           << "  [" << correspondence.readings[i].allowed.label() << "]\n";
         for (size_t which = 0; which < pairs.size(); ++which) {
-            report << "    pair " << which << " read pose " << (int)pairs[which].pose;
+            report << "    pair " << which << " input-to-output";
             for (const auto& agreed : pairs[which].agreed_moves) {
                 report << "   down " << (int)agreed.down << " across " << (int)agreed.across
                   << " said by " << agreed.objects;
@@ -239,9 +239,9 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
                 for (const auto& piece : list)
                     report << "    pair " << which << (side ? " out" : " in ")
                       << "  color " << (int)piece.color
-                      << " at " << (int)piece.left << "," << (int)piece.top
-                      << " " << (int)piece.width << "x" << (int)piece.height
-                      << " px " << piece.count
+                      << " at " << (int)piece.summary.x0 << "," << (int)piece.summary.y0
+                      << " " << (int)piece.summary.w << "x" << (int)piece.summary.h
+                      << " px " << piece.summary.count
                       << " edges " << piece.edges_touching << newline;
             }
         for (size_t which = 0; which < pairs.size(); ++which)
@@ -251,11 +251,11 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
                 const auto& theirs = edge.from_input ? pairs[which].output_objects
                                                      : pairs[which].input_objects;
                 const auto& piece = mine[edge.from];
-                const int landed_w = edge.to >= 0 ? theirs[edge.to].width : piece.width;
-                const int landed_h = edge.to >= 0 ? theirs[edge.to].height : piece.height;
+                const int landed_w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
+                const int landed_h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
                 report << "    pair " << which
-                  << "  " << (int)piece.width << "x" << (int)piece.height
-                  << " at " << (int)piece.left << "," << (int)piece.top
+                  << "  " << (int)piece.summary.w << "x" << (int)piece.summary.h
+                  << " at " << (int)piece.summary.x0 << "," << (int)piece.summary.y0
                   << " -> " << landed_w << "x" << landed_h
                   << " at " << (int)edge.col << "," << (int)edge.row;
                 if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
@@ -289,17 +289,17 @@ inline void report_one_pair(ostream& report, size_t pair_index,
     for (size_t i = 0; i < pair.input_objects.size(); ++i) {
         const auto& piece = pair.input_objects[i];
         report << "  in[" << i << "] color " << (int)piece.color
-          << " at " << (int)piece.left << ',' << (int)piece.top
-          << " " << (int)piece.width << 'x' << (int)piece.height
-          << " px " << piece.count << " shape " << piece.shape
+          << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
+          << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
+          << " px " << piece.summary.count << " shape " << piece.shape
           << " edges " << piece.edges_touching << "\n";
     }
     for (size_t i = 0; i < pair.output_objects.size(); ++i) {
         const auto& landing = pair.output_objects[i];
         report << "  out[" << i << "] color " << (int)landing.color
-          << " at " << (int)landing.left << ',' << (int)landing.top
-          << " " << (int)landing.width << 'x' << (int)landing.height
-          << " px " << landing.count << " shape " << landing.shape
+          << " at " << (int)landing.summary.x0 << ',' << (int)landing.summary.y0
+          << " " << (int)landing.summary.w << 'x' << (int)landing.summary.h
+          << " px " << landing.summary.count << " shape " << landing.shape
           << " edges " << landing.edges_touching << "\n";
     }
     static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };

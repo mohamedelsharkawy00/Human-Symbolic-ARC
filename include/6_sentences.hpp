@@ -176,8 +176,8 @@ inline said_reading say_the_reading(const inference& inf) {
             if (edge.from < 0 || edge.from >= (int16_t)pair.input_objects.size()) continue;
             const auto& piece = pair.input_objects[edge.from];
             note(piece.color, act_turn,   edge.pose);
-            note(piece.color, act_down,   (int8_t)(edge.row - piece.top));
-            note(piece.color, act_across, (int8_t)(edge.col - piece.left));
+            note(piece.color, act_down,   (int8_t)(edge.row - piece.summary.y0));
+            note(piece.color, act_across, (int8_t)(edge.col - piece.summary.x0));
             if (!edge.exact)
                 for (int8_t was = 0; was < COLOR_COUNT; ++was)
                     if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
