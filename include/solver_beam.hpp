@@ -3,7 +3,7 @@
 #include <atomic>
 #include "environment.hpp"
 #include "global_app_state.hpp"
-#include "cuda_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via gui.hpp on Windows)
+#include "10_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via gui.hpp on Windows)
 #ifdef _MSC_VER
 #include "gui.hpp"        // full GUI/Vulkan rendering
 #else

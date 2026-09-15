@@ -1,4 +1,4 @@
-// 5_infer.hpp — read the examples like a human.
+// This file reads the examples like a human.
 // Design story, rationale, and experiment records
 // in notes/1 - Overall Design/Inference Master.md
 //
@@ -10,7 +10,7 @@
 #include "1_readings.hpp"
 #include "2_size.hpp"
 #include "3_background.hpp"
-#include "4_correspondence.hpp"
+#include "6_correspondence.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -559,9 +559,11 @@ struct inference {
 //   1_readings.hpp        the shared base: count it, box it, walk it
 //   2_size.hpp            infer_rule
 //   3_background.hpp      elect_background
-//   4_correspondence.hpp  select_segmentation
-//   6_sentences.hpp       say_the_reading
-//   7_log.hpp             the per-puzzle readout
+//   4_objects.hpp         divide grids into objects
+//   5_matching.hpp        find and select possible matches
+//   6_correspondence.hpp  select_segmentation
+//   8_sentences.hpp       say_the_reading
+//   9_log.hpp             the per-puzzle readout
 inline inference infer(const vector<example>& train) {
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);

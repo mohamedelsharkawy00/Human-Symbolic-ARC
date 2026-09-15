@@ -50,7 +50,7 @@ INC_FILES = [
     # The numbered ones in the order they build on each other, 0 first.
     "0_core_types.hpp", "1_readings.hpp", "2_background.hpp",
     "3_correspondence.hpp", "4_infer.hpp", "5_sentences.hpp", "6_log.hpp",
-    "cuda_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
+    "10_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
     "fixed_dsl.hpp", "global_app_state.hpp", "grid_buffer.hpp", "gui_stub.hpp",
     "logger.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
     "solver_executor.hpp", "sound_manager.hpp", "submission.hpp",

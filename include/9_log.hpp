@@ -1,10 +1,10 @@
-// 7_log.hpp — the per-puzzle readout.
+// This file writes the per-puzzle readout.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // Last in the family: it reads every fact and writes none.
 
 #pragma once
-#include "6_sentences.hpp"
+#include "8_sentences.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>

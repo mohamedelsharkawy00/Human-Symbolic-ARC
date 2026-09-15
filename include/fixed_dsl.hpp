@@ -1,6 +1,6 @@
 #pragma once
 
-// This header is included from solver_beam.hpp AFTER environment.hpp and cuda_dsl.cuh,
+// This header is included from solver_beam.hpp AFTER environment.hpp and 10_dsl.cuh,
 // so arc:: types (grid, example, output_dimension_rule, flat_program, etc.) are already available.
 // Do NOT include environment.hpp here to avoid circular dependencies.
 //
@@ -8,7 +8,7 @@
 // and the fixed_init_context used by build_example_upload. All DSL execution is
 // handled by the GPU kernel in cuda_solver.cu.
 
-#include "cuda_dsl.cuh"
+#include "10_dsl.cuh"
 #include <cstring>
 #include <algorithm>
 

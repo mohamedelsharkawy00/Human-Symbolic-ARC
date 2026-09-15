@@ -1,7 +1,18 @@
+// This file defines the operators the solver can use.
+// Operators are combined into sentences, and those sentences together
+// form a candidate program for the solver to try.
+//
+// The earlier chapters describe what happens in the training examples.
+// To solve a puzzle, we need a program that can make those changes.
+// Its operators can find objects, move them, change their colors,
+// and draw the result.
+//
+// Here we define those operators, the data sent to the GPU to run them,
+// and the results returned so the solver can judge each candidate program.
 #pragma once
 // Single home of the grid/color limits the GPU_* names below alias, and of
 // output_dimension_rule, whose cases the kernel switches on.
-#include "5_infer.hpp"
+#include "7_infer.hpp"
 
 #include <vector>
 #include <cstdint>

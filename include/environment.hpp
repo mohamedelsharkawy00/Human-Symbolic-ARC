@@ -13,10 +13,10 @@
 #include <vector>
 
 // Single home of the DSL op list (NODE_PRIMITIVES) and the node_type enum.
-#include "cuda_dsl.cuh"
+#include "10_dsl.cuh"
 // The one door to everything below the engine: infer(), and through it the
 // core types (arc_color, grid, example, output_dimension_rule) and the limits.
-#include "5_infer.hpp"
+#include "7_infer.hpp"
 
 namespace arc {
 	using namespace std;
@@ -64,14 +64,14 @@ namespace arc {
 
 	// --- Program Tree Constraints ---
 
-	// Scoring weights live in cuda_dsl.cuh (GPU_SCORE_W_*, single home).
+	// Scoring weights live in 10_dsl.cuh (GPU_SCORE_W_*, single home).
 	// All scoring runs in the GPU kernel (dsl_exec_and_score_kernel_v2);
 	// the CPU uses the weights only for the debug/analysis breakdown.
 
 	// Max distinct (color,w,h,count) tuples we track per target example.
 	constexpr int MAX_TARGET_OBJECTS = 16;
 
-	// node_type and the NODE_PRIMITIVES op list live in cuda_dsl.cuh (single home).
+	// node_type and the NODE_PRIMITIVES op list live in 10_dsl.cuh (single home).
 
 	inline constexpr const char* type_name[] = {
 	#define X(id, name, low, high, role) name,
@@ -569,7 +569,7 @@ namespace arc {
 		}
 
 		// Detect invariant colors: present in ALL training inputs.
-		// MOVED to 5_infer.hpp (arc::detect_color_presence).
+		// MOVED to 7_infer.hpp (arc::detect_color_presence).
 		// Reading the always-present (across_inputs) colors is inference's job. The
 		// engine only needs the single dominant background color for
 		// segmentation (Colors skips it, Split erases it), and takes it from
@@ -584,23 +584,23 @@ namespace arc {
 		// every color = exactly one connected region so the two coincide. For puzzles
 		// where one color has multiple disjoint regions of different sizes, a connected-
 		// components-aware variant is needed (see notes/2_dsl/learned_orderings.txt).
-		// detect_output_colors_by_size MOVED to 5_infer.hpp
+		// detect_output_colors_by_size MOVED to 7_infer.hpp
 		// (arc::detect_output_colors_by_size). Ranking across-outputs colors by
 		// pixel count is inference's job; fill_puzzle_level hands
 		// inf.colors.output_colors_by_size / _count straight to the kernel for the
 		// OutputColorsBySize op.
 
-		// detect_output_colors MOVED to 5_infer.hpp (arc::detect_output_colors).
+		// detect_output_colors MOVED to 7_infer.hpp (arc::detect_output_colors).
 		// Reading the across_outputs palette is inference's job. Nothing in the
 		// engine consumes the ordered palette since the InferredOutputColors op
 		// was deleted; the by-size ranking is the surviving consumer.
 
-		// detect_size_rule MOVED to 5_infer.hpp (arc::output_dimension_rule::infer_rule).
+		// detect_size_rule MOVED to 7_infer.hpp (arc::output_dimension_rule::infer_rule).
 		// Reading a rule from the examples is inference's job; the output_dimension_rule TYPE
 		// stays here because the DSL/GPU path sizes output grids from it. The
 		// engine no longer computes it directly — puzzle_loader calls arc::infer(p),
 		// which returns an `inference` object; its output_dimension_rule is copied to p.rule.
-		// See 5_infer.hpp for the verified-foundation notes (1,147-puzzle corpus).
+		// See 7_infer.hpp for the verified-foundation notes (1,147-puzzle corpus).
 
 		// What one node's hash is, from its parts alone. Single home of the
 		// recipe: update_hash finalizes real nodes with it, and the beam

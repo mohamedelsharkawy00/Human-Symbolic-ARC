@@ -42,7 +42,7 @@ HOT_SOURCE_FILES = {
     "solver_beam.hpp",
     "cuda_solver.cu",
     "fixed_dsl.hpp",
-    "cuda_dsl.cuh",
+    "10_dsl.cuh",
     "environment.hpp",
 }
 

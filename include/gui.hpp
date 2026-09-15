@@ -1,9 +1,9 @@
 #pragma once
 #include "environment.hpp"
-#include "6_sentences.hpp"  // sentences_of: the pane says a program the way the log does
+#include "8_sentences.hpp"  // sentences_of: the pane says a program the way the log does
 #include "grid_buffer.hpp"
 #include "global_app_state.hpp"
-#include "cuda_dsl.cuh"
+#include "10_dsl.cuh"
 #include "vulkan_context.hpp"
 #include "sound_manager.hpp"
 
@@ -721,7 +721,7 @@ inline bool draw_grid_view(
 // the in-GUI composer (next step: click a token to append it to a draft program
 // and let the existing hover-preview engine show the effect live).
 // Which tab an op is drawn under is its role, read straight off the op list
-// (role_of, cuda_dsl.cuh). See notes/2 - DSL/Op Algebra.md.
+// (role_of, 10_dsl.cuh). See notes/2 - DSL/Op Algebra.md.
 
 // Top-edge drawer overlay: a full-width panel that floats on top of the live
 // frame, covering the header band from the top of the screen down to the

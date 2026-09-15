@@ -1,5 +1,5 @@
 #include "cuda_solver.cuh"
-#include "cuda_dsl.cuh"
+#include "10_dsl.cuh"
 #include <chrono>
 #include <atomic>
 #include <cstring>
@@ -67,7 +67,7 @@ bool cuda_init() {
 // GPU DSL Execution + Scoring Kernel
 // =====================================================================
 
-// Scoring weights live in cuda_dsl.cuh (GPU_SCORE_W_*, single home).
+// Scoring weights live in 10_dsl.cuh (GPU_SCORE_W_*, single home).
 
 // --- Device helpers ---
 
@@ -1247,7 +1247,7 @@ __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, con
 // Removes nothing: key = smallest-bbox object, target = largest-bbox object; the
 // target is recolored to table[hash(key)], everything else passes through. If the
 // table is empty (rejected by the consistency gate) or the glyph's shape isn't in
-// it, the op is a no-op. Learn and apply share one hash (shape_occupancy_hash, cuda_dsl.cuh).
+// it, the op is a no-op. Learn and apply share one hash (shape_occupancy_hash, 10_dsl.cuh).
 __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     res = src;  // pass everything through; default is no-op
@@ -1265,7 +1265,7 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
     }
     if (key < 0 || tgt < 0 || key == tgt) return res;
 
-    // Fingerprint the key glyph's occupancy (shared recipe in cuda_dsl.cuh).
+    // Fingerprint the key glyph's occupancy (shared recipe in 10_dsl.cuh).
     uint32_t hsh = gpu_shape_hash_of_paint(src.objects[key]);
 
     // Look up the color; miss -> no-op.
@@ -1309,7 +1309,7 @@ __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx,
 
         int f = -1;
         if (lane == 0) {
-            // Fingerprint the object's occupancy (shared recipe in cuda_dsl.cuh).
+            // Fingerprint the object's occupancy (shared recipe in 10_dsl.cuh).
             uint32_t hsh = gpu_shape_hash_of_paint(obj_src);
             for (int k = 0; k < ctx.shape_color_count && k < 16; ++k)
                 if (ctx.shape_color_keys[k] == hsh) { f = ctx.shape_color_vals[k]; break; }
@@ -2133,7 +2133,7 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // Only what was picked is reduced to its unit; the rest ride through.
         if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int best_w, best_h;
-        // One finder for everyone (4_correspondence.hpp). Loose evidence on purpose:
+        // One finder for everyone (4_objects.hpp). Loose evidence on purpose:
         // naming the unit to continue with is a different question from proving
         // a grid repeats, and a motif that fits once and a bit is still the
         // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.

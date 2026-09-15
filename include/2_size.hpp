@@ -1,11 +1,11 @@
-// 2_size.hpp — what decides the output's width and height.
+// This file determines what decides the output's width and height.
 //
 // The first question the reading order asks, and the one that needs the least:
 // infer_rule compares the width and height of each train pair and nothing else,
 // so it never opens a grid. That is why it sits below 1_readings.hpp rather
 // than beside it — reading a grid is not one of its needs.
 //
-// Its rule gates the pair-relation detectors in 5_infer.hpp: only an Identity
+// Its rule gates the pair-relation detectors in 7_infer.hpp: only an Identity
 // output overlays its input cell for cell, so only then are they meaningful.
 
 #pragma once
