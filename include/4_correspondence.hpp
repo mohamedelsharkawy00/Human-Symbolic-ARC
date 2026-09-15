@@ -24,7 +24,10 @@ enum class segmentation_methods : int8_t {
     minimal_repeating_set, smallest_of_two_grids, count
 };
 
+// Label used for GUI
 inline constexpr const char* segmentation_names_lead = "An Object Is";
+
+// GUI and logs
 inline constexpr const char* const segmentation_names[] = {
     "8-Connected Monochrome Cells",
     "8-Connected Multicolor Cells",
@@ -77,24 +80,6 @@ struct degrees_of_freedom {
 // using the allowed permissions. These matches are called correspondences.
 // One reading can produce many correspondences, in both directions: where did
 // an input object go, and where did an output object come from?
-//
-// Searching for an object from one grid in the other produces an object_match:
-// where it was found, with what rotation and colors.
-// It does not store which objects correspond.
-struct object_match {
-    // Top-left corner of the object's placement in the target grid.
-    int row = 0, col = 0;
-    // Rotation or reflection, numbered 0 to 7; 0 means unchanged.
-    int pose = 0;
-    // Whether the correspondence preserves the object's colors.
-    bool exact = false;
-    // Number of cells covered by another object; 0 means fully visible.
-    int hidden = 0;
-    // Number of cells extending beyond the target grid's border.
-    int outside = 0;
-    // Target color for each source color; -1 means that source color is absent.
-    int8_t color_map[COLOR_COUNT];
-};
 
 // This structure collects the correspondences and summaries of the readings tried.
 struct correspondence_facts {
@@ -320,6 +305,24 @@ struct correspondence_facts {
     bool valid = false;
 };
 
+// Searching for an object from one grid in the other produces an object_match:
+// where it was found, with what rotation and colors.
+// It does not store which objects correspond.
+struct object_match {
+    // Top-left corner of the object's placement in the target grid.
+    int row = 0, col = 0;
+    // Rotation or reflection, numbered 0 to 7; 0 means unchanged.
+    int pose = 0;
+    // Whether the correspondence preserves the object's colors.
+    bool exact = false;
+    // Number of cells covered by another object; 0 means fully visible.
+    int hidden = 0;
+    // Number of cells extending beyond the target grid's border.
+    int outside = 0;
+    // Target color for each source color; -1 means that source color is absent.
+    int8_t color_map[COLOR_COUNT];
+};
+
 // Every place the object turns up, tried every way round, plus how many ways
 // there were to try — the two numbers belong together, because a shape that
 // can sit eight different ways had eight times as many chances to fit.
@@ -342,14 +345,7 @@ inline grid posed_cells(const grid& cells, int pose) {
     return posed;
 }
 
-// PARTLY HIDDEN COUNTS AS THERE, and so does PARTLY OFF THE EDGE. A wall does
-// not undo a thing: half a shape at the edge is that shape, put where the grid
-// ran out, and refusing to look there left every copy the wall had cut in half
-// with nothing that could ever explain it. What the grid does show still has to
-// match, and how much fell off is kept on the edge, so a landing that is mostly
-// gone can be told from one that is barely clipped.
-// Background showing through is never hiding: it says the object is not there.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3f.
+// Searches for an object in another grid.
 inline object_matches find_in(const grid& cells, const grid& where, int8_t background,
                               bool may_hang_off, int fixed_row = -1, int fixed_col = -1,
                               bool match_footprint = false, int max_poses = -1) {
@@ -457,496 +453,11 @@ inline object_matches find_in(const grid& cells, const grid& where, int8_t backg
     return found;
 }
 
-// Segment one grid for correspondence the given way, background excluded (background
-// < 0 means "unknown" -> nothing excluded). Emits object_info with canonical
-// shape hashes and, when asked, the objects themselves (1_readings.hpp): each
-// one cut out into a box just big enough, TRANSPARENT where it does not reach.
-inline void segment_into_objects(const grid& one_grid, int8_t background, segmentation_methods segmentation,
-                                vector<correspondence_facts::object_info>& info,
-                                vector<object>* objects,
-                                int step_width = 0, int step_height = 0) {
-    // As many objects as an object index can name — edges carry it in one signed
-    // byte. The finest segmentation is one object per cell, so a small grid must be able
-    // to come apart completely; past this a reading simply cannot be written
-    // down, and it sinks on its own by leaving the rest unexplained.
-    // AS MANY OBJECTS AS THERE ARE CELLS. Every cell its own object is the most a
-    // grid can ever be segmented into, so that is the only honest ceiling; any
-    // number below it stops a segmentation part way and hands back a corner of the
-    // grid as though it were the whole of it.
-    static constexpr int MAX_OBJECTS = MAX_GRID_DIM * MAX_GRID_DIM;
-
-    // Cut on a fixed step: equal blocks, one object each, cells of any color kept
-    // together. Blocks with no colored cells at all are not objects.
-    if (segmentation == segmentation_methods::smallest_of_two_grids ||
-        segmentation == segmentation_methods::minimal_repeating_set) {
-        if (step_width <= 0 || step_height <= 0) return;
-        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
-        for (int block_top = 0; block_top < one_grid.height; block_top += step_height)
-        for (int block_left = 0; block_left < one_grid.width; block_left += step_width) {
-            if ((int)info.size() >= MAX_OBJECTS) return;
-            // A step that does not divide the grid leaves a short block at the
-            // edge; it is still a block, and dropping it would lose real cells.
-            const int block_width  = min(step_width,  one_grid.width  - block_left);
-            const int block_height = min(step_height, one_grid.height - block_top);
-            object piece;
-            piece.cells.clear();  // every cell TRANSPARENT until the block claims it
-            int lit = 0;
-            for (int row = 0; row < block_height; ++row)
-                for (int col = 0; col < block_width; ++col) {
-                    int color = one_grid.data[block_top + row][block_left + col];
-                    bool is_colored = (color >= 0 && color != background);
-                    occupied[row * block_width + col] = is_colored;
-                    if (is_colored) piece.cells[row][col] = (int8_t)color;
-                    lit += is_colored;
-                }
-            if (!lit) continue;
-            correspondence_facts::object_info one_object;
-            one_object.color = -1;
-            one_object.summary.x0 = (int8_t)block_left; one_object.summary.y0 = (int8_t)block_top;
-            one_object.summary.w = (int8_t)block_width; one_object.summary.h = (int8_t)block_height;
-            one_object.summary.count = (int16_t)lit;
-            one_object.shape = canonical_shape_hash(block_width, block_height, occupied);
-            info.push_back(one_object);
-            if (objects) { piece.summary = one_object.summary; objects->push_back(piece); }
-        }
-        // A CUT THAT DOES NOT CUT IS NOT A READING — one object means there is no
-        // motif, and it would win the election for free. The step segmentation is exempt.
-        // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-        if (segmentation != segmentation_methods::smallest_of_two_grids && info.size() < 2) {
-            info.clear();
-            if (objects) objects->clear();
-        }
-        return;
-    }
-    // Whether an object has to be one color is a question of its OWN, asked apart
-    // from what counts as joined: the one walk in 1_readings.hpp answers both.
-    const grouping how =
-        segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
-        segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
-                                                                       grouping::touching_same_color;
-    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
-    object_walk_scratch scratch;
-    each_object(one_grid, background, how, scratch,
-                [&](const object_summary& found, const int16_t* found_cells, int how_many) {
-        if ((int)info.size() >= MAX_OBJECTS) return;
-        auto row_of = [](int16_t at) { return at / MAX_GRID_DIM; };
-        auto col_of = [](int16_t at) { return at % MAX_GRID_DIM; };
-        const int color = one_grid.data[row_of(found_cells[0])][col_of(found_cells[0])];
-        // An object wears one color only if every cell of it does; -1 says several.
-        bool one_color = true;
-        for (int i = 1; i < how_many && one_color; ++i)
-            one_color = (one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])] == color);
-        correspondence_facts::object_info one_object;
-        one_object.color = one_color ? (int8_t)color : (int8_t)-1;
-        one_object.summary = found;
-        for (int i = 0; i < found.w * found.h; ++i) occupied[i] = false;
-        for (int i = 0; i < how_many; ++i)
-            occupied[(row_of(found_cells[i]) - found.y0) * found.w +
-                     (col_of(found_cells[i]) - found.x0)] = true;
-        one_object.shape = canonical_shape_hash(found.w, found.h, occupied);
-        info.push_back(one_object);
-        if (objects) {
-            // Each cell keeps its own color, so an object of several reads as it
-            // looks. For a one-color object that is the color it already had.
-            object piece;
-            piece.summary = found;
-            piece.cells.clear();  // every cell TRANSPARENT until the walk claims it
-            for (int i = 0; i < how_many; ++i)
-                piece.cells[row_of(found_cells[i]) - found.y0][col_of(found_cells[i]) - found.x0] =
-                    (int8_t)one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])];
-            objects->push_back(piece);
-        }
-    });
-}
-
-// How far one object is from another, in cells that do not agree. Laid over
-// each other at their top-left corners, and a cell one has where the other has
-// nothing counts as a disagreement — so a block cut short at the edge is far
-// from every whole one and can never speak for the set.
-inline int objects_apart(const object& left, const object& right) {
-    const int width = max(left.summary.w, right.summary.w);
-    const int height = max(left.summary.h, right.summary.h);
-    int apart = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            const int here = (row < left.summary.h && col < left.summary.w)
-                           ? left.cells[row][col] : TRANSPARENT;
-            const int there = (row < right.summary.h && col < right.summary.w)
-                            ? right.cells[row][col] : TRANSPARENT;
-            apart += (here != there);
-        }
-    return apart;
-}
-
-// COPIES OF ONE THING, AND WHICH OF THEM SPEAKS FOR THE SET. Objects sharing a
-// canonical shape are copies of each other; when the segmentation ran on a VERIFIED
-// period the whole grid is one set, stub at the edge included, because cutting
-// on a period is what makes them copies and the stub is the motif cut short.
-// The set's exemplar is its MEDOID — see object_info::medoid.
-inline void find_copies(vector<correspondence_facts::object_info>& info,
-                        const vector<object>& objects, bool one_set_for_the_grid) {
-    vector<uint32_t> sets;
-    for (size_t i = 0; i < info.size(); ++i) {
-        const uint32_t key = one_set_for_the_grid ? 0u : info[i].shape;
-        const bool has_company = one_set_for_the_grid ||
-            ranges::any_of(info, [&](const auto& other) {
-                return &other != &info[i] && other.shape == info[i].shape &&
-                       other.summary.count == info[i].summary.count; });
-        if (!has_company) continue;
-        auto at = ranges::find(sets, key);
-        if (at == sets.end()) { sets.push_back(key); at = sets.end() - 1; }
-        info[i].motif = (int16_t)(at - sets.begin());
-    }
-    for (int16_t set = 0; set < (int16_t)sets.size(); ++set) {
-        int best = -1, least_apart = 0;
-        for (size_t i = 0; i < info.size(); ++i) {
-            if (info[i].motif != set) continue;
-            int apart = 0;
-            for (size_t j = 0; j < info.size(); ++j)
-                if (j != i && info[j].motif == set)
-                    apart += objects_apart(objects[i], objects[j]);
-            if (best < 0 || apart < least_apart) { best = (int)i; least_apart = apart; }
-        }
-        if (best >= 0) info[best].medoid = true;
-    }
-}
-
-// A PATCH OF NOTHING: where it is, how big, and whether the grid's own colored
-// cells close it in on every side. Not an object_info — a patch has no color,
-// no shape and no copies, and lending it that struct said it had.
-struct blank_patch {
-    int8_t left = 0, top = 0, width = 0, height = 0;
-    int16_t cells = 0;
-    bool enclosed = false;
-};
-
-// THE PATCHES OF NOTHING IN A GRID. Background cells joined side to side —
-// ADJACENCY IS 4, see 1_readings.hpp — each patch given a number, and every
-// cell told which patch it belongs to. A patch that reaches the border of the
-// grid is open to the outside; one that never does is closed in, and that is a
-// hole. Story in notes/1 - Overall Design/Inference Master.md, 3d.
-inline void find_blanks(const grid& one_grid, int8_t background,
-                        vector<blank_patch>& patches,
-                        int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
-    for (int row = 0; row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
-    vector<int> to_visit;
-    for (int row = 0; row < one_grid.height; ++row)
-        for (int col = 0; col < one_grid.width; ++col) {
-            if (one_grid.data[row][col] != background) continue;
-            if (patch_of[row][col] >= 0) continue;
-            const int16_t mine = (int16_t)patches.size();
-            int left = col, right = col, top = row, bottom = row, cells = 0;
-            bool open = false;
-            to_visit.assign(1, row * MAX_GRID_DIM + col);
-            patch_of[row][col] = mine;
-            while (!to_visit.empty()) {
-                const int at = to_visit.back();
-                to_visit.pop_back();
-                const int at_row = at / MAX_GRID_DIM, at_col = at % MAX_GRID_DIM;
-                ++cells;
-                left = min(left, at_col);   right = max(right, at_col);
-                top = min(top, at_row);     bottom = max(bottom, at_row);
-                open = open || at_row == 0 || at_col == 0 ||
-                       at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
-                for (int side = 0; side < 4; ++side) {
-                    const int next_row = at_row + neighbour_row_4(side);
-                    const int next_col = at_col + neighbour_col_4(side);
-                    if (next_row < 0 || next_row >= one_grid.height ||
-                        next_col < 0 || next_col >= one_grid.width) continue;
-                    if (one_grid.data[next_row][next_col] != background) continue;
-                    if (patch_of[next_row][next_col] >= 0) continue;
-                    patch_of[next_row][next_col] = mine;
-                    to_visit.push_back(next_row * MAX_GRID_DIM + next_col);
-                }
-            }
-            blank_patch patch;
-            patch.left = (int8_t)left;  patch.top = (int8_t)top;
-            patch.width = (int8_t)(right - left + 1);
-            patch.height = (int8_t)(bottom - top + 1);
-            patch.cells = (int16_t)cells;
-            patch.enclosed = !open;
-            patches.push_back(patch);
-        }
-}
-
-// Cut it up, then put the objects in the order a person reads them: BIGGEST
-// FIRST, then down the grid. The cells ride along — they are the objects.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
-inline void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_methods segmentation,
-                                vector<correspondence_facts::object_info>& info,
-                                vector<object>* objects,
-                                int step_width = 0, int step_height = 0) {
-    segment_into_objects(one_grid, background, segmentation, info, objects, step_width, step_height);
-    vector<int> reading_order(info.size());
-    iota(reading_order.begin(), reading_order.end(), 0);
-    stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
-        if (info[left].summary.count != info[right].summary.count)
-            return info[left].summary.count > info[right].summary.count;
-        if (info[left].summary.y0 != info[right].summary.y0)
-            return info[left].summary.y0 < info[right].summary.y0;
-        return info[left].summary.x0 < info[right].summary.x0;
-    });
-    vector<correspondence_facts::object_info> sorted;
-    sorted.reserve(info.size());
-    for (int i : reading_order) sorted.push_back(info[i]);
-    info.swap(sorted);
-    if (objects) {
-        vector<object> moved;
-        moved.reserve(objects->size());
-        for (int i : reading_order) moved.push_back((*objects)[i]);
-        objects->swap(moved);
-    }
-}
-
-// WHAT SEGMENTATION SAVES YOU. Saying the grid under a segmentation means spelling each
-// different shape out once, then saying where each copy goes. One object per cell
-// spells nothing out and then pays a position for every cell; the whole grid
-// as one object pays for every cell at once. The segmentation that tells you the most is
-// the cheap one in between.
-//
-// COUNTED IN BITS, so neither price is a matter of taste: a cell has to name a
-// color out of the palette, a position has to name a square out of the grid.
-//
-// THEN DIVIDED BY WHAT THE GRID COSTS SAID PLAINLY, cell by cell. A bit total on
-// its own answers nothing, and totals off two grids of different size are not
-// the same question — a 2x2 is cheap to describe however you segment it, so it beats
-// a 6x6 on size alone and the reading gets taken from the side with no structure
-// on it. As a share of plain cost the size cancels: under 1 the segmentation earned its
-// place, over 1 it made things worse, and a small grid can no longer win by
-// being small.
-//
-// Read off the objects of ONE grid — no matching, no other side, no search. That
-// is the whole point: this can be had BEFORE anything is searched.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-inline double describe_cost(const grid& one_grid, int8_t background,
-                            const vector<correspondence_facts::object_info>& objects) {
-    const double cell_bits = log2((double)COLOR_COUNT);
-    const double place_bits =
-        log2((double)max(1, one_grid.width * one_grid.height));
-    int colored = 0;
-    walk_colored_cells(one_grid, background, [&](int, int, int) { ++colored; });
-    // Nothing on the grid, so there is nothing to save and nothing to lose.
-    const double plain = colored * cell_bits;
-    if (plain <= 0.0) return 1.0;
-    // A segmentation that finds nothing has said nothing: you still spell the grid out
-    // cell by cell, and you paid a position for the privilege. Never the cheap
-    // answer, because it is over 1 by construction.
-    if (objects.empty()) return (plain + place_bits) / plain;
-    // A position per object, plus the cells of each shape the first time it is
-    // met. Same shape turned round is the same shape — the hash is canonical.
-    double cost = objects.size() * place_bits;
-    for (size_t i = 0; i < objects.size(); ++i) {
-        bool said_before = false;
-        for (size_t j = 0; j < i && !said_before; ++j)
-            said_before = (objects[j].shape == objects[i].shape);
-        if (!said_before) cost += objects[i].summary.count * cell_bits;
-    }
-    return cost / plain;
-}
-
-// What share of a grid's cells each color holds — the odds a cell picked at
-// random wears that color.
-inline void color_shares(const grid& one_grid, double share[COLOR_COUNT]) {
-    int counts[COLOR_COUNT], total = 0;
-    count_colors(one_grid, counts);
-    for (int i = 0; i < COLOR_COUNT; ++i) total += counts[i];
-    for (int i = 0; i < COLOR_COUNT; ++i) share[i] = total ? (double)counts[i] / total : 0.0;
-}
-
-// Would this match have happened anyway? `odds` is the chance one placement
-// lands on exactly these colors; `places` is how many placements the footprint
-// has. Their product is how many such matches to EXPECT from a grid of this
-// size and coloring — under one means the match is telling us something.
-// The FALLBACK judge only: see set_up_the_fitting / fit_the_objects_together for why one match at
-// a time is the weaker question.
-inline bool beats_chance(int places, double odds) {
-    return places > 0 && places * odds < 1.0;
-}
-
-// The footprint a match lays down. A match that names an object there wears
-// that object's cells; one that only names a place wears the object's, as it
-// was sitting when it matched.
-inline grid edge_footprint(const correspondence_facts::edge& edge,
-                           const vector<object>& from_objects,
-                           const vector<object>& into_objects) {
-    if (edge.to >= 0 && (size_t)edge.to < into_objects.size()) return into_objects[edge.to].drawn();
-    return posed_cells(from_objects[edge.from].drawn(), edge.pose);
-}
-
-// A cell of a landing that the grid actually shows: on it, and not behind
-// another object. Off the edge or covered, the object did not put it there.
-inline bool landing_shows(const correspondence_facts::edge& edge, const grid& cells,
-                          const grid& into, int row, int col) {
-    if (cells.data[row][col] == TRANSPARENT) return false;
-    const int into_row = edge.row + row, into_col = edge.col + col;
-    if (into_row < 0 || into_row >= into.height ||
-        into_col < 0 || into_col >= into.width) return false;
-    return !edge.hidden || into.data[into_row][into_col] == cells.data[row][col];
-}
-
-inline void mark_painted(const vector<correspondence_facts::edge>& edges,
-                         const vector<object>& from_objects,
-                         const vector<object>& into_objects,
-                         const grid& into,
-                         bool covered[MAX_GRID_DIM][MAX_GRID_DIM],
-                         bool exact_only = true,
-                         bool same_shape_only = false) {
-    for (const auto& edge : edges) {
-        if (exact_only && !edge.exact) continue;
-        if (same_shape_only && !edge.same_shape) continue;
-        const grid footprint = edge_footprint(edge, from_objects, into_objects);
-        for (int row = 0; row < footprint.height; ++row)
-            for (int col = 0; col < footprint.width; ++col)
-                if (landing_shows(edge, footprint, into, row, col))
-                    covered[edge.row + row][edge.col + col] = true;
-    }
-}
-
-// How a pass decided, so a giveup can never be mistaken for an answer.
-enum class fit_verdict : int8_t { fitted, no_fit, gave_up };
-
-// BLOCKS THAT REPEAT, ASKED FROM BOTH ENDS. One block standing for every place
-// it turns up is only half the story: it is the right half when the from side
-// holds one block and the into side many, and it collapses to a single edge the
-// moment the counts are the other way round. So the two questions are asked in
-// turn, and neither end is the privileged one.
-//   Where did each landing come from — every into block takes the from block
-//   that sits at its own place if that one matches, else the first that does.
-//   Where did each object go — every from block still unanswered takes the first
-//   into block it matches.
-// One block to one block for equal counts, one to many or many to one when they
-// differ, and never more edges than the two sides have blocks between them.
-inline fit_verdict collect_motif_edges(
-        const vector<correspondence_facts::object_info>& from_info,
-        const vector<object>& from_objects,
-        const vector<correspondence_facts::object_info>& into_info,
-        const grid& into, int8_t background, int step_w, int step_h,
-        vector<correspondence_facts::edge>& edges, degrees_of_freedom allowed = {}) {
-    if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
-    const int poses = allowed.pose ? 8 : 1;
-
-    // Does this from block sit at that place on the other grid? The answer is
-    // the same question both sweeps ask, so it is written once.
-    auto sits_at = [&](int from_index, const correspondence_facts::object_info& target,
-                       object_match& found) {
-        const object_matches matches =
-            find_in(from_objects[from_index].drawn(), into, background, true,
-                    target.summary.y0, target.summary.x0, true, poses);
-        // ITSELF BEATS ITSELF-IN-ANOTHER-COLOR. The hits come back in pose order,
-        // so the first one can be a recolor of an early pose while a later pose
-        // sits there exactly — and taking the first would report the weaker claim
-        // about the same two blocks.
-        const object_match* best = nullptr;
-        for (const object_match& hit : matches.hits) {
-            if (!allowed.recolor && !hit.exact) continue;
-            if (!best || (hit.exact && !best->exact)) best = &hit;
-            if (best->exact) break;
-        }
-        if (!best) return false;
-        found = *best;
-        return true;
-    };
-    auto draw = [&](int from_index, int target_index, const object_match& hit) {
-        const auto& target = into_info[target_index];
-        correspondence_facts::edge edge;
-        edge.from = (int16_t)from_index;
-        edge.to = (int16_t)target_index;
-        edge.row = (int8_t)target.summary.y0;
-        edge.col = (int8_t)target.summary.x0;
-        edge.pose = (int8_t)hit.pose;
-        edge.exact = hit.exact;
-        edge.stayed_put = (from_info[from_index].summary.y0 == target.summary.y0 &&
-                           from_info[from_index].summary.x0 == target.summary.x0);
-        edge.outside = (int16_t)hit.outside;
-        edge.recolored_to =
-            (!hit.exact && from_info[from_index].color >= 0)
-                ? hit.color_map[from_info[from_index].color] : (int8_t)-1;
-        if (!hit.exact) for (int c = 0; c < COLOR_COUNT; ++c) edge.color_map[c] = hit.color_map[c];
-        edges.push_back(edge);
-    };
-
-    vector<bool> answered(from_info.size(), false);
-    // WHERE DID EACH LANDING COME FROM. Its own place first, so a grid whose
-    // two sides hold the same blocks reads as each staying put rather than as
-    // everything matching everything.
-    for (int target_index = 0; target_index < (int)into_info.size(); ++target_index) {
-        const auto& target = into_info[target_index];
-        int source = -1;
-        object_match hit;
-        for (int i = 0; i < (int)from_info.size(); ++i)
-            if (from_info[i].summary.y0 == target.summary.y0 && from_info[i].summary.x0 == target.summary.x0 &&
-                sits_at(i, target, hit)) { source = i; break; }
-        for (int i = 0; source < 0 && i < (int)from_info.size(); ++i)
-            if (sits_at(i, target, hit)) source = i;
-        if (source < 0) continue;
-        draw(source, target_index, hit);
-        answered[source] = true;
-    }
-    // WHERE DID EACH OBJECT GO. Only the ones no landing claimed, so a from side
-    // bigger than the into side is not silently dropped.
-    for (int i = 0; i < (int)from_info.size(); ++i) {
-        if (answered[i]) continue;
-        object_match hit;
-        for (int target_index = 0; target_index < (int)into_info.size(); ++target_index)
-            if (sits_at(i, into_info[target_index], hit)) {
-                draw(i, target_index, hit);
-                answered[i] = true;
-                break;
-            }
-    }
-    return edges.empty() ? fit_verdict::no_fit : fit_verdict::fitted;
-}
-
-inline int lit_cells(const grid& cells) {
-    int lit = 0;
-    for (int row = 0; row < cells.height; ++row)
-        for (int col = 0; col < cells.width; ++col)
-            lit += (cells.data[row][col] != TRANSPARENT);
-    return lit;
-}
-
-// A match that was found and then thrown away, with the reason.
-inline void throw_away(const vector<correspondence_facts::edge>& found, size_t found_index,
-                       int8_t why, vector<correspondence_facts::edge>* discarded,
-                       vector<int8_t>* discard_why) {
-    if (!discarded || !discard_why) return;
-    discarded->push_back(found[found_index]);
-    discard_why->push_back(why);
-}
-
-// One candidate object: the match it came from, the cells it paints, and the
-// cells of its own that something else paints — which is what puts it BEHIND.
-struct candidate {
-    size_t match_index = 0;
-    vector<int> cells, behind;
-};
-
-// The objects, and which cells each of them could paint.
-struct fitting {
-    // Cells of the target grid that need painting
-    vector<pair<int, int>> cells;
-    // One per match that lands wholly inside the grid
-    vector<candidate> objects;
-    // Per cell: the objects that can paint it, best first
-    vector<vector<int>> options;
-    // Cells an EXACT object could account for — only these drive the search
-    vector<bool> required;
-};
-
-// DID THE MATCH LAND ON ANYTHING AT ALL. Empty space has no shape, so every
-// shape fits it in the background's own color — a match there can never fail,
-// and a claim that cannot fail is not evidence. It reads as "this was already
-// here, in nothing", when what happened is that it was made. Being made is
-// already recorded, as came-from-nothing and as created cells.
-// ONE CELL OF SOMETHING IS ENOUGH, and asking for a WHOLE object was too much:
-// several objects making one picture is a fragment relationship too, so that
-// rule could not tell an assembly from a coincidence and refused both. Whether
-// fragments add up to the thing is the fitting's question, and it already
-// asks it — see set_up_the_fitting.
-inline bool landed_on_something(const correspondence_facts::edge& edge,
-                                const grid& cells, const grid& into,
-                                int8_t background) {
+// Did any cell of the object land on a non-background cell? Background has no
+// shape, so every shape fits it, and a match there is no evidence.
+inline bool landed_on_non_background(const correspondence_facts::edge& edge,
+                                     const grid& cells, const grid& into,
+                                     int8_t background) {
     const grid posed = posed_cells(cells, edge.pose);
     for (int row = 0; row < posed.height; ++row)
         for (int col = 0; col < posed.width; ++col) {
@@ -959,9 +470,30 @@ inline bool landed_on_something(const correspondence_facts::edge& edge,
     return false;
 }
 
-// STAGE 1 — every match that could stand on its own, unjudged as a set. Two
-// sources: the shape found at a place, and an object there with the same
-// canonical shape. Story in notes/1 - Overall Design/Inference Master.md, 3d.
+// Measures how common each color is to help estimate the chance of an accidental match.
+inline void color_shares(const grid& one_grid, double share[COLOR_COUNT]) {
+    int counts[COLOR_COUNT], total = 0;
+    count_colors(one_grid, counts);
+    for (int i = 0; i < COLOR_COUNT; ++i) total += counts[i];
+    for (int i = 0; i < COLOR_COUNT; ++i) share[i] = total ? (double)counts[i] / total : 0.0;
+}
+
+// A tiny blue object can match many places just because blue is common.
+// Reject likely coincidences before treating a match as evidence of correspondence.
+inline bool beats_chance(int places, double odds) {
+    return places > 0 && places * odds < 1.0;
+}
+
+// A match that was found and then thrown away, with the reason.
+inline void throw_away(const vector<correspondence_facts::edge>& found, size_t found_index,
+                       int8_t why, vector<correspondence_facts::edge>* discarded,
+                       vector<int8_t>* discard_why) {
+    if (!discarded || !discard_why) return;
+    discarded->push_back(found[found_index]);
+    discard_why->push_back(why);
+}
+
+// Find possible matches for each object in the other grid.
 inline vector<correspondence_facts::edge> gather_matches(
         const vector<correspondence_facts::object_info>& from_info,
         const vector<object>& from_objects,
@@ -1123,50 +655,73 @@ inline vector<correspondence_facts::edge> gather_matches(
         }
     }
     // Asked once, of every source, where the whole list is in one place.
-    vector<correspondence_facts::edge> on_something;
+    vector<correspondence_facts::edge> on_non_background;
     for (size_t i = 0; i < found.size(); ++i) {
-        if (landed_on_something(found[i], from_objects[found[i].from].drawn(), into, background)) {
-            on_something.push_back(found[i]);
+        if (landed_on_non_background(found[i], from_objects[found[i].from].drawn(),
+                                     into, background)) {
+            on_non_background.push_back(found[i]);
             continue;
         }
         throw_away(found, i, correspondence_facts::lost_to_chance,
                    discarded, discard_why);
     }
-    return on_something;
+    return on_non_background;
 }
 
-// HOW MUCH FREEDOM A MATCH HAD TO SPEND, as one number, smallest for the
-// plainest claim. Freedom is spent, not declared: a reading says what an object
-// MAY do, and this says what this one match actually had to do to get where it
-// went. So a match that stayed put and came as itself is preferred everywhere,
-// and one that had to move, recolor, turn or hang off the edge only takes cells
-// nothing plainer wanted. The weights are powers of two so the four questions
-// read in order — stayed put, then as itself, then upright, then wholly on the
-// grid — and never trade against one another.
-// ONE HOME because three places sort matches, and two of them disagreeing is a
-// bug nobody can see: the fitting once offered biggest-first while the pass
-// after it offered exact-first, and which order a puzzle met depended on
-// whether the search finished.
+// Returns the cells used to work out what a match covers in the target grid.
+// Uses the matched target object if known; otherwise, the source object turned or flipped as matched.
+inline grid edge_footprint(const correspondence_facts::edge& edge,
+                           const vector<object>& from_objects,
+                           const vector<object>& into_objects) {
+    if (edge.to >= 0 && (size_t)edge.to < into_objects.size()) return into_objects[edge.to].drawn();
+    return posed_cells(from_objects[edge.from].drawn(), edge.pose);
+}
+
+// A cell of a landing that the grid actually shows: on it, and not behind
+// another object. Off the edge or covered, the object did not put it there.
+inline bool landing_shows(const correspondence_facts::edge& edge, const grid& cells,
+                          const grid& into, int row, int col) {
+    if (cells.data[row][col] == TRANSPARENT) return false;
+    const int into_row = edge.row + row, into_col = edge.col + col;
+    if (into_row < 0 || into_row >= into.height ||
+        into_col < 0 || into_col >= into.width) return false;
+    return !edge.hidden || into.data[into_row][into_col] == cells.data[row][col];
+}
+
+// One candidate object: the match it came from, the cells it paints, and the
+// cells of its own that something else paints — which is what puts it BEHIND.
+struct candidate {
+    size_t match_index = 0;
+    vector<int> cells, behind;
+};
+
+// The objects, and which cells each of them could paint.
+struct fitting {
+    // Cells of the target grid that need painting
+    vector<pair<int, int>> cells;
+    // One per match that lands wholly inside the grid
+    vector<candidate> objects;
+    // Per cell: the objects that can paint it, best first
+    vector<vector<int>> options;
+    // Cells an EXACT object could account for — only these drive the search
+    vector<bool> required;
+};
+
+// Lower scores prefer matches that did not move, change color, turn or flip,
+// or extend outside the grid, in that order of importance.
 inline int freedom_spent(const correspondence_facts::edge& edge) {
     return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
            (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 ? 0 : 1);
 }
 
-// WHICH OF TWO MATCHES SPEAKS FIRST. Biggest first, because being the whole
-// thing is what a claim is worth, and freedom spent only separates two of a
-// size. LED BY PLAINNESS INSTEAD, a stationary accident outranked a genuine
-// copy — every copy in 045e512c has to move, so the six tiles lost their ring
-// to whatever happened to sit still, and that reading went from explaining the
-// pair to leaving 21 cells over.
+// Prefer more cells; break ties with the lower freedom_spent score.
 inline bool says_more(const correspondence_facts::edge& left, size_t left_cells,
                       const correspondence_facts::edge& right, size_t right_cells) {
     if (left_cells != right_cells) return left_cells > right_cells;
     return freedom_spent(left) < freedom_spent(right);
 }
 
-// STAGE 2 — lay the matches out as a fitting problem: index the cells that need
-// painting, turn each match into an object, and list per cell which objects could
-// paint it. Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// For each target cell, list the matches that can cover it.
 inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& found,
                          const vector<object>& from_objects,
                          const vector<object>& into_objects,
@@ -1253,11 +808,10 @@ inline fitting set_up_the_fitting(const vector<correspondence_facts::edge>& foun
     return laid_out;
 }
 
-// STAGE 3 — OBJECTS THAT FIT TOGETHER: every cell that needs painting is painted
-// exactly once, no overlaps, nothing outside. Not one-at-a-time and not
-// greediest-first — both pick locally and ties poison them. That is a search,
-// so it searches: every cell, fewest options first, backtracking. Fills
-// `chosen` on success. Story in notes/1 - Overall Design/Inference Master.md, 3d.
+// How a pass decided, so a giveup can never be mistaken for an answer.
+enum class fit_verdict : int8_t { fitted, no_fit, gave_up };
+
+// Find objects that cover each required cell exactly once; store them in `chosen`.
 inline fit_verdict fit_the_objects_together(const fitting& laid_out,
                                 vector<int>& chosen) {
     if (!ranges::any_of(laid_out.required, [](bool needed) { return needed; }))
@@ -1265,27 +819,13 @@ inline fit_verdict fit_the_objects_together(const fitting& laid_out,
 
     vector<int> painted_by(laid_out.cells.size(), -1);
     long long work = 0;
-    // WHEN THE OBJECTS STOP COMING TOGETHER, THEY ARE NOT GOING TO. There are
-    // only this many ways to commit an object to a cell; past that the search is
-    // not making new commitments, it is re-ordering ones it already disproved.
-    // Taken from the problem's own size, so a small grid is not given a
-    // budget meant for a big one, and no number here was chosen by taste. Not a
-    // proof — backtracking may legitimately revisit — but a stop that scales.
-    // Running out is reported, never hidden.
-    // COUNTED IN THE UNITS THE WORK IS DONE IN. It used to count commitments,
-    // and choosing ONE commitment rescans every required cell against every
-    // object that could paint it against that object's own cells — so a step was
-    // never a step, it was millions, and a budget of steps bounded nothing.
-    // 13f06aa5 ground a core for minutes inside a single reading. The same
-    // number, counted per cell touched, is a stop that actually stops.
+    // Limit the search based on problem size, counting each cell checked.
+    // Report when the limit is reached; a solution may still exist.
     const long long work_budget =
         (long long)(laid_out.objects.size() + 1) * (long long)(laid_out.cells.size() + 1);
     bool out_of_budget = false;
 
-    // ONE OF THEM IS IN FRONT. Nothing can be both in front of and behind the
-    // same object. Checked as the object goes down, so the search backs out of the
-    // contradiction instead of returning it.
-    // Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+    // Reject an object if it would be both in front of and behind another object.
     auto contradicts = [&](int object_index) {
         for (int behind_id : laid_out.objects[object_index].behind) {
             const int in_front = painted_by[behind_id];
@@ -1347,9 +887,7 @@ inline fit_verdict fit_the_objects_together(const fitting& laid_out,
     return out_of_budget ? fit_verdict::gave_up : fit_verdict::no_fit;
 }
 
-// STAGE 4a — the objects fit, so the fitting IS the reading, plus whatever it
-// left room for. What is refused after that overlaps something kept, and the
-// log has to be able to say so.
+// Keep the chosen matches and any extras that do not overlap; log rejected overlaps.
 inline void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
                            const vector<correspondence_facts::edge>& found,
                            vector<correspondence_facts::edge>& edges,
@@ -1397,10 +935,15 @@ inline void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
                        discarded, discard_why);
 }
 
-// STAGE 4b — nothing fits together, so the grid is not a tiling of one thing.
-// The weaker reading: strongest claim first, keep a match only if it explains a
-// cell no kept match explains. Nothing here needs to ask about chance — anything
-// that could not stand alone never got this far.
+inline int lit_cells(const grid& cells) {
+    int lit = 0;
+    for (int row = 0; row < cells.height; ++row)
+        for (int col = 0; col < cells.width; ++col)
+            lit += (cells.data[row][col] != TRANSPARENT);
+    return lit;
+}
+
+// Try better matches first; keep each only if it covers at least one new cell.
 inline void fall_back_to_greedy(const vector<correspondence_facts::edge>& found,
                                 const vector<object>& from_objects,
                                 const vector<object>& into_objects,
@@ -1456,24 +999,15 @@ inline pair<int, int> move_of(const correspondence_facts::edge& edge,
                            : pair<int, int>{-down, -across};
 }
 
-// One of these per train pair: for each color, the single move that color's
-// objects made from input to output IN THAT PAIR.
-// What the pairs agree on is not the move itself, which may differ from pair to
-// pair, but that the color is decided at all: a color speaks only when EVERY
-// read pair pinned it to exactly one move. A color that moved two ways, or not
-// at all, in any pair stays silent in all of them.
-// Agreement is the exception. A puzzle that answers one object with many places
-// pins nothing down, so this is asked only once some color speaks, and a rule
-// that cannot read it must never be allowed to clear it.
+// Store each color's move for this training pair, only if every read pair has
+// exactly one move for that color. The move may differ between pairs.
 struct what_the_pairs_agreed {
     bool color_speaks[COLOR_COUNT] = {};
     int8_t down[COLOR_COUNT] = {}, across[COLOR_COUNT] = {};
 };
 
-// Would this match be contradicted by what the pairs agreed? STAYING PUT NEVER
-// IS — it is the same move in every frame and is what "nothing happened here"
-// looks like. Anything else has to be the one move its color makes here, and a
-// color no pair could pin down speaks for nothing.
+// Reject shape matches whose movement disagrees with the color's agreed move.
+// Stationary matches are always allowed.
 inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
                                const correspondence_facts::edge& edge,
                                const correspondence_facts::object_info& one_object) {
@@ -1489,12 +1023,7 @@ inline bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
            agreed.across[input_color] != went.second;
 }
 
-// ONE direction of the look: for every object on the FROM side, every place it
-// turns up on the INTO side. Both edge sources, deduplicated by placement.
-// Direction-neutral by construction — the forward and backward passes are this
-// same function with the sides swapped. THE SET TEST decides which matches
-// survive, not the cost of any one match — the four stages above are it.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// Find and select matches from one grid to the other. Swap grids for the reverse direction.
 inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>& from_info,
                           const vector<object>& from_objects,
                           const vector<correspondence_facts::object_info>& into_info,
@@ -1540,24 +1069,8 @@ inline fit_verdict collect_edges(const vector<correspondence_facts::object_info>
     return searched;
 }
 
-// An object nothing found still corresponds to something: WHICH OBJECT OF MY OWN
-// COLOR AND MY OWN SIZE DO I SIT ON TOP OF THE MOST. Same stuff, rearranged —
-// the freedom left when moving, turning and recoloring have all failed, and the
-// only one that can speak for an object that was squashed, since no rigid motion
-// changes a size.
-// IT ONLY EVER POINTS ONE WAY: I AM PART OF THAT, never that is part of me. An
-// object may be answered by the object that covers it — a seed sitting under the
-// first tile stamped over it is answered by that tile, and neither has to rival
-// the other for the cells they share. Pointed the other way the same words let
-// an eighteen-cell object explain itself by touching a two-cell marker, overlap
-// cashed as ownership, and a reading that grew copies out of nothing scored a
-// perfect nothing-left-over. So the object must be no bigger than what it sits
-// on. Not bigger, rather than exactly equal: equal is the squashed case, where
-// the stuff is conserved and only its shape moved.
-// IT CANNOT FLOOD — one edge per object, only where objects overlap, only for
-// objects nothing accounted for, and only between objects of one color and one
-// weight: without those gates any two boxes that touch could be called one thing.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// Match each unmatched object to the same-color object with the most overlap,
+// requiring that the other object has at least as many cells.
 inline void sit_on_top(const vector<correspondence_facts::object_info>& from_info,
                        const vector<object>& from_objects,
                        const vector<correspondence_facts::object_info>& into_info,
@@ -1600,9 +1113,7 @@ inline void sit_on_top(const vector<correspondence_facts::object_info>& from_inf
     }
 }
 
-// EDGES LEAVING each input object — how many places it went. Every edge names
-// its object in `from`, so this is a count, not a tally kept as the edges were
-// made. One writer, and it cannot disagree with `edges`.
+// Count the matches starting from each source object.
 inline void count_edges_leaving(const vector<correspondence_facts::edge>& edges,
                                 vector<correspondence_facts::object_info>& from_info) {
     for (auto& one_object : from_info) one_object.edges_touching = 0;
@@ -1613,10 +1124,7 @@ inline void count_edges_leaving(const vector<correspondence_facts::edge>& edges,
         }
 }
 
-// EDGES ARRIVING at each output object — how many objects met there. What the
-// other end has to say, without asking it: a landing is credited to every object
-// its footprint touches, which is all the far side ever added.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3d.
+// Count the matches that overlap each target object.
 inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges,
                             const vector<object>& from_objects,
                             vector<correspondence_facts::object_info>& into_info,
@@ -1654,14 +1162,8 @@ inline void count_edges_arriving(const vector<correspondence_facts::edge>& edges
     }
 }
 
-// The step to segment on, when the sizes name one: one side a whole number of the
-// other across and down, by the SAME count in every pair, and actually bigger.
-// Then the small side is one block and the big side is a grid of them. WHICH
-// side is small is not fixed — a grid tiled out and a tiling read back are
-// the same fact seen from two ends, and a step that only knew how to grow would
-// have nothing to say about the second. 0,0 = no step, so the
-// smallest_of_two_grids segmentation method has nothing to offer and loses on
-// its own.
+// Return the smaller grid size when all pairs share the same block size and
+// whole-number size ratios. Return {0, 0} if they do not.
 inline pair<int, int> repeating_step_of(const vector<example>& train) {
     if (train.empty()) return { 0, 0 };
     // The block is whichever side is smaller, decided once on the first pair
@@ -1685,20 +1187,164 @@ inline pair<int, int> repeating_step_of(const vector<example>& train) {
     return { first_block.width, first_block.height };
 }
 
-// The smallest block a grid repeats: the shortest run of columns that repeats
-// across it, and of rows that repeats down it. A grid that repeats nothing gets
-// back its own width and height. Grid needs width, height, and data[row][col].
-// Single home of the recipe: the Pattern op reads the unit by it and inference
-// segments by it (segmentation_methods::minimal_repeating_set), so the two can
-// never read a different period off the same grid.
-// `background` is don't care one way round only: a colored cell must be what the
-// block puts there, a background cell where the block has a color is forgiven.
-// Pass a value no cell can hold (-2) to compare raw.
-// `must_fit_twice` is the caller's question, not a setting: inference asks "does
-// this repeat?" and needs two whole copies, the Pattern op asks "what unit do I
-// continue with?" and needs one copy and a matching stub.
-// Why smallest, why there is no biggest, and what each rule costs:
-// notes/1 - Overall Design/The Smallest Repeating Block.md
+// Divides a grid into objects, excluding the background if known.
+inline void segment_into_objects(const grid& one_grid, int8_t background, segmentation_methods segmentation,
+                                vector<correspondence_facts::object_info>& info,
+                                vector<object>* objects,
+                                int step_width = 0, int step_height = 0) {
+    // As many objects as an object index can name — edges carry it in one signed
+    // byte. The finest segmentation is one object per cell, so a small grid must be able
+    // to come apart completely; past this a reading simply cannot be written
+    // down, and it sinks on its own by leaving the rest unexplained.
+    // AS MANY OBJECTS AS THERE ARE CELLS. Every cell its own object is the most a
+    // grid can ever be segmented into, so that is the only honest ceiling; any
+    // number below it stops a segmentation part way and hands back a corner of the
+    // grid as though it were the whole of it.
+    static constexpr int MAX_OBJECTS = MAX_GRID_DIM * MAX_GRID_DIM;
+
+    // Cut on a fixed step: equal blocks, one object each, cells of any color kept
+    // together. Blocks with no colored cells at all are not objects.
+    if (segmentation == segmentation_methods::smallest_of_two_grids ||
+        segmentation == segmentation_methods::minimal_repeating_set) {
+        if (step_width <= 0 || step_height <= 0) return;
+        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
+        for (int block_top = 0; block_top < one_grid.height; block_top += step_height)
+        for (int block_left = 0; block_left < one_grid.width; block_left += step_width) {
+            if ((int)info.size() >= MAX_OBJECTS) return;
+            // A step that does not divide the grid leaves a short block at the
+            // edge; it is still a block, and dropping it would lose real cells.
+            const int block_width  = min(step_width,  one_grid.width  - block_left);
+            const int block_height = min(step_height, one_grid.height - block_top);
+            object piece;
+            piece.cells.clear();  // every cell TRANSPARENT until the block claims it
+            int lit = 0;
+            for (int row = 0; row < block_height; ++row)
+                for (int col = 0; col < block_width; ++col) {
+                    int color = one_grid.data[block_top + row][block_left + col];
+                    bool is_colored = (color >= 0 && color != background);
+                    occupied[row * block_width + col] = is_colored;
+                    if (is_colored) piece.cells[row][col] = (int8_t)color;
+                    lit += is_colored;
+                }
+            if (!lit) continue;
+            correspondence_facts::object_info one_object;
+            one_object.color = -1;
+            one_object.summary.x0 = (int8_t)block_left; one_object.summary.y0 = (int8_t)block_top;
+            one_object.summary.w = (int8_t)block_width; one_object.summary.h = (int8_t)block_height;
+            one_object.summary.count = (int16_t)lit;
+            one_object.shape = canonical_shape_hash(block_width, block_height, occupied);
+            info.push_back(one_object);
+            if (objects) { piece.summary = one_object.summary; objects->push_back(piece); }
+        }
+        // A CUT THAT DOES NOT CUT IS NOT A READING — one object means there is no
+        // motif, and it would win the election for free. The step segmentation is exempt.
+        // Story in notes/1 - Overall Design/Inference Master.md, section 3e.
+        if (segmentation != segmentation_methods::smallest_of_two_grids && info.size() < 2) {
+            info.clear();
+            if (objects) objects->clear();
+        }
+        return;
+    }
+    // Whether an object has to be one color is a question of its OWN, asked apart
+    // from what counts as joined: the one walk in 1_readings.hpp answers both.
+    const grouping how =
+        segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
+        segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
+                                                                       grouping::touching_same_color;
+    bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
+    object_walk_scratch scratch;
+    each_object(one_grid, background, how, scratch,
+                [&](const object_summary& found, const int16_t* found_cells, int how_many) {
+        if ((int)info.size() >= MAX_OBJECTS) return;
+        auto row_of = [](int16_t at) { return at / MAX_GRID_DIM; };
+        auto col_of = [](int16_t at) { return at % MAX_GRID_DIM; };
+        const int color = one_grid.data[row_of(found_cells[0])][col_of(found_cells[0])];
+        // An object wears one color only if every cell of it does; -1 says several.
+        bool one_color = true;
+        for (int i = 1; i < how_many && one_color; ++i)
+            one_color = (one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])] == color);
+        correspondence_facts::object_info one_object;
+        one_object.color = one_color ? (int8_t)color : (int8_t)-1;
+        one_object.summary = found;
+        for (int i = 0; i < found.w * found.h; ++i) occupied[i] = false;
+        for (int i = 0; i < how_many; ++i)
+            occupied[(row_of(found_cells[i]) - found.y0) * found.w +
+                     (col_of(found_cells[i]) - found.x0)] = true;
+        one_object.shape = canonical_shape_hash(found.w, found.h, occupied);
+        info.push_back(one_object);
+        if (objects) {
+            // Each cell keeps its own color, so an object of several reads as it
+            // looks. For a one-color object that is the color it already had.
+            object piece;
+            piece.summary = found;
+            piece.cells.clear();  // every cell TRANSPARENT until the walk claims it
+            for (int i = 0; i < how_many; ++i)
+                piece.cells[row_of(found_cells[i]) - found.y0][col_of(found_cells[i]) - found.x0] =
+                    (int8_t)one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])];
+            objects->push_back(piece);
+        }
+    });
+}
+
+// Divides a grid into objects, then sorts them by size (largest first) and position.
+inline void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_methods segmentation,
+                                vector<correspondence_facts::object_info>& info,
+                                vector<object>* objects,
+                                int step_width = 0, int step_height = 0) {
+    segment_into_objects(one_grid, background, segmentation, info, objects, step_width, step_height);
+    vector<int> reading_order(info.size());
+    iota(reading_order.begin(), reading_order.end(), 0);
+    stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
+        if (info[left].summary.count != info[right].summary.count)
+            return info[left].summary.count > info[right].summary.count;
+        if (info[left].summary.y0 != info[right].summary.y0)
+            return info[left].summary.y0 < info[right].summary.y0;
+        return info[left].summary.x0 < info[right].summary.x0;
+    });
+    vector<correspondence_facts::object_info> sorted;
+    sorted.reserve(info.size());
+    for (int i : reading_order) sorted.push_back(info[i]);
+    info.swap(sorted);
+    if (objects) {
+        vector<object> moved;
+        moved.reserve(objects->size());
+        for (int i : reading_order) moved.push_back((*objects)[i]);
+        objects->swap(moved);
+    }
+}
+
+// Helps choose which segmentation to use: prefer better compression.
+// Compares storing shapes and their positions with storing individual colored cells.
+// 0.5 means compression to half the size; 2 means expansion to twice the size.
+inline double describe_cost(const grid& one_grid, int8_t background,
+                            const vector<correspondence_facts::object_info>& objects) {
+    const double cell_bits = log2((double)COLOR_COUNT);
+    const double place_bits =
+        log2((double)max(1, one_grid.width * one_grid.height));
+    int colored = 0;
+    walk_colored_cells(one_grid, background, [&](int, int, int) { ++colored; });
+    // Nothing on the grid, so there is nothing to save and nothing to lose.
+    const double plain = colored * cell_bits;
+    if (plain <= 0.0) return 1.0;
+    // A segmentation that finds nothing has said nothing: you still spell the grid out
+    // cell by cell, and you paid a position for the privilege. Never the cheap
+    // answer, because it is over 1 by construction.
+    if (objects.empty()) return (plain + place_bits) / plain;
+    // A position per object, plus the cells of each shape the first time it is
+    // met. Same shape turned round is the same shape — the hash is canonical.
+    double cost = objects.size() * place_bits;
+    for (size_t i = 0; i < objects.size(); ++i) {
+        bool said_before = false;
+        for (size_t j = 0; j < i && !said_before; ++j)
+            said_before = (objects[j].shape == objects[i].shape);
+        if (!said_before) cost += objects[i].summary.count * cell_bits;
+    }
+    return cost / plain;
+}
+
+// Find the smallest repeating width and height; use the grid size if none repeats.
+// Ignore background cells when matching; pass -2 to compare every cell.
+// `must_fit_twice` requires two full copies along each repeating direction.
 template <typename Grid>
 ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
                                            int& width, int& height,
@@ -1731,17 +1377,7 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     height = smallest_period(g.height, false);
 }
 
-// The block size used to segment one pair with this method. ONE BLOCK FOR THE PAIR — not for
-// a side. Objects of different size cannot correspond, so the two grids must come
-// apart on the same block; and a reading that runs both ways round would have
-// the two directions cutting differently the moment the block was measured on
-// "the side being read from".
-//
-// WHICH grid it is measured on is itself a question for the looking: measure on
-// each, keep whichever describes its own grid more cheaply. A noisy grid and
-// its clean counterpart are both segmented on the clean one's block, which is the
-// whole reason a denoise puzzle reads at all.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3e.
+// Return the repeating block size measured from this grid.
 inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
                                         int sizes_width, int sizes_height) {
     int width = sizes_width, height = sizes_height;
@@ -1749,24 +1385,8 @@ inline pair<int, int> block_measured_on(const grid& one_grid, int8_t background,
     return { width, height };
 }
 
-// THIS BLOCK IS NOT FOR AN OP TO USE. It is elected by looking at BOTH grids,
-// which is why the strict rule can afford to be strict: a unit that fits only
-// once in the input usually fits twice in a taller output, and the output side
-// carries the proof. 017c7c7b pair 1 is the case -- a 4-tall unit, 6-tall input
-// (fits once and a bit), 9-tall output (fits twice), found on the output.
-// An op sees the input only, and the test pair has no output at all, so it can
-// never reach this block. Hand an op the elected block and it solves train off
-// the answer and misses on test -- a good-looking solution right up until it is
-// scored.
-//
-// SO THE Pattern OP DIVERGES FROM THIS ON PURPOSE. Same function, different
-// question: this one proves a grid repeats and has two grids to prove it with,
-// Pattern only names the unit to continue with and has one. It calls
-// repeat_periods with must_fit_twice=false. The two agree wherever a period is
-// real and can only part where the evidence is one-and-a-half copies thin --
-// which is exactly where false periods live, so the divergence is a standing
-// risk, not a settled thing. If Pattern ever reads a motif nobody believes,
-// this is the first place to look.
+// Choose a shared block size using whichever grid compresses better.
+// Uses both training grids, so this must not supply a block to an input-only operation.
 inline pair<int, int> block_of(const grid& input, const grid& output, int8_t background,
                                segmentation_methods segmentation, int sizes_width, int sizes_height) {
     if (segmentation != segmentation_methods::minimal_repeating_set)
@@ -1787,18 +1407,207 @@ inline pair<int, int> block_of(const grid& input, const grid& output, int8_t bac
                                                                     : from_input;
 }
 
-// THE DETECTOR · the one pass that reads all of the above off the train pairs.
+// Counts differing cells when two objects are aligned at their top-left corners.
+inline int count_differing_cells(const object& left, const object& right) {
+    const int width = max(left.summary.w, right.summary.w);
+    const int height = max(left.summary.h, right.summary.h);
+    int apart = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const int here = (row < left.summary.h && col < left.summary.w)
+                           ? left.cells[row][col] : TRANSPARENT;
+            const int there = (row < right.summary.h && col < right.summary.w)
+                            ? right.cells[row][col] : TRANSPARENT;
+            apart += (here != there);
+        }
+    return apart;
+}
 
+// Groups copies of an object and chooses the most typical copy in each group (the medoid).
+inline void find_copies(vector<correspondence_facts::object_info>& info,
+                        const vector<object>& objects, bool one_set_for_the_grid) {
+    vector<uint32_t> sets;
+    for (size_t i = 0; i < info.size(); ++i) {
+        const uint32_t key = one_set_for_the_grid ? 0u : info[i].shape;
+        const bool has_company = one_set_for_the_grid ||
+            ranges::any_of(info, [&](const auto& other) {
+                return &other != &info[i] && other.shape == info[i].shape &&
+                       other.summary.count == info[i].summary.count; });
+        if (!has_company) continue;
+        auto at = ranges::find(sets, key);
+        if (at == sets.end()) { sets.push_back(key); at = sets.end() - 1; }
+        info[i].motif = (int16_t)(at - sets.begin());
+    }
+    for (int16_t set = 0; set < (int16_t)sets.size(); ++set) {
+        int best = -1, least_apart = 0;
+        for (size_t i = 0; i < info.size(); ++i) {
+            if (info[i].motif != set) continue;
+            int apart = 0;
+            for (size_t j = 0; j < info.size(); ++j)
+                if (j != i && info[j].motif == set)
+                    apart += count_differing_cells(objects[i], objects[j]);
+            if (best < 0 || apart < least_apart) { best = (int)i; least_apart = apart; }
+        }
+        if (best >= 0) info[best].medoid = true;
+    }
+}
 
-// Fills correspondence_facts: segment both sides of each train pair ONCE, then read
-// the correspondence BOTH WAYS ROUND and keep the edges of both. No same-size
-// gate: every edge source works across any output size.
-//
-// THERE IS NO DIRECTION TO CHOOSE. Which side to read from was the one question
-// neither grid could answer and every score got wrong, so it is not asked: both
-// answers are taken and the ones that agree are collapsed to the stronger claim.
-// Every edge carries the side it starts on, and nothing above here needs to.
-// Story in notes/1 - Overall Design/Inference Master.md, sections 3d-3e.
+inline void mark_painted(const vector<correspondence_facts::edge>& edges,
+                         const vector<object>& from_objects,
+                         const vector<object>& into_objects,
+                         const grid& into,
+                         bool covered[MAX_GRID_DIM][MAX_GRID_DIM],
+                         bool exact_only = true,
+                         bool same_shape_only = false) {
+    for (const auto& edge : edges) {
+        if (exact_only && !edge.exact) continue;
+        if (same_shape_only && !edge.same_shape) continue;
+        const grid footprint = edge_footprint(edge, from_objects, into_objects);
+        for (int row = 0; row < footprint.height; ++row)
+            for (int col = 0; col < footprint.width; ++col)
+                if (landing_shows(edge, footprint, into, row, col))
+                    covered[edge.row + row][edge.col + col] = true;
+    }
+}
+
+// Match repeated blocks in both directions so every matching block gets a partner.
+// Prefer a source block at the same position when possible.
+inline fit_verdict collect_motif_edges(
+        const vector<correspondence_facts::object_info>& from_info,
+        const vector<object>& from_objects,
+        const vector<correspondence_facts::object_info>& into_info,
+        const grid& into, int8_t background, int step_w, int step_h,
+        vector<correspondence_facts::edge>& edges, degrees_of_freedom allowed = {}) {
+    if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
+    const int poses = allowed.pose ? 8 : 1;
+
+    // Does this from block sit at that place on the other grid? The answer is
+    // the same question both sweeps ask, so it is written once.
+    auto sits_at = [&](int from_index, const correspondence_facts::object_info& target,
+                       object_match& found) {
+        const object_matches matches =
+            find_in(from_objects[from_index].drawn(), into, background, true,
+                    target.summary.y0, target.summary.x0, true, poses);
+        // ITSELF BEATS ITSELF-IN-ANOTHER-COLOR. The hits come back in pose order,
+        // so the first one can be a recolor of an early pose while a later pose
+        // sits there exactly — and taking the first would report the weaker claim
+        // about the same two blocks.
+        const object_match* best = nullptr;
+        for (const object_match& hit : matches.hits) {
+            if (!allowed.recolor && !hit.exact) continue;
+            if (!best || (hit.exact && !best->exact)) best = &hit;
+            if (best->exact) break;
+        }
+        if (!best) return false;
+        found = *best;
+        return true;
+    };
+    auto draw = [&](int from_index, int target_index, const object_match& hit) {
+        const auto& target = into_info[target_index];
+        correspondence_facts::edge edge;
+        edge.from = (int16_t)from_index;
+        edge.to = (int16_t)target_index;
+        edge.row = (int8_t)target.summary.y0;
+        edge.col = (int8_t)target.summary.x0;
+        edge.pose = (int8_t)hit.pose;
+        edge.exact = hit.exact;
+        edge.stayed_put = (from_info[from_index].summary.y0 == target.summary.y0 &&
+                           from_info[from_index].summary.x0 == target.summary.x0);
+        edge.outside = (int16_t)hit.outside;
+        edge.recolored_to =
+            (!hit.exact && from_info[from_index].color >= 0)
+                ? hit.color_map[from_info[from_index].color] : (int8_t)-1;
+        if (!hit.exact) for (int c = 0; c < COLOR_COUNT; ++c) edge.color_map[c] = hit.color_map[c];
+        edges.push_back(edge);
+    };
+
+    vector<bool> answered(from_info.size(), false);
+    // WHERE DID EACH LANDING COME FROM. Its own place first, so a grid whose
+    // two sides hold the same blocks reads as each staying put rather than as
+    // everything matching everything.
+    for (int target_index = 0; target_index < (int)into_info.size(); ++target_index) {
+        const auto& target = into_info[target_index];
+        int source = -1;
+        object_match hit;
+        for (int i = 0; i < (int)from_info.size(); ++i)
+            if (from_info[i].summary.y0 == target.summary.y0 && from_info[i].summary.x0 == target.summary.x0 &&
+                sits_at(i, target, hit)) { source = i; break; }
+        for (int i = 0; source < 0 && i < (int)from_info.size(); ++i)
+            if (sits_at(i, target, hit)) source = i;
+        if (source < 0) continue;
+        draw(source, target_index, hit);
+        answered[source] = true;
+    }
+    // WHERE DID EACH OBJECT GO. Only the ones no landing claimed, so a from side
+    // bigger than the into side is not silently dropped.
+    for (int i = 0; i < (int)from_info.size(); ++i) {
+        if (answered[i]) continue;
+        object_match hit;
+        for (int target_index = 0; target_index < (int)into_info.size(); ++target_index)
+            if (sits_at(i, into_info[target_index], hit)) {
+                draw(i, target_index, hit);
+                answered[i] = true;
+                break;
+            }
+    }
+    return edges.empty() ? fit_verdict::no_fit : fit_verdict::fitted;
+}
+
+// An empty region that an object may have filled or left behind.
+struct blank_patch {
+    int8_t left = 0, top = 0, width = 0, height = 0;
+    int16_t cells = 0;
+    bool enclosed = false;
+};
+
+// Finds empty regions to help describe where objects appeared or disappeared.
+inline void find_blanks(const grid& one_grid, int8_t background,
+                        vector<blank_patch>& patches,
+                        int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    for (int row = 0; row < MAX_GRID_DIM; ++row)
+        for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
+    vector<int> to_visit;
+    for (int row = 0; row < one_grid.height; ++row)
+        for (int col = 0; col < one_grid.width; ++col) {
+            if (one_grid.data[row][col] != background) continue;
+            if (patch_of[row][col] >= 0) continue;
+            const int16_t mine = (int16_t)patches.size();
+            int left = col, right = col, top = row, bottom = row, cells = 0;
+            bool open = false;
+            to_visit.assign(1, row * MAX_GRID_DIM + col);
+            patch_of[row][col] = mine;
+            while (!to_visit.empty()) {
+                const int at = to_visit.back();
+                to_visit.pop_back();
+                const int at_row = at / MAX_GRID_DIM, at_col = at % MAX_GRID_DIM;
+                ++cells;
+                left = min(left, at_col);   right = max(right, at_col);
+                top = min(top, at_row);     bottom = max(bottom, at_row);
+                open = open || at_row == 0 || at_col == 0 ||
+                       at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
+                for (int side = 0; side < 4; ++side) {
+                    const int next_row = at_row + neighbour_row_4(side);
+                    const int next_col = at_col + neighbour_col_4(side);
+                    if (next_row < 0 || next_row >= one_grid.height ||
+                        next_col < 0 || next_col >= one_grid.width) continue;
+                    if (one_grid.data[next_row][next_col] != background) continue;
+                    if (patch_of[next_row][next_col] >= 0) continue;
+                    patch_of[next_row][next_col] = mine;
+                    to_visit.push_back(next_row * MAX_GRID_DIM + next_col);
+                }
+            }
+            blank_patch patch;
+            patch.left = (int8_t)left;  patch.top = (int8_t)top;
+            patch.width = (int8_t)(right - left + 1);
+            patch.height = (int8_t)(bottom - top + 1);
+            patch.cells = (int16_t)cells;
+            patch.enclosed = !open;
+            patches.push_back(patch);
+        }
+}
+
+// Segment each training pair and match objects in both directions.
+// Merge duplicate matches and store the results in correspondence_facts.
 inline correspondence_facts detect_correspondence(const vector<example>& train,
                                                   int8_t background,
                                                   segmentation_methods segmentation,
@@ -2279,34 +2088,8 @@ inline correspondence_facts detect_correspondence(const vector<example>& train,
     return facts;
 }
 
-// LOOK, GLANCE BACK, MATCH, LOOK AGAIN — the order a person reads a pair in,
-// and they go round it a handful of times, not once and not exhaustively.
-//
-// FIRST GLANCE, at one grid: how does this grid come apart, and which side
-// is worth reading from? Both are questions about the GRIDS, so looking
-// answers them — segment each grid every way and keep the segmentation that says the most in
-// the least (describe_cost). 14 cheap looks, no matching of any kind.
-//
-// SECOND GLANCE, at the other grid: could the objects I just made even BE over
-// there? An object taller or wider than the other grid can never be found on it,
-// so that segmentation is dead before it costs anything. Two grid sizes, no search.
-//
-// THEN MATCH, and only then: what an object was ALLOWED TO DO to get where it went
-// is invisible in either grid. So the freedoms alone are searched — 8, for the
-// one segmentation the glances chose. Among them the old judge stands:
-// fewest cells left unexplained on both grids, fewest objects to break a tie.
-//
-// THEN LOOK AGAIN. A reading that leaves the grid unexplained has said
-// "wrong segmentation" as loudly as it can, so the glance goes back and takes the next
-// segmentation method down. Only a segmentation that accounts for the WHOLE pair ends the walk; anything
-// short of that keeps looking and lets the matching pick between what it found.
-//
-// EVERY READING KEPT WAS MATCHED AND SCORED. There is no second class
-// of reading here and nothing in the table that never competed — the winner
-// beat all of them on the same numbers.
-// Story in notes/1 - Overall Design/Inference Master.md, section 3e.
-//
-// This is the one name infer() calls from this file; everything above feeds it.
+// Try every segmentation and allowed transformation combination on the training pairs.
+// Score the results and return the selected reading. Called by infer().
 inline correspondence_facts select_segmentation(const vector<example>& train, int8_t background) {
     const auto [sizes_step_width, sizes_step_height] = repeating_step_of(train);
 

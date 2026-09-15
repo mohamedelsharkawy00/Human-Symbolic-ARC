@@ -25,66 +25,6 @@ using namespace std;
 // that will be used for masks and marks later.
 constexpr int TRANSPARENT = -1;
 
-// Only puzzle colors count; TRANSPARENT is excluded.
-ARC_HOST_DEVICE constexpr bool is_color(int value) {
-    return value >= 0 && value < COLOR_COUNT;
-}
-
-// Grouping of cells into an object is 8 way, "is this one object?".
-//
-// Worked out rather than written down, because a constexpr array lives in
-// host memory and device code cannot index one -- and the walk below runs on
-// both sides. The eight are the 3x3 around a cell with the cell itself left
-// out, so dir 0..7 steps over the missing middle and reads off row and column.
-ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
-}
-
-// Adjacency between two cells is 4 way, "what shares an edge with this cell?".
-// Up, down, left, right. A diagonal cell touches only at a corner.
-//
-// Why four here and eight for grouping. Picture a ring of blocks meeting only
-// at their corners. Ask "is this one ring" and the answer is yes, corners
-// count, which is the eight. Ask "can the water inside get out" and corners
-// must not count, or the water escapes through the very tip just called a
-// wall and the ring has no inside at all. So anything measuring a border --
-// what frays against what, what surrounds what, whether background leaks to
-// the grid edge -- takes the four. Whatever the shapes use, the space around
-// them uses the other one. Let both use eight and no shape has an inside any
-// more, so holes stop existing.
-ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
-    return dir < 2 ? dir * 2 - 1 : 0;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
-    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
-}
-
-// Walks connected cells: eight directions for objects, four for surrounding space.
-// `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
-template <int Directions = 8, class Claim, class See>
-ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
-                    Claim claim, See see) {
-    static_assert(Directions == 4 || Directions == 8);
-    int head = 0, tail = seeded;
-    while (head < tail) {
-        const int row = queue_row[head], col = queue_col[head];
-        ++head;
-        see(row, col);
-        for (int dir = 0; dir < Directions; ++dir) {
-            const int next_row = row + (Directions == 4 ? neighbour_row_4(dir) : neighbour_row_8(dir));
-            const int next_col = col + (Directions == 4 ? neighbour_col_4(dir) : neighbour_col_8(dir));
-            if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
-            if (!claim(next_row, next_col)) continue;
-            queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
-            ++tail;
-        }
-    }
-    return tail;
-}
-
 // An object's bounding box and cell count, usable without storing its cells.
 struct object_summary {
     int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
@@ -250,6 +190,61 @@ struct object_walk_scratch {
     int16_t cells[MAX_GRID_DIM * MAX_GRID_DIM];
 };
 
+// Grouping of cells into an object is 8 way, "is this one object?".
+//
+// Worked out rather than written down, because a constexpr array lives in
+// host memory and device code cannot index one -- and the walk below runs on
+// both sides. The eight are the 3x3 around a cell with the cell itself left
+// out, so dir 0..7 steps over the missing middle and reads off row and column.
+ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
+    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
+}
+
+// Adjacency between two cells is 4 way, "what shares an edge with this cell?".
+// Up, down, left, right. A diagonal cell touches only at a corner.
+//
+// Why four here and eight for grouping. Picture a ring of blocks meeting only
+// at their corners. Ask "is this one ring" and the answer is yes, corners
+// count, which is the eight. Ask "can the water inside get out" and corners
+// must not count, or the water escapes through the very tip just called a
+// wall and the ring has no inside at all. So anything measuring a border --
+// what frays against what, what surrounds what, whether background leaks to
+// the grid edge -- takes the four. Whatever the shapes use, the space around
+// them uses the other one. Let both use eight and no shape has an inside any
+// more, so holes stop existing.
+ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
+    return dir < 2 ? dir * 2 - 1 : 0;
+}
+ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
+    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
+}
+
+// Walks connected cells: eight directions for objects, four for surrounding space.
+// `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
+template <int Directions = 8, class Claim, class See>
+ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
+                    Claim claim, See see) {
+    static_assert(Directions == 4 || Directions == 8);
+    int head = 0, tail = seeded;
+    while (head < tail) {
+        const int row = queue_row[head], col = queue_col[head];
+        ++head;
+        see(row, col);
+        for (int dir = 0; dir < Directions; ++dir) {
+            const int next_row = row + (Directions == 4 ? neighbour_row_4(dir) : neighbour_row_8(dir));
+            const int next_col = col + (Directions == 4 ? neighbour_col_4(dir) : neighbour_col_8(dir));
+            if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
+            if (!claim(next_row, next_col)) continue;
+            queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
+            ++tail;
+        }
+    }
+    return tail;
+}
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.
@@ -364,6 +359,11 @@ inline int find_objects_by_color(const grid& one_grid, int background,
 
 // Tallies; how much of each color, and where it sits
 
+// Only puzzle colors count; TRANSPARENT is excluded.
+ARC_HOST_DEVICE constexpr bool is_color(int value) {
+    return value >= 0 && value < COLOR_COUNT;
+}
+
 // Every cell wearing a color, in reading order, with one color left out if
 // asked. Single home of the walk: the bounds are the grid's own, held to what a
 // grid can hold, so no two readings can disagree about which cells count.
@@ -436,22 +436,6 @@ inline bool pairs_overlay(const vector<example>& train) {
 // three below, so none of them can drift on what "the same shape, turned" is.
 constexpr int POSE_COUNT = 8;
 
-// How big a grid reads once posed. Only the trade changes the size.
-inline std::pair<int, int> posed_size(int pose, int width, int height) {
-    return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
-}
-
-// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
-// original's own, which is what the mirrors are measured against.
-ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int height,
-                                  int posed_row, int posed_col) {
-    int row = (pose & 1) ? posed_col : posed_row;
-    int col = (pose & 1) ? posed_row : posed_col;
-    if (pose & 2) row = height - 1 - row;
-    if (pose & 4) col = width  - 1 - col;
-    return { row, col };
-}
-
 // Where a cell of the ORIGINAL lands once posed, so a place can be carried into
 // the frame a pair is compared in. The exact inverse of pose_source.
 ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int height,
@@ -484,6 +468,22 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 // Adapts a packed bool occupancy array to the recipe above.
 inline uint32_t shape_occupancy_hash(int width, int height, const bool* occupied) {
     return arc::shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
+}
+
+// How big a grid reads once posed. Only the trade changes the size.
+inline std::pair<int, int> posed_size(int pose, int width, int height) {
+    return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
+}
+
+// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
+// original's own, which is what the mirrors are measured against.
+ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int height,
+                                  int posed_row, int posed_col) {
+    int row = (pose & 1) ? posed_col : posed_row;
+    int col = (pose & 1) ? posed_row : posed_col;
+    if (pose & 2) row = height - 1 - row;
+    if (pose & 4) col = width  - 1 - col;
+    return { row, col };
 }
 
 // Canonical (orientationless, positionless) shape identity: the smallest

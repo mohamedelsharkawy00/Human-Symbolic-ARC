@@ -175,15 +175,6 @@ struct background_hypotheses {
     }
 };
 
-// Per-color background-ness prior, most-background first. The LAST tiebreak
-// only, when area/embeds/story can't separate two candidates — a prior, not a
-// verdict, and structure always overrides it.
-inline int background_rank(int color) {
-    static constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
-    for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
-    return COLOR_COUNT;
-}
-
 // What the side's grids say about each color. Every share is folded WORST-GRID:
 // a background has to hold up everywhere, so one bad grid is the honest number.
 struct background_evidence {
@@ -205,15 +196,13 @@ struct background_evidence {
     }
 };
 
-// A candidate must appear in EVERY grid on the side.
-inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
-    for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
-    for (const grid* grid_ptr : grids) {
-        bool seen[COLOR_COUNT] = {};
-        walk_colored_cells(*grid_ptr, TRANSPARENT,
-                           [&](int, int, int color) { seen[color] = true; });
-        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && seen[i];
-    }
+// Per-color background-ness prior, most-background first. The LAST tiebreak
+// only, when area/embeds/story can't separate two candidates — a prior, not a
+// verdict, and structure always overrides it.
+inline int background_rank(int color) {
+    static constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
+    for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
+    return COLOR_COUNT;
 }
 
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
@@ -460,6 +449,17 @@ inline void rank_candidates(vector<background_hypotheses::hypothesis>& ranked) {
         }
         return left.score > right.score;         // among electables, top score
     });
+}
+
+// A candidate must appear in EVERY grid on the side.
+inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
+    for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
+    for (const grid* grid_ptr : grids) {
+        bool seen[COLOR_COUNT] = {};
+        walk_colored_cells(*grid_ptr, TRANSPARENT,
+                           [&](int, int, int color) { seen[color] = true; });
+        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && seen[i];
+    }
 }
 
 // Elect the background of ONE side (a set of same-role grids) by ROLE alone.
