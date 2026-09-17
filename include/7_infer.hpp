@@ -566,55 +566,120 @@ inline motif_continuation_rule detect_motif_continuation(
     return rule;
 }
 
-// The output's occupied blocks reproduce the input's occupied cells. Each
-// occupied block contains the whole input, with its frame and colors intact.
-struct input_copy_layout_rule {
+// THE OUTPUT AS A GRID OF WHOLE INPUTS. Cut into input-sized blocks, rows by
+// columns and any rectangle, each block is the input turned some way or plain
+// background. Which blocks are filled and how each one sits are answered in
+// 8_sentences.hpp; this records every pose that reproduces a block, because a
+// symmetric input fits several, and picking one here would hide the pick that
+// lets a whole row of them agree.
+struct input_blocks_facts {
     bool valid = false;
+    // One cell-level map shared by every copy; -1 means the color keeps itself.
+    int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    // The poses whose own figure is where the copies are: the filled blocks are
+    // exactly the figure cells of the input posed that way, in every pair.
+    uint8_t figure_poses = 0;
+    struct layout {
+        int8_t rows = 0, cols = 0;
+        // Bit p is set when pose p draws the block; 0 is a block of background.
+        uint8_t poses[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    };
+    vector<layout> pairs;
 };
 
-inline input_copy_layout_rule detect_input_copy_layout(
-        const vector<example>& train, const correspondence_facts& facts,
+inline input_blocks_facts detect_input_blocks(const vector<example>& train,
         int input_background, int output_background) {
-    if (train.empty() || !facts.valid || facts.pairs.size() != train.size() ||
-        facts.segmentation != segmentation_methods::smallest_of_two_grids ||
-        !is_color(input_background) || input_background != output_background) return {};
-    for (size_t i = 0; i < train.size(); ++i) {
-        const auto& input = train[i].input;
-        const auto& output = train[i].output;
-        const auto& pair = facts.pairs[i];
-        const int width = input.width, height = input.height;
-        if (width <= 0 || height <= 0 || output.width != width * width ||
-            output.height != height * height || pair.input_info.size() != 1 ||
-            pair.output_info.empty() || !pair.left_over.empty()) return {};
-        const auto& source = pair.input_info.front().summary;
-        if (source.x0 || source.y0 || source.w != width || source.h != height) return {};
-        bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-        for (const auto& edge : pair.edges) {
-            if (!edge.from_input || edge.from != 0 || edge.to < 0 ||
-                edge.to >= (int)pair.output_info.size() || !edge.exact ||
-                !edge.same_shape || edge.pose || edge.hidden || edge.outside) return {};
-            const auto& block = pair.output_info[edge.to].summary;
-            if (block.w != width || block.h != height || block.x0 < 0 || block.y0 < 0 ||
-                block.x0 % width || block.y0 % height ||
-                edge.col != block.x0 || edge.row != block.y0) return {};
-            const int row = block.y0 / height, col = block.x0 / width;
-            if (row >= height || col >= width || occupied[row][col]) return {};
-            occupied[row][col] = true;
-        }
-        for (int row = 0; row < height; ++row)
-            for (int col = 0; col < width; ++col) {
-                const bool wants_copy = input.data[row][col] != input_background;
-                if (occupied[row][col] != wants_copy) return {};
-                // Correspondence establishes copy identity. Check the complete
-                // block too: foreground-only coverage cannot prove blank cells.
-                for (int r = 0; r < height; ++r)
-                    for (int c = 0; c < width; ++c) {
-                        const int expected = wants_copy ? input.data[r][c] : output_background;
-                        if (output.data[row * height + r][col * width + c] != expected) return {};
-                    }
+    if (train.empty()) return {};
+    for (const auto& pair : train)
+        if (pair.input.width <= 0 || pair.input.height <= 0 ||
+            pair.output.width % pair.input.width || pair.output.height % pair.input.height) return {};
+    // Background blocks need a ground both sides agree on.
+    const int ground = is_color(input_background) && input_background == output_background
+                       ? input_background : -1;
+    auto is_ground = [&](const grid& output, int top, int left, int width, int height) {
+        if (ground < 0) return false;
+        for (int r = 0; r < height; ++r)
+            for (int c = 0; c < width; ++c)
+                if (output.data[top + r][left + c] != ground) return false;
+        return true;
+    };
+    // Visits each cell of the input posed into the block at (top, left) as
+    // (was, now); stops and says false as soon as `cell` does.
+    auto each_posed_cell = [](const example& pair, int top, int left, int pose, auto cell) {
+        const auto& input = pair.input;
+        if (posed_size(pose, input.width, input.height) != make_pair(input.width, input.height))
+            return false;
+        for (int r = 0; r < input.height; ++r)
+            for (int c = 0; c < input.width; ++c) {
+                const auto [row, col] = pose_source(pose, input.width, input.height, r, c);
+                if (!cell(input.data[row][col], pair.output.data[top + r][left + c])) return false;
             }
+        return true;
+    };
+
+    auto read_with = [&](const int8_t* map) {
+        input_blocks_facts facts;
+        copy_n(map, COLOR_COUNT, facts.color_map);
+        facts.figure_poses = ground < 0 ? 0 : 0xFF;
+        for (const auto& pair : train) {
+            const int width = pair.input.width, height = pair.input.height;
+            input_blocks_facts::layout at;
+            at.rows = (int8_t)(pair.output.height / height);
+            at.cols = (int8_t)(pair.output.width / width);
+            for (int r = 0; r < at.rows; ++r)
+                for (int c = 0; c < at.cols; ++c) {
+                    for (int pose = 0; pose < POSE_COUNT; ++pose)
+                        if (each_posed_cell(pair, r * height, c * width, pose, [&](int was, int now) {
+                                return (map[was] >= 0 ? map[was] : was) == now; }))
+                            at.poses[r][c] |= (uint8_t)(1 << pose);
+                    if (!at.poses[r][c] && !is_ground(pair.output, r * height, c * width, width, height))
+                        return input_blocks_facts{};
+                }
+            for (int pose = 0; pose < POSE_COUNT; ++pose) {
+                const auto [posed_width, posed_height] = posed_size(pose, width, height);
+                bool figure = posed_width == at.cols && posed_height == at.rows;
+                for (int r = 0; r < at.rows && figure; ++r)
+                    for (int c = 0; c < at.cols && figure; ++c) {
+                        const auto [row, col] = pose_source(pose, width, height, r, c);
+                        figure = pair.input.data[row][col] != ground
+                                 ? (at.poses[r][c] >> pose & 1) != 0 : at.poses[r][c] == 0;
+                    }
+                if (!figure) facts.figure_poses &= (uint8_t)~(1 << pose);
+            }
+            facts.pairs.push_back(at);
+        }
+        facts.valid = true;
+        return facts;
+    };
+
+    // The map is read off the first block that is not background, once per pose
+    // it could be; the reading that changes the fewest colors wins.
+    const auto& first = train.front();
+    int top = 0, left = 0;
+    while (is_ground(first.output, top, left, first.input.width, first.input.height)) {
+        left += first.input.width;
+        if (left >= first.output.width) { left = 0; top += first.input.height; }
+        if (top >= first.output.height) return {};
     }
-    return {true};
+    input_blocks_facts best;
+    int fewest_changes = COLOR_COUNT + 1;
+    for (int pose = 0; pose < POSE_COUNT; ++pose) {
+        int8_t map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+        const bool consistent = each_posed_cell(first, top, left, pose, [&](int was, int now) {
+            if (!is_color(was) || !is_color(now) || (map[was] >= 0 && map[was] != now)) return false;
+            map[was] = (int8_t)now;
+            return true;
+        });
+        if (!consistent) continue;
+        int changes = 0;
+        for (int was = 0; was < COLOR_COUNT; ++was) changes += map[was] >= 0 && map[was] != was;
+        if (changes >= fewest_changes) continue;
+        if (input_blocks_facts facts = read_with(map); facts.valid) {
+            best = move(facts);
+            fewest_changes = changes;
+        }
+    }
+    return best;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -638,7 +703,7 @@ struct inference {
     color_diff_facts color_diff;
     color_swap_rule color_swaps;
     motif_continuation_rule motif_continuation;
-    input_copy_layout_rule input_copy_layout;
+    input_blocks_facts input_blocks;
     correspondence_facts correspondence;
     background_hypotheses background;
 };
@@ -686,7 +751,7 @@ inline inference infer(const vector<example>& train) {
     // of cutting the grid up chosen by what it manages to explain.
     inf.correspondence = select_segmentation(train, inf.colors.background_color);
     inf.motif_continuation = detect_motif_continuation(train, inf.correspondence);
-    inf.input_copy_layout = detect_input_copy_layout(train, inf.correspondence,
+    inf.input_blocks = detect_input_blocks(train,
         inf.background.input_elected(), inf.background.output_elected());
 
     // Dims is detector #0: its rule decides which questions even apply

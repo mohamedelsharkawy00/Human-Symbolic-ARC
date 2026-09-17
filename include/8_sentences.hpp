@@ -18,6 +18,7 @@
 
 #pragma once
 #include "7_infer.hpp"
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,30 @@ inline vector<string> words_for_pose(int pose) {
     }
 }
 
+// A CELL-LEVEL COLOR MAP AS WORDS: nothing when no color changes, one
+// BidiColorMap when two colors trade places, nullopt when it is anything else.
+inline optional<string> word_for_color_map(const int8_t* map) {
+    int first = -1, second = -1;
+    for (int c = 0; c < COLOR_COUNT; ++c)
+        if (map[c] >= 0 && map[c] != c) { first = c; second = map[c]; break; }
+    if (first < 0) return string();
+    for (int c = 0; c < COLOR_COUNT; ++c) {
+        const int mapped = c == first ? second : c == second ? first : c;
+        if (map[c] >= 0 && map[c] != mapped) return nullopt;
+    }
+    const int a = min(first, second), b = max(first, second);
+    const int variant = a * (2 * COLOR_COUNT - a - 1) / 2 + b - a - 1;
+    return "BidiColorMap[" + to_string(variant) + "]";
+}
+
+// ONE SENTENCE. Nothing is implicit: the first names its source, the rest carry
+// on from the objects already in hand.
+inline void say_sentence(said_reading& said, const string& source, const string& pick,
+                         const string& act, const string& combine) {
+    said.sentences.push_back((said.sentences.empty() ? source : string("CurrentObjects")) +
+                             " " + pick + " " + act + " " + combine);
+}
+
 // WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
 // detector filled it; feeding one op the other's table would be silent nonsense.
 inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
@@ -93,35 +118,158 @@ inline vector<string> programs_from(const said_reading& said) {
     return programs;
 }
 
-// A PROGRAM READ BACK AS ITS SENTENCES, four beats to a row. What the pane draws
-// and what the log writes, so neither has to know how a program is spelled.
+// A PROGRAM READ BACK AS ITS SENTENCES, one to a row. What the pane draws and
+// what the log writes, so neither has to know how a program is spelled. A pick
+// can take several words, so a sentence ends at the word that closes it (the
+// combine role in 10_dsl.cuh), not after a count of them.
 inline vector<string> sentences_of(const string& program) {
-    vector<string> beats, rows;
+    static constexpr const char* const closers[] = {
+        "Union", "Underlay", "Withhold", "Intersection", "Difference" };
+    vector<string> rows;
+    string row;
     for (size_t at = 0, next; at < program.size(); at = next) {
         next = program.find(' ', at);
         if (next == string::npos) next = program.size();
-        if (next > at) beats.push_back(program.substr(at, next - at));
+        if (next > at) {
+            const string word = program.substr(at, next - at);
+            row += (row.empty() ? "" : " ") + word;
+            if (ranges::find(closers, word) != end(closers)) rows.push_back(exchange(row, string()));
+        }
         if (next < program.size()) ++next;
     }
-    for (size_t beat = 0; beat + 3 < beats.size(); beat += 4)
-        rows.push_back(beats[beat] + " " + beats[beat + 1] + " " +
-                       beats[beat + 2] + " " + beats[beat + 3]);
     return rows;
+}
+
+// THE OUTPUT AS WHOLE INPUTS, said as which blocks hold one and how each sits.
+// All of them filled is Tile; filled where the input has its figure is Fractal.
+// How each sits is factored into a pose for the input, then one per row of
+// blocks, then one per column, so a flipped middle row, a mirror down the middle
+// and a kaleidoscope are the same sentences with different numbers. Tile hands
+// back a piece per copy, which is what lets a row of them be picked; Fractal
+// hands back one sheet, so its copies can only all sit one way.
+// False when there is nothing to say, so the rest of the reading still speaks;
+// a layout it has no words for is named on the way out.
+inline bool say_input_blocks(const inference& inf, said_reading& said) {
+    const auto& blocks = inf.input_blocks;
+    if (!blocks.valid || inf.size.Chosen == output_dimension_rule::NotInferredYet ||
+        inf.size.Chosen == output_dimension_rule::BoundingBox) return false;
+    const auto color_word = word_for_color_map(blocks.color_map);
+    if (!color_word) {
+        said.no_word_for.push_back("the copies' cell-color mapping");
+        return false;
+    }
+    auto cheapest = [](auto holds) {
+        int found = -1;
+        for (int pose = 0; pose < POSE_COUNT; ++pose)
+            if (holds(pose) && (found < 0 || words_for_pose(pose).size() < words_for_pose(found).size()))
+                found = pose;
+        return found;
+    };
+
+    struct beat { string pick, act; };
+    vector<beat> opening;
+    if (!color_word->empty()) opening.push_back({"SelectAll", *color_word});
+    auto say_pose = [](vector<beat>& beats, const string& pick, int pose) {
+        for (const string& word : words_for_pose(pose)) beats.push_back({pick, word});
+    };
+    // What a spelling costs is how many ops it runs: source, pick, act, combine.
+    auto ops_in = [](const vector<beat>& beats) {
+        size_t ops = 0;
+        for (const auto& one : beats) ops += 3 + ranges::count(one.pick, ' ') + 1;
+        return ops;
+    };
+
+    const bool some_are_ground = ranges::any_of(blocks.pairs, [](const auto& at) {
+        for (int r = 0; r < at.rows; ++r)
+            for (int c = 0; c < at.cols; ++c)
+                if (!at.poses[r][c]) return true;
+        return false;
+    });
+    string source = "Input";
+    vector<beat> beats;
+    if (some_are_ground) {
+        // The ground is punched out before stamping, so no map may repaint it.
+        const int ground = inf.background.input_elected();
+        const int pose = cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
+        if (pose < 0 || !is_color(ground) ||
+            (blocks.color_map[ground] >= 0 && blocks.color_map[ground] != ground)) {
+            said.no_word_for.push_back("which blocks hold a copy of the input");
+            return false;
+        }
+        source = "InputWithoutBackground";
+        beats = opening;
+        say_pose(beats, "SelectAll", pose);
+        beats.push_back({"SelectAll", "Fractal"});
+    } else {
+        int rows = 0, cols = 0;
+        bool several = false;
+        for (const auto& at : blocks.pairs) {
+            rows = max(rows, (int)at.rows);
+            cols = max(cols, (int)at.cols);
+            several = several || at.rows * at.cols > 1;
+        }
+        // Does the block at (r, c) sit as `input`, then `row`, then `col`, in every pair?
+        auto sits = [&](int r, int c, int input, int row, int col) {
+            const int pose = compose_poses(compose_poses(input, row), col);
+            return ranges::all_of(blocks.pairs, [&](const auto& at) {
+                return r >= at.rows || c >= at.cols || (at.poses[r][c] >> pose & 1) != 0; });
+        };
+        // Tile's copies keep the input's mark, so each band starts from none picked.
+        auto say_bands = [&](vector<beat>& into, const vector<int>& poses, const string& select) {
+            for (int pose = 1; pose < POSE_COUNT; ++pose) {
+                string bands;
+                for (size_t band = 0; band < poses.size(); ++band)
+                    if (poses[band] == pose) bands += " " + select + "[" + to_string(band) + "]";
+                if (!bands.empty()) say_pose(into, "SelectAll InvertSelection" + bands, pose);
+            }
+        };
+        bool found = false;
+        for (int input = 0; input < POSE_COUNT; ++input)
+            for (int first_col = 0; first_col < POSE_COUNT; ++first_col) {
+                vector<int> row(rows), col(cols);
+                bool fits = true;
+                for (int r = 0; r < rows && fits; ++r) {
+                    row[r] = cheapest([&](int p) { return sits(r, 0, input, p, first_col); });
+                    fits = row[r] >= 0;
+                }
+                col[0] = first_col;
+                for (int c = 1; c < cols && fits; ++c) {
+                    col[c] = cheapest([&](int p) {
+                        for (int r = 0; r < rows; ++r)
+                            if (!sits(r, c, input, row[r], p)) return false;
+                        return true;
+                    });
+                    fits = col[c] >= 0;
+                }
+                if (!fits) continue;
+                vector<beat> spelled = opening;
+                say_pose(spelled, "SelectAll", input);
+                if (several) spelled.push_back({"SelectAll", "Tile[0]"});
+                say_bands(spelled, row, "SelectRow");
+                say_bands(spelled, col, "SelectColumn");
+                if (!found || ops_in(spelled) < ops_in(beats)) beats = move(spelled);
+                found = true;
+            }
+        if (!found) {
+            said.no_word_for.push_back("how each copy of the input sits");
+            return false;
+        }
+    }
+    // An output that is the input as given says nothing about blocks.
+    if (beats.empty()) return false;
+    // Only the last paints, so no copy is drawn before it has turned.
+    for (size_t i = 0; i < beats.size(); ++i)
+        say_sentence(said, source, beats[i].pick, beats[i].act,
+                     i + 1 < beats.size() ? "Withhold" : "Union");
+    return true;
 }
 
 inline said_reading say_the_reading(const inference& inf) {
     const correspondence_facts& facts = inf.correspondence;
     said_reading said;
+    if (say_input_blocks(inf, said)) return said;
     if (!facts.valid || facts.pairs.empty()) return said;
 
-    // The occupied block layout is the input mask, and every block is the
-    // unchanged input. These facts establish Fractal's source and placement.
-    if (inf.input_copy_layout.valid &&
-        inf.size.Chosen != output_dimension_rule::NotInferredYet &&
-        inf.size.Chosen != output_dimension_rule::BoundingBox) {
-        said.sentences.push_back("InputWithoutBackground SelectAll Fractal Union");
-        return said;
-    }
     // A whole-input block is not a repeating unit extracted by Pattern. Until
     // its placement is explained, copying it has no complete sentence here.
     if (facts.segmentation == segmentation_methods::smallest_of_two_grids) {
@@ -134,12 +282,7 @@ inline said_reading say_the_reading(const inference& inf) {
     for (const auto& pair : facts.pairs)
         if (pair.sits_on > 0) combine = "Underlay";
 
-    // Nothing is implicit: the first sentence names its source, the rest carry
-    // on from the objects already in hand.
-    auto say = [&](const string& act) {
-        said.sentences.push_back(string(said.sentences.empty() ? "Input" : "CurrentObjects")
-                                 + " SelectAll " + act + " " + combine);
-    };
+    auto say = [&](const string& act) { say_sentence(said, "Input", "SelectAll", act, combine); };
 
     const degrees_of_freedom allowed = facts.chosen < (int8_t)facts.readings.size()
                              ? facts.readings[facts.chosen].allowed : degrees_of_freedom{};
@@ -152,26 +295,12 @@ inline said_reading say_the_reading(const inference& inf) {
     if (inf.motif_continuation.valid &&
         inf.size.Chosen != output_dimension_rule::NotInferredYet &&
         inf.size.Chosen != output_dimension_rule::BoundingBox) {
-        const auto& map = inf.motif_continuation.color_map;
-        int first = -1, second = -1;
-        for (int c = 0; c < COLOR_COUNT; ++c)
-            if (map[c] >= 0 && map[c] != c) { first = c; second = map[c]; break; }
-        bool sayable = true;
-        if (first >= 0) {
-            for (int c = 0; c < COLOR_COUNT; ++c) {
-                const int mapped = c == first ? second : c == second ? first : c;
-                if (map[c] >= 0 && map[c] != mapped) sayable = false;
-            }
-            if (sayable) {
-                const int a = min(first, second), b = max(first, second);
-                const int variant = a * (2 * COLOR_COUNT - a - 1) / 2 + b - a - 1;
-                say("BidiColorMap[" + to_string(variant) + "]");
-            }
-        }
-        if (!sayable) {
+        const auto map_word = word_for_color_map(inf.motif_continuation.color_map);
+        if (!map_word) {
             said.no_word_for.push_back("the motif's cell-color mapping");
             return said;
         }
+        if (!map_word->empty()) say(*map_word);
         say("Tile[0]");
         return said;
     }
@@ -252,9 +381,7 @@ inline said_reading say_the_reading(const inference& inf) {
             default: break;
         }
         for (size_t i = 0; i < words.size(); ++i)
-            said.sentences.push_back(
-                string(said.sentences.empty() ? "Input" : "CurrentObjects") + " " + pick + " " +
-                words[i] + " " + (i + 1 < words.size() ? "Withhold" : combine));
+            say_sentence(said, "Input", pick, words[i], i + 1 < words.size() ? "Withhold" : combine);
     }
 
     // Colours that trade places. Said before the reading's own recolor, because

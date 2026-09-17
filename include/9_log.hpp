@@ -183,7 +183,24 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
 inline void report_said_reading(ostream& report, const inference& inf) {
-    report << "[input_copy_layout] valid " << inf.input_copy_layout.valid << "\n\n";
+    // Each block as the poses that draw it, '-' for background.
+    const auto& blocks = inf.input_blocks;
+    report << "[input_blocks] valid " << blocks.valid << "\n";
+    for (size_t which = 0; which < blocks.pairs.size(); ++which) {
+        const auto& at = blocks.pairs[which];
+        report << "  pair " << which << "  " << (int)at.rows << "x" << (int)at.cols << " ";
+        for (int r = 0; r < at.rows; ++r) {
+            report << (r ? " /" : "");
+            for (int c = 0; c < at.cols; ++c) {
+                report << " ";
+                if (!at.poses[r][c]) report << "-";
+                for (int pose = 0; pose < POSE_COUNT; ++pose)
+                    if (at.poses[r][c] >> pose & 1) report << pose;
+            }
+        }
+        report << "\n";
+    }
+    report << "\n";
     const said_reading said = say_the_reading(inf);
     const vector<string> programs = programs_from(said);
     report << "[sentences] " << programs.size() << " program"

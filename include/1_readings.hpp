@@ -486,6 +486,20 @@ ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int 
     return { row, col };
 }
 
+// The one pose that does `first` and then `then`. Read off where the corners of
+// a square land, since the eight ways round are exactly the ways to move them.
+inline int compose_poses(int first, int then) {
+    for (int pose = 0; pose < POSE_COUNT; ++pose) {
+        bool same = true;
+        for (int corner = 0; corner < 4 && same; ++corner) {
+            const auto [row, col] = posed_place(first, 2, 2, corner / 2, corner % 2);
+            same = posed_place(then, 2, 2, row, col) == posed_place(pose, 2, 2, corner / 2, corner % 2);
+        }
+        if (same) return pose;
+    }
+    return 0;
+}
+
 // Canonical (orientationless, positionless) shape identity: the smallest
 // shape_occupancy_hash over the eight ways round, done by index arithmetic —
 // no pose grids are built. Two objects share a shape, in any orientation, iff
