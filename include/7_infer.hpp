@@ -512,6 +512,111 @@ inline color_swap_rule detect_color_swaps(const vector<example>& train,
     return rule;
 }
 
+// A matched motif continued over the output rectangle. The map belongs to
+// motif cells, including the background; it is not a whole-object recolor.
+struct motif_continuation_rule {
+    bool valid = false;
+    int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+};
+
+inline motif_continuation_rule detect_motif_continuation(
+        const vector<example>& train, const correspondence_facts& facts) {
+    motif_continuation_rule rule;
+    if (!facts.valid || train.empty() || facts.pairs.size() != train.size() ||
+        facts.segmentation != segmentation_methods::minimal_repeating_set) return rule;
+    for (size_t i = 0; i < train.size(); ++i) {
+        const auto& pair = facts.pairs[i];
+        if (pair.edges.size() != 1 || !pair.left_over.empty()) return {};
+        const auto& edge = pair.edges.front();
+        if (!edge.from_input || !edge.same_shape || edge.pose || edge.hidden || edge.outside ||
+            edge.from < 0 || edge.to < 0 || edge.from >= (int)pair.input_info.size() ||
+            edge.to >= (int)pair.output_info.size()) return {};
+        const auto& from = pair.input_info[edge.from].summary;
+        const auto& into = pair.output_info[edge.to].summary;
+        if (from.x0 || from.y0 || into.x0 || into.y0 ||
+            from.w != into.w || from.h != into.h) return {};
+        auto instances_only = [](const auto& objects, int representative) {
+            for (int j = 0; j < (int)objects.size(); ++j)
+                if (j != representative && objects[j].instance_of != representative) return false;
+            return true;
+        };
+        if (pair.output_info.size() < 2 ||
+            !instances_only(pair.input_info, edge.from) ||
+            !instances_only(pair.output_info, edge.to)) return {};
+        const auto& input = train[i].input;
+        const auto& output = train[i].output;
+        int width, height;
+        repeat_periods(input, -2, width, height, /*must_fit_twice=*/false);
+        // Pattern is input-only. A block discovered only on the output cannot
+        // justify spelling Pattern with a different unit on the input.
+        if (width != from.w || height != from.h) return {};
+        for (int r = 0; r < input.height; ++r)
+            for (int c = 0; c < input.width; ++c)
+                if (input.data[r][c] != input.data[r % height][c % width]) return {};
+        for (int r = 0; r < output.height; ++r)
+            for (int c = 0; c < output.width; ++c) {
+                const int was = input.data[r % height][c % width];
+                const int now = output.data[r][c];
+                if (!is_color(was) || !is_color(now)) return {};
+                if (rule.color_map[was] >= 0 && rule.color_map[was] != now) return {};
+                rule.color_map[was] = (int8_t)now;
+            }
+    }
+    rule.valid = true;
+    return rule;
+}
+
+// The output's occupied blocks reproduce the input's occupied cells. Each
+// occupied block contains the whole input, with its frame and colors intact.
+struct input_copy_layout_rule {
+    bool valid = false;
+};
+
+inline input_copy_layout_rule detect_input_copy_layout(
+        const vector<example>& train, const correspondence_facts& facts,
+        int input_background, int output_background) {
+    if (train.empty() || !facts.valid || facts.pairs.size() != train.size() ||
+        facts.segmentation != segmentation_methods::smallest_of_two_grids ||
+        !is_color(input_background) || input_background != output_background) return {};
+    for (size_t i = 0; i < train.size(); ++i) {
+        const auto& input = train[i].input;
+        const auto& output = train[i].output;
+        const auto& pair = facts.pairs[i];
+        const int width = input.width, height = input.height;
+        if (width <= 0 || height <= 0 || output.width != width * width ||
+            output.height != height * height || pair.input_info.size() != 1 ||
+            pair.output_info.empty() || !pair.left_over.empty()) return {};
+        const auto& source = pair.input_info.front().summary;
+        if (source.x0 || source.y0 || source.w != width || source.h != height) return {};
+        bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+        for (const auto& edge : pair.edges) {
+            if (!edge.from_input || edge.from != 0 || edge.to < 0 ||
+                edge.to >= (int)pair.output_info.size() || !edge.exact ||
+                !edge.same_shape || edge.pose || edge.hidden || edge.outside) return {};
+            const auto& block = pair.output_info[edge.to].summary;
+            if (block.w != width || block.h != height || block.x0 < 0 || block.y0 < 0 ||
+                block.x0 % width || block.y0 % height ||
+                edge.col != block.x0 || edge.row != block.y0) return {};
+            const int row = block.y0 / height, col = block.x0 / width;
+            if (row >= height || col >= width || occupied[row][col]) return {};
+            occupied[row][col] = true;
+        }
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col) {
+                const bool wants_copy = input.data[row][col] != input_background;
+                if (occupied[row][col] != wants_copy) return {};
+                // Correspondence establishes copy identity. Check the complete
+                // block too: foreground-only coverage cannot prove blank cells.
+                for (int r = 0; r < height; ++r)
+                    for (int c = 0; c < width; ++c) {
+                        const int expected = wants_copy ? input.data[r][c] : output_background;
+                        if (output.data[row * height + r][col * width + c] != expected) return {};
+                    }
+            }
+    }
+    return {true};
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // THE PRODUCT · the inference struct, and infer() — the reading order
 // ──────────────────────────────────────────────────────────────────────────
@@ -532,6 +637,8 @@ struct inference {
     unchanged_cells_facts unchanged;
     color_diff_facts color_diff;
     color_swap_rule color_swaps;
+    motif_continuation_rule motif_continuation;
+    input_copy_layout_rule input_copy_layout;
     correspondence_facts correspondence;
     background_hypotheses background;
 };
@@ -578,6 +685,9 @@ inline inference infer(const vector<example>& train) {
     // Edge level of correspondence, under the elected background, with the way
     // of cutting the grid up chosen by what it manages to explain.
     inf.correspondence = select_segmentation(train, inf.colors.background_color);
+    inf.motif_continuation = detect_motif_continuation(train, inf.correspondence);
+    inf.input_copy_layout = detect_input_copy_layout(train, inf.correspondence,
+        inf.background.input_elected(), inf.background.output_elected());
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).

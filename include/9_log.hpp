@@ -183,6 +183,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
 inline void report_said_reading(ostream& report, const inference& inf) {
+    report << "[input_copy_layout] valid " << inf.input_copy_layout.valid << "\n\n";
     const said_reading said = say_the_reading(inf);
     const vector<string> programs = programs_from(said);
     report << "[sentences] " << programs.size() << " program"
@@ -242,7 +243,7 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
                       << " at " << (int)piece.summary.x0 << "," << (int)piece.summary.y0
                       << " " << (int)piece.summary.w << "x" << (int)piece.summary.h
                       << " px " << piece.summary.count
-                      << " edges " << piece.edges_touching << newline;
+                      << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << newline;
             }
         for (size_t which = 0; which < pairs.size(); ++which)
             for (const auto& edge : pairs[which].edges) {
@@ -292,7 +293,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
           << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
           << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
           << " px " << piece.summary.count << " shape " << piece.shape
-          << " edges " << piece.edges_touching << "\n";
+          << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << "\n";
     }
     for (size_t i = 0; i < pair.output_info.size(); ++i) {
         const auto& landing = pair.output_info[i];
@@ -300,7 +301,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
           << " at " << (int)landing.summary.x0 << ',' << (int)landing.summary.y0
           << " " << (int)landing.summary.w << 'x' << (int)landing.summary.h
           << " px " << landing.summary.count << " shape " << landing.shape
-          << " edges " << landing.edges_touching << "\n";
+          << " instance_of " << landing.instance_of << " edges " << landing.edges_touching << "\n";
     }
     static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };
     report << "  edges " << pair.edges.size() << ", "

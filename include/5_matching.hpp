@@ -239,6 +239,41 @@ struct object_matching {
         }
     }
 
+    // Link only the topmost, then leftmost complete motifs.
+    static fit_verdict collect_representative_edge(
+            const vector<object_info>& from_info, const vector<object>& from_objects,
+            const vector<object_info>& into_info, const grid& into, int8_t background,
+            int step_w, int step_h, vector<edge>& edges, degrees_of_freedom allowed) {
+        auto first = [&](const vector<object_info>& info) {
+            int best = -1;
+            for (int i = 0; i < (int)info.size(); ++i) {
+                const auto& box = info[i].summary;
+                if (box.w != step_w || box.h != step_h) continue;
+                if (best < 0 || pair{box.y0, box.x0} <
+                    pair{info[best].summary.y0, info[best].summary.x0}) best = i;
+            }
+            return best;
+        };
+        const int source = first(from_info), target = first(into_info);
+        if (source < 0 || target < 0) return fit_verdict::no_fit;
+        const auto& a = from_info[source].summary;
+        const auto& b = into_info[target].summary;
+        const bool stayed = a.y0 == b.y0 && a.x0 == b.x0;
+        if (!allowed.translate && !stayed) return fit_verdict::no_fit;
+        const auto matches = find_in(from_objects[source].drawn(), into, background,
+                                    false, b.y0, b.x0, true, allowed.pose ? 8 : 1);
+        const object_match* best = nullptr;
+        for (const auto& hit : matches.hits) {
+            if (hit.hidden || hit.outside || (!allowed.recolor && !hit.exact)) continue;
+            if (!best || (hit.exact && !best->exact)) best = &hit;
+        }
+        if (!best) return fit_verdict::no_fit;
+        auto link = edge_from_match(*best, source, from_info[source].color, stayed);
+        link.to = (int16_t)target;
+        edges.push_back(link);
+        return fit_verdict::fitted;
+    }
+
     // Match repeated blocks in both directions so every matching block gets a partner.
     // Prefer a source block at the same position when possible.
     static fit_verdict collect_motif_edges(

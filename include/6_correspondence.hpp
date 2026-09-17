@@ -355,7 +355,10 @@ private:
             vector<correspondence_facts::edge> edges, discarded;
             vector<int8_t> discard_why;
             fit_verdict verdict;
-            if (pattern_reading) {
+            if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
+                verdict = object_matching::collect_representative_edge(from_info, from_objects,
+                    into_info, into, background, step_width, step_height, edges, allowed);
+            } else if (pattern_reading) {
                 verdict = object_matching::collect_motif_edges(from_info, from_objects, into_info,
                                               into, background, step_width, step_height,
                                               edges, allowed);
@@ -552,6 +555,29 @@ private:
         count_edges_arriving(backward, output_objects, pair.input_info, input_objects);
         pair.objects_used = (int)pair.edges.size();
 
+        // Validate instances against their own matched motif, including blank cells.
+        // Short boundary blocks must equal the visible prefix of the full motif.
+        if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
+            auto instances = [](vector<object_info>& info, const vector<object>& objects) {
+                for (int rep = 0; rep < (int)info.size(); ++rep) {
+                    if (!info[rep].has_partner) continue;
+                    const auto& whole = objects[rep];
+                    for (int i = 0; i < (int)info.size(); ++i) {
+                        if (i == rep || info[i].has_partner) continue;
+                        const auto& part = objects[i];
+                        if (part.summary.w > whole.summary.w || part.summary.h > whole.summary.h) continue;
+                        bool equal = true;
+                        for (int r = 0; r < part.summary.h; ++r)
+                            for (int c = 0; c < part.summary.w; ++c)
+                                if (part.cells[r][c] != whole.cells[r][c]) equal = false;
+                        if (equal) info[i].instance_of = (int16_t)rep;
+                    }
+                }
+            };
+            instances(pair.input_info, input_objects);
+            instances(pair.output_info, output_objects);
+        }
+
         // Keep rejection records only for objects that still have no partner.
         size_t still_refused = 0;
         for (size_t gone = 0; gone < pair.discarded.size(); ++gone) {
@@ -577,7 +603,7 @@ private:
             find_blanks(other, background, patches, patch_of);
             for (size_t i = 0; i < info.size() && i < objects.size(); ++i) {
                 auto& one = info[i];
-                if (one.has_partner) continue;
+                if (one.has_partner || one.instance_of >= 0) continue;
                 for (int row = 0; row < objects[i].summary.h; ++row)
                     for (int col = 0; col < objects[i].summary.w; ++col) {
                         if (objects[i].cells[row][col] == TRANSPARENT) continue;
@@ -599,12 +625,14 @@ private:
         note_blanks(pair.input_info, input_objects, output);
 
         for (const auto& one_object : pair.input_info) {
+            if (one_object.instance_of >= 0) continue;
             if (one_object.edges_touching == 0)      pair.deleted++;
             else if (one_object.edges_touching == 1) pair.persisted++;
             else                                pair.copied++;
             pair.most_landings = max(pair.most_landings, one_object.edges_touching);
         }
         for (const auto& landing : pair.output_info) {
+            if (landing.instance_of >= 0) continue;
             if (landing.edges_touching == 0)      pair.invented++;
             else if (landing.edges_touching == 1) pair.from_one++;
             else                                  pair.from_many++;
@@ -661,6 +689,7 @@ private:
                             object_at[ours[i].summary.y0 + row][ours[i].summary.x0 + col] = (int16_t)i;
             walk_colored_cells(one_grid, background, [&](int row, int col, int) {
                 if (carried[row][col]) return;
+                if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
                 // An uncovered cell is created or removed if its object has no partner.
                 const int16_t which = object_at[row][col];
                 const bool nobody_claims_the_object =

@@ -45,7 +45,7 @@ inline const char* word_for_segmentation(segmentation_methods segmentation) {
         case segmentation_methods::connected_multicolor:   return "Split[0]";
         case segmentation_methods::all_cells_of_one_color: return "Colors";
         case segmentation_methods::minimal_repeating_set:  return "Pattern";
-        case segmentation_methods::smallest_of_two_grids:  return "Pattern";
+        case segmentation_methods::smallest_of_two_grids:  return nullptr;
         default:                                          return nullptr;
     }
 }
@@ -114,6 +114,21 @@ inline said_reading say_the_reading(const inference& inf) {
     said_reading said;
     if (!facts.valid || facts.pairs.empty()) return said;
 
+    // The occupied block layout is the input mask, and every block is the
+    // unchanged input. These facts establish Fractal's source and placement.
+    if (inf.input_copy_layout.valid &&
+        inf.size.Chosen != output_dimension_rule::NotInferredYet &&
+        inf.size.Chosen != output_dimension_rule::BoundingBox) {
+        said.sentences.push_back("InputWithoutBackground SelectAll Fractal Union");
+        return said;
+    }
+    // A whole-input block is not a repeating unit extracted by Pattern. Until
+    // its placement is explained, copying it has no complete sentence here.
+    if (facts.segmentation == segmentation_methods::smallest_of_two_grids) {
+        said.no_word_for.push_back("the placement of whole-input copies");
+        return said;
+    }
+
     // A piece that sits on what is already there is laid under it, not over.
     const char* combine = "Union";
     for (const auto& pair : facts.pairs)
@@ -131,6 +146,35 @@ inline said_reading say_the_reading(const inference& inf) {
 
     if (const char* segmentation = word_for_segmentation(facts.segmentation)) say(segmentation);
     else said.no_word_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
+
+    // A complete continuation has its own cell-level map. Spell that map once,
+    // then repeat the motif; the generic object recolor below has another scope.
+    if (inf.motif_continuation.valid &&
+        inf.size.Chosen != output_dimension_rule::NotInferredYet &&
+        inf.size.Chosen != output_dimension_rule::BoundingBox) {
+        const auto& map = inf.motif_continuation.color_map;
+        int first = -1, second = -1;
+        for (int c = 0; c < COLOR_COUNT; ++c)
+            if (map[c] >= 0 && map[c] != c) { first = c; second = map[c]; break; }
+        bool sayable = true;
+        if (first >= 0) {
+            for (int c = 0; c < COLOR_COUNT; ++c) {
+                const int mapped = c == first ? second : c == second ? first : c;
+                if (map[c] >= 0 && map[c] != mapped) sayable = false;
+            }
+            if (sayable) {
+                const int a = min(first, second), b = max(first, second);
+                const int variant = a * (2 * COLOR_COUNT - a - 1) / 2 + b - a - 1;
+                say("BidiColorMap[" + to_string(variant) + "]");
+            }
+        }
+        if (!sayable) {
+            said.no_word_for.push_back("the motif's cell-color mapping");
+            return said;
+        }
+        say("Tile[0]");
+        return said;
+    }
 
     // The segmentation methods that explained just as much. Said as openings of their own so a
     // search can try each, rather than trusting the order they were declared in.
@@ -176,8 +220,11 @@ inline said_reading say_the_reading(const inference& inf) {
             if (edge.from < 0 || edge.from >= (int16_t)pair.input_info.size()) continue;
             const auto& piece = pair.input_info[edge.from];
             note(piece.color, act_turn,   edge.pose);
-            note(piece.color, act_down,   (int8_t)(edge.row - piece.summary.y0));
-            note(piece.color, act_across, (int8_t)(edge.col - piece.summary.x0));
+            // A copy's landing is not a movement of the single original.
+            if (piece.edges_touching == 1) {
+                note(piece.color, act_down,   (int8_t)(edge.row - piece.summary.y0));
+                note(piece.color, act_across, (int8_t)(edge.col - piece.summary.x0));
+            }
             if (!edge.exact)
                 for (int8_t was = 0; was < COLOR_COUNT; ++was)
                     if (edge.color_map[was] >= 0 && edge.color_map[was] != was)

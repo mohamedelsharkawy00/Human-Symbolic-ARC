@@ -1,9 +1,9 @@
-SelectAll Pattern SelectAll BidiColorMap[9] Fractal Underlay
+Input SelectAll Pattern Union CurrentObjects SelectAll BidiColorMap[9] Union CurrentObjects SelectAll Tile[0] Union
 Puzzle:       017c7c7b
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:02.7253
-Attempts:     868193
-Nodes:        5
-Best Score:   639.0000
-Max Depth:    4
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        12
+Best Score:   465.0000
+Max Depth:    12

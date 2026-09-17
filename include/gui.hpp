@@ -914,7 +914,7 @@ inline vector<piece_place> pieces_standing_alone(
     const vector<piece_place>& pieces) {
   vector<piece_place> alone;
   for (const auto& at : pieces)
-    if (!piece_in(pairs, at).has_partner) alone.push_back(at);
+    if (!piece_in(pairs, at).has_partner && piece_in(pairs, at).instance_of < 0) alone.push_back(at);
   return alone;
 }
 

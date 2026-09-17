@@ -81,6 +81,8 @@ struct object_segmentation {
         int edges_touching = 0;
         // Whether a match identifies a partner on the other grid.
         bool has_partner = false;
+        // Explained by a matched representative, without an individual edge.
+        int16_t instance_of = -1;
         // Copy group on this grid; -1 means no group.
         int16_t motif = -1;
         // True for the group member with the fewest cell differences from the others.
@@ -176,9 +178,9 @@ struct object_segmentation {
         if (segmentation != segmentation_methods::minimal_repeating_set)
             return { sizes_width, sizes_height };
         const auto from_input =
-            block_measured_on(input, background);
+            block_measured_on(input);
         const auto from_output =
-            block_measured_on(output, background);
+            block_measured_on(output);
         // Cut each grid on its own candidate and ask what that costs to say; the
         // cheaper block is the one that found real repetition rather than noise.
         auto cost_of = [&](const grid& one_grid, pair<int, int> block) {
@@ -311,10 +313,11 @@ private:
         });
     }
 
-    // Return the repeating block size measured from this grid.
-    static pair<int, int> block_measured_on(const grid& one_grid, int8_t background) {
+    // Match Pattern on Input: background cells are evidence too, and a complete
+    // copy plus a matching fragment can establish a period.
+    static pair<int, int> block_measured_on(const grid& one_grid) {
         int width, height;
-        repeat_periods(one_grid, background, width, height);
+        repeat_periods(one_grid, -2, width, height, /*must_fit_twice=*/false);
         return { width, height };
     }
 
