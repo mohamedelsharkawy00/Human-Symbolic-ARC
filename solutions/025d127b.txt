@@ -1,1 +1,1 @@
-Split[1] SelectAll Trim SelectAll SlamRow[1] Split[0] Underlay
+Input SelectAll Split[1] Withhold CurrentObjects SelectAll SlamRow[1] Underlay

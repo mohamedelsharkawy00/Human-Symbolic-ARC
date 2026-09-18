@@ -682,6 +682,77 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
     return best;
 }
 
+// PIECES THAT PILED UP INSIDE THEIR OWN BOXES. Every row of every piece, or every
+// column, slid one step toward the same side and stopped against that side or
+// against the cell that stopped before it, the way SlamRow and SlamColumn pile
+// cells. A piece keeps its colors and its count but not its shape, so
+// correspondence can only say it sits on its landing; this says which way the
+// cells went. Held only when sliding every piece that way draws every output.
+struct piece_slam_rule {
+    bool valid = false;
+    // True when the rows slide sideways, false when the columns slide up or down.
+    bool rows = true;
+    // +1 toward the right or the bottom, -1 toward the left or the top.
+    int8_t step = 0;
+};
+
+inline piece_slam_rule detect_piece_slam(const vector<example>& train,
+        const correspondence_facts& facts, int8_t input_background, int output_background) {
+    // The slide happens in each piece's own box, and the cells it leaves are ground.
+    if (!facts.valid || !boxed_by_its_cells(facts.segmentation) ||
+        !is_color(output_background) || !pairs_overlay(train)) return {};
+    // Draws each output from its input's pieces slid that way, noting whether any
+    // cell moved at all; false at the first cell that comes out wrong.
+    auto draws_every_output = [&](bool rows, int step, bool& moved) {
+        for (const auto& pair : train) {
+            vector<object_segmentation::object_info> info;
+            vector<object> pieces;
+            object_segmentation::segment_for_correspondence(pair.input, input_background,
+                                                            facts.segmentation, info, &pieces);
+            grid drawn;
+            drawn.width = pair.output.width;
+            drawn.height = pair.output.height;
+            for (int r = 0; r < drawn.height; ++r)
+                for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+            bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            for (const object& piece : pieces) {
+                const int lines = rows ? piece.summary.h : piece.summary.w;
+                const int length = rows ? piece.summary.w : piece.summary.h;
+                for (int line = 0; line < lines; ++line) {
+                    // Scanning from the side the cells slide toward, each takes the
+                    // next free spot and becomes the wall for the ones behind it.
+                    int wall = step > 0 ? length - 1 : 0;
+                    for (int i = 0; i < length; ++i) {
+                        const int at = step > 0 ? length - 1 - i : i;
+                        const int color = rows ? piece.cells[line][at] : piece.cells[at][line];
+                        if (color == TRANSPARENT) continue;
+                        const int to = step > 0 ? min(at + step, wall) : max(at + step, wall);
+                        wall = to - step;
+                        const int row = piece.summary.y0 + (rows ? line : to);
+                        const int col = piece.summary.x0 + (rows ? to : line);
+                        // Two pieces landing on one cell would leave the paint order to decide.
+                        if (painted[row][col]) return false;
+                        painted[row][col] = true;
+                        drawn.data[row][col] = color;
+                        moved = moved || to != at;
+                    }
+                }
+            }
+            for (int r = 0; r < drawn.height; ++r)
+                for (int c = 0; c < drawn.width; ++c)
+                    if (drawn.data[r][c] != pair.output.data[r][c]) return false;
+        }
+        return true;
+    };
+    for (const bool rows : {true, false})
+        for (const int step : {1, -1}) {
+            bool moved = false;
+            if (draws_every_output(rows, step, moved) && moved)
+                return {true, rows, (int8_t)step};
+        }
+    return {};
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // THE PRODUCT · the inference struct, and infer() — the reading order
 // ──────────────────────────────────────────────────────────────────────────
@@ -703,6 +774,7 @@ struct inference {
     color_diff_facts color_diff;
     color_swap_rule color_swaps;
     motif_continuation_rule motif_continuation;
+    piece_slam_rule piece_slam;
     input_blocks_facts input_blocks;
     correspondence_facts correspondence;
     background_hypotheses background;
@@ -751,6 +823,8 @@ inline inference infer(const vector<example>& train) {
     // of cutting the grid up chosen by what it manages to explain.
     inf.correspondence = select_segmentation(train, inf.colors.background_color);
     inf.motif_continuation = detect_motif_continuation(train, inf.correspondence);
+    inf.piece_slam = detect_piece_slam(train, inf.correspondence,
+        inf.colors.background_color, inf.background.output_elected());
     inf.input_blocks = detect_input_blocks(train,
         inf.background.input_elected(), inf.background.output_elected());
 

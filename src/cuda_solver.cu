@@ -749,9 +749,13 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     }
     __syncwarp();
 
-    // Pass src through unchanged (fresh pool slot).
+    // Pass src through unchanged (fresh pool slot), the lanes striping the
+    // bytes as Union does, rather than each lane copying every whole object.
     gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
-    for (int i = 0; i < n; ++i) pass->objects[i] = src->objects[i];
+    int used = n * (int)sizeof(gpu_fixed_object);
+    const int8_t* s = reinterpret_cast<const int8_t*>(src->objects);
+    int8_t* d = reinterpret_cast<int8_t*>(pass->objects);
+    for (int b = lane; b < used; b += 32) d[b] = s[b];
     if (lane == 0) pass->count = n;
     __syncwarp();
 }
@@ -760,8 +764,11 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
 // through UNCHANGED (canvas := canvas ∪ src). The per-pixel paint — the measured
 // ~27% hotspot, previously lane-0 serial — is striped across the 32 lanes:
 // pixels of one object map to disjoint canvas cells (no write conflict), and
-// objects are processed sequentially so overlapping objects still resolve
-// later-wins (a warp issues its same-address stores in program order). Union
+// overlapping objects resolve later-wins because the warp syncs after each one.
+// Without that sync, later-wins held only when both objects put the cell on the
+// same lane, which untrimmed full-grid frames happen to do; a trimmed dot and
+// the square around it put one cell on two lanes, and the CAS retry let the
+// earlier object land last (00dbd492 lost its markers under the fill). Union
 // must NOT collapse src into one object (that's UnionList); keeping src intact lets
 // a downstream per-object op still see each object. Mirrors gpu_exec_*_warp.
 __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
@@ -785,8 +792,10 @@ __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
                     gpu_paint_cell(ctx.output.data, gr, gc, v);
             }
         }
+        // One object is wholly down before the next starts, so a later object
+        // wins a shared cell whichever lanes the two put it on.
+        __syncwarp();
     }
-    __syncwarp();
 
     // Pass src through unchanged as the result (fresh pool slot, src copied).
     gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
@@ -842,8 +851,10 @@ __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
                     gpu_paint_cell(ctx.output.data, gr, gc, v);
             }
         }
+        // As in Union: the earlier object is wholly down before the next one
+        // asks whether a cell is still empty.
+        __syncwarp();
     }
-    __syncwarp();
 
     gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
     int used = n * (int)sizeof(gpu_fixed_object);

@@ -90,6 +90,19 @@ inline void say_sentence(said_reading& said, const string& source, const string&
                              " " + pick + " " + act + " " + combine);
 }
 
+// ONE BEAT OF A LINE: the pieces picked, and the one word done to them.
+struct beat { string pick, act; };
+
+// A LINE OF BEATS, SAID AS SENTENCES. Only the last paints: a cell drawn before
+// its piece has turned or slid is never taken back, so every beat before it
+// withholds.
+inline void say_beats(said_reading& said, const string& source,
+                      const vector<beat>& beats, const string& combine) {
+    for (size_t i = 0; i < beats.size(); ++i)
+        say_sentence(said, source, beats[i].pick, beats[i].act,
+                     i + 1 < beats.size() ? "Withhold" : combine);
+}
+
 // WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
 // detector filled it; feeding one op the other's table would be silent nonsense.
 inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
@@ -166,7 +179,6 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         return found;
     };
 
-    struct beat { string pick, act; };
     vector<beat> opening;
     if (!color_word->empty()) opening.push_back({"SelectAll", *color_word});
     auto say_pose = [](vector<beat>& beats, const string& pick, int pose) {
@@ -257,10 +269,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
     }
     // An output that is the input as given says nothing about blocks.
     if (beats.empty()) return false;
-    // Only the last paints, so no copy is drawn before it has turned.
-    for (size_t i = 0; i < beats.size(); ++i)
-        say_sentence(said, source, beats[i].pick, beats[i].act,
-                     i + 1 < beats.size() ? "Withhold" : "Union");
+    say_beats(said, source, beats, "Union");
     return true;
 }
 
@@ -278,16 +287,41 @@ inline said_reading say_the_reading(const inference& inf) {
     }
 
     // A piece that sits on what is already there is laid under it, not over.
-    const char* combine = "Union";
-    for (const auto& pair : facts.pairs)
-        if (pair.sits_on > 0) combine = "Underlay";
+    const bool some_sit_on = ranges::any_of(facts.pairs, [](const auto& pair) {
+        return pair.sits_on > 0; });
+    const char* combine = some_sit_on ? "Underlay" : "Union";
 
-    auto say = [&](const string& act) { say_sentence(said, "Input", "SelectAll", act, combine); };
+    // THE READING AS ONE LINE OF BEATS, said once it is complete, because only
+    // then is it known which beat is the last and paints.
+    vector<beat> beats;
+    auto say = [&](const string& act) { beats.push_back({"SelectAll", act}); };
+    // The segmentation methods that explained just as much. Said as openings of their own so a
+    // search can try each, rather than trusting the order they were declared in.
+    vector<const char*> tied;
+    auto spoken = [&]() -> said_reading& {
+        say_beats(said, "Input", beats, combine);
+        // A tied opening closes the way the chosen one did, so the rest of the
+        // line still follows it.
+        const string close = beats.size() > 1 ? "Withhold" : combine;
+        for (const char* segmentation : tied) {
+            string opening = string("Input SelectAll ") + segmentation + " " + close;
+            bool already = !said.sentences.empty() && said.sentences.front() == opening;
+            for (const string& seen : said.other_openings) already = already || seen == opening;
+            if (!already) said.other_openings.push_back(opening);
+        }
+        return said;
+    };
 
     const degrees_of_freedom allowed = facts.chosen < (int8_t)facts.readings.size()
                              ? facts.readings[facts.chosen].allowed : degrees_of_freedom{};
 
-    if (const char* segmentation = word_for_segmentation(facts.segmentation)) say(segmentation);
+    if (const char* segmentation = word_for_segmentation(facts.segmentation)) {
+        say(segmentation);
+        // Correspondence measured every piece in the box its cells make, and Split
+        // and Colors hand pieces back in the frame they were given (only Trim
+        // shrinks one), so the pieces are trimmed to those boxes first.
+        if (boxed_by_its_cells(facts.segmentation)) say("Trim");
+    }
     else said.no_word_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
 
     // A complete continuation has its own cell-level map. Spell that map once,
@@ -298,23 +332,25 @@ inline said_reading say_the_reading(const inference& inf) {
         const auto map_word = word_for_color_map(inf.motif_continuation.color_map);
         if (!map_word) {
             said.no_word_for.push_back("the motif's cell-color mapping");
-            return said;
+            return spoken();
         }
         if (!map_word->empty()) say(*map_word);
         say("Tile[0]");
-        return said;
+        return spoken();
     }
 
-    // The segmentation methods that explained just as much. Said as openings of their own so a
-    // search can try each, rather than trusting the order they were declared in.
     for (int8_t cell : facts.tied_with_chosen) {
         if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
-        const char* segmentation = word_for_segmentation(facts.readings[cell].segmentation);
-        if (!segmentation) continue;
-        string opening = string("Input SelectAll ") + segmentation + " " + combine;
-        bool already = !said.sentences.empty() && said.sentences.front() == opening;
-        for (const string& seen : said.other_openings) already = already || seen == opening;
-        if (!already) said.other_openings.push_back(opening);
+        if (const char* segmentation = word_for_segmentation(facts.readings[cell].segmentation))
+            tied.push_back(segmentation);
+    }
+
+    // PIECES THAT PILED UP INSIDE THEIR OWN BOXES. The slide drew every output
+    // by itself, so it is the whole of what happened.
+    if (inf.piece_slam.valid) {
+        say(string(inf.piece_slam.rows ? "SlamRow[" : "SlamColumn[") +
+            to_string((int)inf.piece_slam.step) + "]");
+        return spoken();
     }
 
     // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND move
@@ -370,8 +406,10 @@ inline said_reading say_the_reading(const inference& inf) {
     bool a_recolor_was_said = false;
     for (const auto& act : acts_in_every_pair) {
         if (act.what == act_recolor) a_recolor_was_said = true;
+        // Picks add to what is already marked, and the Trim picked every piece, so
+        // a line about one color starts from none picked.
         const string pick = act.color < 0 ? string("SelectAll")
-                                          : "SelectColor[" + to_string((int)act.color) + "]";
+            : "SelectAll InvertSelection SelectColor[" + to_string((int)act.color) + "]";
         vector<string> words;
         switch (act.what) {
             case act_turn:    words = words_for_pose(act.value); break;
@@ -380,8 +418,7 @@ inline said_reading say_the_reading(const inference& inf) {
             case act_recolor: words = {"Recolor[" + to_string((int)act.value) + "]"}; break;
             default: break;
         }
-        for (size_t i = 0; i < words.size(); ++i)
-            say_sentence(said, "Input", pick, words[i], i + 1 < words.size() ? "Withhold" : combine);
+        for (const string& word : words) beats.push_back({pick, word});
     }
 
     // Colours that trade places. Said before the reading's own recolor, because
@@ -400,7 +437,10 @@ inline said_reading say_the_reading(const inference& inf) {
                 break;
             }
 
-    return said;
+    // A piece that sits on its landing changed shape, and nothing here says how.
+    if (some_sit_on) said.no_word_for.push_back("how a piece changed its shape");
+
+    return spoken();
 }
 
 }  // namespace arc

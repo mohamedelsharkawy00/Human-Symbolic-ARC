@@ -179,6 +179,13 @@ inline void report_correspondence_readings(ostream& report, const correspondence
     }
 }
 
+// Which way the pieces' cells piled up inside their own boxes, if they did.
+inline void report_piece_slam(ostream& report, const piece_slam_rule& slam) {
+    report << "[piece_slam] valid " << slam.valid;
+    if (slam.valid) report << "  " << (slam.rows ? "rows" : "columns") << " step " << (int)slam.step;
+    report << "\n\n";
+}
+
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
@@ -368,6 +375,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
+    report_piece_slam(report, inf.piece_slam);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);

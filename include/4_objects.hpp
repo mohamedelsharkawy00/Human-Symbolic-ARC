@@ -37,6 +37,15 @@ inline constexpr const char* const segmentation_names[] = {
     "Smallest Of The Two Grids"
 };
 
+// Whether a segmentation measures each object in the box its own cells make. The
+// connected and one-color groupings do; a repeating block keeps its whole block,
+// blank cells and all.
+inline constexpr bool boxed_by_its_cells(segmentation_methods segmentation) {
+    return segmentation == segmentation_methods::connected_monochrome ||
+           segmentation == segmentation_methods::connected_multicolor ||
+           segmentation == segmentation_methods::all_cells_of_one_color;
+}
+
 // Find the smallest repeating width and height; use the grid size if none repeats.
 // Ignore background cells when matching; pass -2 to compare every cell.
 // `must_fit_twice` requires two full copies along each repeating direction.
