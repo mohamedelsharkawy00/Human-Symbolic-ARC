@@ -1,28 +1,6 @@
 #pragma once
 
-// Sound is Windows-only (WinMM waveOut). On non-MSVC builds (e.g. Kaggle gcc),
-// compile a no-op sound_manager with the same public API so core call sites
-// (play / play_sequence / clear_queue) need no changes. See KAGGLE_PORT_PLAN.txt.
-#ifndef _MSC_VER
-
-#include <vector>
-#include <utility>
-
-namespace arc {
-
-class sound_manager {
-public:
-    static sound_manager& get() { static sound_manager i; return i; }
-    void play(int, int) {}
-    void play_sequence(const std::vector<std::pair<int, int>>&) {}
-    void clear_queue() {}
-    void set_muted(bool) {}
-    bool is_muted() const { return false; }
-};
-
-}  // namespace arc
-
-#else  // _MSC_VER : real Windows implementation
+// Sound, through WinMM waveOut. The GUI plays it; the solver never hears of it.
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -183,5 +161,3 @@ private:
 };
 
 }  // namespace arc
-
-#endif  // _MSC_VER

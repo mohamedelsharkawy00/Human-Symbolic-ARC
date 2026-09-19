@@ -127,8 +127,9 @@ namespace arc {
 		return (int16_t)(type_var_low[to_underlying(t)] + idx);
 	}
 
-	// Not thread-safe: all node alloc/free must happen on the solver worker thread,
-	// or on the main thread while holding solver_state::mtx (which the worker also takes).
+	// Not thread-safe: all node alloc/free must happen on the thread driving the
+	// solver, or on another thread while holding search_progress::mtx (which the
+	// solver also takes).
 	// Cap chunk growth so the pool can't briefly request multi-GB blocks
 	// from upstream and trip the 8 GB job-object limit set in enforce_memory_limit().
 	// Without this cap the doubling growth strategy crashed the app with bad_alloc
@@ -141,9 +142,9 @@ namespace arc {
 	};
 
 	struct node {
-		// Non-atomic: only the worker thread mutates nodes. The main thread
-		// reads node fields under solver_state::mtx (which the worker also
-		// takes), so refcount changes are already serialized.
+		// Non-atomic: only the thread driving the solver mutates nodes. Any
+		// other thread reads node fields under search_progress::mtx (which the
+		// solver also takes), so refcount changes are already serialized.
 		mutable int ref_count;
 		// every op is unary, so a program is a chain; null = chain start
 		node* arg = nullptr;
@@ -354,16 +355,6 @@ namespace arc {
 		// only; empty otherwise). Layer-lock commit uses it: wrong paint on a
 		// kept cell is vandalism (nothing repaints it), wrong paint on a
 		// changed cell is fine (a later layer overwrites it anyway).
-		// Per-train-example connected-component summaries of target output.
-		// Computed once at puzzle-load by find_objects_by_color. Used
-		// by the CC-match score term to reward partial structural progress.
-		// Sized to train.size(); inner array padded to MAX_TARGET_OBJECTS for
-		// cheap upload to GPU template alongside count.
-		struct target_obj_slot {
-			object_summary objs[MAX_TARGET_OBJECTS];
-			int count = 0;
-		};
-		vector<target_obj_slot> target_objects;
 		node* best_tree = nullptr;
 		int best_node_count = NODE_COUNT_MAX;
 		// WHAT THE CHAMPION SCORES ON EACH PAIR, indexed like train and test.
@@ -544,9 +535,16 @@ namespace arc {
 	public:
 		virtual ~environment() = default;
 
-		// Segment each train-example's target output into per-color connected
-		// components and cache the summaries on the puzzle. Used by the
-		// CC-match score term.
+		// THE SCORER'S TARGETS: one output segmented into per-color connected
+		// components on the background inference elected, written the way the
+		// kernel reads them. Used by the CC-match score term to reward partial
+		// structural progress. Returns how many.
+		//
+		// WORKED OUT WHERE THEY ARE UPLOADED, for the main search and the
+		// scratch path alike, and never kept on the puzzle: a kept copy was read
+		// against whatever background stood when it was made, which before
+		// inference is none, and the two paths then scored the same program
+		// differently.
 		//
 		// STAYS IN THE ENGINE — deliberately NOT moved to inference/. Despite
 		// the detect_* name and sitting in the same load block as the migrated
@@ -558,14 +556,21 @@ namespace arc {
 		// holds across all pairs) it fails on both counts, so it belongs to the
 		// scorer, not the inference layer. Do not "finish the migration" by
 		// pulling this — the invariant migration is complete at four extractors.
-		static inline void detect_target_objects(puzzle& p) {
-			p.target_objects.assign(p.train.size(), puzzle::target_obj_slot{});
-			for (size_t i = 0; i < p.train.size(); ++i) {
-				auto& slot = p.target_objects[i];
-				slot.count = find_objects_by_color(
-					p.train[i].output, p.inf.background.output_elected(),
-					slot.objs, MAX_TARGET_OBJECTS);
+		static inline int8_t fill_target_objects(const puzzle& p, const grid& output,
+		                                         gpu_object_summary* dst) {
+			object_summary found[MAX_TARGET_OBJECTS];
+			int count = find_objects_by_color(output, p.inf.background.output_elected(),
+			                                  found, MAX_TARGET_OBJECTS);
+			if (count > GPU_MAX_TARGET_OBJECTS) count = GPU_MAX_TARGET_OBJECTS;
+			for (int k = 0; k < count; ++k) {
+				dst[k].w = found[k].w;
+				dst[k].h = found[k].h;
+				dst[k].x0 = found[k].x0;
+				dst[k].y0 = found[k].y0;
+				dst[k].count = found[k].count;
 			}
+			for (int k = count; k < GPU_MAX_TARGET_OBJECTS; ++k) dst[k] = {};
+			return (int8_t)count;
 		}
 
 		// Detect invariant colors: present in ALL training inputs.
@@ -857,4 +862,4 @@ namespace arc {
 
 }
 
-// 25_dsl_executor.hpp is now included from 23_solver_beam.hpp after 24_fixed_dsl.hpp
+// 17_dsl_executor.hpp is now included from 15_solver_beam.hpp after 16_fixed_dsl.hpp

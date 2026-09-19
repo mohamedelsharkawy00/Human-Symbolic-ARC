@@ -25,42 +25,6 @@ namespace arc {
     return false;
   }
 
-  // The picture half of the four below. A null view is a headless run, or a
-  // puzzle whose views have not been built yet: there is simply nothing to paint.
-  static inline void update_one_view(display_grid* target, const grid& source,
-                                     vector<int>* gpu_buffer) {
-    if (target && gpu_buffer)
-      update_display_buffer(*target, source, *gpu_buffer);
-  }
-
-  static inline void update_example_views(example_views* v, const grid& source,
-                                          vector<int>* gpu_buffer) {
-    if (!v || !gpu_buffer)
-      return;
-    update_display_buffer(v->best, source, *gpu_buffer);
-    update_display_buffer(v->current, source, *gpu_buffer);
-  }
-
-  // Picture and score are both the display's, so there is nothing to clear
-  // where nothing is being shown.
-  static inline void clear_current_view(example_views* v) {
-    if (!v) return;
-    v->current_score = SCORE_MIN - 1.0f;
-    v->current.width = 0;
-  }
-
-  static inline void clear_best_view(float& best, example_views* v) {
-    best = SCORE_MIN - 1.0f;
-    if (v) v->best.width = 0;
-  }
-
-  // One number, two homes: the search keeps it to compare trees by, the display
-  // keeps it to label the CURRENT column with.
-  static inline void set_example_scores(float& best, example_views* v, float score) {
-    best = score;
-    if (v) v->current_score = score;
-  }
-
   inline void beam_solver::commit_and_advance_level() {
     // INJECT PREVIOUS BEAM: Monotonicity base
     for (auto &cand : beam) {
@@ -223,7 +187,7 @@ namespace arc {
   inline void beam_solver::log_level_timing() {
     long long fetch_copy_ns = 0, fetch_sync_ns = 0;
     cuda_dsl_take_fetch_ns(&fetch_copy_ns, &fetch_sync_ns);
-    long long wait_total = m_solver_state.gpu_wait_ns.load();
+    long long wait_total = m_progress.gpu_wait_ns.load();
     long long ns_wait = wait_total - ns_wait_at_last_level;
     ns_wait_at_last_level = wait_total;
     log_timing(to_text(
@@ -247,7 +211,7 @@ namespace arc {
     m_global_attempts = global_attempts;
     // Sentence mode never seeds starters: it has no history pool and no slots,
     // because a sentence is built whole rather than grown an op at a time.
-    if (!initialized && !m_app_state.sentence_search) {
+    if (!initialized && !m_options.sentence_search) {
       seed_starter_nodes();
       initialized = true;
       log_debug("Top-Down Solver (Zero Memory) Initialized.");
@@ -258,7 +222,7 @@ namespace arc {
 
     is_generating_layer = true;
 
-    if (m_app_state.sentence_search) {
+    if (m_options.sentence_search) {
       // Every candidate of a level stays live until it is merged, and a level is
       // beam x sweep -- 23.8M chains at beam 128, which fills the process memory
       // limit and stops dead. Distil whenever the pile gets big, the same cap the
@@ -268,7 +232,7 @@ namespace arc {
         merge_slot_candidates();
       // Commit only once the batch just made has been drained: level_candidates
       // is released on commit, and pending_evaluation only BORROWS those nodes.
-      // Committing with any still queued hands the worker freed memory.
+      // Committing with any still queued hands step() freed memory.
       if (generate_sentence_batch() && pending_evaluation.empty())
         commit_sentence_level();
       return !pending_evaluation.empty();
@@ -1136,46 +1100,10 @@ namespace arc {
       cuda_dsl_example_data& ex,
       const puzzle& p,
       int active_example_count) {
-    static thread_local auto init_ctx = std::make_unique<fixed_exec_context>();
     int active = min(active_example_count, (int)p.train.size());
     ex.count = active;
-
-    for (int ei = 0; ei < active; ++ei) {
-      fixed_init_context(*init_ctx, p.train[ei], p.rule, p.invariant_colors);
-
-      ex.input_grids[ei] = init_ctx->input.data;
-      ex.input_dims[ei * 2 + 0] = (int8_t)init_ctx->input.width;
-      ex.input_dims[ei * 2 + 1] = (int8_t)init_ctx->input.height;
-
-      gpu_packed_mask& tg = ex.target_grids[ei];
-      const auto& out = p.train[ei].output;
-      tg.clear();
-      for (int r = 0; r < out.height; ++r)
-        for (int c = 0; c < out.width; ++c)
-          tg[r][c] = (int8_t)out.data[r][c];
-      ex.target_dims[ei * 2 + 0] = (int8_t)out.width;
-      ex.target_dims[ei * 2 + 1] = (int8_t)out.height;
-
-      int8_t* dm = ex.distance_maps + ei * GPU_MAX_COLORS * GPU_GRID_CELLS;
-      memcpy(dm, init_ctx->distance_maps, GPU_MAX_COLORS * GPU_GRID_CELLS);
-
-      ex.seed_lists[ei] = to_gpu_object_list(init_ctx->seed_objs);
-
-      // Copy precomputed target CC summaries (detect_target_objects ran at load).
-      gpu_object_summary* dst = ex.target_objs + ei * GPU_MAX_TARGET_OBJECTS;
-      int tc = (ei < (int)p.target_objects.size()) ? p.target_objects[ei].count : 0;
-      if (tc > GPU_MAX_TARGET_OBJECTS) tc = GPU_MAX_TARGET_OBJECTS;
-      for (int k = 0; k < tc; ++k) {
-        const auto& s = p.target_objects[ei].objs[k];
-        dst[k].w = s.w;
-        dst[k].h = s.h;
-        dst[k].x0 = s.x0;
-        dst[k].y0 = s.y0;
-        dst[k].count = s.count;
-      }
-      ex.target_obj_counts[ei] = (int8_t)tc;
-    }
-
+    for (int ei = 0; ei < active; ++ei)
+      fill_example_slot(ex, ei, p.train[ei], p);
     environment::fill_puzzle_level(ex, p);
   }
 
@@ -1217,63 +1145,63 @@ namespace arc {
       log_debug(terms[i].say(tree_str, i));
   }
 
-  inline void beam_solver::update_best_solution(int target_idx, puzzle &p, node *tree,
+  inline void beam_solver::update_best_solution(int load_id, puzzle &p, node *tree,
                                    int node_count, beam_solver::candidate_batch &res) {
     int active = min(active_example_count, (int)p.train.size());
 
-    bool best_already_solves = check_old_tree_solves(p, active);
-    bool overrides_worse_tree = res.all_train_solved && !best_already_solves;
-
-    float current_best_sum = 0;
-    for (int i = 0; i < active; ++i)
-      current_best_sum += p.best_score(false, i);
-
-    // SOLVING OUTRANKS RESEMBLING. Nothing that fails the active examples may
-    // displace something that passes them, however high it scores -- otherwise
-    // the two doors trade the best tree back and forth forever, each undoing
-    // the other: one asks who scores higher, the other asks who solves.
-    bool would_lose_a_solve = best_already_solves && !res.all_train_solved;
-    bool score_better = !would_lose_a_solve &&
-                        res.total_train_score > current_best_sum + 0.0001f;
-    // Only treat "same score" as a valid simplification trigger if the new
-    // tree is actually correct on all active examples — tying on a rarity-
-    // weighted score does not imply functional equivalence.
-    bool score_same = res.all_train_solved &&
-                      abs(res.total_train_score - current_best_sum) < 0.0001f;
-    bool nodes_better = node_count < p.best_node_count;
-    bool should_promote = res.all_train_solved && (active < (int)p.train.size());
-
-    if (overrides_worse_tree || score_better || (score_same && nodes_better) || should_promote) {
-      unique_lock lock(m_solver_state.mtx);
-      if (target_idx != m_solver_state.puzzle_idx)
-        return;
-
-      // Hoisted, so the gate line below can say it even when nothing short-circuits.
-      bool old_tree_solves = check_old_tree_solves(p, active);
-      bool still_overrides = res.all_train_solved && !old_tree_solves;
-      bool still_would_lose_a_solve = old_tree_solves && !res.all_train_solved;
-
-      current_best_sum = 0;
+    // WHICH DOOR, IF ANY, LETS THIS TREE IN AS THE BEST. Asked twice: once
+    // without the lock, which turns most candidates away cheaply, and again
+    // under it, since the best may have moved in between.
+    struct gate {
+      bool old_tree_solves, overrides, score_better, score_same, nodes_better, should_promote;
+      float best_sum;
+      bool opens() const {
+        return overrides || score_better || (score_same && nodes_better) || should_promote;
+      }
+    };
+    auto ask_gate = [&] {
+      gate g;
+      g.old_tree_solves = check_old_tree_solves(p, active);
+      g.overrides = res.all_train_solved && !g.old_tree_solves;
+      g.best_sum = 0;
       for (int i = 0; i < active; ++i)
-        current_best_sum += p.best_score(false, i);
+        g.best_sum += p.best_score(false, i);
+      // SOLVING OUTRANKS RESEMBLING. Nothing that fails the active examples may
+      // displace something that passes them, however high it scores -- otherwise
+      // the two doors trade the best tree back and forth forever, each undoing
+      // the other: one asks who scores higher, the other asks who solves.
+      bool would_lose_a_solve = g.old_tree_solves && !res.all_train_solved;
+      g.score_better = !would_lose_a_solve &&
+                       res.total_train_score > g.best_sum + 0.0001f;
+      // Only treat "same score" as a valid simplification trigger if the new
+      // tree is actually correct on all active examples — tying on a rarity-
+      // weighted score does not imply functional equivalence.
+      g.score_same = res.all_train_solved &&
+                     abs(res.total_train_score - g.best_sum) < 0.0001f;
+      g.nodes_better = node_count < p.best_node_count;
+      g.should_promote = res.all_train_solved && (active < (int)p.train.size());
+      return g;
+    };
 
-      bool still_score_better = !still_would_lose_a_solve &&
-                                res.total_train_score > current_best_sum + 0.0001f;
-      bool still_score_same = res.all_train_solved &&
-                              abs(res.total_train_score - current_best_sum) < 0.0001f;
-      bool still_nodes_better = node_count < p.best_node_count;
-      bool still_should_promote = res.all_train_solved && (active < (int)p.train.size());
-
-      if (!still_overrides && !still_score_better && !(still_score_same && still_nodes_better) && !still_should_promote)
+    if (!ask_gate().opens()) {
+      try_update_current_display(load_id, p, tree, node_count, res);
+      return;
+    }
+    {
+      unique_lock lock(m_progress.mtx);
+      if (load_id != m_load_id)
+        return;
+      const gate g = ask_gate();
+      if (!g.opens())
         return;
 
       // Which door opened, so a gate that keeps reopening has to say why.
       log_debug(to_text("[GATE] all_solved=%d old_solves=%d overrides=%d better=%d same=%d fewer=%d "
                         "promote=%d score=%.4f best=%.4f nodes=%d best_nodes=%d active=%d",
-                        (int)res.all_train_solved, (int)old_tree_solves, (int)still_overrides,
-                        (int)still_score_better, (int)still_score_same, (int)still_nodes_better,
-                        (int)still_should_promote, (double)res.total_train_score,
-                        (double)current_best_sum, node_count, p.best_node_count, active));
+                        (int)res.all_train_solved, (int)g.old_tree_solves, (int)g.overrides,
+                        (int)g.score_better, (int)g.score_same, (int)g.nodes_better,
+                        (int)g.should_promote, (double)res.total_train_score,
+                        (double)g.best_sum, node_count, p.best_node_count, active));
 
       // Test eval happens in the train-finale branch below via the CPU
       // evaluate_test_after_solve path — no GPU scratch launches needed.
@@ -1294,7 +1222,7 @@ namespace arc {
           is_train_finale = !p.is_solved;
           is_test_solve = evaluate_test_after_solve(tree, p, node_count) && !p.is_test_solved;
         } else {
-          reset_test_display(p);
+          clear_views(p, true);
         }
       } else if (res.all_train_solved && (active == (int)p.train.size()) && !p.is_solved) {
         is_train_finale = true;
@@ -1302,29 +1230,29 @@ namespace arc {
       }
 
       if (promotion_count == 0 && !is_train_finale && !is_test_solve) {
-        if (!still_overrides && !still_score_better && !(still_score_same && still_nodes_better)) {
-          update_example_results(p.train, &m_solver_state.views.train, res.train);
+        if (!g.overrides && !g.score_better && !(g.score_same && g.nodes_better)) {
+          update_example_results(false, res.train);
           bool full_train = res.all_train_solved && active == (int)p.train.size();
           update_test_current_views(p, tree, node_count, full_train);
-          environment::remove(m_solver_state.current_tree);
-          m_solver_state.current_tree = environment::copy(tree);
-          m_app_state.needs_upload = true;
+          environment::remove(m_progress.current_tree);
+          m_progress.current_tree = environment::copy(tree);
+          changed();
           return;
         }
       }
 
-      bool improvement_sound = (promotion_count == 0) && !is_train_finale && !is_test_solve && (still_score_better || (still_score_same && still_nodes_better));
+      bool improvement_sound = (promotion_count == 0) && !is_train_finale && !is_test_solve && (g.score_better || (g.score_same && g.nodes_better));
 
       // res was evaluated against the pre-promotion active count; only the
       // first (active - promotion_count) entries in res.train are valid.
-      // try_promote_examples already populated views for the promoted ones,
-      // so don't let update_example_results clobber them.
-      update_example_results(p.train, &m_solver_state.views.train, res.train, active - promotion_count);
+      // try_promote_examples already showed the promoted ones, so don't let
+      // update_example_results clobber them.
+      update_example_results(false, res.train, active - promotion_count);
       {
         bool full_train = res.all_train_solved && active == (int)p.train.size();
         update_test_current_views(p, tree, node_count, full_train);
       }
-      m_app_state.needs_upload = true;
+      changed();
 
       // Leave-one-out reduction: strip dead/no-op ops from this new best so the
       // stored best AND the tree the beam continues from are as short as possible.
@@ -1351,14 +1279,14 @@ namespace arc {
 
       refresh_best_display_scores(p, active, reduced_node_count);
 
-      environment::remove(m_solver_state.current_tree);
-      m_solver_state.current_tree = environment::copy(reduced);
+      environment::remove(m_progress.current_tree);
+      m_progress.current_tree = environment::copy(reduced);
 
       // Free the reduced tree if reduce_best_tree allocated a new one (the two
       // copy() calls above took their own refs; this drops our local owner).
       if (was_reduced) environment::remove(reduced);
 
-      bool is_simplification = (promotion_count == 0) && !is_train_finale && !is_test_solve && still_score_same && still_nodes_better && p.is_solved;
+      bool is_simplification = (promotion_count == 0) && !is_train_finale && !is_test_solve && g.score_same && g.nodes_better && p.is_solved;
       if (is_train_finale || is_simplification) {
         if (is_train_finale) {
           log_debug("!!!! TASK SOLVED ON TRAINING SET !!!");
@@ -1367,7 +1295,6 @@ namespace arc {
         } else {
           log_debug(to_text("!!!! SIMPLIFIED SOLUTION FOUND: %d nodes (was %d) !!!!", reduced_node_count, previous_node_count));
         }
-        if (!m_app_state.is_benchmarking) toggle_pause();
       } else if (promotion_count == 0 && !is_test_solve) {
         // Not a solve and not a simplification, just a new best, so say that.
         log_debug(to_text("!!!! NEW BEST: %d nodes (was %d) !!!!", reduced_node_count, previous_node_count));
@@ -1378,592 +1305,504 @@ namespace arc {
         log_debug("!!!! TEST SET SOLVED CORRECTLY !!!!");
       }
 
-      bool final_is_simplification = (promotion_count == 0) && !is_train_finale && !is_test_solve && still_score_same && still_nodes_better && p.is_solved;
+      bool final_is_simplification = (promotion_count == 0) && !is_train_finale && !is_test_solve && g.score_same && g.nodes_better && p.is_solved;
       lock.unlock();
 
       if (improvement_sound || promotion_count > 0 || is_train_finale || is_test_solve || final_is_simplification) {
-        vector<pair<int, int>> seq;
-        seq.push_back({1047, 40});
-        for (int i = 0; i < promotion_count; ++i)
-          seq.push_back({1319, 80});
-        if (final_is_simplification)
-          seq.push_back({1319, 60});
-        if (is_train_finale)
-          seq.push_back({1568, 150});
-        if (is_test_solve)
-          seq.push_back({2093, 250});
-        sound_manager::get().play_sequence(seq);
+        search_news n;
+        n.promotions = promotion_count;
+        n.improved = improvement_sound;
+        n.simplified = final_is_simplification;
+        n.train_solved = is_train_finale;
+        n.test_solved = is_test_solve;
+        news(n);
       }
-    } else {
-      try_update_current_display(target_idx, p, tree, node_count, res);
     }
   }
 
-  inline void beam_solver::reload_current_puzzle() {
-    sound_manager::get().clear_queue();
-    clear_logs();
+  inline bool beam_solver::load(const challenge_task &task, const vector<grid> *test_solutions,
+                                const puzzle_label &label) {
+    m_log.clear();
     cuda_dsl_invalidate_examples();
 
-    int puzzle_idx = m_solver_state.puzzle_idx;
-
     {
-      scoped_lock lock(m_solver_state.mtx);
+      scoped_lock lock(m_progress.mtx);
 
-      // Load UNDER the lock: load_single_puzzle mutates m_puzzle, which draw_frame
-      // reads under this same lock. Loading outside it races the GUI and can render
-      // the new puzzle index against the old/half-swapped puzzle. (load is file IO
-      // only and ignores solver_state, so no recursive-lock/deadlock risk.)
-      const challenge_task &ct = m_puzzle_tasks[puzzle_idx];
-      // Infer at load only if the pane is already open, so a puzzle brought up
-      // to look at is ready on the first frame. Otherwise it waits — see the
-      // check by the pause gate.
-      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, m_solver_state.views, *m_gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
-                                           puzzle_idx, (int)m_puzzle_tasks.size(), m_dataset_flags.load(),
-                                           m_app_state.inference_view.load() != global_app_state::INFERENCE_OFF);
+      // Load UNDER the lock: this replaces m_puzzle, which a watcher on another
+      // thread reads under this same lock. Loading outside it races that
+      // reader, which could draw the new puzzle against a half-swapped one.
+      m_puzzle_loaded = load_task_from_content(task.content, task.id, m_puzzle, test_solutions);
+      m_label = label;
       if (m_puzzle_loaded) m_log.set_puzzle_id(m_puzzle.id);
+      if (m_observer) m_observer->loaded(m_puzzle);
 
-      m_solver_state.attempts = 0;
-      environment::remove(m_solver_state.current_tree);
-      m_solver_state.current_tree = nullptr;
-      auto now = chrono::steady_clock::now();
-      m_solver_state.start_time = now;
-      m_app_state.pause_start_time = now;
+      m_progress.attempts = 0;
+      environment::remove(m_progress.current_tree);
+      m_progress.current_tree = nullptr;
+      m_progress.start_time = chrono::steady_clock::now();
 
       active_example_count = start_example_count;
       asked_inference_yet = false;
-      m_app_state.needs_upload = true;
+      ++m_load_id;
+      changed();
 
       if (m_puzzle_loaded) {
           puzzle &p = m_puzzle;
-          // The stale-prediction bug this used to guard against is gone by
-          // construction: the views are no longer part of the reused m_puzzle,
-          // and the loader rebuilds them from nothing on every load. What is left
-          // to do here is the scores, which live on the examples and are the
-          // search's own -- an example with no picture has nothing scored either.
-          clear_all_views(p);
-          if (!p.is_solved) {
-            if (active_example_count > (int)p.train.size())
-              active_example_count = (int)p.train.size();
-            environment::remove(p.best_tree);
-            p.best_tree = nullptr;
-            invalidate_best_tree_cache(p);
-            p.best_node_count = NODE_COUNT_MAX;
-            p.is_solved = false;
-          } else {
+          // A puzzle just parsed has no best and no scores yet; this says so
+          // to whoever is watching, and puts the search's own copies of the
+          // scores at their floor.
+          clear_views(p, false);
+          clear_views(p, true);
+          if (active_example_count > (int)p.train.size())
             active_example_count = (int)p.train.size();
-            cuda_dsl_invalidate_examples();
-            m_solver_state.current_tree = environment::copy(p.best_tree);
-          }
-          m_solver_state.current_attempt_depth = 0;
-          m_solver_state.current_attempt_nodes = 0;
+          invalidate_best_tree_cache(p);
+          p.best_node_count = NODE_COUNT_MAX;
+          m_progress.current_attempt_depth = 0;
+          m_progress.current_attempt_nodes = 0;
       }
     }
     reset_search();
+    drain_pipeline();
+    return m_puzzle_loaded;
   }
 
+  inline void beam_solver::drain_pipeline() {
+    for (int s = 0; s < 2; ++s) {
+      if (m_slot_pending[s]) cuda_dsl_wait_for_exec(s);
+      for (node *n : m_prev_nodes[s]) environment::remove(n);
+      m_prev_nodes[s].clear();
+      // The deferred winner holds a tree too, and node_pool.release() below
+      // frees the pool out from under it.
+      if (m_deferred[s].tree) environment::remove(m_deferred[s].tree);
+      m_deferred[s].tree = nullptr;
+      m_deferred[s].valid = false;
+      m_slot_pending[s] = false;
+    }
+    node_pool.release();
+  }
 
-  inline void beam_solver::worker() {
-#ifdef _MSC_VER
-    // Lower priority so the solver thread doesn't starve the GUI. Irrelevant
-    // headless (dedicated box, no UI), so skipped there.
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
-#endif
+  inline void beam_solver::read_facts() {
+    // THE FACTS ARE READ WHEN SOMEONE WANTS THEM. Stepping through puzzles
+    // without searching costs only the parse; searching, or running a program
+    // on the puzzle, asks for them, once. Under the lock, since a watcher
+    // reads the same puzzle.
+    if (!m_puzzle_loaded || m_puzzle.inferred) return;
+    scoped_lock lock(m_progress.mtx);
+    infer_into_puzzle(m_puzzle, m_label, m_options.write_logs);
+    changed();
+  }
 
-    while (!m_app_state.stop_threads) {
-      static thread_local vector<node*> tl_prev_nodes[2];
-      static thread_local bool tl_slot_pending[2] = {false, false};
-      // A winner's picture is wanted for the screen, not for the decision, so it
-      // is asked for now and read one harvest later. Everything the read still
-      // needs is kept here, because the batch's own scores are overwritten by
-      // then.
-      struct deferred_winner {
-        node *tree = nullptr;
-        int node_count = 0, active = 0, target_idx = -1;
-        float score[16] = {};
-        bool solved[16] = {};
-        gpu_score_terms terms[16] = {};
-        bool valid = false;
-      };
-      static thread_local deferred_winner tl_deferred[2];
+  inline void beam_solver::infer() {
+    if (!m_puzzle_loaded) return;
+    read_facts();
 
-      // Worker-side tail of the one reset: drain the GPU pipeline slots this
-      // thread owns, then return the node pool to its opening state.
-      auto drain_pipeline = [&] {
-        for (int s = 0; s < 2; ++s) {
-          if (tl_slot_pending[s]) cuda_dsl_wait_for_exec(s);
-          for (node *n : tl_prev_nodes[s]) environment::remove(n);
-          tl_prev_nodes[s].clear();
-          // The deferred winner holds a tree too, and node_pool.release() below
-          // frees the pool out from under it.
-          if (tl_deferred[s].tree) environment::remove(tl_deferred[s].tree);
-          tl_deferred[s].tree = nullptr;
-          tl_deferred[s].valid = false;
-          tl_slot_pending[s] = false;
-        }
-        node_pool.release();
-      };
-
-      // A queued dataset selection (from the GUI checkmarks) rebuilds the task
-      // list, then falls through to reload the current puzzle. Handled like reset.
-      int new_flags = m_queued_dataset_flags.exchange(-1);
-      if (new_flags > 0 && new_flags != m_dataset_flags.load()) {
-        {
-          scoped_lock lock(m_solver_state.mtx);
-          load_dataset(new_flags);
-          if (m_puzzle_tasks.empty()) {
-            m_solver_state.puzzle_idx = 0;
-          } else if (m_solver_state.puzzle_idx >= (int)m_puzzle_tasks.size()) {
-            m_solver_state.puzzle_idx = (int)m_puzzle_tasks.size() - 1;
-          }
-        }
-        if (!m_puzzle_tasks.empty()) reload_current_puzzle();
-        drain_pipeline();
-        continue;
+    // Try what the looking spelled before spending a single beam candidate.
+    if (asked_inference_yet) return;
+    bool solved = false;
+    {
+      scoped_lock lock(m_progress.mtx);
+      asked_inference_yet = true;
+      if (!m_puzzle.is_solved && try_what_inference_said(m_puzzle)) {
+        active_example_count = (int)m_puzzle.train.size();
+        cuda_dsl_invalidate_examples();
+        environment::remove(m_progress.current_tree);
+        m_progress.current_tree = environment::copy(m_puzzle.best_tree);
+        changed();
+        solved = true;
       }
+    }
+    // Said with the lock let go: a driver that pauses on a solve may take it.
+    if (solved) {
+      search_news n;
+      n.from = search_news::source::inference;
+      n.train_solved = true;
+      n.test_solved = m_puzzle.is_test_solved;
+      news(n);
+    }
+  }
 
-      int delta = m_queued_puzzle_delta.exchange(0);
-      if (delta != 0 && !m_puzzle_tasks.empty()) {
-        {
-          scoped_lock lock(m_solver_state.mtx);
-          m_solver_state.puzzle_idx =
-              (m_solver_state.puzzle_idx + delta) % (int)m_puzzle_tasks.size();
-          if (m_solver_state.puzzle_idx < 0)
-              m_solver_state.puzzle_idx += static_cast<int>(m_puzzle_tasks.size());
-        }
-        reload_current_puzzle();
-        drain_pipeline();
-        continue;
-      }
+  inline void beam_solver::step() {
+    if (!m_puzzle_loaded) return;
+    // A puzzle inference just solved hands the turn back, so the driver hears
+    // of it before a single candidate is spent hunting for a shorter one.
+    const bool asked_before = asked_inference_yet;
+    infer();
+    if (!asked_before && m_puzzle.is_solved) return;
 
-      if (m_reset_solver_flag.exchange(false)) {
-        reload_current_puzzle();
-        drain_pipeline();
-        continue;
-      }
+    puzzle &p = m_puzzle;
+    if (p.train.empty())
+      return;
 
-      // THE FACTS ARE READ WHEN SOMEONE WANTS THEM. Stepping through puzzles
-      // with the pane shut and the solver paused costs only the parse; opening
-      // the pane or starting the search asks for them, once. Checked before the
-      // pause gate, because while paused the loop never gets past it — and on
-      // this thread under the lock, since the GUI reads the same puzzle.
-      if (m_puzzle_loaded && !m_puzzle.inferred &&
-          (m_app_state.inference_view.load() != global_app_state::INFERENCE_OFF ||
-           !m_app_state.is_paused.load())) {
-        scoped_lock lock(m_solver_state.mtx);
-        infer_into_puzzle(m_puzzle, m_solver_state.puzzle_idx,
-                          (int)m_puzzle_tasks.size(), m_dataset_flags.load());
-        m_app_state.needs_upload = true;
-      }
-
-      // Try what the looking spelled before spending a single beam candidate.
-      // The lock is let go before pausing: toggle_pause takes the same one, and
-      // it is not recursive, so pausing while holding it hangs the whole app.
-      if (m_puzzle_loaded && m_puzzle.inferred && !asked_inference_yet) {
-        {
-          scoped_lock lock(m_solver_state.mtx);
-          asked_inference_yet = true;
-          if (!m_puzzle.is_solved && try_what_inference_said(m_puzzle)) {
-            active_example_count = (int)m_puzzle.train.size();
-            cuda_dsl_invalidate_examples();
-            environment::remove(m_solver_state.current_tree);
-            m_solver_state.current_tree = environment::copy(m_puzzle.best_tree);
-            m_app_state.needs_upload = true;
-          }
-        }
-        // A SOLVED PUZZLE DOES NOT SEARCH ON ITS OWN, whoever solved it -- the
-        // saved solution at load, what the looking said, or the beam. Unpausing
-        // it again is the user's call, and then it hunts for a shorter one.
-        if (m_puzzle.is_solved && !m_app_state.is_benchmarking && !m_app_state.is_paused)
-          toggle_pause();
-      }
-
-      int target_idx = -1;
-      if (should_pause_or_wait(target_idx))
-        continue;
-
-      if (!m_puzzle_loaded) continue;
-      puzzle &p = m_puzzle;
-      if (p.train.empty())
-        continue;
-
-      // Promote examples FIRST — BEFORE sizing the chunk. If the best tree already
-      // solves the active example, promotion bumps active_example_count. Since the
-      // grid is sized by job_count = chunk * active, sizing before promotion would let
-      // active grow afterward and blow job_count past TARGET_JOBS -> device cudaMalloc
-      // overshoot (unchecked) -> sticky CUDA error -> the GUI's cudaMallocHost aborts.
+    // Promote examples FIRST — BEFORE sizing the chunk. If the best tree already
+    // solves the active example, promotion bumps active_example_count. Since the
+    // grid is sized by job_count = chunk * active, sizing before promotion would let
+    // active grow afterward and blow job_count past TARGET_JOBS -> device cudaMalloc
+    // overshoot (unchecked) -> sticky CUDA error -> the GUI's cudaMallocHost aborts.
+    if (p.best_tree && active_example_count < (int)p.train.size()) {
+      unique_lock pl(m_progress.mtx);
       if (p.best_tree && active_example_count < (int)p.train.size()) {
-        unique_lock pl(m_solver_state.mtx);
-        if (p.best_tree && active_example_count < (int)p.train.size()) {
-          int cur = active_example_count - 1;
-          if (cur >= 0 && cur < (int)p.train.size()) {
-            auto [_, cslv] = eval_best_tree_train(p, cur);
-            if (cslv) {
-              int before = active_example_count;
-              int active_ref = active_example_count;
-              try_promote_examples(p.best_tree, p, active_ref, p.best_node_count);
-              active_example_count = active_ref;
-              if (active_example_count > before) {
-                cuda_dsl_invalidate_examples();
-                refresh_best_display_scores(p, active_example_count, p.best_node_count);
-                m_app_state.needs_upload = true;
-              }
+        int cur = active_example_count - 1;
+        if (cur >= 0 && cur < (int)p.train.size()) {
+          auto [_, cslv] = eval_best_tree_train(p, cur);
+          if (cslv) {
+            int before = active_example_count;
+            int active_ref = active_example_count;
+            try_promote_examples(p.best_tree, p, active_ref, p.best_node_count);
+            active_example_count = active_ref;
+            if (active_example_count > before) {
+              cuda_dsl_invalidate_examples();
+              refresh_best_display_scores(p, active_example_count, p.best_node_count);
+              changed();
             }
           }
         }
       }
-
-      // A promotion filled the train set with a verified tree (recorded in
-      // try_promote_examples, from ANY promotion path — best-channel, layer
-      // lock, or the block above). Commit it as the best and mark the task
-      // solved.
-      if (solve_found_by_promotion) {
-        unique_lock fl(m_solver_state.mtx);
-        if (!p.is_solved) {
-          environment::remove(p.best_tree);
-          p.best_tree = environment::copy(solve_found_by_promotion);
-          p.best_node_count = solve_found_node_count;
-          invalidate_best_tree_cache(p);
-          cuda_dsl_invalidate_examples();
-          refresh_best_display_scores(p, active_example_count, p.best_node_count);
-          environment::remove(m_solver_state.current_tree);
-          m_solver_state.current_tree = environment::copy(p.best_tree);
-          m_app_state.needs_upload = true;
-          log_debug("!!!! SOLVE FOUND BY PROMOTION: marking task solved !!!!");
-          finalize_full_train_solve(p);
-        }
-        environment::remove(solve_found_by_promotion);
-        solve_found_by_promotion = nullptr;
-      }
-
-      // CHUNK ACCUMULATION. The GPU is the bottleneck and is starved at ~1 wave
-      // (~222 blocks) per launch, while the CPU generates ~30x faster than the GPU
-      // consumes (stub test: stub-off ~80k aps vs stub-on ~2.6M aps => 32x GPU-bound).
-      // So accumulate a FULL multi-wave grid before launching. We size by target JOB
-      // count (= chunk * active), since the grid AND VRAM scale with job_count and it
-      // is independent of how many train examples are active. ~2048 jobs ≈ 8.5 waves
-      // (240 blocks/wave at 12 blocks/SM), ~1.65GB VRAM across both pipeline slots.
-      // This is also why throughput "felt faster after the first levels": early levels
-      // have active=1 (few jobs => 1 wave); accumulation fixes the starvation directly.
-      const int active_now = std::max(1, std::min(active_example_count, (int)p.train.size()));
-      const int TARGET_JOBS = 2048;  // generation-bound: the chunk maxes ~1800 jobs (a beam level runs
-                                     // out first), so higher buys nothing. Measured peak ~1.5GB VRAM, 0 faults.
-      const int chunk_cap = std::max(1, std::min(TARGET_JOBS / active_now,
-                                                 flat_program_batch::MAX_PROGRAMS));
-
-      // Prime the generator.
-      { scope_ns generate_time{ns_generate};
-        pump_generate(&m_solver_state.attempts); }
-
-      if (pending_evaluation.empty()) {
-        scope_ns idle_time{ns_idle};
-        if (!is_generating_layer)
-          this_thread::sleep_for(chrono::milliseconds(1));
-        continue;
-      }
-
-      // Reused across iterations (clear keeps capacity). trees are nulled at the
-      // end of the iteration, so clear() only frees genuinely-owned leftovers.
-      static thread_local flat_candidate_chunk chunk;
-      chunk.clear();
-      chunk.reserve(chunk_cap);
-      static thread_local vector<node*> original_nodes;
-      original_nodes.clear();
-      original_nodes.reserve(chunk_cap);
-
-      // Accumulate up to chunk_cap candidates, re-pumping the generator whenever
-      // pending drains, so the GPU gets a full grid. STOP at a beam-level boundary:
-      // pump_generate leaves pending empty after committing a level, and we must NOT
-      // mix level N+1 candidates into this batch (level N+1 needs level N's scores).
-      { scope_ns generate_time{ns_generate};
-      auto asked_for_enough = [&] {
-        return stop_after_attempts > 0 &&
-               m_solver_state.attempts.load() >= stop_after_attempts;
-      };
-      while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap) {
-        while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap &&
-               !pending_evaluation.empty()) {
-          node *orig = pending_evaluation.front();
-          pending_evaluation.pop();
-          if (!orig) continue;
-
-          if (global_cache.count(orig->hash)) { continue; }
-
-          flat_program program;
-          if (!environment::flatten_unary_program(orig, program)) { continue; }
-
-          int nc = environment::count_nodes(orig);
-          if (!chunk.programs->push(program)) { break; }
-          chunk.trees.push_back(orig);
-          chunk.flat_programs.push_back(program);
-          chunk.node_counts.push_back(nc);
-          original_nodes.push_back(environment::copy(orig));
-          m_solver_state.attempts++;
-          m_solver_state.current_max_depth = MAX_SEARCH_DEPTH;
-          m_solver_state.current_attempt_depth = orig->max_depth;
-        }
-        if ((int)chunk.trees.size() >= chunk_cap) break;
-        // Chunk not full and pending drained: generate more of the CURRENT level.
-        pump_generate(&m_solver_state.attempts);
-        if (pending_evaluation.empty()) break;  // level committed / dry -> launch what we have
-      }
-      }
-
-      if (chunk.size() == 0) continue;
-
-      // active is now final (promotion ran before chunk sizing above), so
-      // job_count = chunk.size() * active <= chunk_cap * active <= TARGET_JOBS.
-      const int active = min(active_example_count, (int)p.train.size());
-
-      static thread_local cuda_dsl_exec_batch exec_batch[2];
-      static thread_local int current_slot = 0;
-      bool (&slot_pending)[2] = tl_slot_pending;
-      vector<node*> (&prev_original_nodes)[2] = tl_prev_nodes;
-
-      int launch_slot = current_slot;
-      int wait_slot = 1 - current_slot;
-
-      if (!cuda_dsl_examples_uploaded()) {
-        // The previous batch (wait_slot) may STILL be in flight reading the old
-        // example templates. Promotion bumped `active` and invalidated examples, so
-        // we re-upload here — but overwriting d_example_templates while that batch
-        // runs corrupts its scores/solved flags. That surfaces as runaway spurious
-        // "SIMPLIFIED SOLUTION"/promotion spam and garbage predicted grids (the
-        // "halt then madness" after a promotion). Sync the in-flight batch first so
-        // it has finished reading before we overwrite; its results were already
-        // written by the kernel, so the later wait+process of this slot stays valid.
-        if (slot_pending[wait_slot]) cuda_dsl_wait_for_exec(wait_slot);
-        static thread_local cuda_dsl_example_data example_data;
-        build_example_upload(example_data, p, active_example_count);
-        cuda_dsl_upload_examples(example_data);
-      }
-
-      // Launch the current batch FIRST so the GPU starts immediately, then do
-      // the CPU-side processing of the PREVIOUS batch while this one runs on
-      // the GPU. That host/GPU overlap is the whole point of the two-slot
-      // pipeline. The launch_slot buffers were drained the previous iteration
-      // (when this slot was the wait_slot), so overwriting them is safe.
-      { scope_ns launch_time{ns_launch};
-        pack_cuda_dsl_exec_batch(exec_batch[launch_slot], chunk, active);
-        cuda_dsl_exec_and_score(exec_batch[launch_slot], launch_slot); }
-
-      // Wait on and process the previous batch (the other slot) while the batch
-      // just launched runs on the GPU. The wait is now per-slot, so BOTH slots
-      // are synchronized before their results are read — the old single
-      // slot_0_pending flag skipped this for slot 1, an unsynced read.
-      if (slot_pending[wait_slot] && prev_original_nodes[wait_slot].size() > 0) {
-        { gpu_wait_scope t{m_solver_state};
-          cuda_dsl_wait_for_exec(wait_slot); }
-        scope_ns harvest_time{ns_harvest};
-        // GPU fault detector (permanent). CUDA errors are sticky + cudaGetLastError
-        // surfaces the error from ANY preceding call, so this one check is a catch-all
-        // for every kernel/memcpy/malloc. If "magic madness" returns (frozen/garbled
-        // grids, score spam), grep the puzzle log for "!!! GPU ERROR" — it names the
-        // CUDA error + which launch. (The real fix is the bug; this makes it loud.)
-        { char _ce[512]; if (cuda_dsl_take_error(_ce, sizeof(_ce))) {
-            log_debug(to_text("!!! GPU ERROR (results now garbage until restart): %s", _ce)); } }
-        slot_pending[wait_slot] = false;
-        // Results from previous batch are ready. Process them.
-        cuda_dsl_exec_batch& prev_batch = exec_batch[wait_slot];
-        int program_count = prev_batch.job_count;
-        // Physically bounded: job_count = chunk.size() * active ≈ TARGET_JOBS (2048)
-        // by construction (chunk_cap = TARGET_JOBS/active). Reused across iterations;
-        // assign() re-inits the fill value and keeps capacity so this never
-        // reallocates after the first warmup pass.
-        static thread_local vector<float> program_totals;
-        static thread_local vector<char> program_all_solved;
-        program_totals.assign((size_t)program_count, 0.0f);
-        program_all_solved.assign((size_t)program_count, 1);
-
-        int winner_idx = -1;
-        float winner_score = SCORE_MIN;
-        bool winner_solved = false;
-        int node_count = (int)prev_original_nodes[wait_slot].size();
-
-        { scope_ns tally_time{ns_tally};
-        for (int j = 0; j < prev_batch.job_count; ++j) {
-          int pidx = prev_batch.program_indices[j];
-          program_totals[pidx] += prev_batch.scores[j];
-          if (!prev_batch.solved[j]) program_all_solved[pidx] = false;
-        }
-
-        for (int i = 0; i < node_count; ++i) {
-          float score = program_totals[i];
-          // What this candidate PAINTED, on the first active pair. Recorded for
-          // every candidate, not just the winner, so the grid dedup below can
-          // see two spellings of one answer and keep only one.
-          {
-            int first_job = i * active;
-            if (first_job >= 0 && first_job < prev_batch.job_count)
-              report_score(prev_original_nodes[wait_slot][i], score,
-                           prev_batch.output_hashes[first_job]);
-          }
-          log_tree_record(prev_original_nodes[wait_slot][i], score,
-                          m_global_attempts ? m_global_attempts->load() : 0);
-          bool solved = program_all_solved[i];
-          bool better = solved && !winner_solved;
-          if (!better && solved == winner_solved && score > winner_score)
-            better = true;
-          if (better) {
-            winner_score = score;
-            winner_solved = solved;
-            winner_idx = i;
-          }
-        }
-        }
-
-        // Promotion during the PREVIOUS batch's processing can grow active while
-        // THIS batch is still in flight. That batch was packed+scored against the
-        // OLD example set (prev_batch.active_examples), so indexing its results with
-        // the new `active` reads the wrong candidate's scores/grids AND its
-        // all_train_solved (over fewer examples) could falsely "solve"/promote. If
-        // the batch's active no longer matches, it's stale — skip its winner update
-        // (scores were already tallied/logged; the candidates get re-evaluated at the
-        // new active). Bigger batches stay in flight longer, so this fired routinely
-        // at high TARGET_JOBS and confounded scoring/promotion (the "madness").
-        bool batch_stale = (prev_batch.active_examples != active);
-
-        // The picture asked for last time round this slot has landed: the copy
-        // rides that slot's stream, so the wait above ordered it. Read it BEFORE
-        // asking for the next one.
-        if (tl_deferred[wait_slot].valid) {
-          scope_ns winner_time{ns_winner};
-          deferred_winner &done = tl_deferred[wait_slot];
-          const int8_t *grids = cuda_dsl_winner_grids(wait_slot);
-          const int8_t *dims  = cuda_dsl_winner_dims(wait_slot);
-
-          static thread_local candidate_batch winner_res;
-          winner_res.train.assign(p.train.size(), candidate_result{});
-          winner_res.total_train_score = 0.0f;
-          winner_res.all_train_solved = true;
-          static thread_local vector<gpu_score_terms> winner_breakdowns;
-          winner_breakdowns.clear();
-          winner_breakdowns.reserve(done.active);
-
-          { scope_ns analyze_time{ns_analyze};
-          for (int i = 0; i < done.active && grids && dims; ++i) {
-            const int8_t *og = grids + (size_t)i * GPU_GRID_CELLS;
-            int ow = dims[i * 2 + 0];
-            int oh = dims[i * 2 + 1];
-            if (ow < 0 || ow > GPU_MAX_GRID || oh < 0 || oh > GPU_MAX_GRID) { ow = 0; oh = 0; }
-            winner_res.train[i].state.width = ow;
-            winner_res.train[i].state.height = oh;
-            for (int r = 0; r < oh; ++r)
-              for (int c = 0; c < ow; ++c)
-                winner_res.train[i].state.data[r][c] = (int)og[r * GPU_MAX_GRID + c];
-            winner_res.train[i].valid = true;
-            winner_res.train[i].score = done.score[i];
-            winner_res.total_train_score += done.score[i];
-            if (!done.solved[i]) winner_res.all_train_solved = false;
-
-            winner_breakdowns.push_back(done.terms[i]);
-          }
-          }
-
-          uint64_t g_hash = (!winner_res.train.empty() && winner_res.train[0].valid)
-              ? grid_hash(winner_res.train[0].state) : 0;
-          if (done.tree) {
-            log_score_formula(done.tree, winner_breakdowns);
-            report_score(done.tree, winner_res.total_train_score, g_hash);
-            { scope_ns best_time{ns_best};
-              update_best_solution(done.target_idx, p, done.tree,
-                                   done.node_count, winner_res); }
-            environment::remove(done.tree);
-            done.tree = nullptr;
-          }
-          done.valid = false;
-        }
-
-        // Ask for this batch's picture and leave it to travel.
-        if (winner_idx >= 0 && !batch_stale) {
-          deferred_winner &next = tl_deferred[wait_slot];
-          { scope_ns fetch_time{ns_fetch};
-            cuda_dsl_fetch_output_grids_async(winner_idx, active, wait_slot); }
-          next.tree = environment::copy(prev_original_nodes[wait_slot][winner_idx]);
-          next.node_count = prev_batch.node_counts[winner_idx];
-          next.active = min(active, 16);
-          next.target_idx = target_idx;
-          for (int i = 0; i < next.active; ++i) {
-            int j = winner_idx * active + i;
-            if (j < 0 || j >= prev_batch.job_count) { next.active = i; break; }
-            next.score[i] = prev_batch.scores[j];
-            next.solved[i] = (prev_batch.solved[j] != 0);
-            next.terms[i] = prev_batch.score_terms[j];
-          }
-          next.valid = (next.tree != nullptr);
-        }
-        { scope_ns free_time{ns_free};
-          for (node *n : prev_original_nodes[wait_slot]) environment::remove(n);
-          prev_original_nodes[wait_slot].clear(); }
-      }
-
-      // Record this batch as the one to process next iteration (its launch
-      // already happened above, before the previous batch's CPU processing).
-      prev_original_nodes[launch_slot] = original_nodes;
-      slot_pending[launch_slot] = true;
-      current_slot = wait_slot;
-
-      // Null out borrowed pointers so chunk destructor doesn't free beam nodes
-      for (auto &t : chunk.trees) t = nullptr;
-
     }
-  }
 
-  inline void beam_solver::update_example_results(vector<example> &examples,
-                                     vector<example_views> *views,
+    // A promotion filled the train set with a verified tree (recorded in
+    // try_promote_examples, from ANY promotion path — best-channel, layer
+    // lock, or the block above). Commit it as the best and mark the task
+    // solved.
+    if (solve_found_by_promotion) {
+      unique_lock fl(m_progress.mtx);
+      if (!p.is_solved) {
+        environment::remove(p.best_tree);
+        p.best_tree = environment::copy(solve_found_by_promotion);
+        p.best_node_count = solve_found_node_count;
+        invalidate_best_tree_cache(p);
+        cuda_dsl_invalidate_examples();
+        refresh_best_display_scores(p, active_example_count, p.best_node_count);
+        environment::remove(m_progress.current_tree);
+        m_progress.current_tree = environment::copy(p.best_tree);
+        changed();
+        log_debug("!!!! SOLVE FOUND BY PROMOTION: marking task solved !!!!");
+        finalize_full_train_solve(p);
+      }
+      environment::remove(solve_found_by_promotion);
+      solve_found_by_promotion = nullptr;
+    }
+
+    // CHUNK ACCUMULATION. The GPU is the bottleneck and is starved at ~1 wave
+    // (~222 blocks) per launch, while the CPU generates ~30x faster than the GPU
+    // consumes (stub test: stub-off ~80k aps vs stub-on ~2.6M aps => 32x GPU-bound).
+    // So accumulate a FULL multi-wave grid before launching. We size by target JOB
+    // count (= chunk * active), since the grid AND VRAM scale with job_count and it
+    // is independent of how many train examples are active. ~2048 jobs ≈ 8.5 waves
+    // (240 blocks/wave at 12 blocks/SM), ~1.65GB VRAM across both pipeline slots.
+    // This is also why throughput "felt faster after the first levels": early levels
+    // have active=1 (few jobs => 1 wave); accumulation fixes the starvation directly.
+    const int active_now = std::max(1, std::min(active_example_count, (int)p.train.size()));
+    const int TARGET_JOBS = 2048;  // generation-bound: the chunk maxes ~1800 jobs (a beam level runs
+                                   // out first), so higher buys nothing. Measured peak ~1.5GB VRAM, 0 faults.
+    const int chunk_cap = std::max(1, std::min(TARGET_JOBS / active_now,
+                                               flat_program_batch::MAX_PROGRAMS));
+
+    // Prime the generator.
+    { scope_ns generate_time{ns_generate};
+      pump_generate(&m_progress.attempts); }
+
+    if (pending_evaluation.empty()) {
+      scope_ns idle_time{ns_idle};
+      if (!is_generating_layer)
+        this_thread::sleep_for(chrono::milliseconds(1));
+      return;
+    }
+
+    // Reused across iterations (clear keeps capacity). trees are nulled at the
+    // end of the iteration, so clear() only frees genuinely-owned leftovers.
+    static thread_local flat_candidate_chunk chunk;
+    chunk.clear();
+    chunk.reserve(chunk_cap);
+    static thread_local vector<node*> original_nodes;
+    original_nodes.clear();
+    original_nodes.reserve(chunk_cap);
+
+    // Accumulate up to chunk_cap candidates, re-pumping the generator whenever
+    // pending drains, so the GPU gets a full grid. STOP at a beam-level boundary:
+    // pump_generate leaves pending empty after committing a level, and we must NOT
+    // mix level N+1 candidates into this batch (level N+1 needs level N's scores).
+    { scope_ns generate_time{ns_generate};
+    auto asked_for_enough = [&] {
+      return stop_after_attempts > 0 &&
+             m_progress.attempts.load() >= stop_after_attempts;
+    };
+    while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap) {
+      while (!asked_for_enough() && (int)chunk.trees.size() < chunk_cap &&
+             !pending_evaluation.empty()) {
+        node *orig = pending_evaluation.front();
+        pending_evaluation.pop();
+        if (!orig) continue;
+
+        if (global_cache.count(orig->hash)) { continue; }
+
+        flat_program program;
+        if (!environment::flatten_unary_program(orig, program)) { continue; }
+
+        int nc = environment::count_nodes(orig);
+        if (!chunk.programs->push(program)) { break; }
+        chunk.trees.push_back(orig);
+        chunk.flat_programs.push_back(program);
+        chunk.node_counts.push_back(nc);
+        original_nodes.push_back(environment::copy(orig));
+        m_progress.attempts++;
+        m_progress.current_max_depth = MAX_SEARCH_DEPTH;
+        m_progress.current_attempt_depth = orig->max_depth;
+      }
+      if ((int)chunk.trees.size() >= chunk_cap) break;
+      // Chunk not full and pending drained: generate more of the CURRENT level.
+      pump_generate(&m_progress.attempts);
+      if (pending_evaluation.empty()) break;  // level committed / dry -> launch what we have
+    }
+    }
+
+    if (chunk.size() == 0) return;
+
+    // active is now final (promotion ran before chunk sizing above), so
+    // job_count = chunk.size() * active <= chunk_cap * active <= TARGET_JOBS.
+    const int active = min(active_example_count, (int)p.train.size());
+
+    static thread_local cuda_dsl_exec_batch exec_batch[2];
+    static thread_local int current_slot = 0;
+    bool (&slot_pending)[2] = m_slot_pending;
+    vector<node*> (&prev_original_nodes)[2] = m_prev_nodes;
+
+    int launch_slot = current_slot;
+    int wait_slot = 1 - current_slot;
+
+    if (!cuda_dsl_examples_uploaded()) {
+      // The previous batch (wait_slot) may STILL be in flight reading the old
+      // example templates. Promotion bumped `active` and invalidated examples, so
+      // we re-upload here — but overwriting d_example_templates while that batch
+      // runs corrupts its scores/solved flags. That surfaces as runaway spurious
+      // "SIMPLIFIED SOLUTION"/promotion spam and garbage predicted grids (the
+      // "halt then madness" after a promotion). Sync the in-flight batch first so
+      // it has finished reading before we overwrite; its results were already
+      // written by the kernel, so the later wait+process of this slot stays valid.
+      if (slot_pending[wait_slot]) cuda_dsl_wait_for_exec(wait_slot);
+      static thread_local cuda_dsl_example_data example_data;
+      build_example_upload(example_data, p, active_example_count);
+      cuda_dsl_upload_examples(example_data);
+    }
+
+    // Launch the current batch FIRST so the GPU starts immediately, then do
+    // the CPU-side processing of the PREVIOUS batch while this one runs on
+    // the GPU. That host/GPU overlap is the whole point of the two-slot
+    // pipeline. The launch_slot buffers were drained the previous iteration
+    // (when this slot was the wait_slot), so overwriting them is safe.
+    { scope_ns launch_time{ns_launch};
+      pack_cuda_dsl_exec_batch(exec_batch[launch_slot], chunk, active);
+      cuda_dsl_exec_and_score(exec_batch[launch_slot], launch_slot); }
+
+    // Wait on and process the previous batch (the other slot) while the batch
+    // just launched runs on the GPU. The wait is now per-slot, so BOTH slots
+    // are synchronized before their results are read — the old single
+    // slot_0_pending flag skipped this for slot 1, an unsynced read.
+    if (slot_pending[wait_slot] && prev_original_nodes[wait_slot].size() > 0) {
+      { gpu_wait_scope t{m_progress};
+        cuda_dsl_wait_for_exec(wait_slot); }
+      scope_ns harvest_time{ns_harvest};
+      // GPU fault detector (permanent). CUDA errors are sticky + cudaGetLastError
+      // surfaces the error from ANY preceding call, so this one check is a catch-all
+      // for every kernel/memcpy/malloc. If "magic madness" returns (frozen/garbled
+      // grids, score spam), grep the puzzle log for "!!! GPU ERROR" — it names the
+      // CUDA error + which launch. (The real fix is the bug; this makes it loud.)
+      { char _ce[512]; if (cuda_dsl_take_error(_ce, sizeof(_ce))) {
+          log_debug(to_text("!!! GPU ERROR (results now garbage until restart): %s", _ce)); } }
+      slot_pending[wait_slot] = false;
+      // Results from previous batch are ready. Process them.
+      cuda_dsl_exec_batch& prev_batch = exec_batch[wait_slot];
+      int program_count = prev_batch.job_count;
+      // Physically bounded: job_count = chunk.size() * active ≈ TARGET_JOBS (2048)
+      // by construction (chunk_cap = TARGET_JOBS/active). Reused across iterations;
+      // assign() re-inits the fill value and keeps capacity so this never
+      // reallocates after the first warmup pass.
+      static thread_local vector<float> program_totals;
+      static thread_local vector<char> program_all_solved;
+      program_totals.assign((size_t)program_count, 0.0f);
+      program_all_solved.assign((size_t)program_count, 1);
+
+      int winner_idx = -1;
+      float winner_score = SCORE_MIN;
+      bool winner_solved = false;
+      int node_count = (int)prev_original_nodes[wait_slot].size();
+
+      { scope_ns tally_time{ns_tally};
+      for (int j = 0; j < prev_batch.job_count; ++j) {
+        int pidx = prev_batch.program_indices[j];
+        program_totals[pidx] += prev_batch.scores[j];
+        if (!prev_batch.solved[j]) program_all_solved[pidx] = false;
+      }
+
+      for (int i = 0; i < node_count; ++i) {
+        float score = program_totals[i];
+        // What this candidate PAINTED, on the first active pair. Recorded for
+        // every candidate, not just the winner, so the grid dedup below can
+        // see two spellings of one answer and keep only one.
+        {
+          int first_job = i * active;
+          if (first_job >= 0 && first_job < prev_batch.job_count)
+            report_score(prev_original_nodes[wait_slot][i], score,
+                         prev_batch.output_hashes[first_job]);
+        }
+        log_tree_record(prev_original_nodes[wait_slot][i], score,
+                        m_global_attempts ? m_global_attempts->load() : 0);
+        bool solved = program_all_solved[i];
+        bool better = solved && !winner_solved;
+        if (!better && solved == winner_solved && score > winner_score)
+          better = true;
+        if (better) {
+          winner_score = score;
+          winner_solved = solved;
+          winner_idx = i;
+        }
+      }
+      }
+
+      // Promotion during the PREVIOUS batch's processing can grow active while
+      // THIS batch is still in flight. That batch was packed+scored against the
+      // OLD example set (prev_batch.active_examples), so indexing its results with
+      // the new `active` reads the wrong candidate's scores/grids AND its
+      // all_train_solved (over fewer examples) could falsely "solve"/promote. If
+      // the batch's active no longer matches, it's stale — skip its winner update
+      // (scores were already tallied/logged; the candidates get re-evaluated at the
+      // new active). Bigger batches stay in flight longer, so this fired routinely
+      // at high TARGET_JOBS and confounded scoring/promotion (the "madness").
+      bool batch_stale = (prev_batch.active_examples != active);
+
+      // The picture asked for last time round this slot has landed: the copy
+      // rides that slot's stream, so the wait above ordered it. Read it BEFORE
+      // asking for the next one.
+      if (m_deferred[wait_slot].valid) {
+        scope_ns winner_time{ns_winner};
+        deferred_winner &done = m_deferred[wait_slot];
+        const int8_t *grids = cuda_dsl_winner_grids(wait_slot);
+        const int8_t *dims  = cuda_dsl_winner_dims(wait_slot);
+
+        static thread_local candidate_batch winner_res;
+        winner_res.train.assign(p.train.size(), candidate_result{});
+        winner_res.total_train_score = 0.0f;
+        winner_res.all_train_solved = true;
+        static thread_local vector<gpu_score_terms> winner_breakdowns;
+        winner_breakdowns.clear();
+        winner_breakdowns.reserve(done.active);
+
+        { scope_ns analyze_time{ns_analyze};
+        for (int i = 0; i < done.active && grids && dims; ++i) {
+          const int8_t *og = grids + (size_t)i * GPU_GRID_CELLS;
+          int ow = dims[i * 2 + 0];
+          int oh = dims[i * 2 + 1];
+          if (ow < 0 || ow > GPU_MAX_GRID || oh < 0 || oh > GPU_MAX_GRID) { ow = 0; oh = 0; }
+          winner_res.train[i].state.width = ow;
+          winner_res.train[i].state.height = oh;
+          for (int r = 0; r < oh; ++r)
+            for (int c = 0; c < ow; ++c)
+              winner_res.train[i].state.data[r][c] = (int)og[r * GPU_MAX_GRID + c];
+          winner_res.train[i].valid = true;
+          winner_res.train[i].score = done.score[i];
+          winner_res.total_train_score += done.score[i];
+          if (!done.solved[i]) winner_res.all_train_solved = false;
+
+          winner_breakdowns.push_back(done.terms[i]);
+        }
+        }
+
+        uint64_t g_hash = (!winner_res.train.empty() && winner_res.train[0].valid)
+            ? grid_hash(winner_res.train[0].state) : 0;
+        if (done.tree) {
+          log_score_formula(done.tree, winner_breakdowns);
+          report_score(done.tree, winner_res.total_train_score, g_hash);
+          { scope_ns best_time{ns_best};
+            update_best_solution(done.load_id, p, done.tree,
+                                 done.node_count, winner_res); }
+          environment::remove(done.tree);
+          done.tree = nullptr;
+        }
+        done.valid = false;
+      }
+
+      // Ask for this batch's picture and leave it to travel.
+      if (winner_idx >= 0 && !batch_stale) {
+        deferred_winner &next = m_deferred[wait_slot];
+        { scope_ns fetch_time{ns_fetch};
+          cuda_dsl_fetch_output_grids_async(winner_idx, active, wait_slot); }
+        next.tree = environment::copy(prev_original_nodes[wait_slot][winner_idx]);
+        next.node_count = prev_batch.node_counts[winner_idx];
+        next.active = min(active, 16);
+        next.load_id = m_load_id;
+        for (int i = 0; i < next.active; ++i) {
+          int j = winner_idx * active + i;
+          if (j < 0 || j >= prev_batch.job_count) { next.active = i; break; }
+          next.score[i] = prev_batch.scores[j];
+          next.solved[i] = (prev_batch.solved[j] != 0);
+          next.terms[i] = prev_batch.score_terms[j];
+        }
+        next.valid = (next.tree != nullptr);
+      }
+      { scope_ns free_time{ns_free};
+        for (node *n : prev_original_nodes[wait_slot]) environment::remove(n);
+        prev_original_nodes[wait_slot].clear(); }
+    }
+
+    // Record this batch as the one to process next iteration (its launch
+    // already happened above, before the previous batch's CPU processing).
+    prev_original_nodes[launch_slot] = original_nodes;
+    slot_pending[launch_slot] = true;
+    current_slot = wait_slot;
+
+    // Null out borrowed pointers so chunk destructor doesn't free beam nodes
+    for (auto &t : chunk.trees) t = nullptr;
+
+}
+
+  // The CURRENT column: what the candidate just scored painted on each
+  // example, or nothing where it painted nothing. Only a watcher wants it.
+  inline void beam_solver::update_example_results(bool is_test,
                                      const vector<beam_solver::candidate_result> &results,
                                      int limit) {
-    if (!m_gpu_buffer)
+    if (!m_observer)
       return;
-    int n = (int)examples.size();
+    int n = (int)(is_test ? m_puzzle.test : m_puzzle.train).size();
     if (limit >= 0) n = min(n, limit);
     for (int i = 0; i < n; ++i) {
-      example_views *v = (views && (size_t)i < views->size()) ? &(*views)[i] : nullptr;
-      if (i < results.size() && results[i].valid) {
-        const grid& g = results[i].state;
-        if (v) v->current_score = results[i].score;
-        update_one_view(v ? &v->current : nullptr, g, m_gpu_buffer);
+      if (i < (int)results.size() && results[i].valid) {
+        show_current_score(is_test, i, results[i].score);
+        show(is_test, i, solver_observer::column::current, &results[i].state);
       } else {
-        clear_current_view(v);
+        clear_current(is_test, i);
       }
     }
-  }
-
-  inline void beam_solver::clear_test_current_views(puzzle &p) {
-    if (!m_gpu_buffer) return;
-    for (size_t i = 0; i < p.test.size(); ++i)
-      clear_current_view(m_solver_state.views.of(true, i));
   }
 
   // When a candidate solves all train, run it on test inputs and show its
   // predictions in the CURRENT column. Otherwise clear, to avoid noise from
   // wrong candidates churning. We never read or display the ground-truth
-  // test output here — only the tree's prediction on the test input.
+  // test output here — only the tree's prediction on the test input. All of
+  // it is for a watcher, so none of it runs without one.
   inline void beam_solver::update_test_current_views(puzzle &p, node *tree,
                                                      int node_count,
                                                      bool all_train_solved) {
-    if (!m_gpu_buffer) return;
+    if (!m_observer) return;
     if (!all_train_solved || !tree) {
       for (size_t i = 0; i < p.test.size(); ++i)
-        clear_current_view(m_solver_state.views.of(true, i));
+        clear_current(true, i);
       return;
     }
     for (size_t ei = 0; ei < p.test.size(); ++ei) {
       example &ex = p.test[ei];
-      example_views *v = m_solver_state.views.of(true, ei);
       grid tg = {};
       if (ex.output.width > 0) {
         auto [ts, _slv] = environment::score_tree_output(
             tree, ex, tg, p, node_count);
-        if (v) v->current_score = ts;
+        show_current_score(true, ei, ts);
       } else {
         float _s = 0; bool _slv = false;
         bool ok = environment::execute_tree_via_flat(
             tree, ex, tg, p, node_count, _s, _slv);
-        if (!ok) { clear_current_view(v); continue; }
+        if (!ok) { clear_current(true, ei); continue; }
         // No ground truth — match BEST's convention: leave score untouched
         // (will mirror best_score, set when the tree was first promoted).
       }
-      update_one_view(v ? &v->current : nullptr, tg, m_gpu_buffer);
+      show(true, ei, solver_observer::column::current, &tg);
     }
   }
 
@@ -2005,7 +1844,7 @@ namespace arc {
     // solver does not speak. Four tries on a four-sentence program, against
     // C(n,k) subsets, and it asks the better question: is this sentence
     // pulling its weight?
-    if (m_app_state.sentence_search && flat.count >= 8 && flat.count % 4 == 0) {
+    if (m_options.sentence_search && flat.count >= 8 && flat.count % 4 == 0) {
       bool dropped_any = false;
       for (bool again = true; again;) {
         again = false;
@@ -2122,13 +1961,84 @@ namespace arc {
     return {s, solved};
   }
 
+  // A WHOLE PROGRAM, MADE THE BEST AND SCORED on every example. The puzzle is
+  // solved if it solves the train set; its test verdict is read the same way.
+  // Caller holds the lock.
+  inline void beam_solver::score_program(const string &program) {
+    puzzle &task = m_puzzle;
+    // Re-import (or import onto a puzzle that loaded with a solved tree) would
+    // otherwise leak the whole prior node subtree.
+    if (task.best_tree) environment::remove(task.best_tree);
+    // A failed import must not read as solved, so the old verdict goes with the old tree.
+    task.is_solved = false;
+    task.is_test_solved = false;
+    task.best_tree = environment::parse(program);
+    if (!task.best_tree) return;
+    task.best_node_count = environment::count_nodes(task.best_tree);
+
+    string tree_str = environment::stringify_tree_via_flat(task.best_tree);
+    // Straight from the kernel that scored it, so the printed sum IS the score.
+    auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
+      log_debug(t.say(tree_str, ei, phase));
+    };
+
+    grid temp;
+    bool all_solved = true;
+    for (int i = 0; i < (int)task.train.size(); ++i) {
+      auto &ex = task.train[i];
+      gpu_score_terms terms;
+      auto [s, solved] = environment::score_tree_output(
+          task.best_tree, ex, temp, task, task.best_node_count, &terms);
+
+      log_debug(to_text("Example score: %s (Solved: %s)", shortest(s).c_str(), solved ? "YES" : "NO"));
+      log_score(i, terms, "import_train");
+
+      task.best_score(false, i) = s;
+      show(false, i, solver_observer::column::best, &temp);
+      if (!solved)
+        all_solved = false;
+    }
+
+    if (all_solved) {
+      task.is_solved = true;
+      bool test_all_solved = true;
+      for (int i = 0; i < (int)task.test.size(); ++i) {
+        auto &ex = task.test[i];
+        gpu_score_terms terms;
+        auto [s, solved] = environment::score_tree_output(
+            task.best_tree, ex, temp, task, task.best_node_count, &terms);
+        log_score(i, terms, "import_test");
+        task.best_score(true, i) = s;
+        show(true, i, solver_observer::column::best, &temp);
+        if (!solved) test_all_solved = false;
+      }
+      if (!task.test.empty() && test_all_solved) {
+        task.is_test_solved = true;
+      }
+    }
+  }
+
+  inline void beam_solver::apply_program(const string &program) {
+    if (!m_puzzle_loaded || program.empty()) return;
+    // Scoring wants the facts, so it asks for them. Ops that learn a table
+    // (ShapeColorMap and kin) have nothing to say about a puzzle nobody has
+    // read, and would paint an empty grid for every example.
+    read_facts();
+    scoped_lock lock(m_progress.mtx);
+    score_program(program);
+    if (m_puzzle.is_solved)
+      active_example_count = (int)m_puzzle.train.size();
+    changed();
+    log_debug("Manual solution imported.");
+  }
+
   // WHAT THE LOOKING ALREADY SPELLED, tried before the search starts. Each
   // suggestion is a whole program, so this either finishes the puzzle or costs
   // one scratch evaluation per suggestion -- which is nothing beside the beam.
   inline bool beam_solver::try_what_inference_said(puzzle &p) {
-    if (p.suggested_programs.empty() || !m_gpu_buffer) return false;
+    if (p.suggested_programs.empty()) return false;
     for (const string &program : p.suggested_programs) {
-      apply_solution(p, m_solver_state.views, *m_gpu_buffer, program, m_log);
+      score_program(program);
       if (p.is_solved) {
         log_debug("!!!! SOLVED BY WHAT INFERENCE SAID: " + program + " !!!!");
         return true;
@@ -2139,22 +2049,17 @@ namespace arc {
     p.best_tree = nullptr;
     invalidate_best_tree_cache(p);
     p.best_node_count = NODE_COUNT_MAX;
-    clear_all_views(p);
+    clear_views(p, false);
+    clear_views(p, true);
     return false;
   }
 
-  // Blank every picture of the search, both columns, both sides. The scores go
+  // Blank every picture of the search on one side, both columns. The scores go
   // with them: an example with nothing shown has nothing scored either.
-  inline void beam_solver::clear_all_views(puzzle &p) {
-    for (size_t i = 0; i < p.train.size(); ++i) {
-      example_views *v = m_solver_state.views.of(false, i);
-      clear_current_view(v);
-      clear_best_view(p.best_score(false, i), v);
-    }
-    for (size_t i = 0; i < p.test.size(); ++i) {
-      example_views *v = m_solver_state.views.of(true, i);
-      clear_current_view(v);
-      clear_best_view(p.best_score(true, i), v);
+  inline void beam_solver::clear_views(puzzle &p, bool is_test) {
+    for (size_t i = 0; i < (is_test ? p.test : p.train).size(); ++i) {
+      clear_current(is_test, i);
+      clear_best(p.best_score(is_test, i), is_test, i);
     }
   }
 
@@ -2174,8 +2079,8 @@ namespace arc {
       auto [s, solved] = environment::score_tree_output(
           tree, p.train[active], temp, p, node_count);
 
-      set_example_scores(p.best_score(false, active), m_solver_state.views.of(false, active), s);
-      update_example_views(m_solver_state.views.of(false, active), temp, m_gpu_buffer);
+      set_example_scores(p.best_score(false, active), false, active, s);
+      show_both(false, active, &temp);
       if (!solved) break;
 
       active++;
@@ -2186,7 +2091,7 @@ namespace arc {
     }
 
     // Filling the train set is the solve verdict — `tree` just verified on
-    // every promoted example. Park it; the worker loop marks the task solved.
+    // every promoted example. Park it; step() marks the task solved.
     if (promotion_count > 0 && active == (int)p.train.size() && !p.is_solved) {
       if (solve_found_by_promotion) environment::remove(solve_found_by_promotion);
       solve_found_by_promotion = environment::copy(tree);
@@ -2196,12 +2101,12 @@ namespace arc {
   }
 
   // Shared train-finale: any path that widens the active set to the full train
-  // with a solving best tree must convert that into the solved state + pause.
-  // The finale inside update_best_solution only runs for candidates that pass
-  // its improvement gate — a tree that merely ties the stored best never enters,
+  // with a solving best tree must convert that into the solved state. The
+  // finale inside update_best_solution only runs for candidates that pass its
+  // improvement gate — a tree that merely ties the stored best never enters,
   // so a solve discovered via promotion alone would otherwise search until
-  // timeout (observed on 0692e18c: reduction found the solving tree, the worker
-  // loop promoted to 3/3, and nothing ever fired the finale).
+  // timeout (observed on 0692e18c: reduction found the solving tree, the step
+  // promoted to 3/3, and nothing ever fired the finale).
   inline void beam_solver::finalize_full_train_solve(puzzle &p) {
     if (p.is_solved || !p.best_tree) return;
     if (active_example_count < (int)p.train.size()) return;
@@ -2210,11 +2115,11 @@ namespace arc {
     p.is_test_solved = test_ok;
     log_debug("!!!! TASK SOLVED ON TRAINING SET !!!");
     if (test_ok) log_debug("!!!! TEST SET SOLVED CORRECTLY !!!!");
-    vector<pair<int, int>> seq;
-    seq.push_back({1568, 150});
-    if (test_ok) seq.push_back({2093, 250});
-    sound_manager::get().play_sequence(seq);
-    if (!m_app_state.is_benchmarking) toggle_pause();
+    search_news n;
+    n.from = search_news::source::promotion;
+    n.train_solved = true;
+    n.test_solved = test_ok;
+    news(n);
   }
 
   inline bool beam_solver::evaluate_test_after_solve(node *tree, puzzle &p, int node_count) {
@@ -2232,8 +2137,8 @@ namespace arc {
       // when they carry a score (draw_cell suppresses scored columns with no
       // score), so without this the prediction grid would render blank. With no
       // ground truth the score is against an empty target and isn't meaningful,
-      // but it still gates display — matching apply_solution's reload path.
-      set_example_scores(p.best_score(true, i), m_solver_state.views.of(true, i), ts);
+      // but it still gates display — matching score_program's import path.
+      set_example_scores(p.best_score(true, i), true, i, ts);
       if (p.test[i].output.width > 0) {
         // Ground truth available (eval/training sets): tslv tells us whether the
         // hidden test output was actually solved.
@@ -2242,33 +2147,23 @@ namespace arc {
         // No ground truth (competition test set): can't confirm a solve.
         test_all_ok = false;
       }
-      update_example_views(m_solver_state.views.of(true, i), tg, m_gpu_buffer);
+      show_both(true, i, &tg);
     }
     return test_all_ok;
-  }
-
-  inline void beam_solver::reset_test_display(puzzle &p) {
-    if (!m_gpu_buffer) return;
-    for (size_t i = 0; i < p.test.size(); ++i) {
-      example_views *v = m_solver_state.views.of(true, i);
-      clear_current_view(v);
-      clear_best_view(p.best_score(true, i), v);
-    }
   }
 
   inline void beam_solver::refresh_best_display_scores(puzzle &p, int active, int node_count) {
     bool all_train_perfect = true;
     for (int i = 0; i < (int)p.train.size(); ++i) {
       if (i >= active) {
-        if (m_gpu_buffer) clear_best_view(p.best_score(false, i), m_solver_state.views.of(false, i));
+        clear_best(p.best_score(false, i), false, i);
         continue;
       }
       grid temp = {};
       auto [s, solved] = environment::score_tree_output(
           p.best_tree, p.train[i], temp, p, node_count);
       p.best_score(false, i) = s;
-      if (example_views *v = m_solver_state.views.of(false, i))
-        update_one_view(&v->best, temp, m_gpu_buffer);
+      show(false, i, solver_observer::column::best, &temp);
       if (!solved) all_train_perfect = false;
     }
 
@@ -2282,28 +2177,27 @@ namespace arc {
         auto [score, slv] = environment::score_tree_output(
             p.best_tree, p.test[i], tg, p, node_count);
         p.best_score(true, i) = score;
-        if (example_views *v = m_solver_state.views.of(true, i))
-          update_one_view(&v->best, tg, m_gpu_buffer);
+        show(true, i, solver_observer::column::best, &tg);
       }
     } else {
       for (size_t i = 0; i < p.test.size(); ++i) {
-        clear_best_view(p.best_score(true, i), m_solver_state.views.of(true, i));
+        clear_best(p.best_score(true, i), true, i);
       }
     }
   }
 
-  inline void beam_solver::try_update_current_display(int target_idx, puzzle &p, node *tree, int node_count, const candidate_batch &res) {
-    unique_lock<mutex> lock(m_solver_state.mtx, try_to_lock);
+  inline void beam_solver::try_update_current_display(int load_id, puzzle &p, node *tree, int node_count, const candidate_batch &res) {
+    unique_lock<mutex> lock(m_progress.mtx, try_to_lock);
     if (lock.owns_lock()) {
-      if (target_idx == m_solver_state.puzzle_idx) {
-        update_example_results(p.train, &m_solver_state.views.train, res.train);
+      if (load_id == m_load_id) {
+        update_example_results(false, res.train);
         int active = min(active_example_count, (int)p.train.size());
         bool full_train = res.all_train_solved && active == (int)p.train.size();
         update_test_current_views(p, tree, node_count, full_train);
 
-        environment::remove(m_solver_state.current_tree);
-        m_solver_state.current_tree = environment::copy(tree);
-        m_app_state.needs_upload = true;
+        environment::remove(m_progress.current_tree);
+        m_progress.current_tree = environment::copy(tree);
+        changed();
       }
     }
   }

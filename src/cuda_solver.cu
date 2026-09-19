@@ -1,5 +1,5 @@
 #include "11_dsl.cuh"
-#include "27_cuda_solver.cuh"
+#include "19_cuda_solver.cuh"
 #include <chrono>
 #include <atomic>
 #include <cstring>

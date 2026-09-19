@@ -10,7 +10,7 @@
 #include <vulkan/vulkan_win32.h>
 #include <windows.h>
 
-#include "15_screenshot.hpp"
+#include "24_screenshot.hpp"
 
 namespace arc {
 using namespace std;

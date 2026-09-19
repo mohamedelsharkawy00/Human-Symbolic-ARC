@@ -1,8 +1,8 @@
 #pragma once
-#include "14_global_app_state.hpp"
-#include "21_os_utilities.hpp"
-#include "23_solver_beam.hpp"
-#include "17_sound_manager.hpp"
+#include "23_global_app_state.hpp"
+#include "28_os_utilities.hpp"
+#include "29_solver_session.hpp"
+#include "26_sound_manager.hpp"
 #include <windows.h>
 #include <cctype>
 #include <cstdlib>   // std::getenv (ARC_W / ARC_H debug overrides)
@@ -232,14 +232,9 @@ private:
       }
       case ui_action::import_sol:     m_solver_threading.import_solution(); break;
       case ui_action::export_sol:     m_solver_threading.export_solution(); break;
+      // The run itself follows this switch (30_benchmark.hpp).
       case ui_action::toggle_benchmark:
         m_app_state.is_benchmarking = !m_app_state.is_benchmarking;
-        if (m_app_state.is_benchmarking) {
-          int cur = m_solver_threading.current_puzzle_idx();
-          if (cur > 0) m_solver_threading.change_puzzle(-cur);
-          if (m_app_state.is_paused)
-            m_solver_threading.toggle_pause();
-        }
         break;
       case ui_action::inc_timeout:
         m_app_state.benchmark_timeout_seconds = min(600.0, m_app_state.benchmark_timeout_seconds + 10.0);
@@ -257,10 +252,10 @@ private:
       // Dataset checkmarks: toggle one set's bit and apply. Refuse to clear the
       // last remaining set (set_datasets ignores 0) so the list is never empty.
       case ui_action::toggle_ds_train:
-        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_TRAIN);
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_TRAIN);
         break;
       case ui_action::toggle_ds_eval:
-        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_EVAL);
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_EVAL);
         break;
       case ui_action::cycle_inference:
         m_app_state.inference_view.store((m_app_state.inference_view.load() + 1) %
@@ -282,10 +277,10 @@ private:
       case ui_action::step_left_over:      m_app_state.inference_left_over.step(1); break;
       case ui_action::step_left_over_back: m_app_state.inference_left_over.step(-1); break;
       case ui_action::toggle_ds_test:
-        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_TEST);
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_TEST);
         break;
       case ui_action::toggle_ds_custom:
-        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ beam_solver::DS_CUSTOM);
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_CUSTOM);
         break;
       case ui_action::exit_app:       PostQuitMessage(0); break;
       case ui_action::minimize_app:   ShowWindow(m_hwnd, SW_MINIMIZE); break;

@@ -1,11 +1,11 @@
 #pragma once
 #include "12_environment.hpp"
 #include "8_sentences.hpp"  // sentences_of: the pane says a program the way the log does
-#include "13_grid_buffer.hpp"
-#include "14_global_app_state.hpp"
+#include "22_grid_buffer.hpp"
+#include "23_global_app_state.hpp"
 #include "11_dsl.cuh"
-#include "16_vulkan_context.hpp"
-#include "17_sound_manager.hpp"
+#include "25_vulkan_context.hpp"
+#include "26_sound_manager.hpp"
 
 #include <charconv>
 #include <cmath>
@@ -555,8 +555,8 @@ inline void draw_footer_rows(
     int lw = text_w("CURRENT", scale) + pad * 2;
     int box_h = 5 * scale + pad * 2;
     draw_boxed_text(context, font, "CURRENT", lay.base_margin, lay.footer1_y, scale, lw, box_h, 5);
-    if (state.current_tree)
-      draw_pipeline(state.current_tree, lay.base_margin + lw + pad, lay.footer1_y, 2);
+    if (state.search.current_tree)
+      draw_pipeline(state.search.current_tree, lay.base_margin + lw + pad, lay.footer1_y, 2);
   }
 
   // Footer 2: BEST program pipeline
@@ -585,12 +585,6 @@ inline node *find_node_by_hash(node *n, uint64_t h) {
   for (; n; n = n->arg)
     if (n->hash == h) return n;
   return nullptr;
-}
-
-inline int count_subtree_nodes(node *n) {
-  int total = 0;
-  for (; n; n = n->arg) ++total;
-  return total;
 }
 
 // Where one grid lands on screen. One home for the placement maths, so an
@@ -2102,12 +2096,12 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 
   frame_layout lay = compute_frame_layout(screen_w, screen_h);
 
-  long long current_attempts = state.attempts.load();
-  int search_depth_limit = state.current_max_depth;
+  long long current_attempts = state.search.attempts.load();
+  int search_depth_limit = state.search.current_max_depth;
   int best_depth = task.best_tree ? task.best_tree->max_depth : 0;
-  int cur_depth = state.current_attempt_depth.load();
+  int cur_depth = state.search.current_attempt_depth.load();
 
-  float elapsed = get_elapsed(app_state, state);
+  float elapsed = get_elapsed(app_state, state.search);
 
   app_state.click_zones.clear();
   app_state.slider_zones.clear();
@@ -2136,7 +2130,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
       // Four sentences of room, always, so the footer does not walk up and down
       // the screen as a program grows a sentence.
       int best_lines = max(4, task.best_tree ? count_pipeline_lines(task.best_tree) : 1);
-      int cur_lines = max(4, state.current_tree ? count_pipeline_lines(state.current_tree) : 1);
+      int cur_lines = max(4, state.search.current_tree ? count_pipeline_lines(state.search.current_tree) : 1);
       lay.footer2_y = lay.footer3_y - best_lines * line_h;
       lay.footer1_y = lay.footer2_y - cur_lines * line_h;
       // Safety: never let footers climb into the grid-label band (absurdly deep
@@ -2151,8 +2145,10 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
   if (!draw_grid_view(context, font, background, task, state.views, lay))
     return;
 
-  // Hover preview: compute & draw the subtree output for every train+test
-  // example, overlaid on top of the corresponding row in the CURRENT column.
+  // Hover preview: draw the subtree output for every train+test example,
+  // overlaid on top of the corresponding row in the CURRENT column. Only the
+  // search's process can run a program, so a subtree not seen yet is asked
+  // for, and drawn once the answer is back.
   {
     int p_idx = state.puzzle_idx.load();
     if (state.preview_last_puzzle_idx != p_idx) {
@@ -2163,86 +2159,14 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 
     uint64_t h = app_state.hovered_hash.load();
     int hs = app_state.hovered_source.load();
-    node *root = (hs == 1) ? task.best_tree : state.current_tree;
+    node *root = (hs == 1) ? task.best_tree : state.search.current_tree;
     int total_examples = (int)(task.train.size() + task.test.size());
     if (h != 0 && root && total_examples > 0) {
       auto it = state.preview_cache.find(h);
-      if (it == state.preview_cache.end()) {
+      if (it == state.preview_cache.end() && state.preview_wanted != h) {
         if (node *target = find_node_by_hash(root, h)) {
-          int nc = count_subtree_nodes(target);
-          solver_state::preview_payload payload;
-          payload.accumulators.resize(total_examples);
-          payload.object_lists.resize(total_examples);
-          payload.object_bboxes.resize(total_examples);
-          int slot = 0;
-          auto run_section = [&](const vector<example> &vec) {
-            for (const auto &ex : vec) {
-              grid out;
-              float score = 0; bool solved = false;
-              bool ok = environment::execute_tree_via_flat(
-                  target, ex, out, task, nc, score, solved);
-              if (ok) payload.accumulators[slot] = out;
-
-              // Pull whatever object list the hovered op produced (if any).
-              // Canvas must be large enough to hold every object's painted
-              // extent â€” input-sized isn't enough when ops like Fractal/Tile
-              // produce output-sized masks. Use max(input, output, every
-              // object's x1+1/y1+1) so test examples (output dims = 0) and
-              // multi-scale ops both display correctly.
-              gpu_object_list ol;
-              int work_w = 0, work_h = 0;
-              if (cuda_dsl_fetch_last_object_list_scratch(0, ol, &work_w, &work_h)) {
-                int n_obj = min((int)ol.count, GPU_KERNEL_MAX_OBJECTS);
-                payload.object_lists[slot].reserve(n_obj);
-                payload.object_bboxes[slot].reserve(n_obj);
-                // Base the tile canvas on the job's working output canvas, which
-                // reflects rotate ops (RotateToPortrait yields a portrait canvas) so
-                // the background rotates with the objects. Fall back to the example
-                // dims when the kernel reported nothing; grow to fit any object that
-                // paints beyond the canvas either way.
-                int canvas_w = (work_w > 0) ? work_w : max((int)ex.input.width,  (int)ex.output.width);
-                int canvas_h = (work_h > 0) ? work_h : max((int)ex.input.height, (int)ex.output.height);
-                for (int k = 0; k < n_obj; ++k) {
-                  const auto &o = ol.objects[k];
-                  if (o.x1 + 1 > canvas_w) canvas_w = o.x1 + 1;
-                  if (o.y1 + 1 > canvas_h) canvas_h = o.y1 + 1;
-                }
-                canvas_w = min(canvas_w, MAX_GRID_DIM);
-                canvas_h = min(canvas_h, MAX_GRID_DIM);
-                for (int k = 0; k < n_obj; ++k) {
-                  const auto &o = ol.objects[k];
-                  grid g;
-                  g.width = canvas_w;
-                  g.height = canvas_h;
-                  // Default-fill canvas with transparent; only paint mask
-                  // cells that are themselves non-transparent.
-                  for (int r = 0; r < canvas_h; ++r)
-                    for (int c = 0; c < canvas_w; ++c)
-                      g.data[r][c] = GPU_TRANSPARENT;
-                  int mh = min((int)o.height, MAX_GRID_DIM);
-                  int mw = min((int)o.width, MAX_GRID_DIM);
-                  for (int r = 0; r < mh; ++r) {
-                    int dst_r = o.y0 + r;
-                    if (dst_r < 0 || dst_r >= canvas_h) continue;
-                    for (int c = 0; c < mw; ++c) {
-                      int dst_c = o.x0 + c;
-                      if (dst_c < 0 || dst_c >= canvas_w) continue;
-                      int8_t v = o.mask[r][c];
-                      if (v != GPU_TRANSPARENT)
-                        g.data[dst_r][dst_c] = (int)v;
-                    }
-                  }
-                  payload.object_lists[slot].push_back(std::move(g));
-                  payload.object_bboxes[slot].push_back({
-                    (int)o.x0, (int)o.y0, (int)o.x1, (int)o.y1, canvas_w, canvas_h});
-                }
-              }
-              ++slot;
-            }
-          };
-          run_section(task.train);
-          run_section(task.test);
-          it = state.preview_cache.emplace(h, std::move(payload)).first;
+          state.preview_wanted = h;
+          state.preview_program = environment::stringify_tree_via_flat(target);
         }
       }
       if (it != state.preview_cache.end() && state.preview_uploaded_hash != h) {

@@ -13,6 +13,37 @@ namespace arc {
 	static_assert(GPU_KERNEL_POOL_SIZE >= 2 * MAX_SEARCH_DEPTH,
 		"GPU pool too small for max-depth programs; raise GPU_KERNEL_POOL_SIZE");
 
+	// ONE EXAMPLE, READY FOR THE KERNEL: what it starts from and what it must
+	// paint, into slot `ei` of an upload. The main search fills its active
+	// examples with this and the scratch path its one, so a program scores the
+	// same on both -- otherwise refresh_best_display_scores would set the bar
+	// without the CC bonus and every CC-bearing winner would trivially beat it.
+	inline void fill_example_slot(cuda_dsl_example_data& data, int ei, const example& ex,
+	                              const puzzle& p) {
+		static thread_local auto init_ctx = std::make_unique<fixed_exec_context>();
+		fixed_init_context(*init_ctx, ex, p.rule, p.invariant_colors);
+
+		data.input_grids[ei] = init_ctx->input.data;
+		data.input_dims[ei * 2 + 0] = (int8_t)init_ctx->input.width;
+		data.input_dims[ei * 2 + 1] = (int8_t)init_ctx->input.height;
+
+		gpu_packed_mask& tg = data.target_grids[ei];
+		tg.clear();
+		for (int r = 0; r < ex.output.height; ++r)
+			for (int c = 0; c < ex.output.width; ++c)
+				tg[r][c] = (int8_t)ex.output.data[r][c];
+		data.target_dims[ei * 2 + 0] = (int8_t)ex.output.width;
+		data.target_dims[ei * 2 + 1] = (int8_t)ex.output.height;
+
+		memcpy(data.distance_maps + ei * GPU_MAX_COLORS * GPU_GRID_CELLS,
+		       init_ctx->distance_maps, GPU_MAX_COLORS * GPU_GRID_CELLS);
+
+		data.seed_lists[ei] = to_gpu_object_list(init_ctx->seed_objs);
+
+		data.target_obj_counts[ei] = environment::fill_target_objects(
+			p, ex.output, data.target_objs + ei * GPU_MAX_TARGET_OBJECTS);
+	}
+
 	inline bool environment::execute_flat_program(
 		const flat_program& program, const example& ex, grid& output,
 		const puzzle& p, int node_count, float& out_score, bool& out_solved,
@@ -25,48 +56,9 @@ namespace arc {
 			return true;
 
 		// Build a single-example upload for this example
-		static thread_local auto init_ctx = std::make_unique<fixed_exec_context>();
 		static thread_local cuda_dsl_example_data ex_data;
-
-		fixed_init_context(*init_ctx, ex, p.rule, p.invariant_colors);
-
 		ex_data.count = 1;
-		ex_data.input_grids[0] = init_ctx->input.data;
-		ex_data.input_dims[0] = (int8_t)init_ctx->input.width;
-		ex_data.input_dims[1] = (int8_t)init_ctx->input.height;
-
-		gpu_packed_mask& tg = ex_data.target_grids[0];
-		tg.clear();
-		for (int r = 0; r < ex.output.height; ++r)
-			for (int c = 0; c < ex.output.width; ++c)
-				tg[r][c] = (int8_t)ex.output.data[r][c];
-		ex_data.target_dims[0] = (int8_t)ex.output.width;
-		ex_data.target_dims[1] = (int8_t)ex.output.height;
-
-		memcpy(ex_data.distance_maps, init_ctx->distance_maps, GPU_MAX_COLORS * GPU_GRID_CELLS);
-
-		ex_data.seed_lists[0] = to_gpu_object_list(init_ctx->seed_objs);
-
-		// Target CC summaries for this single example. Recomputed rather than read
-		// off p.target_objects so the scratch-path score matches the main-path
-		// score — otherwise refresh_best_display_scores would set the bar
-		// without the CC bonus and every CC-bearing winner would trivially beat it.
-		{
-			object_summary tobjs[MAX_TARGET_OBJECTS];
-			int tcount = find_objects_by_color(ex.output, p.inf.background.output_elected(),
-			                                   tobjs, MAX_TARGET_OBJECTS);
-			gpu_object_summary* dst = ex_data.target_objs; // ei=0
-			for (int k = 0; k < tcount; ++k) {
-				dst[k].w = tobjs[k].w;
-				dst[k].h = tobjs[k].h;
-				dst[k].x0 = tobjs[k].x0;
-				dst[k].y0 = tobjs[k].y0;
-				dst[k].count = tobjs[k].count;
-			}
-			for (int k = tcount; k < GPU_MAX_TARGET_OBJECTS; ++k) dst[k] = {};
-			ex_data.target_obj_counts[0] = (int8_t)tcount;
-		}
-
+		fill_example_slot(ex_data, 0, ex, p);
 		fill_puzzle_level(ex_data, p);
 
 		// Upload into the scratch slot — isolated from the main cache used by beam search.

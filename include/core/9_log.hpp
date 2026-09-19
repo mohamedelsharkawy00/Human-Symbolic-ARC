@@ -20,11 +20,11 @@ using namespace std;
 // Dump EVERYTHING infer() read off the puzzle into logs/inference/<id>.txt
 // (one file per puzzle, rewritten on each load, so a walk across puzzles
 // keeps every reading). Called by puzzle_loader after infer(), so infer()
-// stays pure. Skipped headless, same reason as 20_logger.hpp: Kaggle disk quota.
+// stays pure. Only when asked: a run with no one to read it (Kaggle) says
+// no, because 240 files would blow its disk quota.
 //
 // ONE FUNCTION PER SECTION, in the order they land in the file, so the section
 // a question is about is the only one that has to be read.
-#ifdef _MSC_VER
 
 // Which grid an edge starts on. A reading holds both, so this is per edge.
 inline const char* edge_side(const correspondence_facts::edge& edge) {
@@ -356,11 +356,8 @@ inline void report_one_pair(ostream& report, size_t pair_index,
     }
 }
 
-#endif
-
 inline void log_inference(const string& id, const inference& inf,
                           int idx = -1, int count = 0, int dataset_flags = 0) {
-#ifdef _MSC_VER
     static once_flag dir_flag;
     call_once(dir_flag, [] { filesystem::create_directories("logs/inference"); });
     ofstream report("logs/inference/" + (id.empty() ? "unknown" : id) + ".txt", ios::trunc);
@@ -381,7 +378,6 @@ inline void log_inference(const string& id, const inference& inf,
     report_pieces_seen(report, inf.correspondence);
     for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)
         report_one_pair(report, i, inf.correspondence.pairs[i]);
-#endif
 }
 
 }  // namespace arc

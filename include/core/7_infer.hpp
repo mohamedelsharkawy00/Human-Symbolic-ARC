@@ -478,7 +478,7 @@ constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 // pair is learned when, in EVERY train pair, every cell that lost one became the
 // other and back. It need not explain the whole diff, and a pair that never
 // fires says nothing, so it is not learned. Consumer: candidate generation pins
-// BidiColorMap's fan-out to the learned variants (23_solver_beam.hpp).
+// BidiColorMap's fan-out to the learned variants (15_solver_beam.hpp).
 struct color_swap_rule {
     // Indexed by the op's variant k = row-major pair {a,b}, a<b — the same
     // encoding gpu_exec_bidi_color_map decodes

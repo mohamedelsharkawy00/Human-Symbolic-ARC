@@ -20,7 +20,7 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES "89") # RTX 4050
 
 # WIN32_LEAN_AND_MEAN keeps windows.h from pulling in the old winsock.h, so
-# winsock2.h (29_command_server.hpp) no longer has to come before every windows.h.
+# winsock2.h (31_command_server.hpp) no longer has to come before every windows.h.
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32 WIN32_LEAN_AND_MEAN)
 
 # MSVC flags (CXX only â€” exclude CUDA). /analyze is Release-only (slow in dev).
@@ -82,19 +82,39 @@ add_custom_command(
     COMMENT "Generating resources..."
 )
 
-# Executable
+# THE SOLVER'S HEADERS: include/core, and nothing else on its include path, so
+# a core file that reached for anything in include/gui would not build.
+add_library(arc_core INTERFACE)
+target_include_directories(arc_core INTERFACE include/core)
+# Off since 2026-09-09: nothing calls it yet and building it costs roughly a
+# third of every clean build. The reasoning sits above the kernel in cuda_solver.cu.
+option(ARC_ENABLE_CUDA_PIECES "Build the currently unused CUDA pieces extraction API" OFF)
+target_compile_definitions(arc_core INTERFACE ARC_ENABLE_CUDA_PIECES=$<BOOL:${ARC_ENABLE_CUDA_PIECES}>)
+
+# THE SOLVER'S GPU HALF: the CUDA kernel. Only the program that searches links it.
+add_library(arc_gpu STATIC "src/cuda_solver.cu")
+target_link_libraries(arc_gpu PUBLIC arc_core)
+
+# The solver on its own, no window: every search, the GUI's included, runs in
+# one of these, and it is what Kaggle runs. Built here too, so what Kaggle
+# compiles is compiled on every build and can be run on a desk.
+add_executable(arc_headless "src/kaggle_main.cpp")
+target_link_libraries(arc_headless PRIVATE arc_gpu)
+# It reads its settings with getenv, the call Kaggle's compiler has; MSVC would
+# rather it used its own _dupenv_s.
+target_compile_definitions(arc_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# The GUI: a window onto the search, which runs in an arc_headless child. It
+# links the solver's headers and not its GPU half, so it cannot create a CUDA
+# context: GUI code that reached for the GPU would fail to link.
 set(SOURCES
-    "src/main.cpp"
-    "src/cuda_solver.cu"
+    "src/gui_main.cpp"
     "${SHADERS_OUT_DIR}/vert.spv"
     "${SHADERS_OUT_DIR}/frag.spv"
     "${CMAKE_CURRENT_BINARY_DIR}/app.rc"
 )
 add_executable(ARC WIN32 ${SOURCES})
-# Off since 2026-09-09: nothing calls it yet and building it costs roughly a
-# third of every clean build. The reasoning sits above the kernel in cuda_solver.cu.
-option(ARC_ENABLE_CUDA_PIECES "Build the currently unused CUDA pieces extraction API" OFF)
-target_compile_definitions(ARC PRIVATE ARC_ENABLE_CUDA_PIECES=$<BOOL:${ARC_ENABLE_CUDA_PIECES}>)
+target_link_libraries(ARC PRIVATE arc_core)
 
 # Backup
 set(ARC_BACKUP_COMMAND Python::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py")
@@ -111,8 +131,10 @@ add_custom_command(
     COMMENT "Running backup..."
 )
 
-# Include Directories
-target_include_directories(ARC PRIVATE include)
+# Include Directories. include/core arrives with arc_core.
+# It starts arc_headless.exe, so building it builds that too.
+add_dependencies(ARC arc_headless)
+target_include_directories(ARC PRIVATE include/gui)
 target_include_directories(ARC PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Linker options. WIN32 target => /subsystem:windows (no console), but the entry
@@ -120,6 +142,8 @@ target_include_directories(ARC PRIVATE ${Vulkan_INCLUDE_DIRS})
 target_link_options(ARC PRIVATE "/ENTRY:mainCRTStartup")
 target_link_options(ARC PRIVATE "$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF>")
 target_link_options(ARC PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT:ICF>")
+target_link_options(arc_headless PRIVATE "$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF>")
+target_link_options(arc_headless PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT:ICF>")
 
 # Libraries
 target_link_libraries(ARC PRIVATE Vulkan::Vulkan)

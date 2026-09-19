@@ -60,8 +60,8 @@ if PROBE or PROBE_ONLY:
 # --- locate inputs --------------------------------------------------------
 # Source dataset (auto-discover via glob -- mount path varies: seen flat at
 # /kaggle/input/<slug>/ and nested at /kaggle/input/datasets/<owner>/<slug>/)
-src_cands = glob.glob("/kaggle/input/**/src/main.cpp", recursive=True)
-assert src_cands, "could not find src/main.cpp under /kaggle/input"
+src_cands = glob.glob("/kaggle/input/**/src/kaggle_main.cpp", recursive=True)
+assert src_cands, "could not find src/kaggle_main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
 INC = SRC_ROOT + "/include"
 print("source root:", SRC_ROOT)
@@ -93,7 +93,7 @@ cmd = [
     "-gencode", "arch=compute_89,code=compute_89",
     "-O2",
     "-I", INC,
-    SRC_ROOT + "/src/main.cpp", SRC_ROOT + "/src/cuda_solver.cu",
+    SRC_ROOT + "/src/kaggle_main.cpp", SRC_ROOT + "/src/cuda_solver.cu",
     "-o", BIN,
 ]
 print("compiling:\n  " + " ".join(cmd))
@@ -108,7 +108,9 @@ print("compiled OK ->", BIN)
 
 # --- 3. run: one shard PER VISIBLE GPU -------------------------------------
 # Launch one process per physical GPU, pinned via CUDA_VISIBLE_DEVICES, each
-# solving a contiguous shard and writing submission_<shard>.json.
+# solving a contiguous shard and writing submission_<shard>.json. Each of those
+# solves every puzzle of its shard in a fresh child process of its own (the
+# child inherits the GPU pin), so no puzzle runs on memory another left behind.
 #
 # SHARD COUNT = number of GPUs ACTUALLY PRESENT (nvidia-smi -L), not a hardcoded
 # 4. This is load-bearing: hardcoding 4 on a 2-GPU box (the default T4x2, which
@@ -151,7 +153,8 @@ for s in range(SHARDS):
     env["ARC_SHARD_TOTAL"] = str(SHARDS)
     env["ARC_PUZZLE_LIMIT"] = PUZZLE_LIMIT  # overall task cap (shard takes its slice)
     env["ARC_TIMEOUT"] = TIMEOUT
-    env["ARC_DATASET"] = "test"   # which set to solve; the solver finds the file itself
+    env["ARC_DATASET"] = "test"   # which set to solve; the solver finds the file itself,
+                                  # walking up from /kaggle/working to the /kaggle/input mount
     lf = open(f"/kaggle/working/shard_{s}.log", "w")
     procs.append((s, subprocess.Popen([BIN], stdout=lf, stderr=subprocess.STDOUT, env=env), lf))
 
@@ -165,12 +168,12 @@ for s, _, _ in procs:
 
 # --- 4. merge shard outputs -> submission.json ----------------------------
 # CROSS-FILE CONTRACT: the "submission_<n>.json" name below is produced by the C++
-# solver (src/main.cpp, the shard_index write path). If you rename it in one place
+# solver (src/kaggle_main.cpp, the shard_index write path). If you rename it in one place
 # you MUST rename it in the other, or this merge silently finds nothing.
 # (The Windows build never shards -- it writes a single submission.json directly.)
-# NAMING CONTRACT (src/main.cpp): with >1 shard each writes submission_<n>.json;
+# NAMING CONTRACT (src/kaggle_main.cpp): with >1 shard each writes submission_<n>.json;
 # with a SINGLE shard it writes submission.json directly (no suffix). The merge
-# must read whatever main.cpp wrote, or it silently produces an empty file.
+# must read whatever kaggle_main.cpp wrote, or it silently produces an empty file.
 if SHARDS > 1:
     merged = {}
     for s in range(SHARDS):

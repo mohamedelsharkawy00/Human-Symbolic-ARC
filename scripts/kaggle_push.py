@@ -40,23 +40,13 @@ DATASET_METADATA = {
     "licenses": [{"name": "CC0-1.0"}],
 }
 
-# The complete set of files the headless Kaggle build needs. Keep this in sync
-# with what the nvcc command compiles (see HANDOFF_KAGGLE_PORT.txt section 4).
-SRC_FILES = ["main.cpp", "cuda_solver.cu"]
-# Every header main.cpp and cuda_solver.cu can reach WITHOUT the _MSC_VER guard.
-# The Windows-only ones (gui, command_server, window_manager, vulkan_context,
-# screenshot, os_utilities) are excluded because gcc never sees them.
-INC_FILES = [
-    # In number order, 0 first; the gaps are the Windows-only ones.
-    "0_core.hpp", "1_readings.hpp", "2_size.hpp", "3_background.hpp",
-    "4_objects.hpp", "5_matching.hpp", "6_correspondence.hpp", "7_infer.hpp",
-    "8_sentences.hpp", "9_log.hpp", "10_text_format.hpp", "11_dsl.cuh",
-    "12_environment.hpp", "13_grid_buffer.hpp", "14_global_app_state.hpp",
-    "17_sound_manager.hpp", "19_gui_stub.hpp", "20_logger.hpp",
-    "22_puzzle_loader.hpp", "23_solver_beam.hpp", "24_fixed_dsl.hpp",
-    "25_dsl_executor.hpp", "26_solver_executor.hpp", "27_cuda_solver.cuh",
-    "28_submission.hpp",
-]
+# The complete set of files the Kaggle build needs: its main, the CUDA kernel,
+# and every header in include/core. The folder IS the list -- the solver is
+# built from include/core alone, locally too (the arc_headless target), so a
+# header it needs cannot be missing from it, and none of include/gui is sent.
+SRC_FILES = ["kaggle_main.cpp", "cuda_solver.cu"]
+CORE = os.path.join(ROOT, "include", "core")
+INC_FILES = sorted(f for f in os.listdir(CORE) if os.path.isfile(os.path.join(CORE, f)))
 
 def sync():
     os.makedirs(PKG, exist_ok=True)
@@ -69,7 +59,7 @@ def sync():
         shutil.copy2(os.path.join(ROOT, "src", f), os.path.join(PKG, "src", f))
     for f in INC_FILES:
         dst = os.path.join(PKG, "include", f)
-        shutil.copy2(os.path.join(ROOT, "include", f), dst)
+        shutil.copy2(os.path.join(CORE, f), dst)
     # Every header is copied flat, so any folder still sitting in there is left
     # over from an older push (third_party, inference) and would be uploaded
     # with the rest. Named by what it is rather than one by one, so the next
@@ -79,6 +69,14 @@ def sync():
         stale = os.path.join(inc, entry)
         if os.path.isdir(stale):
             shutil.rmtree(stale)
+        elif entry not in INC_FILES:
+            # Left from an older push: a header since moved to include/gui or
+            # renamed. Uploaded, it would be dead weight at best.
+            os.remove(stale)
+    src = os.path.join(PKG, "src")
+    for entry in os.listdir(src):
+        if entry not in SRC_FILES:
+            os.remove(os.path.join(src, entry))
     print(f"synced {len(SRC_FILES)} src + {len(INC_FILES)} headers -> {os.path.relpath(PKG, ROOT)}")
 
 def remote_version():

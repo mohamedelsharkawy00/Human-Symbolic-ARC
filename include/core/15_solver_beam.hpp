@@ -1,28 +1,20 @@
 #pragma once
+// THE SOLVER. Give it a puzzle, call step() until it is solved or you run out
+// of time, read the best program off the puzzle. That is the whole contract.
+// It owns no thread, knows no window, reads no settings file and plays no
+// sound: a driver does those. The Kaggle main drives it in a plain loop; the
+// GUI drives it from a thread of its own and watches it through
+// solver_observer. Nothing in this folder may include anything from gui/.
 
 #include <atomic>
 #include "12_environment.hpp"
-#include "14_global_app_state.hpp"
-#include "11_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via 18_gui.hpp on Windows)
-#ifdef _MSC_VER
-#include "18_gui.hpp"        // full GUI/Vulkan rendering
-#else
-#include "19_gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
-#endif
-#include "20_logger.hpp"
-#ifdef _MSC_VER
-#include "21_os_utilities.hpp"  // Win32 window helpers; GUI-only
-#endif
-#include "22_puzzle_loader.hpp"
-#include "17_sound_manager.hpp"
+#include "11_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS, the cuda_dsl_* calls
+#include "13_puzzle_loader.hpp"
+#include "14_solver_log.hpp"
 
 #include <algorithm>
-#include <cstdio>    // std::fprintf (headless refuses an unset ARC_DATASET)
-#include <cstdlib>   // std::getenv (ARC_DATASET), std::exit
 #include <cstring>
-#include <filesystem>
 #include "10_text_format.hpp"
-#include <fstream>
 #include <map>
 #include <mutex>
 // placement new (reset_search reinstantiates search_state in place)
@@ -34,9 +26,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#ifdef _MSC_VER
-#include <windows.h>
-#endif
 
 namespace arc {
 using namespace std;
@@ -256,10 +245,10 @@ struct search_state {
   long long pairs_already_seen = 0;
   long long members_skipped = 0;
 
-  // Where a worker iteration's time actually goes, reported once per level.
+  // Where a step's time actually goes, reported once per level.
   // Counters, not log lines — logging the hot path is what distorted the
   // first measurement.
-  // ns_wait is not here: it lives in solver_state so the render thread can
+  // ns_wait is not here: it lives in search_progress so the render thread can
   // read it, and this class reads it back for the line below.
   long long ns_generate = 0, ns_launch = 0, ns_harvest = 0, ns_idle = 0;
   long long ns_wait_at_last_level = 0;
@@ -274,7 +263,7 @@ struct search_state {
   // A promotion that fills the train set IS the solve, but marking the task
   // solved can't happen at that moment (it can happen mid-update_best_solution,
   // whose own solved/pause writes would collide). The verified tree waits here;
-  // the worker loop marks the task solved at the top of its next pass.
+  // step() marks the task solved at the top of the next one.
   node *solve_found_by_promotion = nullptr;
   int solve_found_node_count = 0;
 
@@ -319,9 +308,9 @@ struct scope_ns {
 
 // A GPU wait, published as it happens so a reader mid-wait sees it.
 struct gpu_wait_scope {
-  solver_state &state;
+  search_progress &state;
   chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-  explicit gpu_wait_scope(solver_state &s) : state(s) {
+  explicit gpu_wait_scope(search_progress &s) : state(s) {
     state.gpu_wait_since.store(chrono::duration_cast<chrono::nanoseconds>(
         t0.time_since_epoch()).count());
   }
@@ -331,6 +320,58 @@ struct gpu_wait_scope {
     state.gpu_wait_count++;
     state.gpu_wait_since.store(0);
   }
+};
+
+// How the search is set up. Fixed for the solver's life.
+struct solver_options {
+  // Search a SENTENCE at a time instead of an op at a time: every candidate is
+  // a whole (GET SELECT ACT COMBINE), so every candidate has painted and can be
+  // scored honestly. Off = the op-at-a-time beam, for A/B.
+  bool sentence_search = true;
+  // Pin color-literal ops (AddColor/Recolor/RemoveColor/InteriorColor) to the
+  // colors that side of the puzzle actually shows, during candidate
+  // generation — collapses the 10x literal fan-out. Behavioral change, so it's
+  // a switch: off = try all 10 colors (original behavior) for A/B + safe revert.
+  bool pin_color_literals = true;
+  // logs/<id>.txt and logs/inference/<id>.txt. For a person reading along;
+  // off on Kaggle, where nobody reads them and the disk quota would not hold them.
+  bool write_logs = false;
+};
+
+// Something the search did that a watcher may want to mark: a sound, a pause.
+struct search_news {
+  // Who found it. The beam, a promotion that filled the train set, or a program
+  // inference spelled before the search began.
+  enum class source { beam, promotion, inference };
+  source from = source::beam;
+  int promotions = 0;       // examples added to the active set by this tree
+  bool improved = false;    // a new best that is neither a solve nor a promotion
+  bool simplified = false;  // a solved puzzle got a shorter program
+  bool train_solved = false;
+  bool test_solved = false;
+};
+
+// WHAT THE SEARCH SHOWS SOMEBODY WATCHING. The solver never draws: it says what
+// it did, and a watcher that wants pictures makes them. Every call arrives on
+// the thread driving the solver, most with progress().mtx held, so a watcher
+// drawing under that lock sees a whole update or none of it. With no watcher
+// the solver skips the work that only makes pictures.
+struct solver_observer {
+  virtual ~solver_observer() = default;
+  // A puzzle was just parsed, or failed to parse and is empty.
+  virtual void loaded(const puzzle & /*p*/) {}
+  // One example's picture in one column: what a tree painted there, or
+  // nullptr for nothing.
+  enum class column { current, best };
+  virtual void painted(bool /*is_test*/, size_t /*example*/, column /*which*/,
+                       const grid * /*g*/) {}
+  // The score beside an example's CURRENT picture; below SCORE_MIN when
+  // nothing has been tried.
+  virtual void scored_current(bool /*is_test*/, size_t /*example*/, float /*score*/) {}
+  // Something visible changed.
+  virtual void changed() {}
+  // A step that mattered. Arrives with the lock NOT held.
+  virtual void news(const search_news & /*n*/) {}
 };
 
 class beam_solver : public environment, private search_state {
@@ -344,40 +385,79 @@ private:
   };
 
 public:
-  // Seeds the live count too: the startup load runs inside init(), which never
-  // touches it, so only reload_current_puzzle would have heard this otherwise.
+  explicit beam_solver(solver_options options = {}, solver_observer *observer = nullptr)
+      : m_options(options), m_observer(observer), m_log(m_progress, options.write_logs) {}
+
+  // ~search_state releases every tree the search still owns; this is the one
+  // it lent to whoever is watching.
+  ~beam_solver() { environment::remove(m_progress.current_tree); }
+
+  beam_solver(const beam_solver &) = delete;
+  beam_solver &operator=(const beam_solver &) = delete;
+
+  // The watcher, or none. Set before the first load.
+  void set_observer(solver_observer *observer) { m_observer = observer; }
+
+  // Both of these live on the search state, so a load puts them back to their
+  // defaults: set them after load() for them to hold on that puzzle.
+  // Stop filling batches after this many attempts, 0 meaning never. A count
+  // stops in the same place every run; a clock stops wherever the machine
+  // happened to be. What stopping means (a pause) is the driver's to decide.
   void set_stop_after_attempts(long long n) { stop_after_attempts = n > 0 ? n : 0; }
+  long long get_stop_after_attempts() const { return stop_after_attempts; }
+  // Seeds the live count too, so it holds from the very next step.
   void set_start_example_count(int n) {
     start_example_count = n < 1 ? 1 : n;
     active_example_count = start_example_count;
   }
+
+  // Debug and tree lines in the log as well as timing, when it writes at all.
+  void set_verbose(bool on) { m_log.verbose = on; }
   void log_debug(const string &msg) { m_log.debug(msg); }
   void log_timing(const string &msg) { m_log.timing(msg); }
-  void clear_logs() { m_log.clear(); }
-  void start_benchmark_report(const string &path) { m_log.start_benchmark_report(path); }
-  void log_benchmark_result(const string &result) { m_log.benchmark_result(result); }
-  void finish_benchmark_report() { m_log.finish_benchmark_report(); }
-  void benchmark_begin() { m_log.benchmark_begin(); }
-  void benchmark_record(const puzzle &p, long long attempts, float elapsed) { m_log.benchmark_record(p, attempts, elapsed); }
   void log_score_formula(const node *tree, const vector<gpu_score_terms> &terms);
+  logger &log() { return m_log; }
 
-private:
-  atomic<long long> *m_global_attempts = nullptr;
-
-public:
-  // ~search_state releases every tree the search still owns.
-  ~beam_solver() {
-    stop_thread();
+  search_progress &progress() { return m_progress; }
+  const search_progress &progress() const { return m_progress; }
+  bool loaded() const { return m_puzzle_loaded; }
+  // Takes no index: one puzzle is loaded at a time, so this is that one.
+  // Another thread reads it under progress().mtx.
+  const puzzle &get_puzzle() const {
+    static puzzle dummy;
+    return m_puzzle_loaded ? m_puzzle : dummy;
   }
 
-  // The one reset, shared by every transition (puzzle switch, dataset change,
-  // R): reinstantiate the whole per-puzzle state, same values as opening.
+  // Parse `task` and start over on it: every trace of the last puzzle goes,
+  // search, pipeline and all. Only parses: nothing is inferred until infer()
+  // asks. `test_solutions` are its answers when known, so the test row can be
+  // scored. `label` only heads the inference readout.
+  bool load(const challenge_task &task, const vector<grid> *test_solutions,
+            const puzzle_label &label = {});
+
+  // Inference, once and whole, then each program it spelled, once, before the
+  // search spends a single candidate. step() asks for both itself.
+  void infer();
+  // Only the first half: the facts, without trying what they spelled. What
+  // running any program on the puzzle needs first.
+  void read_facts();
+
+  // ONE TURN OF THE SEARCH: generate a batch, launch it on the GPU, and score
+  // the batch launched last turn while this one runs. Call it until the
+  // puzzle is solved or time is up; it never blocks for long.
+  void step();
+
+  // A whole program in the solver's own spelling, made the best and scored.
+  // The import path, and how what inference spelled is tried.
+  void apply_program(const string &program);
+
+  // The one reset, shared by every transition: reinstantiate the whole
+  // per-puzzle state, same values as opening.
   void reset_search() {
     search_state &s = *this;
     s.~search_state();
     new (&s) search_state();
   }
-
 
   void report_score(const node *n, float score, uint64_t g_hash);
 
@@ -389,7 +469,7 @@ public:
   // Anything else (non-color ops, pinning off, no learned set, InteriorColor's
   // -1 "auto") is always allowed.
   inline bool color_literal_allowed(node_type type, int16_t value) const {
-    if (!m_app_state.pin_color_literals) return true;
+    if (!m_options.pin_color_literals) return true;
     if (type == node_type::BidiColorMap) {
       if (m_puzzle.inf.color_swaps.count == 0) return true;  // not learned -> full fan-out
       if (value < 0 || value >= COLOR_PAIR_COUNT) return true;   // out-of-range guard
@@ -495,88 +575,7 @@ private:
   void merge_slot_candidates();
   void commit_level_champion();
 
-private:
-  // The task set, sliced in-memory from a challenges JSON (taken as-is) and
-  // iterated by puzzle_idx. Replaces the old per-task file list.
-  vector<challenge_task> m_puzzle_tasks;
-  // Ground-truth test outputs, keyed by task id, loaded from the matching
-  // solutions JSON (empty when none exists, e.g. the competition test set).
-  // Attached to each task's test examples at load so the test row can be scored.
-  map<string, vector<grid>> m_solutions;
-  size_t m_base_gpu_buffer_size = 0;
-  atomic<int> m_queued_puzzle_delta{0};
-  // Which dataset(s) are loaded into m_puzzle_tasks, as a bitmask of dataset
-  // flags (see below). Multiple sets can be checked at once; their tasks are
-  // concatenated into one list (e.g. TRAIN|EVAL = 1000+120 = 1120 puzzles).
-  atomic<int> m_dataset_flags{0};
-  // A pending dataset-flag change requested from the GUI; -1 means none. The
-  // worker picks it up at a safe point and rebuilds m_puzzle_tasks (like reset).
-  atomic<int> m_queued_dataset_flags{-1};
-
 public:
-  // Dataset selection bitmask. CUSTOM reads local per-puzzle JSON files.
-  enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4, DS_CUSTOM = 8 };
-  inline int get_dataset_flags() const { return m_dataset_flags.load(); }
-  // Queue a new dataset selection (bitmask). Applied by the worker; ignored if
-  // empty so the list is never blanked out from under the solver.
-  inline void set_datasets(int flags) {
-    if (flags == 0) return;
-    m_queued_dataset_flags.store(flags);
-  }
-
-  // Build m_puzzle_tasks + m_solutions from every checked dataset, concatenated.
-  // The three competition sets share the same {"id":{"train":[...],"test":[...]}} shape, so
-  // we just slice each selected challenges JSON in-memory (taken as-is) and load
-  // its sibling _solutions file for ground truth. Each set:
-  //   - training:   1000 tasks (has answer keys) — dev / mining.
-  //   - evaluation:  120 tasks (unseen, has answer keys) — honest local score.
-  //   - test:        240 tasks (the competition set, no solutions) — submission.
-  // Custom fixtures from tests/puzzles precede competition sets when selected.
-  // Duplicate ids across sets are dropped (first checked set wins) so puzzle_idx
-  // stays a clean 1:1 index. Records the applied selection in m_dataset_flags.
-  inline void load_dataset(int flags) {
-    const string kaggle_dir =
-        "kaggle/input/competitions/arc-prize-2026-arc-agi-2/";
-    struct set_info { int flag; const char *stem; };
-    static const set_info sets[] = {
-        {DS_TRAIN, "arc-agi_training_challenges.json"},
-        {DS_EVAL,  "arc-agi_evaluation_challenges.json"},
-        {DS_TEST,  "arc-agi_test_challenges.json"},
-    };
-
-    vector<challenge_task> tasks;
-    map<string, vector<grid>> solutions;
-    set<string> seen;
-    if (flags & DS_CUSTOM) {
-      for (auto &task : load_custom_puzzles("tests/puzzles"))
-        if (seen.insert(task.id).second) tasks.push_back(std::move(task));
-    }
-    for (const set_info &s : sets) {
-      if (!(flags & s.flag)) continue;
-      string challenges_json = kaggle_dir + s.stem;
-      auto loaded = load_challenges_json(challenges_json);
-      for (auto &t : loaded)
-        if (seen.insert(t.id).second)
-          tasks.push_back(std::move(t));
-
-      // Ground-truth answers: sibling file with "_challenges" -> "_solutions".
-      // Missing (e.g. the competition test set) just yields no answers.
-      string solutions_json = challenges_json;
-      if (size_t at = solutions_json.rfind("_challenges"); at != string::npos)
-        solutions_json.replace(at, sizeof("_challenges") - 1, "_solutions");
-      auto sol = load_solutions_json(solutions_json);
-      for (auto &kv : sol)
-        solutions.emplace(kv.first, std::move(kv.second));
-    }
-
-    m_puzzle_tasks = std::move(tasks);
-    m_solutions = std::move(solutions);
-    m_dataset_flags.store(flags);
-    m_app_state.dataset_flags.store(flags);
-    std::fprintf(stderr, "dataset flags %d: %zu tasks, %zu solutions\n",
-                 flags, m_puzzle_tasks.size(), m_solutions.size());
-  }
-
   struct candidate_result {
     grid state;
     float score = 0.0f;
@@ -654,340 +653,41 @@ public:
     ~flat_candidate_chunk() { clear(); }
   };
 
-  inline beam_solver(global_app_state &app_state)
-      : m_app_state(app_state), m_log(app_state, m_solver_state) {}
-
-  inline void init(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars,
-                   display_grid &bg_grid) {
-    m_gpu_buffer = &gpu_buffer;
-
-    init_gui_buffers(gpu_buffer, chars, bg_grid);
-    // Pool of preview slots, one per possible example row. Measured against
-    // the ARC training+evaluation sets: max train=10, max test=4, max total
-    // per puzzle=12. 32 leaves generous headroom for unseen puzzle sets.
-    m_solver_state.preview_grids.clear();
-    m_solver_state.preview_grids.reserve(32);
-    for (int i = 0; i < 32; ++i)
-      m_solver_state.preview_grids.push_back(allocate_empty_grid(gpu_buffer));
-
-    // Object-list preview slots: [example][object]. Per-example object cap
-    // matches the kernel's GPU_KERNEL_MAX_OBJECTS (the largest list the GPU
-    // can produce in a single op).
-    m_solver_state.preview_object_grids.clear();
-    m_solver_state.preview_object_grids.resize(32);
-    for (int i = 0; i < 32; ++i) {
-      m_solver_state.preview_object_grids[i].reserve(GPU_KERNEL_MAX_OBJECTS);
-      for (int j = 0; j < GPU_KERNEL_MAX_OBJECTS; ++j)
-        m_solver_state.preview_object_grids[i].push_back(allocate_empty_grid(gpu_buffer));
-    }
-    m_base_gpu_buffer_size = gpu_buffer.size();
-
-    // Which sets to open, decided the way each build is able to decide it.
-#ifdef _MSC_VER
-    // The saved selection, restored before the saved puzzle index is read below
-    // so the index lands in the same list it came from. TRAIN when nothing is
-    // saved: a person is looking at the screen and can check another box.
-    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_TRAIN | DS_EVAL | DS_TEST | DS_CUSTOM);
-    if (initial <= 0) initial = DS_TRAIN;
-#else
-    // The notebook says which, because nothing here can ask. NO DEFAULT, ON
-    // PURPOSE: guessing wrong writes a submission built from the training set
-    // that looks exactly like a real one, and no one is watching to notice.
-    int initial = 0;
-    if (const char *chosen = std::getenv("ARC_DATASET")) {
-      string want = chosen;
-      if (want == "test") initial = DS_TEST;
-      else if (want == "eval") initial = DS_EVAL;
-      else if (want == "train") initial = DS_TRAIN;
-      else if (want == "custom") initial = DS_CUSTOM;
-    }
-    if (initial == 0) {
-      std::fprintf(stderr, "ARC_DATASET must be test, eval, train or custom. Refusing to guess.
-");
-      std::exit(1);
-    }
-#endif
-    load_dataset(initial);
-
-    if (!m_puzzle_tasks.empty()) {
-      int saved_idx = settings_int(read_settings_file(), "puzzle", -1);
-      if (saved_idx >= 0 && saved_idx < (int)m_puzzle_tasks.size())
-        m_solver_state.puzzle_idx.store(saved_idx);
-      m_solver_state.puzzle_idx = max(0, m_solver_state.puzzle_idx.load());
-      m_solver_state.puzzle_idx = min((int)m_puzzle_tasks.size() - 1, m_solver_state.puzzle_idx.load());
-
-      const challenge_task &ct = m_puzzle_tasks[m_solver_state.puzzle_idx];
-      m_puzzle_loaded = load_single_puzzle(ct, m_puzzle, m_solver_state.views, gpu_buffer, m_base_gpu_buffer_size, solutions_for(ct.id),
-                                           m_solver_state.puzzle_idx, (int)m_puzzle_tasks.size(), m_dataset_flags.load());
-      if (m_puzzle_loaded) {
-        m_log.set_puzzle_id(m_puzzle.id);
-#ifdef _MSC_VER
-        // Per-puzzle log file: dev/GUI telemetry. Skipped headless -- on Kaggle
-        // it writes 240+ files into /kaggle/working and exhausts the disk quota.
-        string path = "logs/" + m_puzzle.id + ".txt";
-        filesystem::create_directory("logs");
-        ofstream(path, ios::trunc);
-#endif
-        clear_logs();
-      }
-    }
-
-    m_app_state.needs_upload = true;
-    if (m_puzzle_loaded) {
-      puzzle &p = m_puzzle;
-
-      if (p.best_tree) {
-        m_solver_state.current_tree = environment::copy(p.best_tree);
-        if (p.is_solved) {
-          active_example_count = (int)p.train.size();
-        }
-        for (size_t i = 0; i < p.train.size(); ++i) {
-          grid dummy;
-          environment::score_tree_output(
-              p.best_tree, p.train[i], dummy, p, p.best_node_count);
-          if (example_views *v = m_solver_state.views.of(false, i))
-            update_display_buffer(v->current, dummy, *m_gpu_buffer);
-        }
-      }
-    }
-  }
-
-  inline void start_thread() {
-    log_debug("[*] Starting Beam Solver thread...");
-    m_thread = jthread(&beam_solver::worker, this);
-  }
-
-  inline void stop_thread() {
-    m_app_state.stop_threads = true;
-    if (m_thread.joinable()) {
-      m_thread.request_stop();
-      m_thread.join();
-    }
-  }
-
-  inline int current_puzzle_idx() const { return m_solver_state.puzzle_idx.load(); }
-
-  // ID of the currently loaded puzzle (for copy-to-clipboard). Falls back to
-  // the filename stem if no puzzle is loaded yet.
-  inline string current_puzzle_id() const {
-    scoped_lock lock(m_solver_state.mtx);
-    if (m_puzzle_loaded)
-      return m_puzzle.id;
-    int i = m_solver_state.puzzle_idx.load();
-    if (i >= 0 && i < (int)m_puzzle_tasks.size())
-      return m_puzzle_tasks[i].id;
-    return string();
-  }
-
-  inline void change_puzzle(int delta) {
-    if (m_puzzle_tasks.empty())
-      return;
-    m_queued_puzzle_delta += delta;
-  }
-
-  // Jump to a puzzle by ID (the filename stem). Tries an exact match first,
-  // then falls back to the first puzzle whose ID starts with `id`. Matching is
-  // case-insensitive. Returns true and queues the jump if a match was found.
-  inline bool jump_to_puzzle_id(const string &id) {
-    if (m_puzzle_tasks.empty() || id.empty())
-      return false;
-    auto lower = [](string s) {
-      for (char &c : s) c = (char)tolower((unsigned char)c);
-      return s;
-    };
-    string needle = lower(id);
-    int exact = -1, prefix = -1;
-    for (int i = 0; i < (int)m_puzzle_tasks.size(); ++i) {
-      string stem = lower(m_puzzle_tasks[i].id);
-      if (stem == needle) { exact = i; break; }
-      if (prefix < 0 && stem.compare(0, needle.size(), needle) == 0)
-        prefix = i;
-    }
-    int target = (exact >= 0) ? exact : prefix;
-    if (target < 0)
-      return false;
-    m_queued_puzzle_delta += target - m_solver_state.puzzle_idx.load();
-    return true;
-  }
-
-
-  inline void reset_solver() {
-    m_reset_solver_flag = true;
-  }
-
-  void reload_current_puzzle();
-
-  inline void import_solution() {
-    if (!m_puzzle_loaded) return;
-    puzzle &p = m_puzzle;
-    string sol_path = "solutions/" + p.id + ".txt";
-    if (filesystem::exists(sol_path)) {
-      ifstream sf(sol_path);
-      string sol_str, line;
-      while (getline(sf, line)) {
-        // Strip CR (Windows line endings).
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        // Trim leading/trailing whitespace.
-        size_t a = line.find_first_not_of(" \t");
-        if (a == string::npos) { if (!sol_str.empty()) break; else continue; }
-        size_t b = line.find_last_not_of(" \t");
-        line = line.substr(a, b - a + 1);
-        // First line of the metadata block ("Puzzle:", "Train:", etc.) ends the
-        // program. Metadata lines are "Key: value" pairs and carry a ':';
-        // op tokens never do.
-        if (line.find(':') != string::npos) break;
-        if (!sol_str.empty()) sol_str += ' ';
-        sol_str += line;
-      }
-      // Drop a dangling trailing separator from line continuations.
-      while (!sol_str.empty() && sol_str.back() == ' ')
-        sol_str.pop_back();
-      if (!sol_str.empty()) {
-        lock_guard<mutex> lock(m_solver_state.mtx);
-        // Importing wants the facts, so it asks for them. Ops that learn a
-        // table (ShapeColorMap and kin) have nothing to say about a puzzle
-        // nobody has read, and would paint an empty grid for every example.
-        // A reload with the inference pane shut skips inference, and while
-        // paused nothing ever fills it in -- so ask here, never assume.
-        if (!p.inferred)
-          infer_into_puzzle(p, m_solver_state.puzzle_idx,
-                            (int)m_puzzle_tasks.size(), m_dataset_flags.load());
-        apply_solution(p, m_solver_state.views, *m_gpu_buffer, sol_str, m_log);
-        if (p.is_solved) {
-          active_example_count = (int)p.train.size();
-        }
-        m_app_state.needs_upload = true;
-        log_debug("Manual solution imported.");
-      }
-    }
-  }
-
-  // Unified result formatter — used by both manual Export and benchmark logging.
-  inline string format_solution_result(const puzzle &p,
-                                       const solver_state &state,
-                                       const global_app_state &app) {
-    float elapsed = get_elapsed(app, state);
-    string time_str = format_elapsed(elapsed);
-
-    string train_status = p.is_solved ? "Solved" : "Timeout";
-    string test_status = p.is_test_solved ? "Solved"
-                       : (p.is_solved ? "Failed" : "N/A");
-
-    long long attempts = state.attempts.load();
-    int node_count = p.best_node_count;
-    int max_depth = p.best_tree ? (int)p.best_tree->max_depth : 0;
-
-    float best_score = 0.0f;
-    for (size_t i = 0; i < p.train.size(); ++i)
-      best_score += p.best_score_or_worst(false, i);
-
-    string sol_str = p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : "";
-
-    // Solution on line 1 (raw, no prefix) for import compatibility.
-    string out;
-    out += sol_str + "\n";
-    out += "Puzzle:       " + p.id + "\n";
-    out += "Train:        " + train_status + "\n";
-    out += "Test:         " + test_status + "\n";
-    out += "Elapsed:      " + time_str + "\n";
-    out += to_text("Attempts:     %lld\n", attempts);
-    out += to_text("Nodes:        %d\n", node_count);
-    out += to_text("Best Score:   %.4f\n", best_score);
-    out += to_text("Max Depth:    %d\n", max_depth);
-    return out;
-  }
-
-  inline void export_solution() {
-    if (!m_puzzle_loaded) return;
-    puzzle &p = m_puzzle;
-    if (!p.best_tree) return;
-
-    string result = format_solution_result(p, m_solver_state, m_app_state);
-
-#ifdef _MSC_VER
-    // Per-puzzle solution dump: dev/GUI feature. Skipped headless (disk quota).
-    filesystem::create_directories("solutions");
-    string sol_path = "solutions/" + p.id + ".txt";
-    ofstream sf(sol_path);
-    if (sf.is_open()) {
-      sf << result;
-      log_debug("Manual solution exported to " + sol_path);
-    }
-#endif
-  }
-
-  inline void toggle_pause() {
-    bool new_paused = !m_app_state.is_paused;
-    if (new_paused) {
-      m_app_state.pause_start_time = chrono::steady_clock::now();
-      m_app_state.is_paused = true;
-    } else {
-      auto now = chrono::steady_clock::now();
-      auto dt = now - m_app_state.pause_start_time;
-      scoped_lock lock(m_solver_state.mtx);
-      m_solver_state.start_time += dt;
-      m_app_state.is_paused = false;
-    }
-  }
-
-  inline solver_state &get_solver_state() { return m_solver_state; }
-  inline int get_puzzle_count() const { return (int)m_puzzle_tasks.size(); }
-  // Ground-truth test outputs for a task id, or nullptr when none are loaded
-  // (no solutions file, or this id isn't in it). Passed to load_single_puzzle.
-  inline const vector<grid> *solutions_for(const string &id) const {
-    auto it = m_solutions.find(id);
-    return it != m_solutions.end() ? &it->second : nullptr;
-  }
-  // Takes no index: one puzzle is loaded at a time, so this is that one. It
-  // used to take one and ignore it, which read as a promise it never kept.
-  inline const puzzle &get_puzzle() const {
-    static puzzle dummy;
-    return m_puzzle_loaded ? m_puzzle : dummy;
-  }
-
 private:
-  atomic<bool> m_reset_solver_flag{false};
-
-  inline bool should_pause_or_wait(int &target_idx) {
-    target_idx = m_solver_state.puzzle_idx;
-    if (target_idx < 0 || target_idx >= (int)m_puzzle_tasks.size() || !m_puzzle_loaded) {
-      this_thread::sleep_for(chrono::milliseconds(10));
-      return true;
-    }
-
-    // One-shot: cleared as it fires, so unpausing by hand does not re-stop.
-    if (stop_after_attempts > 0 && !m_app_state.is_paused &&
-        m_solver_state.attempts.load() >= stop_after_attempts) {
-      log_debug(to_text("!!!! PAUSED AT %lld ATTEMPTS !!!!",
-                        m_solver_state.attempts.load()));
-      stop_after_attempts = 0;
-      toggle_pause();
-      return true;
-    }
-
-    if (m_app_state.is_paused) {
-      this_thread::sleep_for(chrono::milliseconds(10));
-      return true;
-    }
-    return false;
-  }
+  // THE TWO-SLOT GPU PIPELINE: what is still in flight between one step and
+  // the next. A batch launched this step is scored the next, while its
+  // successor runs.
+  // A winner's picture is wanted for the watcher and the grid dedup, not for
+  // the decision, so it is asked for now and read one harvest later.
+  // Everything the read still needs is kept here, because the batch's own
+  // scores are overwritten by then.
+  struct deferred_winner {
+    node *tree = nullptr;
+    int node_count = 0, active = 0;
+    int load_id = -1;
+    float score[16] = {};
+    bool solved[16] = {};
+    gpu_score_terms terms[16] = {};
+    bool valid = false;
+  };
+  vector<node *> m_prev_nodes[2];
+  bool m_slot_pending[2] = {false, false};
+  deferred_winner m_deferred[2];
+  // Drain what the GPU still holds for this solver, then return the node pool
+  // to its opening state. Every tree anywhere is dead after this.
+  void drain_pipeline();
 
   bool pump_generate(std::atomic<long long> *global_attempts);
   void log_tree_record(node *tree, float score, long long attempts);
-  void update_best_solution(int target_idx, puzzle &p, node *tree, int node_count, candidate_batch &res);
-  void worker();
-  // `views` is the display side matching `examples`, index for index, or null
-  // when there is nothing on screen. Passed rather than assumed: the function
-  // cannot tell the train side from the test side by looking at the vector.
-  void update_example_results(vector<example> &examples, vector<example_views> *views,
-                              const vector<candidate_result> &results, int limit = -1);
-  void clear_test_current_views(puzzle &p);
+  void update_best_solution(int load_id, puzzle &p, node *tree, int node_count, candidate_batch &res);
+  void update_example_results(bool is_test, const vector<candidate_result> &results, int limit = -1);
   void update_test_current_views(puzzle &p, node *tree, int node_count, bool all_train_solved);
   bool check_old_tree_solves(puzzle &p, int active);
+  // apply_program without the lock, for a caller already holding it.
+  void score_program(const string &program);
   bool try_what_inference_said(puzzle &p);
-  // Gated on the ATTEMPT, not on when inference happened: init() infers at
-  // startup and the worker infers lazily, so keying off `inferred` missed
-  // whichever came first.
+  // Gated on the ATTEMPT, not on `inferred`: the pane can infer a puzzle long
+  // before anything asks what its reading spelled.
   bool asked_inference_yet = false;
   // Greedy leave-one-out reduction of a candidate tree over the active train
   // examples. Repeatedly drops the single op whose removal most improves the
@@ -1003,22 +703,62 @@ private:
   int try_promote_examples(node *tree, puzzle &p, int &active, int node_count);
   void finalize_full_train_solve(puzzle &p);
   bool evaluate_test_after_solve(node *tree, puzzle &p, int node_count);
-  void reset_test_display(puzzle &p);
-  void clear_all_views(puzzle &p);
+  void clear_views(puzzle &p, bool is_test);
   void refresh_best_display_scores(puzzle &p, int active, int node_count);
-  void try_update_current_display(int target_idx, puzzle &p, node *tree, int node_count, const candidate_batch &res);
+  void try_update_current_display(int load_id, puzzle &p, node *tree, int node_count, const candidate_batch &res);
 
-  global_app_state &m_app_state;
-  solver_state m_solver_state;
+  // What a watcher is told, each a no-op with nobody watching.
+  void show(bool is_test, size_t i, solver_observer::column which, const grid *g) {
+    if (m_observer) m_observer->painted(is_test, i, which, g);
+  }
+  // A tree the search now stands on: its picture is the best and the current.
+  void show_both(bool is_test, size_t i, const grid *g) {
+    show(is_test, i, solver_observer::column::best, g);
+    show(is_test, i, solver_observer::column::current, g);
+  }
+  void show_current_score(bool is_test, size_t i, float score) {
+    if (m_observer) m_observer->scored_current(is_test, i, score);
+  }
+  // Nothing tried on this example: no picture, and a score below any real one.
+  void clear_current(bool is_test, size_t i) {
+    show_current_score(is_test, i, SCORE_MIN - 1.0f);
+    show(is_test, i, solver_observer::column::current, nullptr);
+  }
+  // The best score is the search's own, kept to compare trees by; the picture
+  // is the watcher's.
+  void clear_best(float &best, bool is_test, size_t i) {
+    best = SCORE_MIN - 1.0f;
+    show(is_test, i, solver_observer::column::best, nullptr);
+  }
+  // One number, two homes: the search keeps it to compare trees by, the
+  // watcher keeps it to label the CURRENT column with.
+  void set_example_scores(float &best, bool is_test, size_t i, float score) {
+    best = score;
+    show_current_score(is_test, i, score);
+  }
+  void changed() {
+    if (m_observer) m_observer->changed();
+  }
+  void news(const search_news &n) {
+    if (m_observer) m_observer->news(n);
+  }
+
+  atomic<long long> *m_global_attempts = nullptr;
+
+  solver_options m_options;
+  solver_observer *m_observer = nullptr;
+  search_progress m_progress;
   logger m_log;
   puzzle m_puzzle;
   bool m_puzzle_loaded = false;
-  jthread m_thread;
-  vector<int> *m_gpu_buffer = nullptr;
+  puzzle_label m_label;
+  // Counts loads, so a result the GPU hands back for a puzzle that has since
+  // been replaced is recognised and dropped.
+  int m_load_id = 0;
 };
 
 }
 
-#include "24_fixed_dsl.hpp"
-#include "25_dsl_executor.hpp"
-#include "26_solver_executor.hpp"
+#include "16_fixed_dsl.hpp"
+#include "17_dsl_executor.hpp"
+#include "18_solver_executor.hpp"

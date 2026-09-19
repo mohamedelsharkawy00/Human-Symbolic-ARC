@@ -3,8 +3,8 @@
 Updated April 2026 for full-CUDA architecture:
 - Hot path: GPU kernel (dsl_exec_and_score_kernel_v2)
 - CPU hot path: beam search generation + program packing
-- Source-line breakdown targets: 26_solver_executor.hpp, 23_solver_beam.hpp,
-  cuda_solver.cu, 24_fixed_dsl.hpp
+- Source-line breakdown targets: 18_solver_executor.hpp, 15_solver_beam.hpp,
+  cuda_solver.cu, 16_fixed_dsl.hpp
 - Nsight Systems: CUDA kernel times, memory transfers, API overhead
 """
 
@@ -38,10 +38,10 @@ TOP_N = 80
 
 # --- Source files of interest for line-level breakdown ---
 HOT_SOURCE_FILES = {
-    "26_solver_executor.hpp",
-    "23_solver_beam.hpp",
+    "18_solver_executor.hpp",
+    "15_solver_beam.hpp",
     "cuda_solver.cu",
-    "24_fixed_dsl.hpp",
+    "16_fixed_dsl.hpp",
     "11_dsl.cuh",
     "12_environment.hpp",
 }

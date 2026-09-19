@@ -27,6 +27,10 @@ if not defined BUILD_RAN (
     echo Another build is already running in this folder. Wait for it to finish.
     exit /b 1
 )
+:: Launch the freshly built binary unless the caller asked us not to. Only
+:: now, with the lock let go: started inside it, the app inherited the lock's
+:: handle and held it for as long as it ran, so no build could run beside it.
+if "%BUILD_STATUS%"=="0" if /i not "%NOLAUNCH%"=="NOLAUNCH" start "" .\out\%PRESET%\ARC.exe
 exit /b %BUILD_STATUS%
 
 :build
@@ -73,9 +77,12 @@ del /q "out\%PRESET%\*.old" 2>nul
 :: producing the same bytes again (2026-09-09). The test is an append of nothing,
 :: which opens the file for writing without touching its bytes and fails exactly
 :: when the linker would.
-if exist "out\%PRESET%\ARC.exe" (
-    2>nul ( >>"out\%PRESET%\ARC.exe" call ) || (
-        ren "out\%PRESET%\ARC.exe" "ARC.exe.%RANDOM%.old" 2>nul
+:: arc_headless.exe too: a GUI benchmark runs it, one puzzle at a time.
+for %%E in (ARC arc_headless) do (
+    if exist "out\%PRESET%\%%E.exe" (
+        2>nul ( >>"out\%PRESET%\%%E.exe" call ) || (
+            ren "out\%PRESET%\%%E.exe" "%%E.exe.%RANDOM%.old" 2>nul
+        )
     )
 )
 
@@ -90,7 +97,4 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Launch the freshly built binary unless the caller asked us not to.
-if /i "%NOLAUNCH%"=="NOLAUNCH" exit /b 0
-start "" .\out\%PRESET%\ARC.exe
 exit /b 0

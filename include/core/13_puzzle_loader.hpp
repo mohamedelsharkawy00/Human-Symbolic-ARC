@@ -1,19 +1,19 @@
 #pragma once
+// Puzzles in: the ARC JSON files, parsed into a puzzle and read by inference.
+// Core, so it knows nothing about how a puzzle is shown -- the GUI builds its
+// own pictures from the puzzle this hands back.
 #include "12_environment.hpp"   // pulls in 7_infer.hpp: arc::infer(train) -> inference
 #include "9_log.hpp" // the per-puzzle readout, written after infer()
-#include "14_global_app_state.hpp"
-#ifdef _MSC_VER
-#include "18_gui.hpp"        // full GUI/Vulkan rendering
-#else
-#include "19_gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
-#endif
-#include "20_logger.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
+#include <string>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
@@ -93,64 +93,6 @@ inline grid parse_grid(const string &str, size_t &pos) {
   grid.height = r;
   grid.width = max_w;
   return grid;
-}
-
-inline void apply_solution(puzzle &task, puzzle_views &views,
-                           vector<int> &gpu_buffer, const string &sol_str, logger &log) {
-  // Re-import (or import onto a puzzle that loaded with a solved tree) would
-  // otherwise leak the whole prior node subtree.
-  if (task.best_tree) environment::remove(task.best_tree);
-  // A failed import must not read as solved, so the old verdict goes with the old tree.
-  task.is_solved = false;
-  task.is_test_solved = false;
-  task.best_tree = environment::parse(sol_str);
-  if (task.best_tree) {
-    task.best_node_count = environment::count_nodes(task.best_tree);
-
-    string tree_str = environment::stringify_tree_via_flat(task.best_tree);
-    // Straight from the kernel that scored it, so the printed sum IS the score.
-    auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
-      log.debug(t.say(tree_str, ei, phase));
-    };
-
-    // Evaluate and update GPU buffers
-    grid temp;
-    bool all_solved = true;
-    for (int i = 0; i < (int)task.train.size(); ++i) {
-      auto &ex = task.train[i];
-      gpu_score_terms terms;
-      auto [s, solved] = environment::score_tree_output(
-          task.best_tree, ex, temp, task, task.best_node_count, &terms);
-
-      log.debug(to_text("Example score: %s (Solved: %s)", shortest(s).c_str(), solved ? "YES" : "NO"));
-      log_score(i, terms, "import_train");
-
-      task.best_score(false, i) = s;
-      if (example_views *v = views.of(false, i))
-        update_display_buffer(v->best, temp, gpu_buffer);
-      if (!solved)
-        all_solved = false;
-    }
-
-    if (all_solved) {
-      task.is_solved = true;
-      bool test_all_solved = true;
-      for (int i = 0; i < (int)task.test.size(); ++i) {
-        auto &ex = task.test[i];
-        gpu_score_terms terms;
-        auto [s, solved] = environment::score_tree_output(
-            task.best_tree, ex, temp, task, task.best_node_count, &terms);
-        log_score(i, terms, "import_test");
-        task.best_score(true, i) = s;
-        if (example_views *v = views.of(true, i))
-          update_display_buffer(v->best, temp, gpu_buffer);
-        if (!solved) test_all_solved = false;
-      }
-      if (!task.test.empty() && test_all_solved) {
-        task.is_test_solved = true;
-      }
-    }
-  }
 }
 
 // One task pulled out of a big ARC challenges JSON: the task id plus the raw
@@ -269,31 +211,28 @@ inline map<string, vector<grid>> load_solutions_json(const string &json_path) {
   return solutions;
 }
 
-inline void init_gui_buffers(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars,
-                             display_grid &bg_grid) {
-  // Sized for: font atlas + 800x800 bg + 32 preview grids + 32*64 object
-  // preview slots + headroom for the largest puzzle's training data.
-  // Pre-reserve so init never reallocates (no contiguous-block hunts during
-  // startup; pointer stays put once GPU upload begins).
-  gpu_buffer.reserve(32 * 1024 * 1024);
-  load_font_atlas(gpu_buffer, chars);
-  bg_grid.width = 800;
-  bg_grid.height = 800;
-  bg_grid.at.stride = 800;
-  bg_grid.at.offset = (int)gpu_buffer.size();
-  gpu_buffer.resize(gpu_buffer.size() + 800 * 800, 11);
-}
+// Where a puzzle sits in the list it came from. Nothing reads it but the
+// header of the inference readout, which says "puzzle 7 of 1000, TRN".
+struct puzzle_label {
+  int idx = -1;
+  int count = 0;
+  int dataset_flags = 0;
+};
 
-// EVERYTHING INFERENCE SAYS, read once and kept on the puzzle. Held out of the
-// load itself because it is the expensive half: a puzzle nobody is looking at
-// and nobody is solving does not need it, and stepping through a thousand
-// puzzles should cost only the parse. Whoever needs the facts asks for them —
-// the pane when it opens, the search before it starts.
-inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
-                              int dataset_flags = 0) {
+// EVERYTHING INFERENCE SAYS, read once and kept on the puzzle, start to
+// finish in this one call: nothing a fact feeds is worked out anywhere else,
+// so nothing can be worked out before the fact it rests on. Never at load: a
+// puzzle nobody is looking at and nobody is solving does not need it, and
+// stepping through a thousand puzzles should cost only the parse. Whoever
+// needs the facts asks for them — the pane when it opens, the search before
+// it starts. The readout file is written only when asked for, since only a
+// person ever reads it.
+inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
+                              bool write_report = false) {
     task.inf = infer(task.train);
     const inference& inf = task.inf;
-    log_inference(task.id, inf, idx, count, dataset_flags);
+    if (write_report)
+        log_inference(task.id, inf, label.idx, label.count, label.dataset_flags);
     task.rule = inf.size;                              // size - across_input_output
     if (inf.colors.background_color >= 0)              // color - across_inputs
         task.invariant_colors[inf.colors.background_color] = true;  // (bg only - see CAVEAT)
@@ -326,23 +265,11 @@ inline void infer_into_puzzle(puzzle& task, int idx = -1, int count = 0,
 
 // Parse a single task from an in-memory JSON string `content` (which must
 // contain this task's "train"/"test" sections) into `out`, tagging it with
-// `id`. Shared by the per-file loader (load_single_puzzle) and the big
-// challenges-file loader (load_task_from_challenges). Returns true on success.
+// `id`. Nothing is read off it yet: that is infer_into_puzzle, asked for
+// separately. Returns true on success; on failure `out` is an empty puzzle.
 inline bool load_task_from_content(const string &content, const string &id,
-                                   puzzle &out, puzzle_views &views,
-                                   vector<int> &gpu_buffer,
-                                   size_t base_gpu_buffer_size,
-                                   const vector<grid> *test_solutions = nullptr,
-                                   int idx = -1, int count = 0, int dataset_flags = 0,
-                                   bool with_inference = true) {
-  // Truncate the GPU buffer back to the base size to drop any old puzzle data
-  gpu_buffer.resize(base_gpu_buffer_size);
-  // The views point INTO the part just dropped, so they go with it -- here,
-  // beside the puzzle they describe, rather than further down where the parse
-  // starts: every early return between the two would leave them naming cells
-  // that are no longer in the buffer.
-  views.train.clear();
-  views.test.clear();
+                                   puzzle &out,
+                                   const vector<grid> *test_solutions = nullptr) {
   // puzzle has a raw node* best_tree; the compiler-generated dtor won't free
   // it, so we have to release it explicitly before overwriting.
   if (out.best_tree) environment::remove(out.best_tree);
@@ -373,10 +300,8 @@ inline bool load_task_from_content(const string &content, const string &id,
       return content.size();
     };
 
-    // The pair goes into out_vec, where its cells landed goes into view_vec, one
-    // entry each, same index. Nothing about drawing reaches the example itself.
     auto parse_examples = [&](size_t start, size_t end, vector<example> &out_vec,
-                              vector<example_views> &view_vec, bool is_train) {
+                              bool is_train) {
       size_t csr = start;
       while (csr < end) {
         size_t in_pos = content.find("\"input\"", csr);
@@ -387,15 +312,12 @@ inline bool load_task_from_content(const string &content, const string &id,
 
         if (in_g.width > MAX_GRID_DIM || in_g.height > MAX_GRID_DIM) {
           out_vec.clear();
-          view_vec.clear();
           return;
         }
         csr = in_pos;
 
         example ex;
-        example_views view;
         ex.input = in_g;
-        view.input = upload_grid(in_g, gpu_buffer);
 
         size_t out_pos = content.find("\"output\"", csr);
         bool has_output = (out_pos != string::npos && out_pos < end);
@@ -407,11 +329,9 @@ inline bool load_task_from_content(const string &content, const string &id,
           if (out_g.width > 0) {
             if (out_g.width > MAX_GRID_DIM || out_g.height > MAX_GRID_DIM) {
               out_vec.clear();
-              view_vec.clear();
               return;
             }
             ex.output = out_g;
-            view.output = upload_grid(out_g, gpu_buffer);
           } else {
             ex.output.width = 0;
           }
@@ -424,38 +344,20 @@ inline bool load_task_from_content(const string &content, const string &id,
         // attach it here so it behaves exactly like an inline output: scored,
         // distance-mapped, and able to light up "TEST SET SOLVED". One solution
         // grid per test input, in order (out_vec.size() == this example's index).
-        bool has_solution = false;
         if (!is_train && !has_output && test_solutions &&
             out_vec.size() < test_solutions->size()) {
           const grid &sol = (*test_solutions)[out_vec.size()];
-          if (sol.width > 0 && sol.width <= MAX_GRID_DIM && sol.height <= MAX_GRID_DIM) {
+          if (sol.width > 0 && sol.width <= MAX_GRID_DIM && sol.height <= MAX_GRID_DIM)
             ex.output = sol;
-            view.output = upload_grid(sol, gpu_buffer);
-            has_solution = true;
-          }
         }
 
-        view.current = allocate_empty_grid(gpu_buffer);
-        view.best = allocate_empty_grid(gpu_buffer);
-
         out_vec.push_back(ex);
-        view_vec.push_back(view);
       }
     };
 
-    parse_examples(train_start, get_section_end(train_start), task.train, views.train, true);
-    parse_examples(test_start, get_section_end(test_start), task.test, views.test, false);
+    parse_examples(train_start, get_section_end(train_start), task.train, true);
+    parse_examples(test_start, get_section_end(test_start), task.test, false);
 
-    // WHAT LOOKING AT THE PUZZLE SAID. infer() reads every invariant off the
-    // examples and hands back one `inference` object, and the puzzle KEEPS it.
-    // Nothing is copied out of it: what the search reads and what the kernel is
-    // given are both read off the object itself, so a new fact needs no line
-    // adding anywhere to reach them. It used to be copied field by field, which
-    // meant a fact only arrived if somebody remembered its copy line, and a
-    // forgotten one arrived as a zero without saying so.
-    if (with_inference) infer_into_puzzle(task, idx, count, dataset_flags);
-    // NOT yet migrated — still computed by the engine directly:
-    environment::detect_target_objects(task);
     out = std::move(task);
     return true;
   } catch (...) {
@@ -463,18 +365,84 @@ inline bool load_task_from_content(const string &content, const string &id,
   return false;
 }
 
-// Per-task loader: parses one challenge_task sliced from a big challenges JSON
-// (via load_challenges_json). Thin wrapper over load_task_from_content; no file
-// IO — the JSON was already read once when the whole task set was sliced.
-inline bool load_single_puzzle(const challenge_task &task, puzzle &out,
-                               puzzle_views &views, vector<int> &gpu_buffer,
-                               size_t base_gpu_buffer_size,
-                               const vector<grid> *test_solutions = nullptr,
-                               int idx = -1, int count = 0, int dataset_flags = 0,
-                               bool with_inference = true) {
-  return load_task_from_content(task.content, task.id, out, views, gpu_buffer,
-                                base_gpu_buffer_size, test_solutions,
-                                idx, count, dataset_flags, with_inference);
+// WHICH PUZZLES. The three competition sets share one layout on disk, the same
+// on Kaggle and in this folder (kaggle/input/...), plus the local fixtures.
+//   - training:   1000 tasks (has answer keys) — dev / mining.
+//   - evaluation:  120 tasks (unseen, has answer keys) — honest local score.
+//   - test:        240 tasks (the competition set, no solutions) — submission.
+// A bitmask, because the GUI can check several at once.
+enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4, DS_CUSTOM = 8 };
+constexpr int DS_ALL = DS_TRAIN | DS_EVAL | DS_TEST | DS_CUSTOM;
+
+// A dataset by the name a person types, or 0 for a name that is none of them.
+inline int dataset_from_name(const string &name) {
+  if (name == "train") return DS_TRAIN;
+  if (name == "eval") return DS_EVAL;
+  if (name == "test") return DS_TEST;
+  if (name == "custom") return DS_CUSTOM;
+  return 0;
+}
+
+// The tasks of every checked set, concatenated, and every answer key found
+// beside them. Custom fixtures come first. Duplicate ids across sets are
+// dropped (first checked set wins), so an index into `tasks` names one puzzle.
+struct task_set {
+  vector<challenge_task> tasks;
+  map<string, vector<grid>> solutions;
+
+  // Ground-truth test outputs for a task id, or nullptr when none are loaded
+  // (no solutions file, or this id isn't in it).
+  const vector<grid> *solutions_for(const string &id) const {
+    auto it = solutions.find(id);
+    return it != solutions.end() ? &it->second : nullptr;
+  }
+};
+
+// THE FOLDER HOLDING kaggle/input, found by walking up from `start`. This repo
+// mirrors Kaggle's layout, so one answer serves both: from out/x64-Release it
+// is the repo, from /kaggle/working it is "/". Empty when there is none.
+inline filesystem::path find_data_root(filesystem::path start) {
+  for (auto p = start; ; p = p.parent_path()) {
+    if (filesystem::exists(p / "kaggle" / "input")) return p;
+    if (p == p.parent_path()) return {};
+  }
+}
+
+// Every path is relative to the data root, which both mains make the current
+// directory before asking.
+inline task_set load_task_set(int flags) {
+  const string kaggle_dir = "kaggle/input/competitions/arc-prize-2026-arc-agi-2/";
+  struct set_info { int flag; const char *stem; };
+  static const set_info sets[] = {
+      {DS_TRAIN, "arc-agi_training_challenges.json"},
+      {DS_EVAL,  "arc-agi_evaluation_challenges.json"},
+      {DS_TEST,  "arc-agi_test_challenges.json"},
+  };
+
+  task_set out;
+  set<string> seen;
+  if (flags & DS_CUSTOM) {
+    for (auto &task : load_custom_puzzles("tests/puzzles"))
+      if (seen.insert(task.id).second) out.tasks.push_back(std::move(task));
+  }
+  for (const set_info &s : sets) {
+    if (!(flags & s.flag)) continue;
+    string challenges_json = kaggle_dir + s.stem;
+    for (auto &t : load_challenges_json(challenges_json))
+      if (seen.insert(t.id).second)
+        out.tasks.push_back(std::move(t));
+
+    // Ground-truth answers: sibling file with "_challenges" -> "_solutions".
+    // Missing (e.g. the competition test set) just yields no answers.
+    string solutions_json = challenges_json;
+    if (size_t at = solutions_json.rfind("_challenges"); at != string::npos)
+      solutions_json.replace(at, sizeof("_challenges") - 1, "_solutions");
+    for (auto &kv : load_solutions_json(solutions_json))
+      out.solutions.emplace(kv.first, std::move(kv.second));
+  }
+  std::fprintf(stderr, "dataset flags %d: %zu tasks, %zu solutions\n",
+               flags, out.tasks.size(), out.solutions.size());
+  return out;
 }
 
 }

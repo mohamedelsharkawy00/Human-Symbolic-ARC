@@ -1,6 +1,10 @@
 #pragma once
+// Everything the GUI remembers between frames: what the person has switched
+// on, where the panes are, and the pictures it keeps of the solver's work.
 #include "12_environment.hpp"
-#include "13_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
+#include "14_solver_log.hpp"    // search_progress, format_elapsed
+#include "21_search_stream.hpp" // preview_payload
+#include "22_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -42,16 +46,6 @@ inline double settings_double(const unordered_map<string, string>& kv, const str
 	auto it = kv.find(key);
 	return it == kv.end() ? fallback : atof(it->second.c_str());
 }
-
-// Shared time formatter: seconds → "HH:MM:SS.ssss"
-inline string format_elapsed(double t) {
-	int h = (int)t / 3600;
-	int m = ((int)t % 3600) / 60;
-	double s = t - h * 3600 - m * 60;
-	return to_text("%02d:%02d:%07.4f", h, m, s);
-}
-
-struct node; // Forward declaration
 
 enum class logging_mode { none, stream };
 // op_role lives beside the op list in 11_dsl.cuh — it is what an op DOES. The
@@ -165,43 +159,21 @@ struct pick_zone {
 	atomic<int>* which;
 	int value;
 };
+// THE GUI'S SIDE OF THE SEARCH: which puzzle is up, and the pictures kept of
+// the search. `search` is this side's copy of its counters, kept up to date
+// from what the search's process says; its mutex guards the puzzle, and this
+// side's pictures with it.
 struct solver_state {
-	mutable mutex mtx;
+	search_progress &search;
+	explicit solver_state(search_progress &s) : search(s) {}
 	atomic<int> puzzle_idx = -1;
-	node *current_tree = nullptr;
-	atomic<long long> attempts{0}; // Attempts
-	// Nanoseconds the worker has spent waiting on the GPU. Read by the render
-	// thread: attempts alone cannot tell a running kernel from a stall.
-	// gpu_wait_since is the start of the wait in progress (0 = not waiting).
-	// Without it a long wait posts its whole duration to the single frame it
-	// ends on, which reads as more than 100% busy.
-	atomic<long long> gpu_wait_ns{0};
-	atomic<long long> gpu_wait_since{0};
-	atomic<long long> gpu_wait_count{0};
 
-	// Total GPU wait including the part not yet finished.
-	long long gpu_wait_now() const {
-		long long since = gpu_wait_since.load();
-		long long live = since ? chrono::duration_cast<chrono::nanoseconds>(
-			chrono::steady_clock::now().time_since_epoch()).count() - since : 0;
-		return gpu_wait_ns.load() + (live > 0 ? live : 0);
-	}
-	atomic<int> current_max_depth{1};
-	atomic<int> current_attempt_depth{0};
-	atomic<int> current_attempt_nodes{0};
-	chrono::steady_clock::time_point start_time{chrono::steady_clock::now()};
-
-	// Hover preview: cache of subtree outputs per example, keyed by node hash.
-	// Cleared on puzzle change. preview_grids is a fixed pool of GPU display
-	// slots, one per example row, reused to show whichever subtree is hovered.
-	// preview_object_grids is a 2D pool [example][object_slot] used to display
-	// the object list produced by the hovered op (one mini-grid per object).
-	struct preview_payload {
-		struct bbox { int x0, y0, x1, y1, canvas_w, canvas_h; };
-		vector<grid> accumulators;       // size = #examples
-		vector<vector<grid>> object_lists; // [example][object] CPU-side payload
-		vector<vector<bbox>> object_bboxes; // [example][object] world bbox + tile canvas dims
-	};
+	// Hover preview: what the hovered program paints on every example, keyed
+	// by its node hash. Only the search's process can run a program, so the
+	// frame names the one it wants (preview_wanted, preview_program) and the
+	// answer lands in the cache when it comes back. preview_grids is a fixed
+	// pool of GPU display slots, one per example row; preview_object_grids is a
+	// 2D pool [example][object_slot] for the object list the hovered op held.
 	mutable unordered_map<uint64_t, preview_payload> preview_cache;
 	mutable vector<display_grid> preview_grids;
 	mutable vector<vector<display_grid>> preview_object_grids;
@@ -211,11 +183,13 @@ struct solver_state {
 	puzzle_views views;
 	mutable uint64_t preview_uploaded_hash = 0;
 	mutable int preview_last_puzzle_idx = -1;
+	mutable uint64_t preview_wanted = 0;
+	mutable string preview_program;
 };
 
 struct global_app_state {
 	atomic<bool> needs_upload{false};
-	atomic<bool> is_paused{true};  // start paused (no auto-solve); headless sets this explicitly too
+	atomic<bool> is_paused{true};  // start paused (no auto-solve)
 	atomic<bool> show_op_list{false}; // overlay: palette of every DSL op (drag its handle open)
 	// Overlay: what inference read off the puzzle. Show it, step the coarseness,
 	// walk the lines and pieces. Keys live in key_to_action, buttons in the pane.
@@ -250,25 +224,16 @@ struct global_app_state {
 	atomic<int> op_drawer_h{0};      // current drawer height (dragged); 0 = use default
 	atomic<int> op_drawer_h_max{0};  // max height (grid-label row), published for drag clamp
 	atomic<bool> gui_minimized{false};
-	// Pin color-literal ops (AddColor/Recolor/RemoveColor/InteriorColor) to the
-	// colors that side of the puzzle actually shows, during candidate
-	// generation — collapses the 10x literal fan-out. Behavioral change, so it's
-	// a toggle: off = try all 10 colors (original behavior) for A/B + safe revert.
-	atomic<bool> pin_color_literals{true};
-	// Search a SENTENCE at a time instead of an op at a time: every candidate is
-	// a whole (GET SELECT ACT COMBINE), so every candidate has painted and can be
-	// scored honestly. Off = the op-at-a-time beam, for A/B.
-	atomic<bool> sentence_search{true};
 	atomic<bool> needs_resize{false};
 	atomic<bool> stop_threads{false};
 	atomic<logging_mode> log_mode{logging_mode::none};
 	chrono::steady_clock::time_point pause_start_time{chrono::steady_clock::now()};
 
-	// Currently loaded dataset selection (bitmask of beam_solver::dataset_flag),
+	// Currently loaded dataset selection (bitmask of dataset_flag),
 	// mirrored from the solver so the GUI checkmarks can render their state.
 	atomic<int> dataset_flags{0};
 
-	// Benchmark mode
+	// Benchmark mode: the switch, and what a run is asked for (30_benchmark.hpp).
 	atomic<bool> is_benchmarking{false};
 	double benchmark_timeout_seconds{10.0};
 	int benchmark_puzzle_limit{10};
@@ -279,23 +244,6 @@ struct global_app_state {
 	atomic<int> benchmark_test_solved{0};
 	atomic<double> benchmark_total_aps{0.0};
 	atomic<chrono::steady_clock::time_point> benchmark_start_time{};
-
-	// Benchmark loop control state (puzzle-walk FSM, main thread only)
-	struct benchmark_runner {
-		atomic<bool> started{false};
-		atomic<bool> waiting_for_advance{false};
-		atomic<int> last_idx{-1};
-		// Index of the puzzle we most recently recorded. Guards against recording
-		// the same puzzle twice when a finish (solve/timeout) is observed on more
-		// than one loop iteration before the solver thread swaps in the next one.
-		atomic<int> recorded_idx{-1};
-		void reset() {
-			started.store(false);
-			waiting_for_advance.store(false);
-			last_idx.store(-1);
-			recorded_idx.store(-1);
-		}
-	} benchmark;
 
 	// Puzzle-ID inline editor. When `active`, keystrokes append to `buffer`
 	// (instead of triggering the normal hotkeys) and the ID field renders the
@@ -375,15 +323,15 @@ inline void apply_settings(global_app_state& app, const unordered_map<string, st
 	app.inference_left_over.at.store(settings_int(kv, "inference_left_over", SHOW_OFF));
 }
 
-inline float get_elapsed(const global_app_state &app, const solver_state &state) {
+inline float get_elapsed(const global_app_state &app, const search_progress &search) {
 	if (app.is_paused) {
 	  // pause_start_time and start_time are initialized independently at
 	  // construction, so before the solver has ever run (e.g. start-paused)
 	  // their difference can be slightly negative. Clamp to 0.
-	  float paused_elapsed = chrono::duration<float>(app.pause_start_time - state.start_time).count();
+	  float paused_elapsed = chrono::duration<float>(app.pause_start_time - search.start_time).count();
 	  return paused_elapsed > 0.0f ? paused_elapsed : 0.0f;
 	}
-	return chrono::duration<float>(chrono::steady_clock::now() - state.start_time).count();
+	return chrono::duration<float>(chrono::steady_clock::now() - search.start_time).count();
 }
 
 }

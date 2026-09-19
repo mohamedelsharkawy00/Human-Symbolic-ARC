@@ -1,8 +1,7 @@
 #pragma once
 // How a grid is laid out inside gpu_buffer, the cell buffer the Vulkan shader
-// draws from. The CUDA solver never reads it. It lives in its own file because
-// 23_solver_beam.hpp calls these whether or not there is a screen, so the headless
-// Kaggle build (19_gui_stub.hpp) needs them too and writes into a buffer nobody draws.
+// draws from. The solver never sees it: it says what it painted, and the GUI
+// copies that in here (29_solver_session.hpp).
 #include "12_environment.hpp"
 #include <algorithm>
 #include <cstring>
@@ -48,8 +47,8 @@ struct example_views {
 struct puzzle_views {
   vector<example_views> train, test;
 
-  // Empty until a puzzle is loaded, and absent entirely in a headless run, so
-  // every reader asks rather than indexes blind.
+  // Empty until a puzzle is loaded, so every reader asks rather than indexes
+  // blind.
   example_views *of(bool is_test, size_t i) {
     vector<example_views> &side = is_test ? test : train;
     return i < side.size() ? &side[i] : nullptr;

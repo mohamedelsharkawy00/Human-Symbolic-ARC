@@ -1,6 +1,6 @@
 #pragma once
 
-// This header is included from 23_solver_beam.hpp AFTER 12_environment.hpp and 11_dsl.cuh,
+// This header is included from 15_solver_beam.hpp AFTER 12_environment.hpp and 11_dsl.cuh,
 // so arc:: types (grid, example, output_dimension_rule, flat_program, etc.) are already available.
 // Do NOT include 12_environment.hpp here to avoid circular dependencies.
 //
@@ -139,7 +139,7 @@ static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
 
 // =====================================================================
 // Bridge functions (depend on 12_environment.hpp types: flat_program, example, output_dimension_rule, grid)
-// These are placed at the end because 24_fixed_dsl.hpp is included after 12_environment.hpp.
+// These are placed at the end because 16_fixed_dsl.hpp is included after 12_environment.hpp.
 // =====================================================================
 
 // --- Convert flat_program (node_type) to gpu_flat_op array ---

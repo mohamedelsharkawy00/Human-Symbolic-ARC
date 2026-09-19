@@ -6,6 +6,8 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <vector>
 #include <windows.h>
 #undef TRANSPARENT  // conflicts with the 1_readings.hpp sentinel
 // OS specific window and power management helpers
@@ -212,9 +214,177 @@ inline void enforce_memory_limit() {
 		info.BasicLimitInformation.MaximumWorkingSetSize = ws_max_gb * GB;
 	}
 
+	// Every search runs in a child of this process (search_process below), and
+	// a child is in its parent's job, under the same limits. Closing the job
+	// kills it -- and the job closes as this process ends, however it ends,
+	// so no search outlives the window it belongs to.
+	flags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
 	info.BasicLimitInformation.LimitFlags = flags;
 	SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
 	AssignProcessToJobObject(job, GetCurrentProcess());
+}
+
+// A CHILD PROCESS SPOKEN TO BY LINES: what it is sent goes to its stdin, what
+// it says comes back from its stdout a line at a time. Every search the GUI
+// shows is one of these (arc_headless --serve), so ending a search is ending a
+// process, which takes everything it held with it. Its stderr goes to `errors`,
+// kept apart so an error cannot land in the middle of one of its lines.
+class search_process {
+public:
+  search_process() = default;
+  search_process(const search_process &) = delete;
+  search_process &operator=(const search_process &) = delete;
+  ~search_process() { kill(); }
+
+  bool start(std::wstring command_line, const std::filesystem::path &errors) {
+    kill();
+    SECURITY_ATTRIBUTES inheritable{sizeof(inheritable), nullptr, TRUE};
+    HANDLE child_in = nullptr, child_out = nullptr;
+    if (!CreatePipe(&child_in, &m_to_child, &inheritable, 1 << 16)) return false;
+    if (!CreatePipe(&m_from_child, &child_out, &inheritable, 1 << 20)) {
+      CloseHandle(child_in);
+      close_all();
+      return false;
+    }
+    HANDLE child_err = CreateFileW(errors.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inheritable,
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    SetHandleInformation(m_to_child, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(m_from_child, HANDLE_FLAG_INHERIT, 0);
+
+    // Only its own three ends are inherited: the command port's socket, for
+    // one, stays with this process.
+    HANDLE inherit[3] = {child_in, child_out, child_err};
+    const DWORD inherit_count = child_err == INVALID_HANDLE_VALUE ? 2 : 3;
+    SIZE_T list_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &list_size);
+    std::vector<char> list_storage(list_size);
+    auto *attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(list_storage.data());
+    if (!attributes || !InitializeProcThreadAttributeList(attributes, 1, 0, &list_size)) {
+      CloseHandle(child_in);
+      CloseHandle(child_out);
+      if (child_err != INVALID_HANDLE_VALUE) CloseHandle(child_err);
+      close_all();
+      return false;
+    }
+    UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit,
+                              inherit_count * sizeof(HANDLE), nullptr, nullptr);
+
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = child_in;
+    startup.StartupInfo.hStdOutput = child_out;
+    startup.StartupInfo.hStdError = child_err == INVALID_HANDLE_VALUE ? nullptr : child_err;
+    PROCESS_INFORMATION child{};
+    const bool started = CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, TRUE,
+                                        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+                                        nullptr, nullptr, &startup.StartupInfo, &child);
+    DeleteProcThreadAttributeList(attributes);
+    // Only the child holds these now, so its pipes close when it exits.
+    CloseHandle(child_in);
+    CloseHandle(child_out);
+    if (child_err != INVALID_HANDLE_VALUE) CloseHandle(child_err);
+    if (!started) {
+      close_all();
+      return false;
+    }
+    CloseHandle(child.hThread);
+    m_process = child.hProcess;
+    return true;
+  }
+
+  bool started() const { return m_process != nullptr; }
+
+  // One line to its stdin. A child that has gone just does not hear it.
+  void send(const std::string &line) {
+    if (!m_to_child) return;
+    std::string text = line + "\n";
+    DWORD wrote = 0;
+    WriteFile(m_to_child, text.data(), (DWORD)text.size(), &wrote, nullptr);
+  }
+
+  // Hands each complete line it has said to `on_line`. False once it has
+  // exited and everything it said has been read.
+  template <typename Fn> bool poll(Fn &&on_line) {
+    if (!m_from_child) return false;
+    for (;;) {
+      DWORD waiting = 0;
+      if (!PeekNamedPipe(m_from_child, nullptr, 0, nullptr, &waiting, nullptr)) return false;
+      if (waiting == 0) return true;
+      if (m_chunk.size() < waiting) m_chunk.resize(waiting);
+      DWORD got = 0;
+      if (!ReadFile(m_from_child, m_chunk.data(), waiting, &got, nullptr) || got == 0) return false;
+      m_pending.append(m_chunk.data(), got);
+      size_t from = 0;
+      for (size_t end; (end = m_pending.find('\n', from)) != std::string::npos; from = end + 1) {
+        std::string one = m_pending.substr(from, end - from);
+        if (!one.empty() && one.back() == '\r') one.pop_back();
+        on_line(one);
+      }
+      m_pending.erase(0, from);
+    }
+  }
+
+  // Waits for it to end by itself, at most `ms`.
+  bool wait(DWORD ms) {
+    return !m_process || WaitForSingleObject(m_process, ms) == WAIT_OBJECT_0;
+  }
+
+  void kill() {
+    if (m_process) {
+      TerminateProcess(m_process, 1);
+      WaitForSingleObject(m_process, INFINITE);
+    }
+    close_all();
+  }
+
+private:
+  void close_all() {
+    for (HANDLE *h : {&m_process, &m_to_child, &m_from_child})
+      if (*h) {
+        CloseHandle(*h);
+        *h = nullptr;
+      }
+    m_pending.clear();
+  }
+
+  HANDLE m_process = nullptr;
+  HANDLE m_to_child = nullptr;
+  HANDLE m_from_child = nullptr;
+  std::string m_pending;
+  std::vector<char> m_chunk;
+};
+
+// How much of the card is already spoken for. Anything resident that is not
+// ours -- a game, a second app, a browser -- shows up here, and makes timings
+// from this run incomparable to an uncontended one. Read through NVML, which
+// the driver ships, because the GUI creates no CUDA context to ask with.
+struct gpu_usage {
+  unsigned long long used_mb = 0;
+  unsigned long long total_mb = 0;
+  int used_percent = 0;
+};
+
+inline gpu_usage read_gpu_usage() {
+  struct nvml_memory { unsigned long long total, free, used; };
+  using init_fn = int (*)();
+  using handle_fn = int (*)(unsigned, void **);
+  using memory_fn = int (*)(void *, nvml_memory *);
+  static HMODULE nvml = LoadLibraryW(L"nvml.dll");
+  static auto init = nvml ? (init_fn)(void *)GetProcAddress(nvml, "nvmlInit_v2") : nullptr;
+  static auto device = nvml ? (handle_fn)(void *)GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex_v2") : nullptr;
+  static auto memory = nvml ? (memory_fn)(void *)GetProcAddress(nvml, "nvmlDeviceGetMemoryInfo") : nullptr;
+  static const bool ready = init && device && memory && init() == 0;
+
+  gpu_usage usage;
+  void *gpu = nullptr;
+  nvml_memory m{};
+  if (!ready || device(0, &gpu) != 0 || memory(gpu, &m) != 0 || m.total == 0) return usage;
+  usage.used_mb = m.used / (1024ull * 1024ull);
+  usage.total_mb = m.total / (1024ull * 1024ull);
+  usage.used_percent = (int)(100ull * m.used / m.total);
+  return usage;
 }
 
 }

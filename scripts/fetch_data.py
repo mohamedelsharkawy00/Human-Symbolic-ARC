@@ -16,7 +16,7 @@ Output : kaggle/input/competitions/arc-prize-2026-arc-agi-2/
 
 The public files carry test answers; a challenges file must not, so the answers
 are split out into the matching solutions file -- the shape the loader expects
-(load_challenges_json / load_solutions_json in include/22_puzzle_loader.hpp).
+(load_challenges_json / load_solutions_json in include/core/13_puzzle_loader.hpp).
 
 The test file is a STAND-IN: Kaggle swaps in the real hidden 240 at scoring
 time. Locally it is the first 240 training ids with their answers removed,
