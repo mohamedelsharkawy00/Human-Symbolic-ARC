@@ -1,13 +1,13 @@
 #pragma once
-#include "environment.hpp"   // pulls in 7_infer.hpp: arc::infer(train) -> inference
+#include "12_environment.hpp"   // pulls in 7_infer.hpp: arc::infer(train) -> inference
 #include "9_log.hpp" // the per-puzzle readout, written after infer()
-#include "global_app_state.hpp"
+#include "14_global_app_state.hpp"
 #ifdef _MSC_VER
-#include "gui.hpp"        // full GUI/Vulkan rendering
+#include "18_gui.hpp"        // full GUI/Vulkan rendering
 #else
-#include "gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
+#include "19_gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
 #endif
-#include "logger.hpp"
+#include "20_logger.hpp"
 
 #include <cctype>
 #include <cstring>

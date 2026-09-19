@@ -1,27 +1,27 @@
 #pragma once
 
 #include <atomic>
-#include "environment.hpp"
-#include "global_app_state.hpp"
-#include "10_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via gui.hpp on Windows)
+#include "12_environment.hpp"
+#include "14_global_app_state.hpp"
+#include "11_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS (was pulled in via 18_gui.hpp on Windows)
 #ifdef _MSC_VER
-#include "gui.hpp"        // full GUI/Vulkan rendering
+#include "18_gui.hpp"        // full GUI/Vulkan rendering
 #else
-#include "gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
+#include "19_gui_stub.hpp"   // headless: GPU-buffer helpers only, no rendering
 #endif
-#include "logger.hpp"
+#include "20_logger.hpp"
 #ifdef _MSC_VER
-#include "os_utilities.hpp"  // Win32 window helpers; GUI-only
+#include "21_os_utilities.hpp"  // Win32 window helpers; GUI-only
 #endif
-#include "puzzle_loader.hpp"
-#include "sound_manager.hpp"
+#include "22_puzzle_loader.hpp"
+#include "17_sound_manager.hpp"
 
 #include <algorithm>
 #include <cstdio>    // std::fprintf (headless refuses an unset ARC_DATASET)
 #include <cstdlib>   // std::getenv (ARC_DATASET), std::exit
 #include <cstring>
 #include <filesystem>
-#include "text_format.hpp"
+#include "10_text_format.hpp"
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -1019,6 +1019,6 @@ private:
 
 }
 
-#include "fixed_dsl.hpp"
-#include "dsl_executor.hpp"
-#include "solver_executor.hpp"
+#include "24_fixed_dsl.hpp"
+#include "25_dsl_executor.hpp"
+#include "26_solver_executor.hpp"

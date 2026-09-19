@@ -8,7 +8,7 @@ namespace arc {
 
 	// The GPU pool must hold every object-list a max-depth program acquires
 	// (up to ~2 slots/op). If MAX_SEARCH_DEPTH grows past 24, bump
-	// GPU_KERNEL_POOL_SIZE in 10_dsl.cuh in lockstep or deep candidates get
+	// GPU_KERNEL_POOL_SIZE in 11_dsl.cuh in lockstep or deep candidates get
 	// silently mis-scored (clamp in gpu_acquire). See that note.
 	static_assert(GPU_KERNEL_POOL_SIZE >= 2 * MAX_SEARCH_DEPTH,
 		"GPU pool too small for max-depth programs; raise GPU_KERNEL_POOL_SIZE");

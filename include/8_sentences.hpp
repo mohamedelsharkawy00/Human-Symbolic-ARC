@@ -134,7 +134,7 @@ inline vector<string> programs_from(const said_reading& said) {
 // A PROGRAM READ BACK AS ITS SENTENCES, one to a row. What the pane draws and
 // what the log writes, so neither has to know how a program is spelled. A pick
 // can take several words, so a sentence ends at the word that closes it (the
-// combine role in 10_dsl.cuh), not after a count of them.
+// combine role in 11_dsl.cuh), not after a count of them.
 inline vector<string> sentences_of(const string& program) {
     static constexpr const char* const closers[] = {
         "Union", "Underlay", "Withhold", "Intersection", "Difference" };

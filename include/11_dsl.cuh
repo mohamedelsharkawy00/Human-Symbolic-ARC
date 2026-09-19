@@ -17,7 +17,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
-#include "text_format.hpp"  // to_text, for gpu_score_terms::say
+#include "10_text_format.hpp"  // to_text, for gpu_score_terms::say
 #include <cstddef>
 #include <cstdio>   // fprintf / stderr in pinned_vector::resize failure path
 #include <cstdlib>  // std::abort
@@ -98,7 +98,7 @@ public:
     const T& operator[](size_t i) const { return m_data[i]; }
 };
 
-// --- Domain constants: single home; environment.hpp derives its names from these ---
+// --- Domain constants: single home; 12_environment.hpp derives its names from these ---
 static constexpr int GPU_MAX_GRID = arc::MAX_GRID_DIM;
 static constexpr int GPU_GRID_CELLS = GPU_MAX_GRID * GPU_MAX_GRID;
 static constexpr int GPU_MAX_OPS = 64;
@@ -115,7 +115,7 @@ using gpu_packed_mask = arc::object_cells;
 #define GPU_MASK_HD ARC_HOST_DEVICE
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
-// debug/analysis breakdown in environment.hpp.
+// debug/analysis breakdown in 12_environment.hpp.
 static constexpr float GPU_SCORE_W_EXACT_MATCH = 1.0f;
 static constexpr float GPU_SCORE_W_HISTOGRAM = 1.0f;
 static constexpr float GPU_SCORE_W_DISTANCE_MAP = 0.1f;
@@ -408,8 +408,8 @@ inline constexpr bool needs_a_pick(node_type t) {
 // the clamp in gpu_acquire (cuda_solver.cu) and silently overwrite slot N-1 ->
 // corrupted scores for deep candidates (which the search DOES generate, up to
 // MAX_SEARCH_DEPTH). Sized to 2*MAX_SEARCH_DEPTH so no deep program clamps; this
-// header is GPU-only and must not pull in environment.hpp, so the value is a
-// literal — keep it >= 2*MAX_SEARCH_DEPTH (dsl_executor.hpp static_asserts it).
+// header is GPU-only and must not pull in 12_environment.hpp, so the value is a
+// literal — keep it >= 2*MAX_SEARCH_DEPTH (25_dsl_executor.hpp static_asserts it).
 static constexpr int GPU_KERNEL_MAX_OBJECTS = 32;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 

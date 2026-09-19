@@ -6,35 +6,35 @@
 2130       cuda_solver.cu                                      src
 1791       cpu_stacks_vtune.csv                                profiling\output
 1244       dsl_executor.hpp                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-1163       solver_executor.hpp                                 include
+1163       26_solver_executor.hpp                              include
 1076       solver_executor.hpp                                 CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
 843        environment.hpp                                     CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-774        gui.hpp                                             include
-752        environment.hpp                                     include
+774        18_gui.hpp                                          include
+752        12_environment.hpp                                  include
 666        analyze.py                                          profiling
 662        gui.hpp                                             CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-534        vulkan_context.hpp                                  include
+534        16_vulkan_context.hpp                               include
 527        vulkan_context.hpp                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-515        solver_beam.hpp                                     include
+515        23_solver_beam.hpp                                  include
 507        source_lines.csv                                    profiling\output
 392        solver_beam.hpp                                     CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
 350        analyze.cpython-313.pyc                             profiling\__pycache__
 350        context_values.cfg                                  profiling\output\vtune_results\config
 330        analyze.py                                          CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\profiling
-273        puzzle_loader.hpp                                   include
-260        fixed_dsl.hpp                                       include
-257        window_manager.hpp                                  include
+273        22_puzzle_loader.hpp                                include
+260        24_fixed_dsl.hpp                                    include
+257        30_window_manager.hpp                               include
 252        analysis_type.cfg                                   profiling\output\vtune_results\config
 245        puzzle_loader.hpp                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
 242        window_manager.hpp                                  CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
 233        line_counts.txt                                     scripts
 218        main.cpp                                            CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\src
-212        10_dsl.cuh                                        include
+212        11_dsl.cuh                                          include
 208        SESSION_HANDOUT.txt                                 notes
 208        main.cpp                                            src
 194        hotspots.txt                                        profiling\output
 128        sound_manager.hpp                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-128        sound_manager.hpp                                   include
+128        17_sound_manager.hpp                                include
 124        vert.glsl                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\src\shaders
 124        claude_session_summary_20260329.txt                 CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\5_misc
 118        vert.glsl                                           src\shaders
@@ -45,14 +45,14 @@
 97         fastest_benchmark_2026-03-30_12-28-59_PM.txt        notes
 96         backup.py                                           CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\scripts
 96         backup.py                                           scripts
-96         os_utilities.hpp                                    include
+96         21_os_utilities.hpp                                 include
 85         make_resources.py                                   CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\scripts
 85         make_resources.py                                   scripts
 84         os_utilities.hpp                                    CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
-82         global_app_state.hpp                                include
+82         14_global_app_state.hpp                             include
 78         search_strategies.txt                               CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\3_search
 78         SESSION_SUMMARY.md                                  notes
-78         logger.hpp                                          include
+78         20_logger.hpp                                       include
 78         search_strategies.txt                               notes\3_search
 77         let_var_p2_implementation.txt                       notes\2_dsl
 77         let_var_p2_implementation.txt                       CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\2_dsl
@@ -61,7 +61,7 @@
 70         generation_baking.txt                               notes
 68         CMakeLists.txt                                      .
 68         CMakeLists.txt                                      CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline
-65         dsl_executor.hpp                                    include
+65         25_dsl_executor.hpp                                 include
 57         global_app_state.hpp                                CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\include
 56         project_status 06-04-2026.txt                       notes\5_misc
 52         arch_concepts_p1_current.txt                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\notes\1_overall_design
@@ -158,7 +158,7 @@
 4          state.cfg                                           profiling\output\vtune_results\config
 3          mrtehelpers-2026.04.26-09h02m36s.17696.log          profiling\output\vtune_results\log
 2          NVIDIA Nsight Integration - NVIDIA Developer.url    notes\5_misc
-2          cuda_solver.cuh                                     include
+2          27_cuda_solver.cuh                                  include
 2          directory.xml                                       profiling\output\vtune_results\sqlite-db\timelinedb
 1          arc_logo.svg                                        assets
 1          a5313dff.txt                                        CHECKPOINT 30-03-2026 01-13-22 PM (ID 1560) Benchmark Baseline\solutions

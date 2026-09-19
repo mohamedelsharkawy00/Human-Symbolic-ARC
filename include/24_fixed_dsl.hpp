@@ -1,14 +1,14 @@
 #pragma once
 
-// This header is included from solver_beam.hpp AFTER environment.hpp and 10_dsl.cuh,
+// This header is included from 23_solver_beam.hpp AFTER 12_environment.hpp and 11_dsl.cuh,
 // so arc:: types (grid, example, output_dimension_rule, flat_program, etc.) are already available.
-// Do NOT include environment.hpp here to avoid circular dependencies.
+// Do NOT include 12_environment.hpp here to avoid circular dependencies.
 //
 // Contains: fixed-size grid/object types, segmentation helpers for puzzle upload,
 // and the fixed_init_context used by build_example_upload. All DSL execution is
 // handled by the GPU kernel in cuda_solver.cu.
 
-#include "10_dsl.cuh"
+#include "11_dsl.cuh"
 #include <cstring>
 #include <algorithm>
 
@@ -138,8 +138,8 @@ static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
 }
 
 // =====================================================================
-// Bridge functions (depend on environment.hpp types: flat_program, example, output_dimension_rule, grid)
-// These are placed at the end because fixed_dsl.hpp is included after environment.hpp.
+// Bridge functions (depend on 12_environment.hpp types: flat_program, example, output_dimension_rule, grid)
+// These are placed at the end because 24_fixed_dsl.hpp is included after 12_environment.hpp.
 // =====================================================================
 
 // --- Convert flat_program (node_type) to gpu_flat_op array ---

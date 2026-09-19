@@ -1,7 +1,8 @@
 #pragma once
-#include "global_app_state.hpp"
-#include "os_utilities.hpp"
-#include "sound_manager.hpp"
+#include "14_global_app_state.hpp"
+#include "21_os_utilities.hpp"
+#include "23_solver_beam.hpp"
+#include "17_sound_manager.hpp"
 #include <windows.h>
 #include <cctype>
 #include <cstdlib>   // std::getenv (ARC_W / ARC_H debug overrides)

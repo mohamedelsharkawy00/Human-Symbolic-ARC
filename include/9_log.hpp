@@ -20,7 +20,7 @@ using namespace std;
 // Dump EVERYTHING infer() read off the puzzle into logs/inference/<id>.txt
 // (one file per puzzle, rewritten on each load, so a walk across puzzles
 // keeps every reading). Called by puzzle_loader after infer(), so infer()
-// stays pure. Skipped headless, same reason as logger.hpp: Kaggle disk quota.
+// stays pure. Skipped headless, same reason as 20_logger.hpp: Kaggle disk quota.
 //
 // ONE FUNCTION PER SECTION, in the order they land in the file, so the section
 // a question is about is the only one that has to be read.

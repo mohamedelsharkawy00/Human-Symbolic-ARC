@@ -1,10 +1,10 @@
 #pragma once
-// Headless (non-MSVC / Kaggle) replacement for gui.hpp. The grid<->gpu_buffer
-// layout helpers live in grid_buffer.hpp, shared with the real GUI: solver_beam
+// Headless (non-MSVC / Kaggle) replacement for 18_gui.hpp. The grid<->gpu_buffer
+// layout helpers live in 13_grid_buffer.hpp, shared with the real GUI: solver_beam
 // calls them either way, so here they fill a buffer nothing ever draws. Only
 // load_font_atlas is dropped outright, becoming a no-op.
-// On MSVC the real gui.hpp is used instead; this file is non-MSVC only.
-#include "grid_buffer.hpp"
+// On MSVC the real 18_gui.hpp is used instead; this file is non-MSVC only.
+#include "13_grid_buffer.hpp"
 #include <map>
 
 namespace arc {

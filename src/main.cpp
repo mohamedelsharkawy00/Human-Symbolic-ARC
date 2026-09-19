@@ -1,8 +1,3 @@
-// First include on the GUI build: pulls winsock2.h, which must precede every
-// windows.h (solver_beam.hpp includes one) or the old Winsock wins.
-#ifdef _MSC_VER
-#include "command_server.hpp"
-#endif
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -12,19 +7,24 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include "cuda_solver.cuh"
-#include "global_app_state.hpp"
-#include "solver_beam.hpp"
-#include "submission.hpp"
-#include "text_format.hpp"
+// In number order, so the files are read in the order they are numbered.
+// 9_log is here for that alone: main calls nothing in it, but without it 8 and
+// 9 would be read late, when 18_gui and 22_puzzle_loader first include them.
+#include "9_log.hpp"
+#include "10_text_format.hpp"
+#include "14_global_app_state.hpp"
+#include "23_solver_beam.hpp"
+#include "27_cuda_solver.cuh"
+#include "28_submission.hpp"
 
 // Windows-only GUI/Vulkan/Win32 headers. The headless (Kaggle/gcc) build skips
 // these entirely; it runs the solver without a window or renderer.
 #ifdef _MSC_VER
-#include "os_utilities.hpp"
-#include "gui.hpp"
-#include "vulkan_context.hpp"
-#include "window_manager.hpp"
+#include "16_vulkan_context.hpp"
+#include "18_gui.hpp"
+#include "21_os_utilities.hpp"
+#include "29_command_server.hpp"
+#include "30_window_manager.hpp"
 #endif
 
 using namespace std;

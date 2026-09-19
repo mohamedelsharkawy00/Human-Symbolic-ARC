@@ -7,7 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <windows.h>
-#undef TRANSPARENT  // conflicts with environment.hpp sentinel
+#undef TRANSPARENT  // conflicts with the 1_readings.hpp sentinel
 // OS specific window and power management helpers
 
 namespace arc {

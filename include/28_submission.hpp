@@ -4,7 +4,7 @@
 
 // Kaggle submission.json writer (headless build only).
 //
-// The benchmark report (logger.hpp) only logs the PROGRAM found + stats, not
+// The benchmark report (20_logger.hpp) only logs the PROGRAM found + stats, not
 // the predicted grids -- so producing a submission is separate work: for each
 // finished puzzle we execute its best_tree on every test input to generate the
 // predicted output grid, and accumulate them in the competition format:
@@ -17,7 +17,7 @@
 //   - one list entry per test input, IN ORDER
 // A grid is a list-of-lists of ints 0-9.
 
-#include "environment.hpp"
+#include "12_environment.hpp"
 #include <string>
 #include <vector>
 #include <fstream>

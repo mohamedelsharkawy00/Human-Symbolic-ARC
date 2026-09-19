@@ -4,11 +4,11 @@
 // reply line ("ok ..." or "error ..."), connection closes. The first app takes
 // 2026 and each later one the next free port up. Pure transport:
 // what commands mean is decided by the handler wired up in main().
-// winsock2.h must precede windows.h, so include this header before the
-// other Win32 headers.
+// Any include order works: WIN32_LEAN_AND_MEAN (CMakeLists.txt) keeps
+// windows.h from bringing in the old winsock.h that winsock2.h clashes with.
 #include <winsock2.h>
 // winsock2.h pulls windows.h, whose GDI macro TRANSPARENT would shadow the
-// arc::TRANSPARENT constant in environment.hpp. Nothing here uses the macro.
+// arc::TRANSPARENT constant in 1_readings.hpp. Nothing here uses the macro.
 #undef TRANSPARENT
 #include <chrono>
 #include <ctime>
@@ -16,7 +16,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
-#include "text_format.hpp"
+#include "10_text_format.hpp"
 
 namespace arc {
 using namespace std;

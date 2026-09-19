@@ -1,9 +1,9 @@
 #pragma once
 // How a grid is laid out inside gpu_buffer, the cell buffer the Vulkan shader
 // draws from. The CUDA solver never reads it. It lives in its own file because
-// solver_beam.hpp calls these whether or not there is a screen, so the headless
-// Kaggle build (gui_stub.hpp) needs them too and writes into a buffer nobody draws.
-#include "environment.hpp"
+// 23_solver_beam.hpp calls these whether or not there is a screen, so the headless
+// Kaggle build (19_gui_stub.hpp) needs them too and writes into a buffer nobody draws.
+#include "12_environment.hpp"
 #include <algorithm>
 #include <cstring>
 #include <vector>

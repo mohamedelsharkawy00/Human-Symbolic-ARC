@@ -47,14 +47,15 @@ SRC_FILES = ["main.cpp", "cuda_solver.cu"]
 # The Windows-only ones (gui, command_server, window_manager, vulkan_context,
 # screenshot, os_utilities) are excluded because gcc never sees them.
 INC_FILES = [
-    # The numbered ones in the order they build on each other, 0 first.
-    "0_core_types.hpp", "1_readings.hpp", "2_background.hpp",
-    "3_correspondence.hpp", "4_infer.hpp", "5_sentences.hpp", "6_log.hpp",
-    "10_dsl.cuh", "cuda_solver.cuh", "dsl_executor.hpp", "environment.hpp",
-    "fixed_dsl.hpp", "global_app_state.hpp", "grid_buffer.hpp", "gui_stub.hpp",
-    "logger.hpp", "puzzle_loader.hpp", "solver_beam.hpp",
-    "solver_executor.hpp", "sound_manager.hpp", "submission.hpp",
-    "text_format.hpp",
+    # In number order, 0 first; the gaps are the Windows-only ones.
+    "0_core.hpp", "1_readings.hpp", "2_size.hpp", "3_background.hpp",
+    "4_objects.hpp", "5_matching.hpp", "6_correspondence.hpp", "7_infer.hpp",
+    "8_sentences.hpp", "9_log.hpp", "10_text_format.hpp", "11_dsl.cuh",
+    "12_environment.hpp", "13_grid_buffer.hpp", "14_global_app_state.hpp",
+    "17_sound_manager.hpp", "19_gui_stub.hpp", "20_logger.hpp",
+    "22_puzzle_loader.hpp", "23_solver_beam.hpp", "24_fixed_dsl.hpp",
+    "25_dsl_executor.hpp", "26_solver_executor.hpp", "27_cuda_solver.cuh",
+    "28_submission.hpp",
 ]
 
 def sync():
