@@ -83,5 +83,4 @@ struct output_dimension_rule {
     }
 };
 
-
 }  // namespace arc

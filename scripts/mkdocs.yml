@@ -1,0 +1,52 @@
+# MkDocs config for rendering the notes/ folder.
+site_name: Notes
+
+docs_dir: ../notes
+# Output goes in the project's build-output folder: ARC/out/notes_site/.
+site_dir: ../out/notes_site
+
+# Make all nav titles come from filenames (see title_hook.py).
+hooks:
+  - title_hook.py
+
+# Flat .html + relative links so the built site works by double-click (file://),
+# no server. (Search would need a server, so it's left off; use -Serve for it.)
+use_directory_urls: false
+
+# No explicit nav: MkDocs auto-builds the sidebar from the folder tree, so new
+# notes appear on rebuild with zero config. README.md becomes the home page.
+# (When all notes are .md, the sidebar will mirror the folders 1:1.)
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/weather-night, name: Light mode }
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/weather-sunny, name: Dark mode }
+  features:
+    # Collapsible folder tree that mirrors the real directory structure.
+    # (No navigation.sections / navigation.expand - those flatten the tree.)
+    - navigation.indexes
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc: { permalink: false }   # no ¶ anchor on heading hover
+
+plugins: []   # no search (needs a server); enable with -Serve
+
+# Custom CSS (widen sidebar, tighten nav indent). Lives in notes/stylesheets/.
+extra_css:
+  - stylesheets/extra.css
+
+# Auto-size the nav pane to the longest label, once on load. In notes/javascripts/.
+extra_javascript:
+  - javascripts/autosize_nav.js

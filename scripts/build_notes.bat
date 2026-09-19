@@ -6,8 +6,8 @@ REM
 REM Keep this window open while editing; close it (or Ctrl+C) to stop the server.
 setlocal
 
-set "MKDOCS=%~dp0..\notes\.mkdocs"
-set "CFG=%MKDOCS%\mkdocs.yml"
+set "MKDOCS=%~dp0"
+set "CFG=%MKDOCS%mkdocs.yml"
 set "NO_MKDOCS_2_WARNING=1"
 
 REM Uses the machine's Python, not a venv. Two packages are all this needs;

@@ -170,7 +170,6 @@ struct object {
 #pragma warning(pop)
 #endif
 
-
 // What counts as one object. The walk answers all three the same way, so no
 // two readings can disagree about which cells belong together.
 enum class grouping : int8_t {
