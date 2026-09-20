@@ -716,10 +716,10 @@ namespace arc {
 			// says whether they were ever meant to be used.
 			const auto& learned = p.inf.shape_color_map;
 			for (int i = 0; i < 16; ++i) {
-				ex.shape_color_keys[i] = learned.valid ? learned.keys[i] : 0;
-				ex.shape_color_vals[i] = learned.valid ? (int8_t)learned.colors[i] : (int8_t)0;
+				ex.shape_color_keys[i] = learned.holds() ? learned.keys[i] : 0;
+				ex.shape_color_vals[i] = learned.holds() ? (int8_t)learned.colors[i] : (int8_t)0;
 			}
-			ex.shape_color_count = learned.valid ? (int8_t)learned.count : (int8_t)0;
+			ex.shape_color_count = learned.holds() ? (int8_t)learned.count : (int8_t)0;
 
 			// The canvas the INPUT figures sit on — what segmentation excludes.
 			ex.background_color = p.inf.colors.background_color;

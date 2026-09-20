@@ -26,7 +26,7 @@ using namespace std;
 // Correspondences match objects from input to output and from output to input.
 
 // This structure collects the correspondences and summaries of the readings tried.
-struct correspondence_facts {
+struct correspondence_election {
     using object_info = object_segmentation::object_info;
     using edge = object_matching::edge;
 
@@ -78,12 +78,12 @@ struct correspondence_facts {
     // Total non-background cells in all training grids, used to normalize leftover counts.
     int cells = 0;
     // The selected segmentation, shared by all training pairs.
-    segmentation_methods segmentation = segmentation_methods::connected_monochrome;
+    segmentation_methods segmentation = segmentation_methods::unset;
     // Scores for each segmentation and permission combination.
     // Table index: segmentation * degrees_of_freedom::COMBINATIONS + allowed.index().
     struct reading {
         // Which segmentation, and what a match was allowed to change
-        segmentation_methods segmentation = segmentation_methods::connected_monochrome;
+        segmentation_methods segmentation = segmentation_methods::unset;
         degrees_of_freedom allowed;
         // How many objects the segmentation FOUND, and how many it USED â€” the log prints
         // them as "segmented into X, used Y"
@@ -106,11 +106,10 @@ struct correspondence_facts {
     // Cached results for every reading, in readings order.
     // pairs holds a copy of reading_pairs[chosen].
     vector<vector<pair_info>> reading_pairs;
-    bool valid = false;
 
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
-    static correspondence_facts infer(const vector<example>& train, int8_t background) {
+    static correspondence_election infer(const vector<example>& train, int8_t background) {
 
         // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
         // because every reading's leftovers are a share of it.
@@ -129,17 +128,17 @@ struct correspondence_facts {
 
         // Keep each reading score with its matched pairs to avoid repeating the search.
         struct scored_reading {
-            correspondence_facts::reading summary;
-            vector<correspondence_facts::pair_info> pairs;
+            correspondence_election::reading summary;
+            vector<correspondence_election::pair_info> pairs;
         };
         auto search_one = [&](const prepared_segmentation& prepared) {
             const auto& look = prepared.look;
             vector<scored_reading> pass;
             for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
                 const degrees_of_freedom allowed = degrees_of_freedom::from_index(packed);
-                correspondence_facts tried = detect_correspondence(
+                correspondence_election tried = detect_correspondence(
                     train, background, prepared, allowed);
-                correspondence_facts::reading scored;
+                correspondence_election::reading scored;
                 scored.segmentation = look.segmentation;
                 scored.allowed = allowed;
                 scored.objects_can_fit = look.objects_can_fit;
@@ -188,7 +187,7 @@ struct correspondence_facts {
         // Charge created or removed cells half price: their absence of a partner is known,
         // but the rule that creates or removes them is still unexplained.
         const double half_said = 0.5;
-        auto price_of = [&](const correspondence_facts::reading& one) {
+        auto price_of = [&](const correspondence_election::reading& one) {
             const double unsaid = (one.left_over - one.made - one.gone)
                                 + (one.made + one.gone) * half_said;
             return one.describe_cost + unsaid * spelling_out;
@@ -207,10 +206,10 @@ struct correspondence_facts {
         }
 
         // Store results in table order and record the winner separately.
-        correspondence_facts facts;
+        correspondence_election facts;
         facts.cells = facts_cells;
         facts.segmentation = passes[elected].front().summary.segmentation;
-        auto cell_of = [](const correspondence_facts::reading& one) {
+        auto cell_of = [](const correspondence_election::reading& one) {
             return (int)one.segmentation * degrees_of_freedom::COMBINATIONS + one.allowed.index();
         };
         facts.readings.resize((int)segmentation_methods::count * degrees_of_freedom::COMBINATIONS);
@@ -233,15 +232,14 @@ struct correspondence_facts {
             }
         }
         facts.pairs = facts.reading_pairs[facts.chosen];
-        facts.valid = true;
         return facts;
     }
 
 private:
     // Objects and grid-only scores shared by every permission combination.
     struct prepared_segmentation {
-        correspondence_facts::reading look;
-        vector<correspondence_facts::pair_info> pairs;
+        correspondence_election::reading look;
+        vector<correspondence_election::pair_info> pairs;
         vector<vector<object>> input_objects, output_objects;
         vector<int> step_width, step_height;
         vector<bool> read;
@@ -310,10 +308,10 @@ private:
 
     // 3. Follow one reading through the examples.
     // One reading: match each example, reconcile their evidence, then describe what survived.
-    static correspondence_facts detect_correspondence(const vector<example>& train, int8_t background,
+    static correspondence_election detect_correspondence(const vector<example>& train, int8_t background,
                                                        const prepared_segmentation& prepared,
                                                        degrees_of_freedom allowed) {
-        correspondence_facts facts;
+        correspondence_election facts;
         if (train.empty()) return facts;
         facts.pairs = prepared.pairs;
         facts.segmentation = prepared.look.segmentation;
@@ -323,14 +321,13 @@ private:
         reconcile_examples(train, background, prepared, allowed, facts);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.read[i]) summarize_pair(train, background, prepared, facts, i);
-        facts.valid = true;
         return facts;
     }
 
     // Match both directions, merge duplicate links, and record shared movements.
     static void match_one_pair(const vector<example>& train, int8_t background,
                                const prepared_segmentation& prepared, degrees_of_freedom allowed,
-                               correspondence_facts& facts, size_t pair_index,
+                               correspondence_election& facts, size_t pair_index,
                                const what_the_pairs_agreed* agreed) {
         const bool pattern_reading =
             facts.segmentation == segmentation_methods::minimal_repeating_set ||
@@ -352,7 +349,7 @@ private:
             const auto& from_objects = from_input ? input_objects : output_objects;
             const auto& into_objects = from_input ? output_objects : input_objects;
             const grid& into = from_input ? output : input;
-            vector<correspondence_facts::edge> edges, discarded;
+            vector<correspondence_election::edge> edges, discarded;
             vector<int8_t> discard_why;
             fit_verdict verdict;
             if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
@@ -386,23 +383,23 @@ private:
         // Prefer exact over recolored over overlap-only; ties prefer the forward match.
         // Matches without a target object stay separate.
         struct two_ends { int16_t on_input, on_output; };
-        auto both_ends = [](const correspondence_facts::edge& edge) {
+        auto both_ends = [](const correspondence_election::edge& edge) {
             return edge.from_input ? two_ends{ edge.from, edge.to }
                                    : two_ends{ edge.to, edge.from };
         };
-        auto joins_the_same = [&](const correspondence_facts::edge& left,
-                                  const correspondence_facts::edge& right) {
+        auto joins_the_same = [&](const correspondence_election::edge& left,
+                                  const correspondence_election::edge& right) {
             const two_ends mine = both_ends(left), theirs = both_ends(right);
             return mine.on_input >= 0 && mine.on_output >= 0 &&
                    mine.on_input == theirs.on_input &&
                    mine.on_output == theirs.on_output;
         };
-        auto claim_strength = [](const correspondence_facts::edge& edge) {
+        auto claim_strength = [](const correspondence_election::edge& edge) {
             return !edge.same_shape ? 0 : edge.exact ? 2 : 1;
         };
-        vector<correspondence_facts::edge> kept;
+        vector<correspondence_election::edge> kept;
         for (const auto& link : pair.edges) {
-            auto same = ranges::find_if(kept, [&](const correspondence_facts::edge& seen) {
+            auto same = ranges::find_if(kept, [&](const correspondence_election::edge& seen) {
                 return joins_the_same(link, seen); });
             if (same == kept.end()) { kept.push_back(link); continue; }
             const int mine = claim_strength(link), theirs = claim_strength(*same);
@@ -413,8 +410,8 @@ private:
 
         // Sort by source grid, source position, then target position for display.
         stable_sort(pair.edges.begin(), pair.edges.end(),
-                    [&](const correspondence_facts::edge& left,
-                        const correspondence_facts::edge& right) {
+                    [&](const correspondence_election::edge& left,
+                        const correspondence_election::edge& right) {
             if (left.from_input != right.from_input) return left.from_input;
             const auto& objects = left.from_input ? pair.input_info
                                                   : pair.output_info;
@@ -429,7 +426,7 @@ private:
         // Group equal input-to-output movements within this pair.
         // Count each input object once per movement, using its input color.
         // A backward positional correspondence needs an identifiable input object.
-        auto input_object_of = [&](const correspondence_facts::edge& edge) {
+        auto input_object_of = [&](const correspondence_election::edge& edge) {
             if (edge.from_input) return (int)edge.from;
             if (edge.to >= 0) return (int)edge.to;
             if (edge.hidden || edge.outside) return -1;
@@ -447,7 +444,7 @@ private:
             }
             return found;
         };
-        vector<correspondence_facts::pair_info::moved_together> moves;
+        vector<correspondence_election::pair_info::moved_together> moves;
         vector<vector<int>> who_moved;
         for (const auto& edge : pair.edges) {
             if (!edge.same_shape) continue;
@@ -481,15 +478,15 @@ private:
     // Let movements supported by all examples constrain ambiguous matches.
     static void reconcile_examples(const vector<example>& train, int8_t background,
                                    const prepared_segmentation& prepared, degrees_of_freedom allowed,
-                                   correspondence_facts& facts) {
+                                   correspondence_election& facts) {
         // Use a color to constrain matches only when every read pair has one shared,
         // nonzero movement for it. The movement may differ between pairs.
         // Return null when this pair has no such movement or has several.
         auto lone_move_of = [&](size_t which, int color) {
-            const correspondence_facts::pair_info::moved_together* only = nullptr;
+            const correspondence_election::pair_info::moved_together* only = nullptr;
             for (const auto& said : facts.pairs[which].agreed_moves) {
                 if (said.color != color || (!said.down && !said.across)) continue;
-                if (only) return (const correspondence_facts::pair_info::moved_together*)nullptr;
+                if (only) return (const correspondence_election::pair_info::moved_together*)nullptr;
                 only = &said;
             }
             return only;
@@ -535,7 +532,7 @@ private:
     // Describe the final links, unmatched objects, and unexplained cells of one pair.
     static void summarize_pair(const vector<example>& train, int8_t background,
                                const prepared_segmentation& prepared,
-                               correspondence_facts& facts, size_t pair_index) {
+                               correspondence_election& facts, size_t pair_index) {
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
@@ -544,7 +541,7 @@ private:
 
         // The two halves of the merged list, each in its own frame, so every
         // helper below stays the one-direction function it always was.
-        vector<correspondence_facts::edge> forward, backward;
+        vector<correspondence_election::edge> forward, backward;
         for (const auto& edge : pair.edges)
             (edge.from_input ? forward : backward).push_back(edge);
 
@@ -594,7 +591,7 @@ private:
         pair.discard_why.resize(still_refused);
 
         // Record the background region touched by each unmatched object on the other grid.
-        auto note_blanks = [&](vector<correspondence_facts::object_info>& info,
+        auto note_blanks = [&](vector<correspondence_election::object_info>& info,
                                const vector<object>& objects, const grid& other) {
             if (ranges::all_of(info, [](const auto& one) {
                     return one.has_partner; })) return;
@@ -649,11 +646,11 @@ private:
 
         // Find uncovered cells on both grids, counting recolored shape matches as coverage.
         auto unexplained = [&](const grid& one_grid,
-                               const vector<correspondence_facts::edge>& landing_here,
+                               const vector<correspondence_election::edge>& landing_here,
                                const vector<object>& their_objects,
                                const vector<object>& our_objects,
-                               const vector<correspondence_facts::object_info>& ours,
-                               const vector<correspondence_facts::edge>& leaving_here,
+                               const vector<correspondence_election::object_info>& ours,
+                               const vector<correspondence_election::edge>& leaving_here,
                                bool from_input) {
             // Mark cells actually covered by incoming shape matches.
             bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -714,8 +711,8 @@ private:
 
     // 4. Count what the final matches explain and describe the empty regions.
     // Count the matches starting from each source object.
-    static void count_edges_leaving(const vector<correspondence_facts::edge>& edges,
-                                    vector<correspondence_facts::object_info>& from_info) {
+    static void count_edges_leaving(const vector<correspondence_election::edge>& edges,
+                                    vector<correspondence_election::object_info>& from_info) {
         for (auto& one_object : from_info) one_object.edges_touching = 0;
         for (const auto& edge : edges)
             if (edge.from >= 0 && (size_t)edge.from < from_info.size()) {
@@ -725,9 +722,9 @@ private:
     }
 
     // Count the matches that overlap each target object.
-    static void count_edges_arriving(const vector<correspondence_facts::edge>& edges,
+    static void count_edges_arriving(const vector<correspondence_election::edge>& edges,
                                 const vector<object>& from_objects,
-                                vector<correspondence_facts::object_info>& into_info,
+                                vector<correspondence_election::object_info>& into_info,
                                 const vector<object>& into_objects) {
         for (const auto& edge : edges) {
             const grid footprint = object_matching::edge_footprint(edge, from_objects, into_objects);
@@ -757,7 +754,7 @@ private:
         }
     }
 
-    static void mark_painted(const vector<correspondence_facts::edge>& edges,
+    static void mark_painted(const vector<correspondence_election::edge>& edges,
                              const vector<object>& from_objects,
                              const vector<object>& into_objects,
                              const grid& into,
@@ -831,8 +828,8 @@ private:
 };
 
 // Entry point used by infer(); the result owns the correspondence machinery.
-inline correspondence_facts select_segmentation(const vector<example>& train, int8_t background) {
-    return correspondence_facts::infer(train, background);
+inline correspondence_election select_segmentation(const vector<example>& train, int8_t background) {
+    return correspondence_election::infer(train, background);
 }
 
 } // namespace arc

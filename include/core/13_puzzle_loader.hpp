@@ -250,7 +250,7 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     // claimed it, the other op would be reading the wrong semantics, so an
     // unclaimed op is as dead as an empty table.
     const auto claimed = inf.shape_color_map.claimed_by;
-    const bool learned = inf.shape_color_map.valid;
+    const bool learned = inf.shape_color_map.holds();
     task.dead_ops[(int)node_type::ShapeColorMap] =
         (!learned || claimed != shape_color_map_rule::body_recolor);
     task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =

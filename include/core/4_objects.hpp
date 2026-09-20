@@ -22,7 +22,13 @@ using namespace std;
 // Segmentation methods are compared by how well they explain the training pairs.
 enum class segmentation_methods : int8_t {
     connected_monochrome, connected_multicolor, all_cells_of_one_color,
-    minimal_repeating_set, smallest_of_two_grids, count
+    minimal_repeating_set, smallest_of_two_grids,
+    // How many real methods there are, so a loop can run over them.
+    count,
+    // Nothing has been chosen yet. It shares count's value so that loops
+    // over the real methods skip it, and every test for a real method
+    // (boxed_by_its_cells and the like) says no to it for free.
+    unset = count
 };
 
 // Label used for GUI
@@ -34,7 +40,8 @@ inline constexpr const char* const segmentation_names[] = {
     "8-Connected Multicolor Cells",
     "All Cells Of One Color",
     "Minimal Repeating Set Of Cells",
-    "Smallest Of The Two Grids"
+    "Smallest Of The Two Grids",
+    "Not Chosen Yet"  // segmentation_methods::unset
 };
 
 // Whether a segmentation measures each object in the box its own cells make. The
@@ -45,6 +52,12 @@ inline constexpr bool boxed_by_its_cells(segmentation_methods segmentation) {
            segmentation == segmentation_methods::connected_multicolor ||
            segmentation == segmentation_methods::all_cells_of_one_color;
 }
+
+// An election nobody filled in must not pass for a real reading: unset is
+// what such an object holds, and this is what keeps it from sneaking
+// through a boxed_by_its_cells gate.
+static_assert(!boxed_by_its_cells(segmentation_methods::unset),
+              "unset must not look like a real segmentation");
 
 // Find the smallest repeating width and height; use the grid size if none repeats.
 // Ignore background cells when matching; pass -2 to compare every cell.

@@ -106,7 +106,7 @@ inline void say_beats(said_reading& said, const string& source,
 // WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
 // detector filled it; feeding one op the other's table would be silent nonsense.
 inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
-    if (!rule.valid) return nullptr;
+    if (!rule.holds()) return nullptr;
     switch (rule.claimed_by) {
         case shape_color_map_rule::body_recolor:  return "ShapeColorMap";
         case shape_color_map_rule::interior_fill: return "ShapeToInteriorColorMap";
@@ -164,7 +164,7 @@ inline vector<string> sentences_of(const string& program) {
 // a layout it has no words for is named on the way out.
 inline bool say_input_blocks(const inference& inf, said_reading& said) {
     const auto& blocks = inf.input_blocks;
-    if (!blocks.valid || inf.size.Chosen == output_dimension_rule::NotInferredYet ||
+    if (!blocks.holds() || !inf.size.holds() ||
         inf.size.Chosen == output_dimension_rule::BoundingBox) return false;
     const auto color_word = word_for_color_map(blocks.color_map);
     if (!color_word) {
@@ -274,10 +274,10 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
 }
 
 inline said_reading say_the_reading(const inference& inf) {
-    const correspondence_facts& facts = inf.correspondence;
+    const correspondence_election& facts = inf.correspondence;
     said_reading said;
     if (say_input_blocks(inf, said)) return said;
-    if (!facts.valid || facts.pairs.empty()) return said;
+    if (facts.pairs.empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until
     // its placement is explained, copying it has no complete sentence here.
@@ -326,8 +326,7 @@ inline said_reading say_the_reading(const inference& inf) {
 
     // A complete continuation has its own cell-level map. Spell that map once,
     // then repeat the motif; the generic object recolor below has another scope.
-    if (inf.motif_continuation.valid &&
-        inf.size.Chosen != output_dimension_rule::NotInferredYet &&
+    if (inf.motif_continuation.holds() && inf.size.holds() &&
         inf.size.Chosen != output_dimension_rule::BoundingBox) {
         const auto map_word = word_for_color_map(inf.motif_continuation.color_map);
         if (!map_word) {
@@ -347,7 +346,7 @@ inline said_reading say_the_reading(const inference& inf) {
 
     // PIECES THAT PILED UP INSIDE THEIR OWN BOXES. The slide drew every output
     // by itself, so it is the whole of what happened.
-    if (inf.piece_slam.valid) {
+    if (inf.piece_slam.holds()) {
         say(string(inf.piece_slam.rows ? "SlamRow[" : "SlamColumn[") +
             to_string((int)inf.piece_slam.step) + "]");
         return spoken();

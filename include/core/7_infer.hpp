@@ -1,11 +1,4 @@
 // This file reads the examples like a human.
-// Design story, rationale, and experiment records
-// in notes/1 - Overall Design/Inference Master.md
-//
-// infer() lives here, and so do the channels small enough to have no file of
-// their own. Each thing is explained where it is defined; infer() at the bottom
-// carries the reading order and the family of files.
-
 #pragma once
 #include "1_readings.hpp"
 #include "2_size.hpp"
@@ -23,14 +16,8 @@
 namespace arc {
 using namespace std;
 
-// ──────────────────────────────────────────────────────────────────────────
-// COLORS · which colors appear where, and in what order
-// ──────────────────────────────────────────────────────────────────────────
-// The one channel with no file of its own, and the one that cannot sit in one
-// place: the presence facts need no background, while by_size ranks only once
-// the election has named one.
-// Color facts — each answers exactly one question along one direction.
-// A bool[COLOR_COUNT] is a color set.
+// Tracks which colors appear, disappear, or persist across training examples.
+// A bool[COLOR_COUNT] is a set of colors: true means the color is present.
 struct color_facts {
     // Color · across_input_output
     // in input, gone in output
@@ -70,8 +57,7 @@ struct color_facts {
     // set per side — never a global whitelist (lethal, measured).
 };
 
-// A set of colors said as digits, "0,3,4", or "-" when it holds none. Beside
-// the sets it reads, so the screen and the log say a color set the same way.
+// Formats a color set as comma-separated digits for display and logging, or "-" if empty.
 inline string colors_as_text(const bool member[COLOR_COUNT]) {
     string listed;
     for (int color = 0; color < COLOR_COUNT; ++color)
@@ -118,8 +104,7 @@ inline void detect_color_presence(const vector<example>& train, color_facts& fac
 
 }
 
-// Color · across_outputs — "which colors appear in the outputs, in what
-// order?" First-appearance order (load-bearing).
+// Records the output color palette in order of first appearance for logs and the GUI.
 inline void detect_output_colors(const vector<example>& train, color_facts& facts) {
     bool seen[COLOR_COUNT] = {};
     facts.output_colors_count = 0;
@@ -134,10 +119,7 @@ inline void detect_output_colors(const vector<example>& train, color_facts& fact
     }
 }
 
-// Color · across_outputs — "do all outputs rank their colors by pixel count the
-// same way?" The background is a PARAMETER, not read off `facts`, so the
-// dependency on the election having already run is visible at the call site
-// instead of being a rule someone has to remember.
+// Lists colors from most-used to least-used across all training outputs.
 inline void detect_output_colors_by_size(const vector<example>& train,
                                          int8_t background, color_facts& facts) {
     facts.output_colors_by_size_count = 0;
@@ -175,15 +157,7 @@ inline void detect_output_colors_by_size(const vector<example>& train,
     facts.output_colors_by_size_count = first_count;
 }
 
-// Runs the two color detectors that need nothing but the pairs. by_size is not
-// among them: it needs the elected background, so infer() calls it later.
-//
-// A DETECTOR RETURNS ITS FACT. Read the call and you know where the answer came
-// out; nothing you passed in is quietly rewritten. The only functions taking a
-// non-const reference are the ones whose whole job is to write it, and they say
-// so in their names — count_edges_leaving, measure_area_and_reach — or they are
-// the several passes that fill ONE shared fact, whose public entry still
-// returns: these two, behind this one.
+// Collects all basic color facts that can be learned without knowing the background yet.
 inline color_facts detect_color_facts(const vector<example>& train) {
     color_facts facts;
     detect_color_presence(train, facts);
@@ -191,18 +165,13 @@ inline color_facts detect_color_facts(const vector<example>& train) {
     return facts;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// SHAPE -> COLOR · which shape says to paint which color
-// ──────────────────────────────────────────────────────────────────────────
-// Learned shape -> color lookup for the ShapeColorMap op, rejected whole if one
-// shape ever wants two colors. Story in
-// notes/1 - Overall Design/Inference Master.md, section 3c.
+// Maps shapes to colors (rejected if any shape needs two different colors).
 struct shape_color_map_rule {
     static constexpr int MAX_KEYS = 16;
     uint32_t keys[MAX_KEYS]   = {};  // FNV-1a hash of the key glyph's occupancy
     int8_t   colors[MAX_KEYS] = {};  // color the target is repainted to
     int      count = 0;
-    bool     valid = false;
+    bool holds() const { return count > 0; }
     // WHICH DETECTOR FILLED IT. Two of them share this storage and mean
     // different things by it: body_recolor repaints an object, interior_fill
     // paints the hole inside one. A consumer that cannot tell them apart is
@@ -211,9 +180,7 @@ struct shape_color_map_rule {
         = claimed_by_nobody;
 };
 
-// Add one shape -> color to the table, or say the table cannot hold it. False
-// means this shape already wants a different color, or the table is full —
-// either way the whole rule is off, which is what both detectors do with it.
+// Remembers which color goes with this shape. Returns false if the shape gets conflicting colors.
 inline bool learn_shape_color(shape_color_map_rule& rule, uint32_t shape, int8_t color) {
     for (int i = 0; i < rule.count; ++i)
         if (rule.keys[i] == shape) return rule.colors[i] == color;
@@ -224,6 +191,7 @@ inline bool learn_shape_color(shape_color_map_rule& rule, uint32_t shape, int8_t
     return true;
 }
 
+// Looks at small key shapes and learns what color they say to paint the target shapes.
 inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
                                                    int8_t background) {
     shape_color_map_rule rule;
@@ -271,16 +239,12 @@ inline shape_color_map_rule detect_shape_color_map(const vector<example>& train,
         // Insert with the consistency gate.
         if (!learn_shape_color(rule, key_shape, repainted_to)) return rule;
     }
-    rule.valid = (rule.count > 0);
-    if (rule.valid) rule.claimed_by = shape_color_map_rule::body_recolor;
+    if (rule.holds()) rule.claimed_by = shape_color_map_rule::body_recolor;
     return rule;
 }
 
-// Shape -> INTERIOR-fill color, per-object. Sibling of detect_shape_color_map:
-// same occupancy-hash key, but keyed on each object's OWN shape and applied as
-// an interior fill. Writes the SHARED shape_color_map_rule storage,
-// so infer() must run it only as a FALLBACK after the body-recolor detector
-// rejects. Story in notes/1 - Overall Design/Inference Master.md, section 3c.
+// Learns which color fills the hollow inside of each shape. Shares storage with
+// detect_shape_color_map, so infer() runs this only when that one finds nothing.
 inline shape_color_map_rule detect_shape_to_interior_color_map(
         const vector<example>& train, int8_t background) {
     shape_color_map_rule rule;
@@ -370,19 +334,11 @@ inline shape_color_map_rule detect_shape_to_interior_color_map(
             if (!learn_shape_color(rule, object_shape, (int8_t)fill)) return rule;
         }
     }
-    rule.valid = (rule.count > 0);
-    if (rule.valid) rule.claimed_by = shape_color_map_rule::interior_fill;
+    if (rule.holds()) rule.claimed_by = shape_color_map_rule::interior_fill;
     return rule;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// UNCHANGED · how much of the input survives untouched
-// ──────────────────────────────────────────────────────────────────────────
-// Unchanged · across_input_output — "how much of the input is still there,
-// untouched, in the output?" One map per pair (per-example values, not just a
-// fold). Only meaningful when a pair's input and output are the same size.
-// Consumer idea: high kept fraction => layer 1 is "copy the input"; search
-// only the cells that changed.
+// Which cells kept their color from input to output, one map per example.
 struct unchanged_cells_facts {
     // One map per train pair: true = the cell kept its color
     vector<array<bool, MAX_GRID_DIM * MAX_GRID_DIM>> kept;
@@ -390,10 +346,11 @@ struct unchanged_cells_facts {
     vector<float> kept_fraction;
     // The worst pair — the safe number to gate on
     float min_kept_fraction = 0.0f;
-    // False until computed (infer() only runs this on Identity puzzles)
-    bool valid = false;
+    // False until filled in (infer() only runs this on same-size puzzles)
+    bool computed = false;
 };
 
+// Fills the maps above by comparing each input to its output, cell by cell.
 inline unchanged_cells_facts detect_unchanged_cells(const vector<example>& train) {
     unchanged_cells_facts facts;
     if (!pairs_overlay(train)) return facts;
@@ -417,17 +374,11 @@ inline unchanged_cells_facts detect_unchanged_cells(const vector<example>& train
         facts.kept_fraction[i] = (float)same / (float)(in.width * in.height);
         facts.min_kept_fraction = min(facts.min_kept_fraction, facts.kept_fraction[i]);
     }
-    facts.valid = true;
+    facts.computed = true;
     return facts;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// COLOR DIFF · which cells each color gained and lost
-// ──────────────────────────────────────────────────────────────────────────
-// color_diff · across_input_output · per pair, per color — the raw diff split by
-// color: which cells did each color GAIN and LOSE? No interpretation; this is
-// the material later detectors read. Complements unchanged_cells, which is
-// colorless.
+// Which cells each color gained and lost, per example.
 struct color_diff_facts {
     // One map per train pair per color, indexed [pair][color]
     // gained: output cell is this color, input cell wasn't
@@ -437,9 +388,10 @@ struct color_diff_facts {
     // Per color, across all pairs: total gained / lost cell counts
     int gained_count[COLOR_COUNT] = {};
     int lost_count[COLOR_COUNT] = {};
-    bool valid = false;
+    bool computed = false;
 };
 
+// Records every changed cell under the color it lost and the color it gained.
 inline color_diff_facts detect_color_diff(const vector<example>& train) {
     color_diff_facts facts;
     if (!pairs_overlay(train)) return facts;
@@ -463,33 +415,27 @@ inline color_diff_facts detect_color_diff(const vector<example>& train) {
                 }
             }
     }
-    facts.valid = true;
+    facts.computed = true;
     return facts;
 }
 
-// Every unordered pair of colors, 10 choose 2: how many variants the swap op
-// fans out to, and the size of the table that pins them.
+// How many two-color pairs exist — 45 for the 10 colors.
 constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 
-// ──────────────────────────────────────────────────────────────────────────
-// COLOR SWAP · whether part of the change is two colors trading places
-// ──────────────────────────────────────────────────────────────────────────
-// color_swap · across_input_output — "is (part of) the change a color SWAP?" A
-// pair is learned when, in EVERY train pair, every cell that lost one became the
-// other and back. It need not explain the whole diff, and a pair that never
-// fires says nothing, so it is not learned. Consumer: candidate generation pins
-// BidiColorMap's fan-out to the learned variants (15_solver_beam.hpp).
+// Two colors that trade places: every cell of color A becomes color B, and B becomes A.
 struct color_swap_rule {
     // Indexed by the op's variant k = row-major pair {a,b}, a<b — the same
     // encoding gpu_exec_bidi_color_map decodes
     bool variant[COLOR_PAIR_COUNT] = {};
     int  count = 0;
+    bool holds() const { return count > 0; }
 };
 
+// Tries every color pair and keeps the ones that swap in all examples.
 inline color_swap_rule detect_color_swaps(const vector<example>& train,
                                           const color_diff_facts& diff) {
     color_swap_rule rule;
-    if (!diff.valid || !pairs_overlay(train)) return rule;
+    if (!diff.computed || !pairs_overlay(train)) return rule;
 
     int variant = 0;
     for (int first = 0; first < COLOR_COUNT; ++first)
@@ -512,17 +458,18 @@ inline color_swap_rule detect_color_swaps(const vector<example>& train,
     return rule;
 }
 
-// A matched motif continued over the output rectangle. The map belongs to
-// motif cells, including the background; it is not a whole-object recolor.
+// A repeating pattern carried across the whole output, with its colors remapped.
 struct motif_continuation_rule {
-    bool valid = false;
+    bool held = false;
     int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    bool holds() const { return held; }
 };
 
+// Checks that the input is one tiling pattern and reads the recolor off the output.
 inline motif_continuation_rule detect_motif_continuation(
-        const vector<example>& train, const correspondence_facts& facts) {
+        const vector<example>& train, const correspondence_election& facts) {
     motif_continuation_rule rule;
-    if (!facts.valid || train.empty() || facts.pairs.size() != train.size() ||
+    if (train.empty() || facts.pairs.size() != train.size() ||
         facts.segmentation != segmentation_methods::minimal_repeating_set) return rule;
     for (size_t i = 0; i < train.size(); ++i) {
         const auto& pair = facts.pairs[i];
@@ -562,18 +509,14 @@ inline motif_continuation_rule detect_motif_continuation(
                 rule.color_map[was] = (int8_t)now;
             }
     }
-    rule.valid = true;
+    rule.held = true;
     return rule;
 }
 
-// THE OUTPUT AS A GRID OF WHOLE INPUTS. Cut into input-sized blocks, rows by
-// columns and any rectangle, each block is the input turned some way or plain
-// background. Which blocks are filled and how each one sits are answered in
-// 8_sentences.hpp; this records every pose that reproduces a block, because a
-// symmetric input fits several, and picking one here would hide the pick that
-// lets a whole row of them agree.
-struct input_blocks_facts {
-    bool valid = false;
+// The output is a grid of input-sized blocks, each one a turned copy of the
+// input or plain background. Every pose that draws a block is kept, not just one.
+struct input_blocks_rule {
+    bool held = false;
     // One cell-level map shared by every copy; -1 means the color keeps itself.
     int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     // The poses whose own figure is where the copies are: the filled blocks are
@@ -585,9 +528,11 @@ struct input_blocks_facts {
         uint8_t poses[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     };
     vector<layout> pairs;
+    bool holds() const { return held; }
 };
 
-inline input_blocks_facts detect_input_blocks(const vector<example>& train,
+// Cuts each output into input-sized blocks and records how every block is drawn.
+inline input_blocks_rule detect_input_blocks(const vector<example>& train,
         int input_background, int output_background) {
     if (train.empty()) return {};
     for (const auto& pair : train)
@@ -618,12 +563,12 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
     };
 
     auto read_with = [&](const int8_t* map) {
-        input_blocks_facts facts;
+        input_blocks_rule facts;
         copy_n(map, COLOR_COUNT, facts.color_map);
         facts.figure_poses = ground < 0 ? 0 : 0xFF;
         for (const auto& pair : train) {
             const int width = pair.input.width, height = pair.input.height;
-            input_blocks_facts::layout at;
+            input_blocks_rule::layout at;
             at.rows = (int8_t)(pair.output.height / height);
             at.cols = (int8_t)(pair.output.width / width);
             for (int r = 0; r < at.rows; ++r)
@@ -633,7 +578,7 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
                                 return (map[was] >= 0 ? map[was] : was) == now; }))
                             at.poses[r][c] |= (uint8_t)(1 << pose);
                     if (!at.poses[r][c] && !is_ground(pair.output, r * height, c * width, width, height))
-                        return input_blocks_facts{};
+                        return input_blocks_rule{};
                 }
             for (int pose = 0; pose < POSE_COUNT; ++pose) {
                 const auto [posed_width, posed_height] = posed_size(pose, width, height);
@@ -648,7 +593,7 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
             }
             facts.pairs.push_back(at);
         }
-        facts.valid = true;
+        facts.held = true;
         return facts;
     };
 
@@ -661,7 +606,7 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
         if (left >= first.output.width) { left = 0; top += first.input.height; }
         if (top >= first.output.height) return {};
     }
-    input_blocks_facts best;
+    input_blocks_rule best;
     int fewest_changes = COLOR_COUNT + 1;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         int8_t map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
@@ -674,7 +619,7 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
         int changes = 0;
         for (int was = 0; was < COLOR_COUNT; ++was) changes += map[was] >= 0 && map[was] != was;
         if (changes >= fewest_changes) continue;
-        if (input_blocks_facts facts = read_with(map); facts.valid) {
+        if (input_blocks_rule facts = read_with(map); facts.holds()) {
             best = move(facts);
             fewest_changes = changes;
         }
@@ -682,24 +627,21 @@ inline input_blocks_facts detect_input_blocks(const vector<example>& train,
     return best;
 }
 
-// PIECES THAT PILED UP INSIDE THEIR OWN BOXES. Every row of every piece, or every
-// column, slid one step toward the same side and stopped against that side or
-// against the cell that stopped before it, the way SlamRow and SlamColumn pile
-// cells. A piece keeps its colors and its count but not its shape, so
-// correspondence can only say it sits on its landing; this says which way the
-// cells went. Held only when sliding every piece that way draws every output.
+// Every piece slammed its own cells against one side of its own box.
+// Only held when sliding every piece that way redraws every output exactly.
 struct piece_slam_rule {
-    bool valid = false;
     // True when the rows slide sideways, false when the columns slide up or down.
     bool rows = true;
     // +1 toward the right or the bottom, -1 toward the left or the top.
     int8_t step = 0;
+    bool holds() const { return step != 0; }
 };
 
+// Tries all four slide directions and keeps the one that redraws every output.
 inline piece_slam_rule detect_piece_slam(const vector<example>& train,
-        const correspondence_facts& facts, int8_t input_background, int output_background) {
+        const correspondence_election& facts, int8_t input_background, int output_background) {
     // The slide happens in each piece's own box, and the cells it leaves are ground.
-    if (!facts.valid || !boxed_by_its_cells(facts.segmentation) ||
+    if (!boxed_by_its_cells(facts.segmentation) ||
         !is_color(output_background) || !pairs_overlay(train)) return {};
     // Draws each output from its input's pieces slid that way, noting whether any
     // cell moved at all; false at the first cell that comes out wrong.
@@ -748,24 +690,13 @@ inline piece_slam_rule detect_piece_slam(const vector<example>& train,
         for (const int step : {1, -1}) {
             bool moved = false;
             if (draws_every_output(rows, step, moved) && moved)
-                return {true, rows, (int8_t)step};
+                return {rows, (int8_t)step};
         }
     return {};
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// THE PRODUCT · the inference struct, and infer() — the reading order
-// ──────────────────────────────────────────────────────────────────────────
-// The product of infer(): one facts struct per channel, plus the engine's
-// size rule read straight off the train pairs.
-//
-// ONE CHANNEL PER QUESTION about the train pairs. Each channel owns a rule (what
-// it claims; some can fail) and a detector (the one pass that reads that rule
-// off the pairs), and nothing else — one field below apiece.
-//
-// FACTS, NOT VERDICTS: consumers fold and gate downstream. One exception —
-// background_hypotheses keeps its runners-up ranked, because something later
-// revises the choice.
+// Everything infer() learned about one puzzle: one field per question it asks.
+// These are facts, not decisions — whoever reads them decides what to do.
 struct inference {
     output_dimension_rule size;
     color_facts colors;
@@ -775,45 +706,18 @@ struct inference {
     color_swap_rule color_swaps;
     motif_continuation_rule motif_continuation;
     piece_slam_rule piece_slam;
-    input_blocks_facts input_blocks;
-    correspondence_facts correspondence;
-    background_hypotheses background;
+    input_blocks_rule input_blocks;
+    correspondence_election correspondence;
+    background_election background;
 };
 
-// infer() is PURE: train pairs in, inference out. Engine reads via puzzle_loader
-// bridge. Analysis phase, called once at puzzle load. propose() deferred (see notes).
-//
-// THE READING ORDER, the one every file number and every include follows, and
-// the one the body below walks top to bottom:
-//
-//   SIZE            what decides the output's width and height
-//   COLORS          which colors appear where, and in what order
-//   BACKGROUND      which color the figures sit on, elected per side
-//   CORRESPONDENCE  where each object went, and how to cut the grid up
-//   UNCHANGED       how much of the input survives untouched   ┐ only when
-//   COLOR DIFF      which cells each color gained and lost     │ input and
-//   COLOR SWAP      whether part of the change is two trading  │ output
-//   SHAPE -> COLOR  which shape says to paint which color      ┘ overlay
-//
-// THE FAMILY. A channel that grew big enough took ALL of itself into a file —
-// facts, machinery, and the detector that fills them. infer() calls in and gets
-// its answer back. The numbers ARE the reading order above, as far as the files
-// go: each may include only what is numbered below it.
-//
-//   1_readings.hpp        the shared base: count it, box it, walk it
-//   2_size.hpp            infer_rule
-//   3_background.hpp      elect_background
-//   4_objects.hpp         divide grids into objects
-//   5_matching.hpp        find and select possible matches
-//   6_correspondence.hpp  select_segmentation
-//   8_sentences.hpp       say_the_reading
-//   9_log.hpp             the per-puzzle readout
+// Asks every question about the training pairs, in order, and returns the answers.
 inline inference infer(const vector<example>& train) {
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);
     inf.colors = detect_color_facts(train);  // rule-independent
     // Background: input-side and output-side elected independently by role,
-    // ranked lists kept alive (see step 2 note on background_hypotheses).
+    // ranked lists kept alive (see step 2 note on background_election).
     // background_color is the INPUT side's verdict — what segmentation excludes.
     inf.background = elect_background(train);
     inf.colors.background_color = inf.background.input_elected();
@@ -845,7 +749,7 @@ inline inference infer(const vector<example>& train) {
         // instead of a body recolor. Only run when the body-recolor
         // hypothesis didn't validate; the winner is recorded in claimed_by,
         // which is what tells the two ops apart downstream.
-        if (!inf.shape_color_map.valid)
+        if (!inf.shape_color_map.holds())
             inf.shape_color_map = detect_shape_to_interior_color_map(
                 train, inf.colors.background_color);
     }

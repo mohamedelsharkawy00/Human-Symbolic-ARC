@@ -34,6 +34,9 @@ struct output_dimension_rule {
     int width_numerator = 0, width_denominator = 0;
     int height_numerator = 0, height_denominator = 0;
 
+    // True once the pairs named a case; otherwise Chosen stays NotInferredYet.
+    bool holds() const { return Chosen != NotInferredYet; }
+
     // Picks how output size is decided, first match wins
     static output_dimension_rule infer_rule(const vector<example>& train) {
         if (train.empty())

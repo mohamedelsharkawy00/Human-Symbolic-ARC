@@ -46,7 +46,7 @@ inline constexpr double BG_W_PUNCHED = 0.2;   // Evidence of a background showin
 inline constexpr int BG_PERSIST_BONUS = 50;
 
 // Hypotheses: plural.
-struct background_hypotheses {
+struct background_election {
     struct hypothesis {
         // -1 = "no background"
         int8_t color = -1;
@@ -405,7 +405,7 @@ inline void close_underneath(background_evidence& evidence) {
 // punched-through and embeds are graded votes.
 // KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
-inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
+inline void score_candidates(vector<background_election::hypothesis>& ranked,
                              const background_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
@@ -438,7 +438,7 @@ inline void score_candidates(vector<background_hypotheses::hypothesis>& ranked,
 
 // STAGE 5 — best background first. The top score elects IF it clears BG_FLOOR,
 // else the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
-inline void rank_candidates(vector<background_hypotheses::hypothesis>& ranked) {
+inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
     stable_sort(ranked.begin(), ranked.end(), [&](const auto& left, const auto& right) {
         const bool left_electable  = (left.color >= 0 && left.score >= BG_FLOOR);
         const bool right_electable = (right.color >= 0 && right.score >= BG_FLOOR);
@@ -466,9 +466,9 @@ inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every
 // Candidates: any color present in EVERY grid on the side, plus -1 ("no
 // background"). persists[c] = does color c survive into the outputs (nullptr =
 // assume all persist, e.g. when electing outputs); it only breaks ties.
-inline vector<background_hypotheses::hypothesis> elect_side_background(
+inline vector<background_election::hypothesis> elect_side_background(
         const vector<const grid*>& grids, const bool* persists = nullptr) {
-    vector<background_hypotheses::hypothesis> ranked;
+    vector<background_election::hypothesis> ranked;
     if (grids.empty()) return ranked;
 
     bool in_every[COLOR_COUNT];
@@ -504,8 +504,8 @@ inline vector<background_hypotheses::hypothesis> elect_side_background(
 // all grids pooled, and per pair. Same election, different grid sets — they
 // legitimately disagree, and the disagreement IS information.
 // Priority among directions is decided by consumers, later.
-inline background_hypotheses elect_background(const vector<example>& train) {
-    background_hypotheses out;
+inline background_election elect_background(const vector<example>& train) {
+    background_election out;
     // Persistence: a color surviving into some output — the background stays,
     // content is consumed. Feeds the input election's tiebreak.
     bool persists[COLOR_COUNT] = {};
@@ -531,7 +531,7 @@ inline background_hypotheses elect_background(const vector<example>& train) {
     out.across_input_output.clear();
     for (const auto& ex : train) {
         const vector<const grid*> just_this_input = { &ex.input };
-        const vector<background_hypotheses::hypothesis> local =
+        const vector<background_election::hypothesis> local =
             elect_side_background(just_this_input);
         // A per-pair background must be CONFIDENT: on a single grid the standout
         // share saturates, so area is the only honest signal here. Confident =
@@ -566,7 +566,7 @@ inline background_hypotheses elect_background(const vector<example>& train) {
         // beaten in this pair when the local ground has at least twice its local
         // area — then the global winner is a figure here, not background. Unless it
         // still HOLDS THE FIGURES locally.
-        const int8_t global_background = background_hypotheses::top(out.across_inputs);
+        const int8_t global_background = background_election::top(out.across_inputs);
         if (global_background >= 0 && pair_background >= 0 &&
             pair_background != global_background) {
             int global_dominance = 0, global_embeds = 0, local_dominance = 0;
@@ -587,8 +587,8 @@ inline background_hypotheses elect_background(const vector<example>& train) {
     // the output side independently elects the very color the veto targeted, the
     // flip was a color, not the background.
     if (out.input_vetoed &&
-        background_hypotheses::top(out.across_inputs) ==
-        background_hypotheses::top(out.across_outputs))
+        background_election::top(out.across_inputs) ==
+        background_election::top(out.across_outputs))
         out.input_vetoed = false;
     return out;
 }

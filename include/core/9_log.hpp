@@ -27,12 +27,12 @@ using namespace std;
 // a question is about is the only one that has to be read.
 
 // Which grid an edge starts on. A reading holds both, so this is per edge.
-inline const char* edge_side(const correspondence_facts::edge& edge) {
+inline const char* edge_side(const correspondence_election::edge& edge) {
     return edge.from_input ? "in->out" : "out->in";
 }
 
 // What kind of edge it is, in the order the claim weakens.
-inline const char* edge_kind(const correspondence_facts::edge& edge) {
+inline const char* edge_kind(const correspondence_election::edge& edge) {
     return !edge.same_shape ? "  sits on" : edge.exact ? "  exact" : "  recolored";
 }
 
@@ -86,17 +86,17 @@ inline void report_colors(ostream& report, const color_facts& colors) {
     report << "\n\n";
 }
 
-inline void report_background(ostream& report, const background_hypotheses& background) {
+inline void report_background(ostream& report, const background_election& background) {
     report << "[background] input=" << (int)background.input_elected()
       << "  output=" << (int)background.output_elected()
       << (background.is_per_pair() ? "  MODE=PER-PAIR" : "") << "\n "
-      << " across_inputs=" << (int)background_hypotheses::top(background.across_inputs)
-      << " across_outputs=" << (int)background_hypotheses::top(background.across_outputs)
-      << " across_inputs_outputs=" << (int)background_hypotheses::top(background.across_inputs_outputs)
+      << " across_inputs=" << (int)background_election::top(background.across_inputs)
+      << " across_outputs=" << (int)background_election::top(background.across_outputs)
+      << " across_inputs_outputs=" << (int)background_election::top(background.across_inputs_outputs)
       << "  across_input_output";
     for (int8_t color : background.across_input_output) report << ' ' << (int)color;
     report << "\n";
-    auto dump = [&](const char* name, const vector<background_hypotheses::hypothesis>& ranked) {
+    auto dump = [&](const char* name, const vector<background_election::hypothesis>& ranked) {
         report << "  " << name << " (color embeds dom in_out SCORE span gaps under):\n";
         for (const auto& candidate : ranked)
             report << "    " << (int)candidate.color << "  " << candidate.embeds << "  "
@@ -122,7 +122,7 @@ inline void report_color_swaps(ostream& report, const color_swap_rule& swaps) {
 
 inline void report_shape_color_map(ostream& report, const shape_color_map_rule& rule) {
     static const char* claimed_name[] = { "nobody", "body_recolor", "interior_fill" };
-    report << "[shape_color_map] valid " << rule.valid
+    report << "[shape_color_map] holds " << rule.holds()
       << " count " << rule.count
       << " claimed_by " << claimed_name[rule.claimed_by] << "\n";
     for (int i = 0; i < rule.count; ++i)
@@ -132,8 +132,8 @@ inline void report_shape_color_map(ostream& report, const shape_color_map_rule& 
 }
 
 inline void report_unchanged(ostream& report, const unchanged_cells_facts& unchanged) {
-    report << "[unchanged] valid " << unchanged.valid;
-    if (unchanged.valid) {
+    report << "[unchanged] computed " << unchanged.computed;
+    if (unchanged.computed) {
         report << "  min_kept " << unchanged.min_kept_fraction << "  per_pair";
         for (float kept : unchanged.kept_fraction) report << ' ' << kept;
     }
@@ -141,8 +141,8 @@ inline void report_unchanged(ostream& report, const unchanged_cells_facts& uncha
 }
 
 inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
-    report << "[color_diff] valid " << diff.valid << "\n";
-    if (diff.valid)
+    report << "[color_diff] computed " << diff.computed << "\n";
+    if (diff.computed)
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (diff.gained_count[color] || diff.lost_count[color])
                 report << "color " << color
@@ -154,9 +154,8 @@ inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
 // The election's own numbers, so a tie is readable as a tie. BOX CELLS is what
 // the pieces' own boxes cover — two readings can tie on pieces and left over
 // and still differ here.
-inline void report_correspondence_readings(ostream& report, const correspondence_facts& correspondence) {
-    report << "[correspondence] valid " << correspondence.valid
-      << "  segmentation " << segmentation_names[(int)correspondence.segmentation] << "\n";
+inline void report_correspondence_readings(ostream& report, const correspondence_election& correspondence) {
+    report << "[correspondence] segmentation " << segmentation_names[(int)correspondence.segmentation] << "\n";
     // Which readings were actually in the election. Everything else below was
     // run for the table and never competed — see select_segmentation.
     report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
@@ -181,8 +180,8 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 
 // Which way the pieces' cells piled up inside their own boxes, if they did.
 inline void report_piece_slam(ostream& report, const piece_slam_rule& slam) {
-    report << "[piece_slam] valid " << slam.valid;
-    if (slam.valid) report << "  " << (slam.rows ? "rows" : "columns") << " step " << (int)slam.step;
+    report << "[piece_slam] holds " << slam.holds();
+    if (slam.holds()) report << "  " << (slam.rows ? "rows" : "columns") << " step " << (int)slam.step;
     report << "\n\n";
 }
 
@@ -192,7 +191,7 @@ inline void report_piece_slam(ostream& report, const piece_slam_rule& slam) {
 inline void report_said_reading(ostream& report, const inference& inf) {
     // Each block as the poses that draw it, '-' for background.
     const auto& blocks = inf.input_blocks;
-    report << "[input_blocks] valid " << blocks.valid << "\n";
+    report << "[input_blocks] holds " << blocks.holds() << "\n";
     for (size_t which = 0; which < blocks.pairs.size(); ++which) {
         const auto& at = blocks.pairs[which];
         report << "  pair " << which << "  " << (int)at.rows << "x" << (int)at.cols << " ";
@@ -224,7 +223,7 @@ inline void report_said_reading(ostream& report, const inference& inf) {
 // in each pair's own way up, so a pair drawn a quarter turn from its
 // neighbours can be set beside them. Readings nobody agreed in are not listed:
 // a page of empty lines says nothing that their absence does not.
-inline void report_agreed_moves(ostream& report, const correspondence_facts& correspondence) {
+inline void report_agreed_moves(ostream& report, const correspondence_election& correspondence) {
     for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
         const auto& pairs = correspondence.reading_pairs[i];
         if (ranges::all_of(pairs, [](const auto& pair) {
@@ -250,7 +249,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_facts& cor
 // pieces say how; and a reading that leaves a cell over is only readable next
 // to the edges it did draw. Read straight off the readings -- it used to be
 // handed a screen-shaped copy of them, and could only say what that copy kept.
-inline void report_pieces_seen(ostream& report, const correspondence_facts& correspondence) {
+inline void report_pieces_seen(ostream& report, const correspondence_election& correspondence) {
     const char* newline = "\n";
     for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
         report << "  reading " << i << " pieces   "
@@ -294,7 +293,7 @@ inline void report_pieces_seen(ostream& report, const correspondence_facts& corr
 // thrown away — a missing line is only readable next to the reason it is
 // missing.
 inline void report_one_pair(ostream& report, size_t pair_index,
-                            const correspondence_facts::pair_info& pair) {
+                            const correspondence_election::pair_info& pair) {
     report << "pair " << pair_index
       << "  in_objects " << pair.input_info.size()
       << "  out_objects " << pair.output_info.size()
@@ -352,7 +351,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
         report << "  dropped " << edge_side(edge) << " [" << (int)edge.from
           << "] at " << (int)edge.col << ','
           << (int)edge.row << edge_kind(edge)
-          << "  " << correspondence_facts::refusal_names[pair.discard_why[i]] << "\n";
+          << "  " << correspondence_election::refusal_names[pair.discard_why[i]] << "\n";
     }
 }
 

@@ -817,8 +817,8 @@ struct row_place {
 
 // The piece a place names. Which list it is in is the place's own side, the
 // same way an edge carries the side it was read from.
-inline const correspondence_facts::object_info& piece_in(
-    const vector<correspondence_facts::pair_info>& pairs, const piece_place& at) {
+inline const correspondence_election::object_info& piece_in(
+    const vector<correspondence_election::pair_info>& pairs, const piece_place& at) {
   const auto& pair = pairs[at.pair];
   return (at.from_input ? pair.input_info : pair.output_info)[at.which];
 }
@@ -832,8 +832,8 @@ struct line_ends {
   int8_t from_x = 0, from_y = 0, from_w = 0, from_h = 0;
   int8_t to_x = 0, to_y = 0, to_w = 0, to_h = 0;
 };
-inline line_ends ends_of(const correspondence_facts::pair_info& pair,
-                         const correspondence_facts::edge& edge) {
+inline line_ends ends_of(const correspondence_election::pair_info& pair,
+                         const correspondence_election::edge& edge) {
   const auto& mine = edge.from_input ? pair.input_info : pair.output_info;
   const auto& theirs = edge.from_input ? pair.output_info : pair.input_info;
   const auto& piece = mine[edge.from];
@@ -847,7 +847,7 @@ inline line_ends ends_of(const correspondence_facts::pair_info& pair,
 // wearing another color, or not found at all and only sitting on what it
 // overlaps most. Said in the order the claim weakens.
 enum : int8_t { line_exact, line_recolored, line_sits_on };
-inline int8_t claim_of(const correspondence_facts::edge& edge) {
+inline int8_t claim_of(const correspondence_election::edge& edge) {
   return !edge.same_shape ? line_sits_on : edge.exact ? line_exact : line_recolored;
 }
 
@@ -855,7 +855,7 @@ inline int8_t claim_of(const correspondence_facts::edge& edge) {
 // pair, then the input column before the output one, then down the grid. The
 // cut is biggest-first, which is not a thing on screen — walked that way the
 // box you are stepping bounced between the columns.
-inline vector<piece_place> pieces_of(const vector<correspondence_facts::pair_info>& pairs) {
+inline vector<piece_place> pieces_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<piece_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (int side = 0; side < 2; ++side) {
@@ -882,7 +882,7 @@ struct motif_set {
   int16_t which = -1;
   bool operator==(const motif_set&) const = default;
 };
-inline vector<motif_set> motif_sets(const vector<correspondence_facts::pair_info>& pairs,
+inline vector<motif_set> motif_sets(const vector<correspondence_election::pair_info>& pairs,
                                     const vector<piece_place>& pieces) {
   vector<motif_set> sets;
   for (const auto& at : pieces) {
@@ -893,7 +893,7 @@ inline vector<motif_set> motif_sets(const vector<correspondence_facts::pair_info
   }
   return sets;
 }
-inline bool piece_is_in(const correspondence_facts::object_info& pc,
+inline bool piece_is_in(const correspondence_election::object_info& pc,
                         const piece_place& at, const motif_set& set) {
   return pc.motif >= 0 && pc.motif == set.which &&
          at.pair == set.pair && at.from_input == set.from_input;
@@ -904,7 +904,7 @@ inline bool piece_is_in(const correspondence_facts::object_info& pc,
 // answers, and each one is said under the stepper. What these lack is a
 // partner, which is why the walk is named for that and not for silence.
 inline vector<piece_place> pieces_standing_alone(
-    const vector<correspondence_facts::pair_info>& pairs,
+    const vector<correspondence_election::pair_info>& pairs,
     const vector<piece_place>& pieces) {
   vector<piece_place> alone;
   for (const auto& at : pieces)
@@ -913,7 +913,7 @@ inline vector<piece_place> pieces_standing_alone(
 }
 
 // The refused matches, read the same way round, off the piece each was for.
-inline vector<row_place> refusals_of(const vector<correspondence_facts::pair_info>& pairs) {
+inline vector<row_place> refusals_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<row_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (size_t i = 0; i < pairs[pair].discarded.size(); ++i)
@@ -930,7 +930,7 @@ inline vector<row_place> refusals_of(const vector<correspondence_facts::pair_inf
 }
 
 // The cells the reading could not account for, in the order they were found.
-inline vector<row_place> left_over_of(const vector<correspondence_facts::pair_info>& pairs) {
+inline vector<row_place> left_over_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<row_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (size_t i = 0; i < pairs[pair].left_over.size(); ++i)
@@ -942,14 +942,14 @@ inline vector<row_place> left_over_of(const vector<correspondence_facts::pair_in
 // it. Every walk below sorts, and the pane runs its body twice — to measure and
 // to draw — so working them out where they are used cost three walks a frame.
 struct reading_on_screen {
-  const vector<correspondence_facts::pair_info>* pairs = nullptr;
+  const vector<correspondence_election::pair_info>* pairs = nullptr;
   vector<piece_place> pieces, alone;
   vector<row_place> refused, left_over, lines;
   vector<motif_set> sets;
 };
 
 // Every edge of the reading, both ways round, one list a stepper can walk.
-inline vector<row_place> lines_of(const vector<correspondence_facts::pair_info>& pairs) {
+inline vector<row_place> lines_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<row_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (size_t i = 0; i < pairs[pair].edges.size(); ++i)
@@ -1348,7 +1348,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // not have to do to know what is on screen.
       detail(to_text("%s %s  ---  %s", segmentation_names_lead,
                      segmentation_names[clamp((int)R.segmentation, 0,
-                                       (int)segmentation_methods::count - 1)],
+                                       (int)segmentation_methods::count)],
                      R.allowed.label().c_str()));
       static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
       // The pieces the reading cut out, and the matches it threw away. Neither is
@@ -1399,7 +1399,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
                          (int)at.pair, (int)dr.from, (int)dr.col, (int)dr.row,
                          kind_name[claim_of(dr)],
-                         correspondence_facts::refusal_names[
+                         correspondence_election::refusal_names[
                              clamp((int)pairs[at.pair].discard_why[at.which], 0, 3)]);
           if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
         }
@@ -1687,7 +1687,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // there is: the copy this pane used to read had three buckets for four
       // reasons, so two of them were reported as one.
       {
-        const int reasons = (int)size(correspondence_facts::refusal_names);
+        const int reasons = (int)size(correspondence_election::refusal_names);
         vector<int> by_reason(reasons, 0);
         for (const auto& pr : pairs)
           for (int8_t why : pr.discard_why)
@@ -1700,7 +1700,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           if (reason == 0) label_chip("REFUSED", ty);
           draw_text(context, font,
                     to_text("%d %s", by_reason[reason],
-                            correspondence_facts::refusal_names[reason]),
+                            correspondence_election::refusal_names[reason]),
                     value_x, ty, scale);
           ty += line_h;
         }
@@ -1770,7 +1770,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       ty += line_h;  // blank line after
     }
 
-    auto draw_dir = [&](const char* name, const vector<background_hypotheses::hypothesis>& d) {
+    auto draw_dir = [&](const char* name, const vector<background_election::hypothesis>& d) {
       label_chip(name, ty); ty += line_h;
       // column header, aligned with the rows below
       // Every cell is text in a width, so heads and rows share one shape.
@@ -1798,10 +1798,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     divide();
 
     // What changed between the two sides.
-    if (task.inf.unchanged.valid)
+    if (task.inf.unchanged.computed)
       line(to_text("INPUT ALREADY RIGHT ON %.0f PCT OF CELLS, WORST PAIR",
                    task.inf.unchanged.min_kept_fraction * 100.0f));
-    if (task.inf.color_diff.valid) {
+    if (task.inf.color_diff.computed) {
       string s = "CELLS WON/LOST ";
       for (int c = 0; c < COLOR_COUNT; ++c)
         if (task.inf.color_diff.gained_count[c] || task.inf.color_diff.lost_count[c])
@@ -2348,7 +2348,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         app_state.inference_rank.pick(correspondence.chosen, readings);
     // WALKED FOR THE ONE READING ON SCREEN, and worked out here rather than
     // stored: these are places in the facts, not copies of them.
-    static const vector<correspondence_facts::pair_info> nothing;
+    static const vector<correspondence_election::pair_info> nothing;
     const auto &pairs = rank < (int)correspondence.reading_pairs.size()
                           ? correspondence.reading_pairs[rank] : nothing;
     reading_on_screen walked;
