@@ -1,4 +1,20 @@
 // This file reads the examples like a human.
+//
+// Three kinds of answer live here, told apart by how each one can be useless:
+//
+//   FACTS      measured off the pairs, so they can only be missing. Nothing
+//              can disagree with them. They answer computed.
+//   RULES      claims the pairs can refute. One disagreeing cell kills one,
+//              and "none apply" is a real answer. They answer holds().
+//   ELECTIONS  candidates scored with tuned weights. There is always a
+//              winner, so they answer neither: an election can be wrong but
+//              never refuted, which is why it keeps its runners-up for a
+//              later stage to overturn. They live in 3_background.hpp and
+//              6_correspondence.hpp.
+//
+// A fact computed from an election inherits the election's wrongness, with
+// no flag to say so: detect_output_colors_by_size takes the elected
+// background as a parameter, so at least the call site shows it.
 #pragma once
 #include "1_readings.hpp"
 #include "2_size.hpp"
