@@ -578,7 +578,7 @@ namespace arc {
 		// Reading the always-present (across_inputs) colors is inference's job. The
 		// engine only needs the single dominant background color for
 		// segmentation (Colors skips it, Split erases it), and takes it from
-		// inf.colors.background_color. p.invariant_colors is the one place that
+		// inf.background.input_elected(). p.invariant_colors is the one place that
 		// still holds a copy, because fixed_init_context cannot name `inference`.
 
 		// OutputColorsBySize: train output colors ranked by total pixel count (desc),
@@ -722,7 +722,7 @@ namespace arc {
 			ex.shape_color_count = learned.holds() ? (int8_t)learned.count : (int8_t)0;
 
 			// The canvas the INPUT figures sit on — what segmentation excludes.
-			ex.background_color = p.inf.colors.background_color;
+			ex.background_color = p.inf.background.input_elected();
 
 			// The canvas the output figures sit on. The kernel starts the canvas
 			// in this color, so the skeleton's closing underlay costs no nodes.

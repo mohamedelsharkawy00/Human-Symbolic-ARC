@@ -65,7 +65,7 @@ inline void report_dims(ostream& report, const output_dimension_rule& size) {
     report << "rule " << (int)size.Chosen << "\n\n";
 }
 
-inline void report_colors(ostream& report, const color_facts& colors) {
+inline void report_colors(ostream& report, const color_facts& colors, int8_t input_background) {
     report << "[colors]\n";
     report << "consumed " << colors_as_text(colors.consumed)
       << "  introduced " << colors_as_text(colors.introduced)
@@ -76,7 +76,7 @@ inline void report_colors(ostream& report, const color_facts& colors) {
       << "  any_output " << colors_as_text(colors.in_any_output) << "\n";
     report << "every_grid " << colors_as_text(colors.in_every_grid)
       << "  any_grid " << colors_as_text(colors.in_any_grid)
-      << "  background " << (int)colors.background_color << "\n";
+      << "  background " << (int)input_background << "\n";
     report << "output_colors ";
     for (int i = 0; i < colors.output_colors_count; ++i)
         report << (int)colors.output_colors[i];
@@ -364,7 +364,7 @@ inline void log_inference(const string& id, const inference& inf,
 
     report_header(report, id, idx, count, dataset_flags);
     report_dims(report, inf.size);
-    report_colors(report, inf.colors);
+    report_colors(report, inf.colors, inf.background.input_elected());
     report_background(report, inf.background);
     report_color_swaps(report, inf.color_swaps);
     report_shape_color_map(report, inf.shape_color_map);

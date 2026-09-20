@@ -83,7 +83,7 @@ struct background_election {
         int score = 0;
     };
     
-    // Background is a per-DIRECTION fact, like every other fact in this file:
+    // Background is an elected verdict for each direction:
     // the same election over different grid sets gives legitimately different
     // backgrounds, and the disagreement IS information. Best background first
     // in each.
@@ -95,7 +95,7 @@ struct background_election {
     static int8_t top(const vector<hypothesis>& ranked) {
         return ranked.empty() ? (int8_t)-1 : ranked[0].color;
     }
-    // THE SPLIT: input background and output background are different facts —
+    // THE SPLIT: input background and output background are separate elected verdicts —
     // their relationship is part of the transformation rule (see
     // notes/4 - To Do/Background Per-Side Split.md). There is deliberately NO
     // one-answer merge; ask the side you mean.

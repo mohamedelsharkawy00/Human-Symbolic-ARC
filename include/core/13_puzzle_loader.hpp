@@ -234,8 +234,8 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     if (write_report)
         log_inference(task.id, inf, label.idx, label.count, label.dataset_flags);
     task.rule = inf.size;                              // size - across_input_output
-    if (inf.colors.background_color >= 0)              // color - across_inputs
-        task.invariant_colors[inf.colors.background_color] = true;  // (bg only - see CAVEAT)
+    if (inf.background.input_elected() >= 0)              // color - across_inputs
+        task.invariant_colors[inf.background.input_elected()] = true;  // (bg only - see CAVEAT)
     // WHAT AN OP CANNOT DO ANYTHING WITH. An op whose backing fact is absent
     // can only no-op, so it leaves the generating pool now, once, rather than
     // being tried and discarded on every candidate. Read off what inference
@@ -244,7 +244,7 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
         (inf.colors.output_colors_by_size_count == 0);
     // No elected ground means this op is Input spelled longer.
     task.dead_ops[(int)node_type::InputWithoutBackground] =
-        (inf.colors.background_color < 0);
+        (inf.background.input_elected() < 0);
     // The two shape->color ops SHARE one learned table and mean different things
     // by it: one repaints a body, the other fills a hole. Whichever detector
     // claimed it, the other op would be reading the wrong semantics, so an
