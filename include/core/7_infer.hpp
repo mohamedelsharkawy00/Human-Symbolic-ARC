@@ -774,6 +774,130 @@ struct overlap_corner_rule {
     }
 };
 
+// THE SEEDS THE OP WILL BE HANDED. The DSL fills its seed list off the input
+// before a program runs (16_fixed_dsl.hpp), and this says the same list from
+// this side of the fence, so a replay below can be checked against what the op
+// will really do. The rule itself is not restated -- 4_objects.hpp's read_seeds
+// is the one copy of it -- only the grid it is asked about.
+struct marker_piece {
+    object_summary summary;
+    int8_t color = 0;
+};
+
+inline vector<marker_piece> seeds_the_op_will_see(const grid& input, int8_t never_changes) {
+    vector<marker_piece> pieces;
+    object_walk_scratch scratch;
+    // -1 excludes nothing: the ground is a piece here like any other, and it is
+    // dropped below for its colour, not for being the ground.
+    each_object(input, -1, grouping::touching_same_color, scratch,
+                [&](const object_summary& box, const int16_t* cells, int found) {
+        if (found <= 0) return;
+        const int row = cells[0] / MAX_GRID_DIM, col = cells[0] % MAX_GRID_DIM;
+        const int8_t color = (int8_t)input.data[row][col];
+        if (color == never_changes) return;
+        pieces.push_back({ box, color });
+    });
+    vector<object_summary> boxes;
+    for (const marker_piece& piece : pieces) boxes.push_back(piece.summary);
+    vector<marker_piece> seeds;
+    for (int which : read_seeds(boxes).seeds) seeds.push_back(pieces[which]);
+    return seeds;
+}
+
+// THE TEMPLATE STAMPED ALONG EVERY MARKER. Each marker stands away from the
+// template and so says a direction; the template lands flush against that
+// marker, then repeats at the same step, wearing the marker's colour, until it
+// has left the grid. The input stays underneath it all. Only held when
+// replaying that redraws every output exactly, which is what makes the claim
+// checkable rather than a guess at what the markers meant.
+struct project_on_seeds_rule {
+    bool projected = false;
+    bool holds() const { return projected; }
+
+    static project_on_seeds_rule detect(const vector<example>& train,
+                                        const correspondence_election& correspondence,
+                                        int8_t input_background) {
+        // The template is handed over in the frame its cells make, which is
+        // what the Trim in front of the word gives it.
+        if (!boxed_by_its_cells(correspondence.segmentation) || train.empty()) return {};
+        for (const auto& pair : train) {
+            // Stamping paints over a copy of the input, so a canvas of another
+            // size is a different drawing than the one replayed here.
+            if (pair.input.width != pair.output.width ||
+                pair.input.height != pair.output.height) return {};
+            vector<object_segmentation::object_info> info;
+            vector<object> pieces;
+            object_segmentation::segment_for_correspondence(pair.input, input_background,
+                                                            correspondence.segmentation, info, &pieces);
+            if (pieces.empty()) return {};
+            // The template is whichever piece SortBySize[0] puts first, and that
+            // word ranks by cells -- not the box that picked the markers. The op
+            // reads the two off different lists, so this has to as well.
+            const object* tpl = &pieces[0];
+            for (const object& piece : pieces)
+                if (piece.summary.count > tpl->summary.count) tpl = &piece;
+
+            const vector<marker_piece> markers = seeds_the_op_will_see(pair.input, input_background);
+            if (markers.empty()) return {};
+
+            grid drawn = pair.input;
+            // ProjectOnSeeds hands back the copy of the input it draws on plus
+            // one object per stamp, and they share one list, so the drawing runs
+            // out one stamp before the list does.
+            constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
+            int stamped = 0;
+            for (const marker_piece& marker : markers) {
+                // Centres, so a marker beside the template says which way to go
+                // however wide either of them is.
+                const int tpl_x1 = tpl->summary.x0 + tpl->summary.w - 1;
+                const int tpl_y1 = tpl->summary.y0 + tpl->summary.h - 1;
+                const int marker_x1 = marker.summary.x0 + marker.summary.w - 1;
+                const int marker_y1 = marker.summary.y0 + marker.summary.h - 1;
+                const int across = (marker.summary.x0 + marker_x1) / 2 - (tpl->summary.x0 + tpl_x1) / 2;
+                const int down   = (marker.summary.y0 + marker_y1) / 2 - (tpl->summary.y0 + tpl_y1) / 2;
+                // A marker sitting on the template says no direction at all.
+                if (across == 0 && down == 0) continue;
+                // The first stamp lands flush against the marker, on the side
+                // the template is coming from.
+                int landing_x = tpl->summary.x0, landing_y = tpl->summary.y0;
+                if (across > 0)      landing_x = marker.summary.x0;
+                else if (across < 0) landing_x = marker_x1 - (tpl->summary.w - 1);
+                if (down > 0)        landing_y = marker.summary.y0;
+                else if (down < 0)   landing_y = marker_y1 - (tpl->summary.h - 1);
+                const int step_x = landing_x - tpl->summary.x0;
+                const int step_y = landing_y - tpl->summary.y0;
+                if (step_x == 0 && step_y == 0) continue;
+                for (int repeat = 1; repeat <= MAX_GRID_DIM; ++repeat) {
+                    if (stamped >= most_the_op_stamps) break;
+                    const int at_x = tpl->summary.x0 + repeat * step_x;
+                    const int at_y = tpl->summary.y0 + repeat * step_y;
+                    // Walked off the canvas altogether: the rest of this
+                    // direction is nothing the op would draw.
+                    if (at_x + tpl->summary.w <= 0 || at_x >= drawn.width ||
+                        at_y + tpl->summary.h <= 0 || at_y >= drawn.height) break;
+                    // A stamp hanging over the edge is drawn as far as it fits.
+                    for (int r = 0; r < tpl->summary.h; ++r)
+                        for (int c = 0; c < tpl->summary.w; ++c) {
+                            if (tpl->cells[r][c] == TRANSPARENT) continue;
+                            const int row = at_y + r, col = at_x + c;
+                            if (row < 0 || row >= drawn.height ||
+                                col < 0 || col >= drawn.width) continue;
+                            drawn.data[row][col] = marker.color;
+                        }
+                    ++stamped;
+                }
+            }
+            // Nothing stamped is the input handed straight back, which every
+            // other reading already says without a word this long.
+            if (stamped == 0) return {};
+            for (int r = 0; r < drawn.height; ++r)
+                for (int c = 0; c < drawn.width; ++c)
+                    if (drawn.data[r][c] != pair.output.data[r][c]) return {};
+        }
+        return { true };
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -785,6 +909,7 @@ struct inference {
     motif_continuation_rule motif_continuation;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
+    project_on_seeds_rule project_on_seeds;
     input_blocks_rule input_blocks;
     correspondence_election correspondence;
     background_election background;
@@ -809,6 +934,8 @@ inline inference infer(const vector<example>& train) {
         inf.background.input_elected(), inf.background.output_elected());
     inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
+    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence,
+        inf.background.input_elected());
     inf.input_blocks = input_blocks_rule::detect(train,
         inf.background.input_elected(), inf.background.output_elected());
 

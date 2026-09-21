@@ -290,6 +290,8 @@ inline said_reading say_the_reading(const inference& inf) {
     const bool some_sit_on = ranges::any_of(facts.pairs, [](const auto& pair) {
         return pair.sits_on > 0; });
     const char* combine = some_sit_on ? "Underlay" : "Union";
+    // Read again below: a reading that turns out to be one of the layouts lays
+    // the input down itself, and then nothing sits on anything.
 
     // THE READING AS ONE LINE OF BEATS, said once it is complete, because only
     // then is it known which beat is the last and paints.
@@ -357,6 +359,22 @@ inline said_reading say_the_reading(const inference& inf) {
     // whole of what happened and the acts below have nothing left to explain.
     if (inf.overlap_corner.holds()) {
         say("OverlapCorner");
+        return spoken();
+    }
+
+    // THE TEMPLATE STAMPED ALONG EVERY MARKER. SortBySize[0] hands over the
+    // piece with the most cells first, which is the one ProjectOnSeeds repeats,
+    // and the markers it repeats it along are the DSL's own -- this line never
+    // names them. Like the slam and the chain, the stamping drew every output
+    // by itself, so nothing is left for the acts below to explain.
+    if (inf.project_on_seeds.holds()) {
+        // ProjectOnSeeds hands back the input with the stamps over it, so the
+        // pieces found sitting on one another are markers under their own
+        // stamps -- the projection working, not a piece laid beneath another.
+        // Underlay would answer that by leaving every marker showing through.
+        combine = "Union";
+        say("SortBySize[0]");
+        say("ProjectOnSeeds");
         return spoken();
     }
 

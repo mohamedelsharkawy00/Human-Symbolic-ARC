@@ -190,6 +190,11 @@ inline void report_overlap_corner(ostream& report, const overlap_corner_rule& ch
     report << "[overlap_corner] holds " << chain.holds() << "\n\n";
 }
 
+// Whether the template was stamped along every marker that pointed a way.
+inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule& projection) {
+    report << "[project_on_seeds] holds " << projection.holds() << "\n\n";
+}
+
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
@@ -378,6 +383,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_correspondence_readings(report, inf.correspondence);
     report_piece_slam(report, inf.piece_slam);
     report_overlap_corner(report, inf.overlap_corner);
+    report_project_on_seeds(report, inf.project_on_seeds);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);
