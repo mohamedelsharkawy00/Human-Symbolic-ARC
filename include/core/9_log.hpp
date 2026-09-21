@@ -185,6 +185,13 @@ inline void report_piece_slam(ostream& report, const piece_slam_rule& slam) {
     report << "\n\n";
 }
 
+// Which way the diagonals lean, where the colors cycle along them.
+inline void report_diagonal_continuation(ostream& report, const diagonal_continuation_rule& diagonals) {
+    report << "[diagonal_continuation] holds " << diagonals.holds();
+    if (diagonals.holds()) report << "  lean " << (int)diagonals.lean;
+    report << "\n\n";
+}
+
 // Whether the pieces were laid out as one corner chain, each hung off the last.
 inline void report_overlap_corner(ostream& report, const overlap_corner_rule& chain) {
     report << "[overlap_corner] holds " << chain.holds() << "\n\n";
@@ -443,6 +450,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
+    report_diagonal_continuation(report, inf.diagonal_continuation);
     report_piece_slam(report, inf.piece_slam);
     report_overlap_corner(report, inf.overlap_corner);
     report_project_on_seeds(report, inf.project_on_seeds);

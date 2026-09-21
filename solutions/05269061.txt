@@ -1,9 +1,9 @@
-Split[0] DiagTile[0] Underlay
+Input SelectAll Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll DiagTile[0] Union
 Puzzle:       05269061
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.1189
-Attempts:     83968
-Nodes:        3
-Best Score:   7621.5000
-Max Depth:    3
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        12
+Best Score:   5644.5000
+Max Depth:    12

@@ -583,6 +583,17 @@ inline said_reading say_the_reading(const inference& inf) {
             tied.push_back(segmentation);
     }
 
+    // THE SAME CONTINUATION, READ ALONG THE DIAGONALS. Which color sits on which
+    // diagonal is read off the grid in hand, so the sentence carries the lean and
+    // nothing else -- that is what makes DiagTile a rule and not a table. Said
+    // below the tied openings rather than above them, because all the op reads is
+    // the input's own cells where they sat, and any opening that hands those over
+    // is as good as the one the election happened to pick.
+    if (inf.diagonal_continuation.holds()) {
+        say("DiagTile[" + to_string((int)inf.diagonal_continuation.lean) + "]");
+        return spoken();
+    }
+
     // PIECES THAT PILED UP INSIDE THEIR OWN BOXES. The slide drew every output
     // by itself, so it is the whole of what happened.
     if (inf.piece_slam.holds()) {

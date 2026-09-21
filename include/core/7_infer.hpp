@@ -507,6 +507,80 @@ struct motif_continuation_rule {
     }
 };
 
+// THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
+// are crossed, the input paints part of that cycle, and the output is the cycle
+// carried over every cell -- the motif above with diagonals in place of a box.
+//
+// THE PERIOD IS HOW MANY COLORS THERE ARE, which is DiagTile's arithmetic and
+// not a choice made here: the op counts the colors it was handed and steps the
+// cycle by that count. Diagonals that repeat on any other period are a reading
+// this has no way to say, so it does not claim them.
+//
+// ONE COLOR IS NO CYCLE. With a single color every diagonal is the same
+// diagonal, the claim comes out true of any grid painted all one color, and it
+// would say "diagonals" about a puzzle that never mentioned them.
+//
+// AND IT HAS TO CARRY SOMETHING. An output the input already was is the cycle
+// redrawn where it already sat, which says nothing about diagonals either.
+struct diagonal_continuation_rule {
+    bool held = false;
+    // DiagTile's own argument: 0 for the diagonals of constant row + column,
+    // 1 for those of constant row - column.
+    int8_t lean = 0;
+    bool holds() const { return held; }
+
+    // Reads the cycle off each input and keeps the lean that redraws every
+    // output exactly. Nothing about the colors is kept: which color sits on
+    // which diagonal is read off the grid in hand, differently in every pair,
+    // and that is what makes this a rule rather than a table.
+    static diagonal_continuation_rule detect(const vector<example>& train,
+                                             const correspondence_election& correspondence,
+                                             int8_t background) {
+        // The cycle is read off the cells where they sit, so the pieces have to
+        // be the input's own cells in the input's own frame.
+        if (train.empty() || !boxed_by_its_cells(correspondence.segmentation) ||
+            !is_color(background)) return {};
+        auto redraws_every_output = [&](int8_t lean) {
+            bool carried_something = false;
+            for (const auto& pair : train) {
+                int counts[COLOR_COUNT];
+                count_colors(pair.input, counts, background);
+                int colors = 0;
+                for (int color = 0; color < COLOR_COUNT; ++color) colors += counts[color] > 0;
+                if (colors < 2) return false;
+                auto seat_of = [&](int row, int col) {
+                    const int diagonal = lean ? row - col : row + col;
+                    return ((diagonal % colors) + colors) % colors;
+                };
+                int8_t cycle[COLOR_COUNT];
+                for (int seat = 0; seat < colors; ++seat) cycle[seat] = -1;
+                bool agrees = true;
+                walk_colored_cells(pair.input, background, [&](int row, int col, int color) {
+                    int8_t& seated = cycle[seat_of(row, col)];
+                    agrees = agrees && (seated < 0 || seated == color);
+                    seated = (int8_t)color;
+                });
+                if (!agrees) return false;
+                // A seat no cell sat in is a color the cycle never named. The op
+                // hands the pieces back untouched rather than guess it, so a
+                // cycle with a hole in it is not a sentence.
+                for (int seat = 0; seat < colors; ++seat) if (cycle[seat] < 0) return false;
+                for (int row = 0; row < pair.output.height; ++row)
+                    for (int col = 0; col < pair.output.width; ++col) {
+                        if (pair.output.data[row][col] != cycle[seat_of(row, col)]) return false;
+                        carried_something = carried_something ||
+                            row >= pair.input.height || col >= pair.input.width ||
+                            pair.input.data[row][col] != pair.output.data[row][col];
+                    }
+            }
+            return carried_something;
+        };
+        for (const int8_t lean : {(int8_t)0, (int8_t)1})
+            if (redraws_every_output(lean)) return {true, lean};
+        return {};
+    }
+};
+
 // WHAT A CUT IS ALLOWED TO FOLLOW. Where the cut falls -- which axis, which
 // color, how many panes -- is read off the grid; these are only the permissions,
 // the way degrees_of_freedom holds them for matching.
@@ -1499,6 +1573,7 @@ struct inference {
     color_diff_facts color_diff;
     color_swap_candidates color_swaps;
     motif_continuation_rule motif_continuation;
+    diagonal_continuation_rule diagonal_continuation;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
     project_on_seeds_rule project_on_seeds;
@@ -1539,6 +1614,10 @@ inline inference infer(const vector<example>& train) {
     // of cutting the grid up chosen by what it manages to explain.
     inf.correspondence = select_segmentation(train, inf.background.input_elected());
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
+    // The same continuation read along the diagonals. Asked after the motif
+    // because a repeating box is the plainer claim and should get first refusal.
+    inf.diagonal_continuation = diagonal_continuation_rule::detect(train,
+        inf.correspondence, inf.background.input_elected());
     inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
     inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,
