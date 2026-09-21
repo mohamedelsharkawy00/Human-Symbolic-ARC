@@ -269,29 +269,24 @@ inline object_map label_objects(const grid& one_grid) {
     object_map objects;
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
-    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    walk_colored_cells(one_grid, TRANSPARENT, [&](int start_row, int start_col, int color) {
-        if (objects.id[start_row][start_col] >= 0) return;
-        int16_t id = (int16_t)objects.color.size();
-        queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
-        objects.id[start_row][start_col] = id;
-        bool on_border = false;
-        int first_cell = (int)objects.cells.size();
-        const int size = walk_out(one_grid.height, one_grid.width, queue_row, queue_col, 1,
-            [&](int next_row, int next_col) {
-                if (objects.id[next_row][next_col] >= 0 ||
-                    one_grid.data[next_row][next_col] != color) return false;
-                objects.id[next_row][next_col] = id; return true;
-            },
-            [&](int row, int col) {
+    object_walk_scratch scratch;
+    each_object(one_grid, TRANSPARENT, grouping::touching_same_color, scratch,
+        [&](const object_summary& summary, const int16_t* cells, int count) {
+            const int color = one_grid.data[cells[0] / MAX_GRID_DIM][cells[0] % MAX_GRID_DIM];
+            if (!is_color(color)) return;
+            const int16_t id = (int16_t)objects.count();
+            objects.first_cell.push_back((int)objects.cells.size());
+            for (int i = 0; i < count; ++i) {
+                const int row = cells[i] / MAX_GRID_DIM, col = cells[i] % MAX_GRID_DIM;
+                objects.id[row][col] = id;
                 objects.cells.push_back({ (int8_t)row, (int8_t)col });
-                if (row == 0 || row == one_grid.height - 1 ||
-                    col == 0 || col == one_grid.width - 1)
-                    on_border = true;
-            });
-        objects.color.push_back(color); objects.size.push_back(size);
-        objects.first_cell.push_back(first_cell); objects.on_border.push_back(on_border);
-    });
+            }
+            objects.color.push_back(color);
+            objects.size.push_back(count);
+            objects.on_border.push_back(summary.x0 == 0 || summary.y0 == 0 ||
+                summary.x0 + summary.w == one_grid.width ||
+                summary.y0 + summary.h == one_grid.height);
+        });
     return objects;
 }
 
@@ -307,7 +302,6 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
     int objects_of_color[COLOR_COUNT] = {}, backdrop_objects_of_color[COLOR_COUNT] = {};
 
     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
-    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
     // One vote box per object, indexed by the object's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
     // boxes this object touched, so clearing costs what was used, not all of them.
@@ -321,24 +315,8 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
         // Flood "outside" = everything reachable from the border without
         // entering this object. Four-way space cannot leak through corners
         // joined by the object's eight-way connectivity.
-        for (int row = 0; row < one_grid.height; ++row)
-            for (int col = 0; col < one_grid.width; ++col) outside[row][col] = false;
-        int seeded = 0;
-        for (int row = 0; row < one_grid.height; ++row)
-            for (int col = 0; col < one_grid.width; ++col) {
-                if (row != 0 && row != one_grid.height - 1 &&
-                    col != 0 && col != one_grid.width - 1) continue;
-                if (objects.id[row][col] == this_object || outside[row][col]) continue;
-                outside[row][col] = true;
-                queue_row[seeded] = (int16_t)row; queue_col[seeded] = (int16_t)col; seeded++;
-            }
-        walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, seeded,
-            [&](int next_row, int next_col) {
-                if (outside[next_row][next_col] ||
-                    objects.id[next_row][next_col] == this_object) return false;
-                outside[next_row][next_col] = true; return true;
-            },
-            [](int, int) {});
+        mark_outside(one_grid.height, one_grid.width,
+            [&](int row, int col) { return objects.id[row][col] == this_object; }, outside);
         // Outer contour = the outside cells directly beside this object (edges
         // only, not corners). Every such cell
         // votes for the object it belongs to; a majority makes this a figure

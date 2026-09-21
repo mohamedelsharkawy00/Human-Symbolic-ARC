@@ -785,7 +785,7 @@ private:
                             int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
         for (int row = 0; row < MAX_GRID_DIM; ++row)
             for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
-        vector<int> to_visit;
+        int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
         for (int row = 0; row < one_grid.height; ++row)
             for (int col = 0; col < one_grid.width; ++col) {
                 if (one_grid.data[row][col] != background) continue;
@@ -793,28 +793,21 @@ private:
                 const int16_t mine = (int16_t)patches.size();
                 int left = col, right = col, top = row, bottom = row, cells = 0;
                 bool open = false;
-                to_visit.assign(1, row * MAX_GRID_DIM + col);
+                queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
                 patch_of[row][col] = mine;
-                while (!to_visit.empty()) {
-                    const int at = to_visit.back();
-                    to_visit.pop_back();
-                    const int at_row = at / MAX_GRID_DIM, at_col = at % MAX_GRID_DIM;
-                    ++cells;
-                    left = min(left, at_col);   right = max(right, at_col);
-                    top = min(top, at_row);     bottom = max(bottom, at_row);
-                    open = open || at_row == 0 || at_col == 0 ||
-                           at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
-                    for (int side = 0; side < 4; ++side) {
-                        const int next_row = at_row + neighbour_row_4(side);
-                        const int next_col = at_col + neighbour_col_4(side);
-                        if (next_row < 0 || next_row >= one_grid.height ||
-                            next_col < 0 || next_col >= one_grid.width) continue;
-                        if (one_grid.data[next_row][next_col] != background) continue;
-                        if (patch_of[next_row][next_col] >= 0) continue;
+                cells = walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, 1,
+                    [&](int next_row, int next_col) {
+                        if (one_grid.data[next_row][next_col] != background ||
+                            patch_of[next_row][next_col] >= 0) return false;
                         patch_of[next_row][next_col] = mine;
-                        to_visit.push_back(next_row * MAX_GRID_DIM + next_col);
-                    }
-                }
+                        return true;
+                    },
+                    [&](int at_row, int at_col) {
+                        left = min(left, at_col); right = max(right, at_col);
+                        top = min(top, at_row); bottom = max(bottom, at_row);
+                        open = open || at_row == 0 || at_col == 0 ||
+                               at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
+                    });
                 blank_patch patch;
                 patch.left = (int8_t)left;  patch.top = (int8_t)top;
                 patch.width = (int8_t)(right - left + 1);

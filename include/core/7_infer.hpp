@@ -386,66 +386,23 @@ struct shape_color_map_rule {
         shape_color_map_rule rule;
         if (!pairs_overlay(train)) return {};
 
-        bool visited[MAX_GRID_DIM][MAX_GRID_DIM];
-        int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-        // Zeroed once here, then the used prefix is reset per object below. The reset
-        // is what the code relies on; this only says so where a reader starts.
-        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};  // object footprint over its box
-        bool outside[MAX_GRID_DIM * MAX_GRID_DIM] = {};   // box cells reachable from the rim
-
+        object_walk_scratch scratch;
+        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};
+        bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
         for (const auto& ex : train) {
             const grid& in = ex.input;
             const grid& out = ex.output;
-
-            memset(visited, 0, sizeof(visited));
-            for (int start_row = 0; start_row < in.height && start_row < MAX_GRID_DIM; ++start_row)
-            for (int start_col = 0; start_col < in.width  && start_col < MAX_GRID_DIM; ++start_col) {
-                if (visited[start_row][start_col]) continue;
-                int color = in.data[start_row][start_col];
-                if (color < 0 || color == background) {
-                    visited[start_row][start_col] = true; continue;
-                }
-
-                // One object: same-color cells that touch, corners counting (this is
-                // what the device's gpu_flood_fill does too).
-                queue_row[0] = (int16_t)start_row; queue_col[0] = (int16_t)start_col;
-                visited[start_row][start_col] = true;
-                int left = start_col, top = start_row, right = start_col, bottom = start_row;
-                const int object_size = walk_out(in.height, in.width, queue_row, queue_col, 1,
-                    [&](int next_row, int next_col) {
-                        if (visited[next_row][next_col] ||
-                            in.data[next_row][next_col] != color) return false;
-                        visited[next_row][next_col] = true; return true;
-                    },
-                    [&](int row, int col) {
-                        left = min(left, col);  top = min(top, row);
-                        right = max(right, col); bottom = max(bottom, row);
-                    });
-                const int width = right - left + 1, height = bottom - top + 1;
-
-                for (int i = 0; i < width * height; ++i) { occupied[i] = false; outside[i] = false; }
-                for (int i = 0; i < object_size; ++i)
-                    occupied[(queue_row[i] - top) * width + (queue_col[i] - left)] = true;
-
-                // Outside = empty cells you can reach from the box's rim without
-                // going through a corner, mirroring gpu_interior_paint_warp.
-                // Interior = neither the piece nor outside: the hole inside it.
-                for (bool changed = true; changed; ) {
-                    changed = false;
-                    for (int row = 0; row < height; ++row)
-                    for (int col = 0; col < width; ++col) {
-                        int id = row * width + col;
-                        if (occupied[id] || outside[id]) continue;
-                        bool on_box_rim = (row == 0 || row == height - 1 ||
-                                             col == 0 || col == width - 1);
-                        bool next_to_outside =
-                            (row > 0          && outside[id - width]) ||
-                            (row < height - 1 && outside[id + width]) ||
-                            (col > 0          && outside[id - 1]) ||
-                            (col < width - 1  && outside[id + 1]);
-                        if (on_box_rim || next_to_outside) { outside[id] = true; changed = true; }
-                    }
-                }
+            bool consistent = true;
+            each_object(in, background, grouping::touching_same_color, scratch,
+                [&](const object_summary& box, const int16_t* cells, int count) {
+                if (!consistent) return;
+                const int left = box.x0, top = box.y0, width = box.w, height = box.h;
+                fill_n(occupied, width * height, false);
+                for (int i = 0; i < count; ++i)
+                    occupied[(cells[i] / MAX_GRID_DIM - top) * width +
+                             cells[i] % MAX_GRID_DIM - left] = true;
+                mark_outside(height, width,
+                    [&](int row, int col) { return occupied[row * width + col]; }, outside);
 
                 // Fill color = the output color on interior cells whose INPUT was
                 // background — the cells the fill actually paints. Cells that are
@@ -456,19 +413,23 @@ struct shape_color_map_rule {
                 for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col) {
                     int id = row * width + col;
-                    if (occupied[id] || outside[id]) continue;         // not interior
+                    if (occupied[id] || outside[row][col]) continue;         // not interior
                     int in_row = top + row, in_col = left + col;
                     if (in.data[in_row][in_col] != background) continue;  // inside-noise
                     int out_color = out.data[in_row][in_col];
-                    if (!is_color(out_color)) return {};                  // bad fill -> reject
-                    if (!any_painted) { fill = out_color; any_painted = true; }
-                    else if (out_color != fill) return {};                // non-uniform -> reject
+                    if (!is_color(out_color) || (any_painted && out_color != fill)) {
+                        consistent = false;
+                        return;
+                    }
+                    fill = out_color;
+                    any_painted = true;
                 }
-                if (!any_painted) continue;                            // nothing painted -> skip
+                if (!any_painted) return;
 
                 uint32_t object_shape = shape_occupancy_hash(width, height, occupied);
-                if (!rule.learn(object_shape, (int8_t)fill)) return {};
-            }
+                consistent = rule.learn(object_shape, (int8_t)fill);
+            });
+            if (!consistent) return {};
         }
         if (rule.holds()) rule.claimed_by = shape_color_map_rule::interior_fill;
         return rule;

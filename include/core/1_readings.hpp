@@ -244,6 +244,30 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
     return tail;
 }
 
+// Mark cells reachable from the border without crossing a blocked cell.
+// Space uses four-way connectivity, so it cannot leak through touching corners.
+template <class Blocked>
+inline void mark_outside(int height, int width, Blocked blocked,
+                         bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) outside[row][col] = false;
+    auto claim = [&](int row, int col) {
+        if (outside[row][col] || blocked(row, col)) return false;
+        outside[row][col] = true;
+        return true;
+    };
+    int seeded = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (row != 0 && row != height - 1 && col != 0 && col != width - 1) continue;
+            if (!claim(row, col)) continue;
+            queue_row[seeded] = (int16_t)row;
+            queue_col[seeded++] = (int16_t)col;
+        }
+    walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
+}
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.
