@@ -28,8 +28,12 @@
 #      program, since painting the ground is not leaving it. The elected
 #      background is tried first. Assuming it cost every NOR puzzle its sentence.
 #
-# The programs run 6 to 37 ops against a beam whose max depth is 6, so the long
-# ones are not findable by search at all -- they are handed over whole.
+# The programs run 7 to 42 ops. MAX_SEARCH_DEPTH is 32, so the six priorities
+# are past what the search can reach at any budget; the rest are reachable in
+# principle and were not reached in practice -- 0520fde7 is the only one of the
+# 31 that had a saved solution before, at 4.59M attempts and 17.8s, and it is
+# the one this replaces with zero attempts. What the search would do with the
+# other 30 given time is NOT measured: no benchmark has been run against them.
 
 
 0520fde7  AND
