@@ -210,7 +210,10 @@ public:
     string id = current_puzzle_id();
     if (id.empty()) return;
     string sol_path = "solutions/" + id + ".txt";
-    if (!filesystem::exists(sol_path)) return;
+    if (!filesystem::exists(sol_path)) {
+        m_log.debug("no " + sol_path + " to import (paths are read from where ARC runs)");
+        return;
+    }
     ifstream sf(sol_path);
     string sol_str, line;
     while (getline(sf, line)) {
@@ -231,7 +234,10 @@ public:
     // Drop a dangling trailing separator from line continuations.
     while (!sol_str.empty() && sol_str.back() == ' ')
       sol_str.pop_back();
-    if (sol_str.empty()) return;
+    if (sol_str.empty()) {
+        m_log.debug(sol_path + " holds no program above its first Key: value line");
+        return;
+    }
     send_when_running("import " + sol_str);
   }
 

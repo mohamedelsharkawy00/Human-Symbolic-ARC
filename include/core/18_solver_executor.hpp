@@ -1973,7 +1973,14 @@ namespace arc {
     task.is_solved = false;
     task.is_test_solved = false;
     task.best_tree = environment::parse(program);
-    if (!task.best_tree) return;
+    if (!task.best_tree) {
+        log_debug("could not read this as a program: " + program);
+        return;
+    }
+    // A program whose sentences do not each open with a source runs and draws
+    // and is wrong; say so rather than let it score.
+    if (const char* wrong = sentence_with_no_source(program))
+        log_debug(string(wrong) + ": " + program);
     task.best_node_count = environment::count_nodes(task.best_tree);
 
     string tree_str = environment::stringify_tree_via_flat(task.best_tree);

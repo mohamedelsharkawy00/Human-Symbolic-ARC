@@ -104,6 +104,16 @@ target_link_libraries(arc_headless PRIVATE arc_gpu)
 # rather it used its own _dupenv_s.
 target_compile_definitions(arc_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
 
+# ONE PROGRAM, ONE PUZZLE, NO SEARCH: hands a written program to a puzzle and
+# shows what it drew beside what was wanted, pair by pair. It answers only
+# "can the words we already have say this?", which is the question a new op
+# should have to survive before it is added. Run it from the repo root:
+#   arc_spell <task-id> "<program>"      one program
+#   arc_spell <task-id> --file <path>    one a line, each reported in turn
+add_executable(arc_spell "scripts/spell.cpp")
+target_link_libraries(arc_spell PRIVATE arc_gpu)
+target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 # The GUI: a window onto the search, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA
 # context: GUI code that reached for the GPU would fail to link.

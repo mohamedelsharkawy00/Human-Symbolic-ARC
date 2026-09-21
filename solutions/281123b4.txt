@@ -1,0 +1,12 @@
+Input Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Union
+Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+Input Panes SelectAll Origin Recolor[0] Underlay
+Puzzle: 281123b4
+Train: Solved
+Test: Solved
+Found by: hand, with the bench; the search cannot reach 37 ops
+Reading: pane_split wall v color 3, 4 panes; pane_mask says a PRIORITY order
+Order: 9 beats 4 beats 8 beats 5, then ground
+Nodes: 37
