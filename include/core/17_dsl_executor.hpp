@@ -40,6 +40,28 @@ namespace arc {
 
 		data.seed_lists[ei] = to_gpu_object_list(init_ctx->seed_objs);
 
+		// WHERE THIS EXAMPLE'S PANES LIE. Geometry only: Panes is an act and
+		// clips whatever the chain holds, so nothing here decides what counts as
+		// figure. Done in this file and not in fixed_init_context because the cut
+		// is a fact the puzzle holds, and a test input has to be cut by the same
+		// reading the pairs were -- the fact re-reads the grid rather than
+		// remembering the pairs, so what the op cuts on and what inference said
+		// cannot drift apart.
+		vector<pane_split_facts::pane> boxes;
+		int8_t (&out_boxes)[GPU_MAX_PANES][4] = data.pane_boxes[ei];
+		memset(out_boxes, 0, sizeof(out_boxes));
+		int8_t found = 0;
+		if (p.inf.pane_split.holds() && p.inf.pane_split.panes_of(ex.input, boxes))
+			for (const auto& box : boxes) {
+				if (found >= GPU_MAX_PANES) break;
+				out_boxes[found][0] = box.top;
+				out_boxes[found][1] = box.left;
+				out_boxes[found][2] = box.width;
+				out_boxes[found][3] = box.height;
+				++found;
+			}
+		data.pane_counts[ei] = found;
+
 		data.target_obj_counts[ei] = environment::fill_target_objects(
 			p, ex.output, data.target_objs + ei * GPU_MAX_TARGET_OBJECTS);
 	}

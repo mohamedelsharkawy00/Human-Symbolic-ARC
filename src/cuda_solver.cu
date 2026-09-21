@@ -682,6 +682,42 @@ __device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_
     return res;
 }
 
+// Panes: Partition's act with the cut already decided. Partition reads the
+// walls off a selection; the elected split read them off every training pair at
+// once, so here the boxes simply come up with the example. What is cut is
+// whatever the chain holds -- hand it InputWithoutBackground and the panes come
+// back as figures, hand it Colors and they come back a layer at a time.
+__device__ gpu_object_list& gpu_exec_panes(gpu_exec_context& ctx, const gpu_object_list& src) {
+    auto& res = gpu_acquire(ctx);
+    for (int b = 0; b < ctx.pane_count; ++b) {
+        const int r0 = ctx.pane_boxes[b][0], c0 = ctx.pane_boxes[b][1];
+        const int w  = ctx.pane_boxes[b][2], h  = ctx.pane_boxes[b][3];
+        if (w <= 0 || h <= 0) continue;
+        const int r1 = r0 + h, c1 = c0 + w;
+        for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
+            const auto& s = src.objects[i];
+            gpu_fixed_object obj;
+            obj.x0 = (int16_t)c0; obj.y0 = (int16_t)r0;
+            obj.x1 = (int16_t)(c1 - 1); obj.y1 = (int16_t)(r1 - 1);
+            obj.width = (int16_t)w; obj.height = (int16_t)h;
+            obj.selected = false;
+            obj.mask.clear();
+            GPU_DEV_FOR_EACH_PIXEL(s, sr, sc, v) {
+                const int gr = s.y0 + sr, gc = s.x0 + sc;
+                if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1) continue;
+                obj.mask[gr - r0][gc - c0] = v;
+            }
+            // EVERY PANE COMES BACK, even one the source never reached -- empty,
+            // but there. Partition drops such a tile because its tiles are
+            // whatever the walls happen to leave; panes are a fixed set that gets
+            // stacked, so a missing one would silently shift every later pane
+            // into the wrong place in the list.
+            res.objects[res.count++] = obj;
+        }
+    }
+    return res;
+}
+
 __device__ gpu_object_list& gpu_exec_intersection(gpu_exec_context& ctx, const gpu_object_list& src) {
     // canvas := canvas ∩ src — clear canvas pixels not covered by any src object.
     // Mirrors Union (canvas ∪ src) and Difference (canvas − src): write-only on canvas, pass src through.
@@ -3521,6 +3557,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SizeRankColorMap: result = last ? &gpu_exec_size_rank_color_map(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Bridge:         result = last ? &gpu_exec_bridge(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Partition:      result = last ? &gpu_exec_partition(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::Panes:          result = last ? &gpu_exec_panes(ctx, *last) : &gpu_acquire(ctx); break;
             // Union handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Union:          result = &gpu_acquire(ctx); break;
             // Withhold handled in the warp-parallel branch above; here means !has_current_objects.
@@ -3613,6 +3650,8 @@ static constexpr int MAX_CACHED_EXAMPLES = 16;
 struct gpu_example_template {
     gpu_fixed_grid input;
     gpu_object_list seed_objs;
+    int8_t pane_boxes[GPU_MAX_PANES][4];
+    int8_t pane_count;
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
     uint32_t shape_color_keys[16];
@@ -3790,6 +3829,8 @@ static void build_example_templates(const cuda_dsl_example_data& ex, int count,
         memcpy(tmpl.distance_maps, dm, GPU_MAX_COLORS * GPU_GRID_CELLS);
 
         tmpl.seed_objs = ex.seed_lists[ei];
+        memcpy(tmpl.pane_boxes, ex.pane_boxes[ei], sizeof(tmpl.pane_boxes));
+        tmpl.pane_count = ex.pane_counts[ei];
         memcpy(tmpl.output_colors_by_size, ex.output_colors_by_size,
                sizeof(tmpl.output_colors_by_size));
         tmpl.output_colors_by_size_count = ex.output_colors_by_size_count;
@@ -3912,6 +3953,11 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
             ctx.shape_color_count = tmpl.shape_color_count;
             ctx.background_color = tmpl.background_color;
             ctx.output_background_color = tmpl.output_background_color;
+            // Where this example's panes lie, for the Panes act.
+            ctx.pane_count = tmpl.pane_count;
+            for (int i = 0; i < GPU_MAX_PANES; ++i)
+                for (int k = 0; k < 4; ++k)
+                    ctx.pane_boxes[i][k] = tmpl.pane_boxes[i][k];
         }
 
         // Stripe-copy distance_maps (9 KB)
@@ -4695,7 +4741,7 @@ bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
     size_t src_off = 0;
     if (current_idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS) {
         src_off = offsetof(gpu_exec_context, seed_objs);
-    } else if (current_idx >= 0 && current_idx < GPU_KERNEL_POOL_SIZE) {
+        } else if (current_idx >= 0 && current_idx < GPU_KERNEL_POOL_SIZE) {
         src_off = offsetof(gpu_exec_context, pool) + current_idx * sizeof(gpu_object_list);
     } else {
         return false;

@@ -104,6 +104,8 @@ static constexpr int GPU_GRID_CELLS = GPU_MAX_GRID * GPU_MAX_GRID;
 static constexpr int GPU_MAX_OPS = 64;
 static constexpr int GPU_MAX_OBJECTS = 900;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
+// A grid cut both ways leaves at most this many panes worth carrying.
+static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
 
 // The packed cell store lives upstream in 1_readings.hpp, where both sides can
@@ -235,6 +237,9 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
   X(RestoreOrientation, "RestoreOrientation", 0, 0, translate)                   \
   X(ShapeColorMap, "ShapeColorMap", 0, 0, map)                                   \
   X(Seeds, "Seeds", 0, 0, get)                                                   \
+  /* Partition cuts on the walls a selection marks; Panes cuts on the cut  */    \
+  /* the split elected, which is the same act with a surer hand.           */        \
+  X(Panes, "Panes", 0, 0, generate)                                                  \
   X(VoteDenoise, "VoteDenoise", 0, 0, map)                                       \
   X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 0, map)               \
   X(SnapToAnchors, "SnapToAnchors", 0, 0, map)                                   \
@@ -341,7 +346,8 @@ inline constexpr inferred_amount how_much_is_inferred(node_type t) {
     case node_type::InputWithoutBackground:
     case node_type::SizeRankColorMap:
     case node_type::ShapeColorMap:
-    case node_type::ShapeToInteriorColorMap:  return inferred_amount::all;
+    case node_type::ShapeToInteriorColorMap:
+    case node_type::Panes:                    return inferred_amount::all;
     case node_type::Colors:
     case node_type::Split:
     case node_type::VoteDenoise:
@@ -520,6 +526,12 @@ struct gpu_exec_context {
     // to undo exactly what was done (works on square grids, unlike target dims).
     int8_t orientation_flipped = 0;
     gpu_object_list seed_objs;
+    // WHERE THIS EXAMPLE'S PANES LIE, as top/left/width/height. Geometry, not
+    // cells: Panes clips whatever the chain holds to these boxes, so what counts
+    // as figure stays the caller's word (InputWithoutBackground, Colors, ...)
+    // rather than something this op decides on everyone's behalf.
+    int8_t pane_boxes[GPU_MAX_PANES][4];
+    int8_t pane_count;
     // puzzle-level: train output colors ranked by total pixel count (desc); count below
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
@@ -584,6 +596,8 @@ struct cuda_dsl_example_data {
     int8_t target_dims[MAX_UPLOAD_EXAMPLES * 2];
     int8_t distance_maps[MAX_UPLOAD_EXAMPLES * GPU_MAX_COLORS * GPU_GRID_CELLS];
     gpu_object_list seed_lists[MAX_UPLOAD_EXAMPLES];
+    int8_t pane_boxes[MAX_UPLOAD_EXAMPLES][GPU_MAX_PANES][4];
+    int8_t pane_counts[MAX_UPLOAD_EXAMPLES];
     int8_t output_colors_by_size[GPU_MAX_COLORS] = {};
     int8_t output_colors_by_size_count = 0;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level).
