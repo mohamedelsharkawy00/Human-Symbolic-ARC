@@ -1,9 +1,9 @@
-Colors SelectAll SortBySize[0] SelectAll Trim ProjectOnSeeds Union
+Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union
 Puzzle:       045e512c
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:19.0469
-Attempts:     3051289
-Nodes:        6
-Best Score:   6621.0000
-Max Depth:    5
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        16
+Best Score:   6838.0000
+Max Depth:    16

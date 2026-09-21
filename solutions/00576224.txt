@@ -1,9 +1,9 @@
-Input SelectObjectsWithHoles[3] Tile[0] Union CurrentObjects SelectRow[1] FlipHorizontal Union
+Input SelectAll Tile[0] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] FlipHorizontal Union
 Puzzle:       00576224
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:06.8472
-Attempts:     2633496
-Nodes:        8
-Best Score:   6190.0000
-Max Depth:    8
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        10
+Best Score:   4586.0000
+Max Depth:    10

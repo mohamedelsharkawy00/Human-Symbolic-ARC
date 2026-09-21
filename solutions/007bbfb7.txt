@@ -2,8 +2,8 @@ InputWithoutBackground SelectAll Fractal Union
 Puzzle:       007bbfb7
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.2457
-Attempts:     155648
+Elapsed:      00:00:00.0000
+Attempts:     0
 Nodes:        4
-Best Score:   4945.0000
+Best Score:   4025.0000
 Max Depth:    4

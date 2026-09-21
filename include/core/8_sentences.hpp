@@ -700,10 +700,10 @@ inline said_reading say_the_reading(const inference& inf) {
     if (allowed.translate && a_piece_moved && !a_move_was_said)
         said.no_word_for.push_back("where each piece went");
 
-    // Only confirmed whole-grid swaps can be said without choosing objects.
-    // Partial-swap candidates remain available to search.
+    // A swap is said over the pieces, so it only has to hold where a piece is.
+    // Candidates that fail even that remain available to search.
     for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
-        if (inf.color_swaps.whole_grid[variant])
+        if (inf.color_swaps.over_the_pieces[variant])
             say("BidiColorMap[" + to_string(variant) + "]");
 
     if (allowed.recolor)

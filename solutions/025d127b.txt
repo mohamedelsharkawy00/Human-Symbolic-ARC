@@ -1,1 +1,9 @@
-Input SelectAll Split[1] Withhold CurrentObjects SelectAll SlamRow[1] Underlay
+Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SlamRow[1] Underlay
+Puzzle:       025d127b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        12
+Best Score:   1077.0000
+Max Depth:    12

@@ -1,9 +1,9 @@
-Colors SizeRankColorMap Underlay SelectAll FlipHorizontal Intersection
-Puzzle: 0520fde7
-Train: Solved
-Test: Solved
-Elapsed: 00:00:17.8635
-Attempts: 4591210
-Nodes: 4
-Best Score: 755.0000
-Max Depth: 6
+InputWithoutBackground Panes SelectAll Origin IntersectionList Recolor[2] Union
+Puzzle:       0520fde7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        7
+Best Score:   846.0000
+Max Depth:    7

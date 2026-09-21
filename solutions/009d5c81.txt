@@ -1,9 +1,9 @@
-Input SelectAll Colors Withhold CurrentObjects SelectAll ShapeColorMap Union InputWithoutBackground SelectLargestObject[0] MaskOut[1] Intersection
+Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap[0] Withhold CurrentObjects SelectAll ShapeColorMap Union
 Puzzle:       009d5c81
 Train:        Solved
 Test:         Solved
-Elapsed:      00:11:09.9125
-Attempts:     108210246
-Nodes:        12
-Best Score:   2570.0000
-Max Depth:    12
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        16
+Best Score:   2300.0000
+Max Depth:    16
