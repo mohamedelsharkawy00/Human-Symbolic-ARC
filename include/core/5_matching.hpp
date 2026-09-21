@@ -593,8 +593,9 @@ private:
                     }
                 auto edge = edge_from_match(hit, (int)from_index, one_object.color, stationary);
                 const bool stands_alone = beats_chance(found_here.places, odds);
-                // Stationary, hidden, or recolored matches must pass the chance test on their own.
-                if ((stationary || hit.hidden || !hit.exact) && !stands_alone) {
+                // EXPERIMENT: every match must pass the chance test, not only the
+                // stationary, hidden, or recolored ones.
+                if (!stands_alone) {
                     if (discarded && discard_why) {
                         discarded->push_back(edge);
                         discard_why->push_back(object_matching::lost_to_chance);
