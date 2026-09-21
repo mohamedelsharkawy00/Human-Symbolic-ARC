@@ -242,6 +242,8 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     // actually said, so a verdict cannot drift from the fact behind it.
     task.dead_ops[(int)node_type::SizeRankColorMap] =
         (inf.colors.output_colors_by_size_count == 0);
+    // No split, no panes: the op would hand back an empty list on every grid.
+    task.dead_ops[(int)node_type::Panes] = !inf.pane_split.holds();
     // No elected ground means this op is Input spelled longer.
     task.dead_ops[(int)node_type::InputWithoutBackground] =
         (inf.background.input_elected() < 0);
@@ -260,6 +262,11 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     // openings, so each is its own whole program rather than a claim that one
     // of them is right.
     task.suggested_programs = programs_from(say_the_reading(inf));
+    // A sentence that opens with no source carves what the sentence before it
+    // left instead of the input. It runs, it draws, and it is wrong, so it is
+    // dropped here rather than handed to the search as something to build on.
+    erase_if(task.suggested_programs, [](const string& one) {
+        return sentence_with_no_source(one) != nullptr; });
     task.inferred = true;
 }
 

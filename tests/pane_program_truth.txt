@@ -1,0 +1,127 @@
+# Pane programs: the reading, said in the solver's own words, and RUN.
+# Format:  <id>  <shape>, then the program, one SENTENCE a line, indented.
+#   Prefix a line with WRONG to mark a known failure (not a regression).
+#
+# NOT WRITTEN BY HAND. Every program is what say_panes emits for that puzzle,
+# taken off suggested_programs, run on the train pairs, then asked for the
+# held-out TEST answer. All right, none wrong, nothing searched for.
+#
+# THE SHAPES, every one out of words that already existed:
+#   AND           IntersectionList
+#   OR            UnionList
+#   NOR           UnionList, then AddColor + Colors to keep only what was filled
+#   XOR           the union painted, then the intersection taken back out
+#   PRIORITY      the winner painted, each loser laid under it in turn
+#   AS THEY COME  the panes laid down in the order they were cut
+# A pose, where the panes face each other rather than repeat, is said by naming
+# the first pane's band, taking the others, and turning those.
+#
+# FOUR THINGS EVERY ONE OF THEM NEEDS, each of which cost a wrong answer first:
+#   1. Origin. The panes are cut where they lie; without it they never stack.
+#   2. A GET opening EVERY sentence. One starting with Colors carves what the
+#      last sentence left instead of the input, and nothing reported it wrong.
+#      sentence_with_no_source now refuses such a program before it is handed on.
+#   3. A ground sentence last. Where the outputs elect no background the canvas
+#      starts empty, the drawing comes out right, and the gaps stay transparent.
+#   4. The ground FOUND, not assumed. "8 where no pane has anything, 0 else"
+#      reads equally as NOR painting 8 and as OR painting 0; only the first is a
+#      program, since painting the ground is not leaving it. The elected
+#      background is tried first. Assuming it cost every NOR puzzle its sentence.
+#
+# The programs run 6 to 37 ops against a beam whose max depth is 6, so the long
+# ones are not findable by search at all -- they are handed over whole.
+
+
+0520fde7  AND
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Recolor[2] Union
+0c9aba6e  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[8] Colors SelectColor[8] InvertSelection DeleteSelection Union
+195ba7dc  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[1] Union
+1b2d62fb  AND
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Recolor[8] Union
+281123b4  PRIORITY
+  Input Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+2dee498d  OR
+  Input Panes SelectColumn[0] InvertSelection DeleteSelection Origin Union
+31d5ba1a  XOR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[6] Union
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
+3428a4f5  XOR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[3] Union
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
+34b99a2b  XOR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[2] Union
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
+3d31c5b3  PRIORITY
+  Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[2] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+506d28a5  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[3] Union
+5d2a5c43  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[8] Union
+6430c8c4  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[3] Colors SelectColor[3] InvertSelection DeleteSelection Union
+66f2d22f  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[5] Colors SelectColor[5] InvertSelection DeleteSelection Union
+6a11f6da  PRIORITY
+  Input Colors SelectColor[6] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[1] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+75b8110e  PRIORITY
+  Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[6] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+94f9d214  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[2] Colors SelectColor[2] InvertSelection DeleteSelection Union
+99b1bc43  XOR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[3] Union
+  InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
+a68b268e  AS THEY COME
+  InputWithoutBackground Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+ce4f8723  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[3] Union
+cf98881b  AS THEY COME
+  InputWithoutBackground Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+d19f7514  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[4] Union
+dae9d2b5  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[6] Union
+e133d23d  OR
+  InputWithoutBackground Panes SelectAll Origin UnionList Recolor[2] Union
+e345f17b  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[4] Colors SelectColor[4] InvertSelection DeleteSelection Union
+e3497940  AS THEY COME
+  InputWithoutBackground Panes SelectColumn[0] InvertSelection FlipHorizontal SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+e98196ab  AS THEY COME
+  InputWithoutBackground Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+e99362f0  PRIORITY
+  Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[7] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[2] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+ea9794b1  PRIORITY
+  Input Colors SelectColor[3] InvertSelection DeleteSelection Panes SelectAll Origin Union
+  Input Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
+  Input Panes SelectAll Origin Recolor[0] Underlay
+f2829549  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[3] Colors SelectColor[3] InvertSelection DeleteSelection Union
+fafffa47  NOR
+  InputWithoutBackground Panes SelectAll Origin UnionList AddColor[2] Colors SelectColor[2] InvertSelection DeleteSelection Union

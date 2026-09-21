@@ -153,6 +153,32 @@ inline vector<string> sentences_of(const string& program) {
     return rows;
 }
 
+// EVERY SENTENCE MUST OPEN WITH A SOURCE. A sentence whose first word is not a
+// GET does not start from the input: it carves whatever the sentence before it
+// left in hand. That reads as a perfectly ordinary program, runs without
+// complaint, draws something plausible, and is wrong -- which is exactly how it
+// got past a footer, a log and two readers. So it is checked here, once, and a
+// program that breaks it is named rather than handed on.
+//
+// CurrentObjects is a GET and says "the ones I have" on purpose; carrying the
+// hand forward is only a bug when nobody said to.
+inline const char* sentence_with_no_source(const string& program) {
+    // The GET-role ops, named here the way sentences_of names the closers: this
+    // file is read before the op table exists, so the words are spelled out. If
+    // a GET is ever added to NODE_PRIMITIVES it belongs in this list too.
+    static constexpr const char* const sources[] = {
+        "Input", "InputWithoutBackground", "Output", "CurrentObjects", "Seeds" };
+    for (const string& sentence : sentences_of(program)) {
+        const size_t end = sentence.find(' ');
+        const string first = sentence.substr(0, end == string::npos ? sentence.size() : end);
+        bool opens = false;
+        for (const char* source : sources) opens |= first == source;
+        if (!opens) return "a sentence that opens with no source";
+    }
+    return nullptr;
+}
+
+
 // THE OUTPUT AS WHOLE INPUTS, said as which blocks hold one and how each sits.
 // All of them filled is Tile; filled where the input has its figure is Fractal.
 // How each sits is factored into a pose for the input, then one per row of
@@ -273,9 +299,220 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
     return true;
 }
 
+// THE PANES, SAID. The split cut the input into panes and the mask says what
+// they come to; both are facts, so the program is read off them and nothing is
+// tried. Every sentence here opens with a GET of its own, which is why it does
+// not go through say_sentence: that one carries the hand forward with
+// CurrentObjects, and a sentence that carried the hand forward would carve what
+// the last sentence left instead of the input -- right-looking and silently
+// wrong. Origin is what stacks the panes; without it they stay where they were
+// cut and nothing lines up.
+inline bool say_panes(const inference& inf, said_reading& said) {
+    const auto& split = inf.pane_split;
+    const auto& mask = inf.pane_mask;
+    if (!split.holds() || !mask.holds()) return false;
+    // A PANE TURNED BEFORE IT STACKS. Panes facing each other across a wall are
+    // mirrored, not shifted, and pane_mask reads every pane after the first
+    // through one pose. Saying that needs those panes named, and a band names a
+    // pane only while they lie in one row or one column -- so a lattice read
+    // through a pose is a reading with no sentence.
+    string turn;
+    if (mask.posed != 0) {
+        if (split.down != 1 && split.across != 1) {
+            said.no_word_for.push_back("a lattice of panes read through a pose");
+            return false;
+        }
+        // Every pane but the first: name the first's band and take the others.
+        turn = (split.down == 1 ? " SelectColumn[0]" : " SelectRow[0]") + string(" InvertSelection");
+        for (const string& word : words_for_pose(mask.posed)) turn += " " + word;
+        turn += " SelectAll";
+    }
+    const int panes = mask.panes;
+    if (panes < 2 || panes > 8) return false;
+    const int patterns = 1 << panes;
+    const auto& says = mask.by_mask;
+    if ((int)says.size() != patterns || !says[0].said()) return false;
+    // WHICH COLOR IS THE GROUND IS NOT OBVIOUS. The pattern where no pane has
+    // anything is the ground for most shapes -- and is the one and only thing
+    // NOR paints, so assuming it costs every NOR its sentence. Each color in the
+    // table is tried as the ground instead, and the shape that holds names it.
+    // THE ELECTED GROUND IS TRIED FIRST, and that is not a preference but the
+    // whole difference between two readings of one table. A table that says
+    // "8 where no pane has anything, 0 everywhere else" reads equally as NOR
+    // painting 8 and as OR painting 0 -- and only the first is a program, since
+    // painting the ground is not the same as leaving it there.
+    int8_t grounds[COLOR_COUNT + 2];
+    int ground_count = 0;
+    auto offer = [&](int8_t color) {
+        if (color < 0 || ground_count > COLOR_COUNT) return;
+        for (int g = 0; g < ground_count; ++g) if (grounds[g] == color) return;
+        grounds[ground_count++] = color;
+    };
+    offer(inf.background.output_elected());
+    offer(inf.background.input_elected());
+    for (int m = 0; m < patterns; ++m) {
+        if (says[m].said()) offer(says[m].paint);
+    }
+    if (ground_count == 0) return false;
+
+    // Each pane's own color is what it alone comes to.
+    int8_t alone[8];
+    bool one_color_each = true;
+    for (int p = 0; p < panes; ++p) {
+        const auto& only = says[1 << p];
+        alone[p] = only.said() ? only.paint : (int8_t)-1;
+        if (alone[p] < 0) one_color_each = false;
+    }
+
+    auto bits = [](int m) { int n = 0; while (m) { n += m & 1; m >>= 1; } return n; };
+    const string head = "InputWithoutBackground Panes" + (turn.empty() ? " SelectAll" : turn) + " Origin";
+    for (int g = 0; g < ground_count; ++g) {
+        const int8_t ground = grounds[g];
+        // Every pattern that paints must paint the same color for the four
+        // boolean shapes; a table that does not is an order, or nothing said.
+        int8_t lit_color = -1;
+        bool one_lit_color = true;
+        for (int m = 0; m < patterns; ++m) {
+            if (!says[m].said() || says[m].paint == ground) continue;
+            if (says[m].paint < 0) { one_lit_color = false; break; }
+            if (lit_color < 0) lit_color = says[m].paint;
+            else if (lit_color != says[m].paint) { one_lit_color = false; break; }
+        }
+        if (!one_lit_color || lit_color < 0) continue;
+        auto shape_holds = [&](auto predicate) {
+            for (int m = 0; m < patterns; ++m) {
+                if (!says[m].said()) continue;
+                if (predicate(m) != (says[m].paint != ground)) return false;
+            }
+            return true;
+        };
+        const string paint = to_string((int)lit_color);
+        if (shape_holds([&](int m) { return m == patterns - 1; })) {
+            said.sentences.push_back(head + " IntersectionList Recolor[" + paint + "] Union");
+            return true;
+        }
+        if (shape_holds([&](int m) { return m != 0; })) {
+            said.sentences.push_back(head + " UnionList Recolor[" + paint + "] Union");
+            return true;
+        }
+        if (shape_holds([&](int m) { return bits(m) == 1; })) {
+            // Everything the panes cover, less what they all agree on.
+            said.sentences.push_back(head + " UnionList Recolor[" + paint + "] Union");
+            said.sentences.push_back(head + " IntersectionList Difference");
+            return true;
+        }
+        if (shape_holds([&](int m) { return m == 0; })) {
+            // What the panes do NOT cover: fill the box, then keep only the fill.
+            said.sentences.push_back(head + " UnionList AddColor[" + paint + "] Colors SelectColor["
+                                     + paint + "] InvertSelection DeleteSelection Union");
+            return true;
+        }
+    }
+
+    // AN ORDER, when the panes do not agree and one of them always wins. Read
+    // off the table: whoever takes the pattern where every pane is still in wins
+    // first, then the same question again without it.
+    const int8_t ground = says[0].paint;
+    // THE PANES LAID DOWN AS THEY COME, when what wins is simply the first pane
+    // that has anything. Nothing has to be named, so this says the panes whose
+    // colors are not one apiece too -- including the ones that never overlap,
+    // where there is no order to get wrong.
+    if (ground >= 0) {
+        bool list_order = true;
+        for (int m = 1; m < patterns && list_order; ++m) {
+            if (!says[m].said()) continue;
+            int first = -1;
+            for (int p = 0; p < panes && first < 0; ++p) if (m >> p & 1) first = p;
+            list_order = says[m].copy_pane == first ||
+                         (says[m].paint >= 0 && alone[first] == says[m].paint);
+        }
+        if (list_order) {
+            said.sentences.push_back(head + " Underlay");
+            said.sentences.push_back("Input Panes SelectAll Origin Recolor[" +
+                                     to_string((int)ground) + "] Underlay");
+            return true;
+        }
+    }
+    if (one_color_each && ground >= 0) {
+        int order[8], count = 0, left = patterns - 1;
+        while (left) {
+            if (!says[left].said()) break;
+            int won = -1;
+            for (int p = 0; p < panes; ++p)
+                if ((left >> p & 1) && alone[p] == says[left].paint) { won = p; break; }
+            if (won < 0) break;
+            order[count++] = won;
+            left &= ~(1 << won);
+        }
+        if (count == panes) {
+            // Every pattern must come to the first pane in that order that has
+            // anything -- otherwise the order is a coincidence of the big masks.
+            bool every = true;
+            for (int m = 0; m < patterns && every; ++m) {
+                if (!says[m].said()) continue;
+                int8_t wins = ground;
+                for (int i = 0; i < panes; ++i)
+                    if (m >> order[i] & 1) { wins = alone[order[i]]; break; }
+                every = says[m].paint == wins;
+            }
+            if (every) {
+                for (int i = 0; i < panes; ++i)
+                    said.sentences.push_back(
+                        "Input Colors SelectColor[" + to_string((int)alone[order[i]]) +
+                        "] InvertSelection DeleteSelection Panes SelectAll Origin " +
+                        (i == 0 ? "Union" : "Underlay"));
+                // The canvas starts empty when the outputs elect no ground, so
+                // the ground is laid last, under everything already painted.
+                said.sentences.push_back("Input Panes SelectAll Origin Recolor[" +
+                                         to_string((int)ground) + "] Underlay");
+                return true;
+            }
+        }
+    }
+
+    said.no_word_for.push_back("what the panes come to");
+    return false;
+}
+
+// WHICH PANE THE ANSWER IS, when the answer is a pane and not something drawn
+// from them. Only one of the reasons has words: a place in a row of panes, said
+// as the band the pane sits in. The others name a property the language has no
+// selector for, so they are said as the missing word and nothing is spelled --
+// which is the point of saying them at all.
+inline bool say_pane_pick(const inference& inf, said_reading& said) {
+    const auto& split = inf.pane_split;
+    const auto& pick = inf.pane_pick;
+    if (!split.holds() || !pick.holds()) return false;
+    if (pick.way != pane_pick_rule::AtIndex) {
+        said.no_word_for.push_back(
+            pick.way == pane_pick_rule::OddColor   ? "the pane whose palette is unlike the others" :
+            pick.way == pane_pick_rule::OddOneOut  ? "the pane unlike the others" :
+            pick.way == pane_pick_rule::NotSymmetric || pick.way == pane_pick_rule::OnlySymmetric
+                                                   ? "the pane that folds unlike the others"
+                                                   : "the pane that carries most or least");
+        return false;
+    }
+    // A band names a pane only while the panes lie in one row or one column;
+    // across a lattice a place needs two bands at once, and a selector adds
+    // rather than narrows, so the two together name a cross and not a pane.
+    const bool one_across = split.down == 1, one_down = split.across == 1;
+    if (!one_across && !one_down) {
+        said.no_word_for.push_back("a place in a lattice of panes");
+        return false;
+    }
+    const string band = one_across ? "SelectColumn[" : "SelectRow[";
+    said.sentences.push_back("Input Panes " + band + to_string((int)pick.which) +
+                             "] InvertSelection DeleteSelection Origin Union");
+    return true;
+}
+
 inline said_reading say_the_reading(const inference& inf) {
     const correspondence_election& facts = inf.correspondence;
     said_reading said;
+    // Asked first: a split is a fact about the frame, and where it holds the
+    // panes are what the pairs are about. Nothing below knows they are there.
+    if (say_panes(inf, said)) return said;
+    if (say_pane_pick(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
     if (facts.pairs.empty()) return said;
 
