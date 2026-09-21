@@ -254,19 +254,23 @@ struct color_diff_facts {
 // How many two-color pairs exist — 45 for the 10 colors.
 constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 
-// Two colors that trade places: every cell of color A becomes color B, and B becomes A.
-struct color_swap_rule {
+// Candidate color pairs: changed A cells become B and changed B cells become A.
+// Unchanged occurrences may remain; this does not establish a whole-grid swap.
+struct color_swap_candidates {
     // Indexed by the op's variant k = row-major pair {a,b}, a<b — the same
     // encoding gpu_exec_bidi_color_map decodes
     bool variant[COLOR_PAIR_COUNT] = {};
+    // Subset confirmed for every input occurrence of both colors in every pair.
+    // Other colors may still require separate operations.
+    bool whole_grid[COLOR_PAIR_COUNT] = {};
     int  count = 0;
-    bool holds() const { return count > 0; }
+    bool has_candidates() const { return count > 0; }
 
-    // Tries every color pair and keeps the ones that swap in all examples.
-    static color_swap_rule detect(const vector<example>& train,
+    // Keeps pairs whose changed cells are consistent with a swap in every example.
+    static color_swap_candidates detect(const vector<example>& train,
                                   const color_diff_facts& diff) {
-        color_swap_rule rule;
-        if (!diff.computed || !pairs_overlay(train)) return rule;
+        color_swap_candidates candidates;
+        if (!diff.computed || !pairs_overlay(train)) return candidates;
 
         int variant = 0;
         for (int first = 0; first < COLOR_COUNT; ++first)
@@ -284,9 +288,28 @@ struct color_swap_rule {
                     swaps = became(diff.lost[i][first], second) &&
                             became(diff.lost[i][second], first);
                 }
-                if (swaps) { rule.variant[variant] = true; rule.count++; }
+                if (!swaps) continue;
+                candidates.variant[variant] = true;
+                candidates.count++;
+
+                bool everywhere = true;
+                for (const auto& pair : train) {
+                    const grid& in = pair.input;
+                    const grid& out = pair.output;
+                    for (int row = 0; everywhere && row < in.height; ++row)
+                        for (int col = 0; col < in.width; ++col) {
+                            const int was = in.data[row][col];
+                            if ((was == first && out.data[row][col] != second) ||
+                                (was == second && out.data[row][col] != first)) {
+                                everywhere = false;
+                                break;
+                            }
+                        }
+                    if (!everywhere) break;
+                }
+                candidates.whole_grid[variant] = everywhere;
             }
-        return rule;
+        return candidates;
     }
 };
 
@@ -1509,7 +1532,7 @@ struct inference {
     shape_color_map_rule shape_color_map;
     unchanged_cells_facts unchanged;
     color_diff_facts color_diff;
-    color_swap_rule color_swaps;
+    color_swap_candidates color_swaps;
     motif_continuation_rule motif_continuation;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
@@ -1569,7 +1592,7 @@ inline inference infer(const vector<example>& train) {
     if (inf.size.Chosen == output_dimension_rule::Identity) {
         inf.unchanged   = unchanged_cells_facts::detect(train);
         inf.color_diff  = color_diff_facts::detect(train);
-        inf.color_swaps = color_swap_rule::detect(train, inf.color_diff);
+        inf.color_swaps = color_swap_candidates::detect(train, inf.color_diff);
         inf.shape_color_map = shape_color_map_rule::detect_body_recolor(
             train, inf.background.input_elected());
         // Fallback: same shape->color table, but keyed on each object's own

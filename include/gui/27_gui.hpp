@@ -1809,7 +1809,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       line(s);
     }
     if (task.inf.color_swaps.count) {
-      string s = "SWAPPED";
+      string s = "SWAP CANDIDATES";
       int k = 0;
       for (int a = 0; a < COLOR_COUNT; ++a)
         for (int b = a + 1; b < COLOR_COUNT; ++b, ++k)

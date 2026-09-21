@@ -110,13 +110,13 @@ inline void report_background(ostream& report, const background_election& backgr
     report << "\n";
 }
 
-inline void report_color_swaps(ostream& report, const color_swap_rule& swaps) {
+inline void report_color_swaps(ostream& report, const color_swap_candidates& swaps) {
     report << "[color_swaps] count " << swaps.count << "\n";
     int variant = 0;
     for (int first = 0; first < COLOR_COUNT; ++first)
         for (int second = first + 1; second < COLOR_COUNT; ++second, ++variant)
             if (swaps.variant[variant])
-                report << "swap " << first << "<->" << second << "\n";
+                report << "candidate " << first << "<->" << second << "\n";
     report << "\n";
 }
 
