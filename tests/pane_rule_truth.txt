@@ -1,0 +1,61 @@
+# Pane rule ground truth: what the panes come to, once the split has cut.
+# Format:  <id>  mask <panes> <pose>   |   <id>  pick <the reason>
+#   Prefix a line with WRONG to mark a known failure (not a regression).
+#
+# TWO RULES, and the stronger one is asked first.
+#
+# pane_mask_rule MAKES a drawing. At each position every pane is reduced to one
+# bit -- something here, or ground -- and each pattern of those bits either
+# paints a fixed color or copies one named pane. 2^k patterns, not 10^k colors.
+# An AND is the all-bits pattern painting one color; a priority order is each
+# pattern copying its leading pane. Neither has to be named to be found, and a
+# pattern the pairs never showed is still one it can answer.
+#   pose = the pose every pane after the first is read through, 0 = as is.
+#          Panes facing each other across a wall are mirrored, not shifted.
+#
+# pane_pick_rule makes NO drawing: the answer IS one of the panes, and the whole
+# rule is the reason for choosing it. The ways are tried plainest first, a
+# property the pane HAS before a place it SITS.
+#
+# VERIFIED END TO END: each rule is read off the TRAIN pairs only, then asked
+# for the held-out TEST answer. All 37 right, 0 wrong, 0 declined.
+#
+# Expect 33 mask rows and 4 pick rows.
+
+0520fde7  mask  panes 2  pose 0
+0b148d64  pick  the odd palette
+0c9aba6e  mask  panes 2  pose 0
+195ba7dc  mask  panes 2  pose 0
+1b2d62fb  mask  panes 2  pose 0
+281123b4  mask  panes 4  pose 0
+2dee498d  pick  the one in that place  place 0
+31d5ba1a  mask  panes 2  pose 0
+3428a4f5  mask  panes 2  pose 0
+34b99a2b  mask  panes 2  pose 0
+3d31c5b3  mask  panes 4  pose 0
+506d28a5  mask  panes 2  pose 0
+5bd6f4ac  pick  the one in that place  place 2
+5d2a5c43  mask  panes 2  pose 0
+6430c8c4  mask  panes 2  pose 0
+662c240a  pick  the one that breaks the fold  fold 1
+66f2d22f  mask  panes 2  pose 0
+6a11f6da  mask  panes 3  pose 0
+75b8110e  mask  panes 4  pose 0
+88a62173  mask  panes 4  pose 0
+94f9d214  mask  panes 2  pose 0
+99b1bc43  mask  panes 2  pose 0
+a68b268e  mask  panes 4  pose 0
+be03b35f  mask  panes 4  pose 3
+ce4f8723  mask  panes 2  pose 0
+cf98881b  mask  panes 3  pose 0
+d19f7514  mask  panes 2  pose 0
+d47aa2ff  mask  panes 2  pose 0
+dae9d2b5  mask  panes 2  pose 0
+e133d23d  mask  panes 2  pose 0
+e345f17b  mask  panes 2  pose 0
+e3497940  mask  panes 2  pose 4
+e98196ab  mask  panes 2  pose 0
+e99362f0  mask  panes 4  pose 0
+ea9794b1  mask  panes 4  pose 0
+f2829549  mask  panes 2  pose 0
+fafffa47  mask  panes 2  pose 0

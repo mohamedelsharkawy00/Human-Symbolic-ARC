@@ -195,6 +195,65 @@ inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule
     report << "[project_on_seeds] holds " << projection.holds() << "\n\n";
 }
 
+// The frame the figures sit in: whether the input is really several grids side
+// by side. One line, because the fact is one claim; the panes follow so a wrong
+// cut is visible at a glance rather than inferred from what fails downstream.
+inline void report_pane_split(ostream& report, const pane_split_facts& split) {
+    static constexpr const char* const cut_names[] = { "wall", "blank", "bare" };
+    static constexpr const char* const axis_names[] = { "across", "down", "both ways" };
+    report << "[pane_split] holds " << split.holds();
+    if (split.holds())
+        report << "  cut " << cut_names[split.cut]
+               << "  axis " << axis_names[split.axis]
+               << "  color " << (int)split.color
+               << "  panes " << (int)split.down << "x" << (int)split.across;
+    report << "\n";
+    for (size_t which = 0; which < split.pairs.size(); ++which) {
+        report << "  pair " << which << " ";
+        for (const auto& one_pane : split.pairs[which])
+            report << "  " << (int)one_pane.width << "x" << (int)one_pane.height
+                   << " at " << (int)one_pane.left << "," << (int)one_pane.top;
+        report << "\n";
+    }
+    report << "\n";
+}
+
+// What the panes come to: one line per pattern of filled panes, so the idea
+// behind the rule is readable rather than inferred from sixteen color rows.
+inline void report_pane_mask(ostream& report, const pane_mask_rule& mask) {
+    report << "[pane_mask] holds " << mask.holds();
+    if (mask.holds())
+        report << "  panes " << (int)mask.panes << "  pose " << (int)mask.posed;
+    report << "\n";
+    for (size_t pattern = 0; pattern < mask.by_mask.size(); ++pattern) {
+        const auto& says = mask.by_mask[pattern];
+        if (!says.said()) continue;
+        report << "  ";
+        for (int p = 0; p < mask.panes; ++p) report << (pattern >> p & 1 ? '#' : '.');
+        if (says.paint >= 0) report << "  paint " << (int)says.paint;
+        else report << "  copy pane " << (int)says.copy_pane;
+        report << "\n";
+    }
+    report << "\n";
+}
+
+// Which pane the answer is, and the reason given for choosing it.
+inline void report_pane_pick(ostream& report, const pane_pick_rule& pick) {
+    static constexpr const char* const way_names[] = {
+        "the odd one out", "the odd palette", "the one they repeat",
+        "the one that breaks the fold", "the only one that folds",
+        "the fullest", "the emptiest", "the most colored", "the least colored",
+        "the one in that place" };
+    report << "[pane_pick] holds " << pick.holds();
+    if (pick.holds()) {
+        report << "  " << way_names[pick.way];
+        if (pick.way == pane_pick_rule::NotSymmetric ||
+            pick.way == pane_pick_rule::OnlySymmetric) report << "  fold " << (int)pick.which;
+        if (pick.way == pane_pick_rule::AtIndex) report << "  place " << (int)pick.which;
+    }
+    report << "\n" << "\n";
+}
+
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
@@ -376,6 +435,9 @@ inline void log_inference(const string& id, const inference& inf,
     report_dims(report, inf.size);
     report_colors(report, inf.colors, inf.background.input_elected());
     report_background(report, inf.background);
+    report_pane_split(report, inf.pane_split);
+    report_pane_mask(report, inf.pane_mask);
+    report_pane_pick(report, inf.pane_pick);
     report_color_swaps(report, inf.color_swaps);
     report_shape_color_map(report, inf.shape_color_map);
     report_unchanged(report, inf.unchanged);
