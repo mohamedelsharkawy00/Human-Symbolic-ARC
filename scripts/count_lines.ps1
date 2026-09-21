@@ -1,6 +1,9 @@
 # The project root is one level up from where this script is located
 $rootPath = Split-Path $PSScriptRoot -Parent
 
+# A file longer than this is asking to be split, and the table says so
+$lineLimit = 800
+
 # Ask git which files belong to the project rather than keeping a skip list in
 # this script: --exclude-standard applies .gitignore, so the two cannot drift
 # apart. --cached is everything tracked and --others adds files git has not been
@@ -23,7 +26,10 @@ $results = foreach ($relPath in $relPaths) {
     if (-not (Test-Path -LiteralPath $fullPath)) { continue }
 
     try {
-        $lines = (Get-Content -LiteralPath $fullPath | Measure-Object -Line).Lines
+        # Every line, blank ones included. Measure-Object -Line reads an empty
+        # string as zero lines, so it had been quietly shortening every count
+        # here by however many blank lines the file had.
+        $lines = @(Get-Content -LiteralPath $fullPath).Count
         # Directory is the parent path relative to $rootPath
         $directory = [System.IO.Path]::GetDirectoryName($relPath)
         if ([string]::IsNullOrEmpty($directory)) { $directory = "." }
@@ -51,12 +57,29 @@ if ($sortedResults.Count -gt 0) {
         if ($nLen -gt $maxNameLen) { $maxNameLen = $nLen }
     }
 
-    $sortedResults | ForEach-Object {
-        $count = [string]$_.LineCount
-        $name = [string]$_.Name
-        $dir = [string]$_.Directory
+    # The table is sorted longest first, so one rule drawn where the counts fall
+    # past the limit marks every file over it without needing its own column.
+    $rule = ("-" * ($maxCountLen + $maxNameLen + 4)) + " $lineLimit line limit"
+    $ruleDrawn = $false
+
+    $lines = foreach ($r in $sortedResults) {
+        if (-not $ruleDrawn -and $r.LineCount -le $lineLimit) {
+            $rule
+            $ruleDrawn = $true
+        }
+
+        $count = [string]$r.LineCount
+        $name = [string]$r.Name
+        $dir = [string]$r.Directory
 
         # Buffer columns with 4 spaces for readability
         "$($count.PadRight($maxCountLen + 4))$($name.PadRight($maxNameLen + 4))$($dir)"
-    } | Set-Content -Path "$PSScriptRoot\line_counts.txt"
+    }
+    # Nothing came in under the limit, so the rule belongs at the foot
+    if (-not $ruleDrawn) { $lines += $rule }
+
+    $lines | Set-Content -Path "$PSScriptRoot\line_counts.txt"
+
+    $overLimit = @($sortedResults | Where-Object { $_.LineCount -gt $lineLimit }).Count
+    Write-Host "$overLimit of $($sortedResults.Count) files over the $lineLimit line limit"
 }
