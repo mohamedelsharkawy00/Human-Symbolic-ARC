@@ -410,7 +410,7 @@ inline constexpr bool needs_a_pick(node_type t) {
 // MAX_SEARCH_DEPTH). Sized to 2*MAX_SEARCH_DEPTH so no deep program clamps; this
 // header is GPU-only and must not pull in 12_environment.hpp, so the value is a
 // literal — keep it >= 2*MAX_SEARCH_DEPTH (17_dsl_executor.hpp static_asserts it).
-static constexpr int GPU_KERNEL_MAX_OBJECTS = 32;
+static constexpr int GPU_KERNEL_MAX_OBJECTS = arc::MAX_OBJECTS_IN_A_LIST;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 
 // `selected` is the SELECT slot at object depth: one flag per object, not per

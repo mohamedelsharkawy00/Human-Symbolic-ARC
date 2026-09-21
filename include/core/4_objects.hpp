@@ -361,4 +361,40 @@ private:
 
 };
 
+// WHICH PIECE THE SEEDS POINT AT. An op that repeats one piece along the others
+// has to settle this before it draws -- the largest box is the piece being
+// repeated, and everything else is a seed -- and a reading that says what that
+// op will draw has to settle it the same way, or it describes a drawing that
+// never happens. So the rule is written here once and both sides read it: the
+// DSL when it fills its seed list (16_fixed_dsl.hpp), inference when it replays
+// an op to check a claim (7_infer.hpp).
+//
+// THE TWO MEASURES ARE NOT THE SAME ONE. A piece is dropped from the seeds by
+// the BOX it fills, while the word that hands the repeated piece over first,
+// SortBySize[0], ranks by CELLS. They usually agree and are not the same
+// question, so they are kept apart here rather than quietly merged.
+struct seeded_pieces {
+    // Indices into the boxes handed in. -1 when nothing was.
+    int repeated = -1;
+    // The rest, smallest box first, which is the order an op walks them in.
+    vector<int> seeds;
+};
+
+inline seeded_pieces read_seeds(const vector<object_summary>& boxes) {
+    seeded_pieces reading;
+    if (boxes.empty()) return reading;
+    auto box_of = [&](int which) { return (int)boxes[which].w * (int)boxes[which].h; };
+    // Ties go to the first found, which is the way both sides broke them before
+    // they shared this.
+    int largest = 0;
+    for (int which = 1; which < (int)boxes.size(); ++which)
+        if (box_of(which) > box_of(largest)) largest = which;
+    reading.repeated = largest;
+    for (int which = 0; which < (int)boxes.size(); ++which)
+        if (which != largest) reading.seeds.push_back(which);
+    stable_sort(reading.seeds.begin(), reading.seeds.end(),
+                [&](int one, int other) { return box_of(one) < box_of(other); });
+    return reading;
+}
+
 } // namespace arc

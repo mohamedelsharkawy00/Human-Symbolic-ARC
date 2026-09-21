@@ -249,20 +249,24 @@ static inline void fixed_init_context(
         all_objects.count = dst;
     }
 
-    // Seeds = all objects except largest, sorted by size ascending
+    // Seeds = all objects except the largest, smallest box first. The rule is
+    // 4_objects.hpp's read_seeds, which inference reads too, so what an op is
+    // handed here and what a reading says it will be handed cannot drift apart.
     ctx.seed_objs.clear();
     if (all_objects.count > 0) {
-        int largest_idx = 0, largest_area = 0;
+        vector<object_summary> boxes;
         for (int i = 0; i < all_objects.count; ++i) {
-            int area = all_objects.objects[i].width * all_objects.objects[i].height;
-            if (area > largest_area) { largest_area = area; largest_idx = i; }
+            object_summary box;
+            box.w = (int8_t)all_objects.objects[i].width;
+            box.h = (int8_t)all_objects.objects[i].height;
+            boxes.push_back(box);
         }
-        for (int i = 0; i < all_objects.count; ++i) {
-            if (i == largest_idx) continue;
+        // A grid holds at most 900 cells and so at most 900 objects, which is
+        // what this list holds: the cap is a guard, never a cut.
+        for (int which : read_seeds(boxes).seeds) {
             if (ctx.seed_objs.count >= GPU_MAX_OBJECTS) break;
-            ctx.seed_objs.objects[ctx.seed_objs.count++] = all_objects.objects[i];
+            ctx.seed_objs.objects[ctx.seed_objs.count++] = all_objects.objects[which];
         }
-        sort_objects_by_area_asc(ctx.seed_objs);
     }
 }
 

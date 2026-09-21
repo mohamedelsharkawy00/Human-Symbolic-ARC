@@ -719,11 +719,9 @@ struct overlap_corner_rule {
         // measured in their own, and the cells no piece reaches are ground.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
             !is_color(output_background) || train.empty()) return {};
-        // OverlapCorner lays out the first 32 objects it is handed (11_dsl.cuh's
-        // GPU_KERNEL_MAX_OBJECTS, which the DSL header states and this layer is
-        // compiled before, so it cannot be shared). A chain this detector
-        // verified past that point is one the op would not draw.
-        constexpr size_t most_the_op_lays_out = 32;
+        // OverlapCorner lays out as many objects as one list holds; a chain this
+        // detector verified past that point is one the op would not draw.
+        constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
         for (const auto& pair : train) {
             vector<object_segmentation::object_info> info;
