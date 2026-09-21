@@ -378,6 +378,9 @@ inline said_reading say_the_reading(const inference& inf) {
     };
     enum : int8_t { act_turn, act_down, act_across, act_recolor };
     vector<seen_act> acts_in_every_pair;
+    // Whether any piece landed anywhere but where it started, whether or not
+    // the act that did it survived being asked of every pair.
+    bool a_piece_moved = false;
     for (size_t which = 0; which < facts.pairs.size(); ++which) {
         const auto& pair = facts.pairs[which];
         vector<seen_act> here;
@@ -394,8 +397,11 @@ inline said_reading say_the_reading(const inference& inf) {
             note(piece.color, act_turn,   edge.pose);
             // A copy's landing is not a movement of the single original.
             if (piece.edges_touching == 1) {
-                note(piece.color, act_down,   (int8_t)(edge.row - piece.summary.y0));
-                note(piece.color, act_across, (int8_t)(edge.col - piece.summary.x0));
+                const int8_t down   = (int8_t)(edge.row - piece.summary.y0);
+                const int8_t across = (int8_t)(edge.col - piece.summary.x0);
+                a_piece_moved = a_piece_moved || down != 0 || across != 0;
+                note(piece.color, act_down,   down);
+                note(piece.color, act_across, across);
             }
             if (!edge.exact)
                 for (int8_t was = 0; was < COLOR_COUNT; ++was)
@@ -410,9 +416,10 @@ inline said_reading say_the_reading(const inference& inf) {
         acts_in_every_pair = still;
     }
 
-    bool a_recolor_was_said = false;
+    bool a_recolor_was_said = false, a_move_was_said = false;
     for (const auto& act : acts_in_every_pair) {
         if (act.what == act_recolor) a_recolor_was_said = true;
+        if (act.what == act_down || act.what == act_across) a_move_was_said = true;
         // Picks add to what is already marked, and the Trim picked every piece, so
         // a line about one color starts from none picked.
         const string pick = act.color < 0 ? string("SelectAll")
@@ -427,6 +434,16 @@ inline said_reading say_the_reading(const inference& inf) {
         }
         for (const string& word : words) beats.push_back({pick, word});
     }
+
+    // A PIECE MOVED AND NOTHING HERE SAYS WHERE IT WENT. An act has to hold in
+    // every pair, so a slide that differs from piece to piece -- or one whose
+    // pieces wear a different colour in every pair, since an act is asked under
+    // the colour it happened to -- leaves the table empty. Empty then reads as
+    // "nothing happened", and the line says to segment the input and paint it
+    // straight back. That is the language missing a word for the arrangement,
+    // not the pieces standing still, and this is the moment to say so.
+    if (allowed.translate && a_piece_moved && !a_move_was_said)
+        said.no_word_for.push_back("where each piece went");
 
     // Colours that trade places. Said before the reading's own recolor, because
     // a swap is the whole story for the cells it touches and needs no pieces.
