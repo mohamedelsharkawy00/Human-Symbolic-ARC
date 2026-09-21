@@ -701,6 +701,81 @@ struct piece_slam_rule {
     }
 };
 
+// THE PIECES LAID OUT AS ONE DIAGONAL CHAIN, each hung off the bottom-right
+// corner of the one before it, overlapping it by the single cell they share.
+// Only held when replaying that chain redraws every output exactly, which is
+// what makes the claim checkable rather than a guess at what the layout means:
+// a chain that does not come out cell for cell is not what happened.
+struct overlap_corner_rule {
+    bool chained = false;
+    bool holds() const { return chained; }
+
+    // Lays every input's pieces into the chain and keeps the claim only if that
+    // drew each output on the nose.
+    static overlap_corner_rule detect(const vector<example>& train,
+                                      const correspondence_election& correspondence,
+                                      int8_t input_background, int output_background) {
+        // Each piece is hung off the last one's box, so the pieces have to be
+        // measured in their own, and the cells no piece reaches are ground.
+        if (!boxed_by_its_cells(correspondence.segmentation) ||
+            !is_color(output_background) || train.empty()) return {};
+        // OverlapCorner lays out the first 32 objects it is handed (11_dsl.cuh's
+        // GPU_KERNEL_MAX_OBJECTS, which the DSL header states and this layer is
+        // compiled before, so it cannot be shared). A chain this detector
+        // verified past that point is one the op would not draw.
+        constexpr size_t most_the_op_lays_out = 32;
+        bool laid_any_piece_somewhere_new = false;
+        for (const auto& pair : train) {
+            vector<object_segmentation::object_info> info;
+            vector<object> pieces;
+            object_segmentation::segment_for_correspondence(pair.input, input_background,
+                                                            correspondence.segmentation, info, &pieces);
+            // One piece put in the corner says nothing about chaining.
+            if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return {};
+            // The chain runs left to right, ties top to bottom -- the order the
+            // op itself walks the objects in, so the reading and the word agree
+            // about which piece is first.
+            vector<const object*> chain;
+            for (const object& piece : pieces) chain.push_back(&piece);
+            stable_sort(chain.begin(), chain.end(), [](const object* one, const object* other) {
+                return one->summary.x0 != other->summary.x0
+                     ? one->summary.x0 < other->summary.x0
+                     : one->summary.y0 < other->summary.y0;
+            });
+            grid drawn;
+            drawn.width = pair.output.width;
+            drawn.height = pair.output.height;
+            for (int r = 0; r < drawn.height; ++r)
+                for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+            // The head of the chain sits in the corner; each piece after it puts
+            // its top-left on the last one's bottom-right and paints over it,
+            // which is the paint order the closing Union gives them for free.
+            int x = 0, y = 0;
+            for (const object* piece : chain) {
+                for (int r = 0; r < piece->summary.h; ++r)
+                    for (int c = 0; c < piece->summary.w; ++c) {
+                        const int color = piece->cells[r][c];
+                        if (color == TRANSPARENT) continue;
+                        const int row = y + r, col = x + c;
+                        // A chain that runs off the canvas did not draw this output.
+                        if (row < 0 || row >= drawn.height ||
+                            col < 0 || col >= drawn.width) return {};
+                        drawn.data[row][col] = color;
+                    }
+                laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
+                    x != piece->summary.x0 || y != piece->summary.y0;
+                x += piece->summary.w - 1;
+                y += piece->summary.h - 1;
+            }
+            for (int r = 0; r < drawn.height; ++r)
+                for (int c = 0; c < drawn.width; ++c)
+                    if (drawn.data[r][c] != pair.output.data[r][c]) return {};
+        }
+        // Pieces already sitting in the chain were never laid into one.
+        return { laid_any_piece_somewhere_new };
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -711,6 +786,7 @@ struct inference {
     color_swap_rule color_swaps;
     motif_continuation_rule motif_continuation;
     piece_slam_rule piece_slam;
+    overlap_corner_rule overlap_corner;
     input_blocks_rule input_blocks;
     correspondence_election correspondence;
     background_election background;
@@ -732,6 +808,8 @@ inline inference infer(const vector<example>& train) {
     inf.correspondence = select_segmentation(train, inf.background.input_elected());
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence,
+        inf.background.input_elected(), inf.background.output_elected());
+    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
     inf.input_blocks = input_blocks_rule::detect(train,
         inf.background.input_elected(), inf.background.output_elected());

@@ -352,6 +352,14 @@ inline said_reading say_the_reading(const inference& inf) {
         return spoken();
     }
 
+    // PIECES LAID INTO A CORNER CHAIN, each hung off the last one's bottom-right
+    // cell. Like the slam, the layout drew every output by itself, so it is the
+    // whole of what happened and the acts below have nothing left to explain.
+    if (inf.overlap_corner.holds()) {
+        say("OverlapCorner");
+        return spoken();
+    }
+
     // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND move
     // AND change colour, so a line carries several acts, and the grammar gives
     // each act its own sentence sharing the line's GET and SELECT. Only the last

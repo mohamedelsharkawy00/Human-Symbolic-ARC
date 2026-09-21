@@ -185,6 +185,11 @@ inline void report_piece_slam(ostream& report, const piece_slam_rule& slam) {
     report << "\n\n";
 }
 
+// Whether the pieces were laid out as one corner chain, each hung off the last.
+inline void report_overlap_corner(ostream& report, const overlap_corner_rule& chain) {
+    report << "[overlap_corner] holds " << chain.holds() << "\n\n";
+}
+
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
@@ -372,6 +377,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
     report_piece_slam(report, inf.piece_slam);
+    report_overlap_corner(report, inf.overlap_corner);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);
