@@ -574,7 +574,7 @@ namespace arc {
 		}
 
 		// Detect invariant colors: present in ALL training inputs.
-		// MOVED to 7_infer.hpp (arc::detect_color_presence).
+		// MOVED to 7_infer.hpp (arc::color_facts::detect_presence).
 		// Reading the always-present (across_inputs) colors is inference's job. The
 		// engine only needs the single dominant background color for
 		// segmentation (Colors skips it, Split erases it), and takes it from
@@ -590,12 +590,12 @@ namespace arc {
 		// where one color has multiple disjoint regions of different sizes, a connected-
 		// components-aware variant is needed (see notes/2_dsl/learned_orderings.txt).
 		// detect_output_colors_by_size MOVED to 7_infer.hpp
-		// (arc::detect_output_colors_by_size). Ranking across-outputs colors by
-		// pixel count is inference's job; fill_puzzle_level hands
+		// (arc::color_facts::detect_output_colors_by_size). Ranking across-outputs
+		// colors by pixel count is inference's job; fill_puzzle_level hands
 		// inf.colors.output_colors_by_size / _count straight to the kernel for the
 		// OutputColorsBySize op.
 
-		// detect_output_colors MOVED to 7_infer.hpp (arc::detect_output_colors).
+		// detect_output_colors MOVED to 7_infer.hpp (arc::color_facts::detect_output_colors).
 		// Reading the across_outputs palette is inference's job. Nothing in the
 		// engine consumes the ordered palette since the InferredOutputColors op
 		// was deleted; the by-size ranking is the surviving consumer.

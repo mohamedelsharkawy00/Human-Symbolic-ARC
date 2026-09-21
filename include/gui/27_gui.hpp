@@ -1731,13 +1731,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                      (int)task.inf.size.height_numerator, (int)task.inf.size.height_denominator);
       line(s);
     }
-    named_row({{"COLORS GONE", colors_as_text(F.consumed)},
-               {"NEW", colors_as_text(F.introduced)},
-               {"KEPT", colors_as_text(F.preserved)}});
-    named_row({{"IN EVERY INPUT", colors_as_text(F.in_every_input)},
-               {"IN EVERY OUTPUT", colors_as_text(F.in_every_output)}});
-    named_row({{"IN EVERY GRID", colors_as_text(F.in_every_grid)},
-               {"ANYWHERE", colors_as_text(F.in_any_grid)}});
+    named_row({{"COLORS GONE", color_facts::as_text(F.consumed)},
+               {"NEW", color_facts::as_text(F.introduced)},
+               {"KEPT", color_facts::as_text(F.preserved)}});
+    named_row({{"IN EVERY INPUT", color_facts::as_text(F.in_every_input)},
+               {"IN EVERY OUTPUT", color_facts::as_text(F.in_every_output)}});
+    named_row({{"IN EVERY GRID", color_facts::as_text(F.in_every_grid)},
+               {"ANYWHERE", color_facts::as_text(F.in_any_grid)}});
     {
       string all;
       for (int i = 0; i < task.inf.colors.output_colors_count; ++i)

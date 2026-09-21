@@ -67,15 +67,15 @@ inline void report_dims(ostream& report, const output_dimension_rule& size) {
 
 inline void report_colors(ostream& report, const color_facts& colors, int8_t input_background) {
     report << "[colors]\n";
-    report << "consumed " << colors_as_text(colors.consumed)
-      << "  introduced " << colors_as_text(colors.introduced)
-      << "  preserved " << colors_as_text(colors.preserved) << "\n";
-    report << "every_input " << colors_as_text(colors.in_every_input)
-      << "  any_input " << colors_as_text(colors.in_any_input)
-      << "  every_output " << colors_as_text(colors.in_every_output)
-      << "  any_output " << colors_as_text(colors.in_any_output) << "\n";
-    report << "every_grid " << colors_as_text(colors.in_every_grid)
-      << "  any_grid " << colors_as_text(colors.in_any_grid)
+    report << "consumed " << color_facts::as_text(colors.consumed)
+      << "  introduced " << color_facts::as_text(colors.introduced)
+      << "  preserved " << color_facts::as_text(colors.preserved) << "\n";
+    report << "every_input " << color_facts::as_text(colors.in_every_input)
+      << "  any_input " << color_facts::as_text(colors.in_any_input)
+      << "  every_output " << color_facts::as_text(colors.in_every_output)
+      << "  any_output " << color_facts::as_text(colors.in_any_output) << "\n";
+    report << "every_grid " << color_facts::as_text(colors.in_every_grid)
+      << "  any_grid " << color_facts::as_text(colors.in_any_grid)
       << "  background " << (int)input_background << "\n";
     report << "output_colors ";
     for (int i = 0; i < colors.output_colors_count; ++i)

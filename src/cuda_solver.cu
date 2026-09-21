@@ -1254,7 +1254,7 @@ __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, con
 }
 
 // ShapeColorMap: repaint the main object to a color picked by a small glyph's
-// SHAPE, using the puzzle-level table learned host-side (detect_shape_color_map).
+// SHAPE, using the puzzle-level table learned host-side (shape_color_map_rule::detect_body_recolor).
 // Removes nothing: key = smallest-bbox object, target = largest-bbox object; the
 // target is recolored to table[hash(key)], everything else passes through. If the
 // table is empty (rejected by the consistency gate) or the glyph's shape isn't in
@@ -1294,7 +1294,7 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 }
 
 // ShapeToInteriorColorMap: per-object interior fill whose color is picked by the
-// object's OWN shape via the puzzle-level table (detect_shape_to_interior_color_map).
+// object's OWN shape via the puzzle-level table (shape_color_map_rule::detect_interior_fill).
 // Sibling of ShapeColorMap, but applies per object (not single key->target) and
 // paints the enclosed interior (not the body). For each object: lane 0 hashes the
 // occupancy (shape_occupancy_hash, the same shared recipe ShapeColorMap uses), looks
