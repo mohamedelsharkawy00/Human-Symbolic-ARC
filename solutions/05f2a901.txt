@@ -1,1 +1,9 @@
-Colors SelectColor[8] InvertSelection DeleteSelection SelectAll Trim Union Input Colors SelectColor[2] InvertSelection DeleteSelection SelectAll Trim SelectAll AlignToCanvas Union AddColor[0] Output SelectAll AddColor[0] Union
+Input SelectAll Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] Union CurrentObjects SelectAll InvertSelection SelectColor[2] AlignToCanvas Union
+Puzzle:       05f2a901
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.0853
+Attempts:     0
+Nodes:        19
+Best Score:   2112.0000
+Max Depth:    19

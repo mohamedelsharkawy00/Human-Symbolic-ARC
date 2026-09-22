@@ -1440,6 +1440,141 @@ struct overlap_corner_rule {
     }
 };
 
+// PIECES SLID UP AGAINST THE ONES THAT STAY. One colour is already where it
+// belongs and the other closes the gap until the two touch. That is what
+// AlignToCanvas does, and this reads the same movement off the pairs: the still
+// pieces are painted, the box their cells make is the whole of what the op gets
+// to see of the canvas, and every other piece lands flush against that box,
+// along whichever axis it stood further apart on. Only held when replaying it
+// redraws every output exactly, which is what makes the claim checkable rather
+// than a guess at where the pieces were headed.
+//
+// TWO COLOURS, BECAUSE A PICK NAMES A PIECE BY ITS COLOUR. The sentence has to
+// say which pieces stay and which slide, and SelectColor is the only word that
+// names a piece by what it is -- so a grid where three colours share the work
+// is a movement with no sentence, and is not claimed here.
+//
+// THE ARITHMETIC IS THE OP'S, NOT A SECOND OPINION. Which of the two flush
+// landings wins, and which axis the piece travels along, are
+// gpu_exec_align_to_canvas' own rules, restated here so that what the reading
+// checks is what the word will really do. The two have to move together.
+struct slide_to_touch_rule {
+    int8_t stays  = -1;   // the colour that is already where it belongs
+    int8_t slides = -1;   // the colour that closes the gap until they touch
+    bool holds() const { return is_color(stays) && is_color(slides); }
+
+    static slide_to_touch_rule detect(const vector<example>& train,
+                                      const correspondence_election& correspondence,
+                                      int8_t input_background, int output_background) {
+        // The pieces slide in grid coordinates and the cells they leave behind
+        // are ground, so the two grids have to lie over one another; and the
+        // boxes measured here are the boxes Trim hands the op.
+        if (!boxed_by_its_cells(correspondence.segmentation) ||
+            !is_color(output_background) || !pairs_overlay(train) || train.empty()) return {};
+
+        // The colours the pieces wear: two of them, the same two in every pair,
+        // or there is no pair of picks that can say this.
+        int8_t colors[2] = { -1, -1 };
+        for (const auto& pair : train) {
+            vector<object_segmentation::object_info> info;
+            object_segmentation::segment_for_correspondence(pair.input, input_background,
+                                                            correspondence.segmentation, info, nullptr);
+            // One list is all the op is ever handed, so a grid cut into more
+            // pieces than that is one the word could not draw anyway.
+            if (info.empty() || info.size() > MAX_OBJECTS_IN_A_LIST) return {};
+            for (const auto& piece : info) {
+                // A piece of several colours answers to both picks and to neither.
+                if (!is_color(piece.color)) return {};
+                if (piece.color == colors[0] || piece.color == colors[1]) continue;
+                if (!is_color(colors[0]))      colors[0] = piece.color;
+                else if (!is_color(colors[1])) colors[1] = piece.color;
+                else return {};
+            }
+        }
+        if (!is_color(colors[0]) || !is_color(colors[1])) return {};
+
+        // Draws each output from its input's pieces, one colour standing still
+        // and the other sliding up against it, noting whether anything moved at
+        // all; false at the first cell that comes out wrong.
+        auto draws_every_output = [&](int8_t stays, int8_t slides, bool& moved) {
+            for (const auto& pair : train) {
+                vector<object_segmentation::object_info> info;
+                vector<object> pieces;
+                object_segmentation::segment_for_correspondence(pair.input, input_background,
+                                                                correspondence.segmentation, info, &pieces);
+                grid drawn;
+                drawn.width = pair.output.width;
+                drawn.height = pair.output.height;
+                for (int r = 0; r < drawn.height; ++r)
+                    for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+                auto paint = [&](const object& piece, int down, int across) {
+                    for (int r = 0; r < piece.summary.h; ++r)
+                        for (int c = 0; c < piece.summary.w; ++c) {
+                            const int color = piece.cells[r][c];
+                            if (color == TRANSPARENT) continue;
+                            const int row = piece.summary.y0 + down + r;
+                            const int col = piece.summary.x0 + across + c;
+                            // A piece slid off the canvas did not draw this output.
+                            if (row < 0 || row >= drawn.height ||
+                                col < 0 || col >= drawn.width) return false;
+                            drawn.data[row][col] = color;
+                        }
+                    return true;
+                };
+                // WHAT THE OP SEES OF THE CANVAS is the box around everything
+                // already painted, read once, before the first piece slides --
+                // so what slides is measured against the pieces that stay, and
+                // never against another piece that is still on its way.
+                int tx0 = MAX_GRID_DIM, ty0 = MAX_GRID_DIM, tx1 = -1, ty1 = -1;
+                for (size_t i = 0; i < pieces.size(); ++i) {
+                    if (info[i].color != stays) continue;
+                    if (!paint(pieces[i], 0, 0)) return false;
+                    tx0 = min(tx0, (int)pieces[i].summary.x0);
+                    ty0 = min(ty0, (int)pieces[i].summary.y0);
+                    tx1 = max(tx1, pieces[i].summary.x0 + pieces[i].summary.w - 1);
+                    ty1 = max(ty1, pieces[i].summary.y0 + pieces[i].summary.h - 1);
+                }
+                // An empty canvas is nothing to touch, and the op answers that
+                // by leaving every piece exactly where it stood.
+                if (tx1 < 0) return false;
+                bool anything_slid = false;
+                for (size_t i = 0; i < pieces.size(); ++i) {
+                    if (info[i].color != slides) continue;
+                    anything_slid = true;
+                    const int x0 = pieces[i].summary.x0, y0 = pieces[i].summary.y0;
+                    const int x1 = x0 + pieces[i].summary.w - 1;
+                    const int y1 = y0 + pieces[i].summary.h - 1;
+                    // The two ways to land flush on each axis; the nearer wins.
+                    const int to_the_left = tx0 - x1 - 1, to_the_right = tx1 - x0 + 1;
+                    const int above = ty0 - y1 - 1, below = ty1 - y0 + 1;
+                    int across = abs(to_the_left) <= abs(to_the_right) ? to_the_left : to_the_right;
+                    int down   = abs(above) <= abs(below) ? above : below;
+                    // And it travels along the axis it stood further apart on;
+                    // a gap reads negative where the two boxes already overlap.
+                    if (max(tx0 - x1, x0 - tx1) >= max(ty0 - y1, y0 - ty1)) down = 0;
+                    else                                                    across = 0;
+                    if (!paint(pieces[i], down, across)) return false;
+                    moved = moved || down != 0 || across != 0;
+                }
+                if (!anything_slid) return false;
+                for (int r = 0; r < drawn.height; ++r)
+                    for (int c = 0; c < drawn.width; ++c)
+                        if (drawn.data[r][c] != pair.output.data[r][c]) return false;
+            }
+            return true;
+        };
+
+        // Which colour stays is the reading's to find, not to assume.
+        for (const int which : { 0, 1 }) {
+            bool moved = false;
+            const int8_t stays = colors[which], slides = colors[1 - which];
+            // Pieces already touching were never slid up against anything.
+            if (draws_every_output(stays, slides, moved) && moved) return { stays, slides };
+        }
+        return {};
+    }
+};
+
 // THE SEEDS THE OP WILL BE HANDED. The DSL fills its seed list off the input
 // before a program runs (16_fixed_dsl.hpp), and this says the same list from
 // this side of the fence, so a replay below can be checked against what the op
@@ -1576,6 +1711,7 @@ struct inference {
     diagonal_continuation_rule diagonal_continuation;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
+    slide_to_touch_rule slide_to_touch;
     project_on_seeds_rule project_on_seeds;
     input_blocks_rule input_blocks;
     pane_split_facts pane_split;
@@ -1621,6 +1757,11 @@ inline inference infer(const vector<example>& train) {
     inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
     inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,
+        inf.background.input_elected(), inf.background.output_elected());
+    // Pieces that slid up against the ones that stayed. Asked after the chain
+    // because a layout that puts every piece somewhere new is the larger claim
+    // and should get first refusal; this one leaves most of the grid alone.
+    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
     inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence,
         inf.background.input_elected());

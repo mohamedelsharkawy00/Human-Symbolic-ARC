@@ -197,6 +197,14 @@ inline void report_overlap_corner(ostream& report, const overlap_corner_rule& ch
     report << "[overlap_corner] holds " << chain.holds() << "\n\n";
 }
 
+// Which colour stayed put and which slid up against it.
+inline void report_slide_to_touch(ostream& report, const slide_to_touch_rule& slide) {
+    report << "[slide_to_touch] holds " << slide.holds();
+    if (slide.holds())
+        report << "  " << (int)slide.stays << " stays, " << (int)slide.slides << " slides";
+    report << "\n\n";
+}
+
 // Whether the template was stamped along every marker that pointed a way.
 inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule& projection) {
     report << "[project_on_seeds] holds " << projection.holds() << "\n\n";
@@ -453,6 +461,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_diagonal_continuation(report, inf.diagonal_continuation);
     report_piece_slam(report, inf.piece_slam);
     report_overlap_corner(report, inf.overlap_corner);
+    report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
