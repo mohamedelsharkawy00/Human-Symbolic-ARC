@@ -251,9 +251,6 @@ struct color_diff_facts {
     }
 };
 
-// How many two-color pairs exist — 45 for the 10 colors.
-constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
-
 // Candidate color pairs: changed A cells become B and changed B cells become A.
 // Unchanged occurrences may remain; this alone does not establish a swap that
 // can be said out loud.

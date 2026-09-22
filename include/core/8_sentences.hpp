@@ -18,6 +18,7 @@
 
 #pragma once
 #include "7_infer.hpp"
+#include "0_vocabulary.hpp"
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,7 +40,7 @@ struct said_reading {
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
-// the any-color flag, so Split[0] keeps colors together and Split[1] does not.
+// the same-color flag: Split[1] keeps colors separate; Split[0] joins them.
 inline const char* word_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
         case segmentation_methods::connected_monochrome:   return "Split[1]";
@@ -82,40 +83,22 @@ inline optional<string> word_for_color_map(const int8_t* map) {
     return "BidiColorMap[" + to_string(variant) + "]";
 }
 
-// WHAT IS MARKED, READ OFF THE WORDS. A paint lands only what was picked (the
-// COMBINE rule in 11_dsl.cuh), so whether a sentence still holds its whole hand
-// when it closes is a question about the words it has already said. Three states
-// is all the words can tell apart, and all that is ever asked of them: is it all
-// of them, or not.
-// The words are spelled out rather than looked up, because this file is read
-// before the op table exists -- the same reason sentences_of spells its closers.
-// Every SELECT is named Select-something, and the four ops that clear are the
-// four in clears_the_marks.
+// How much of the object list is selected after these words.
+// Selectors add to the selection; carving and deletion can clear it.
 enum class the_mark { none, some, all };
 
 inline the_mark mark_after(const string& words) {
-    static constexpr const char* const clearers[] = {
-        "Split", "Colors", "Partition", "DeleteSelection" };
     the_mark mark = the_mark::none;
-    for (size_t at = 0, next; at < words.size(); at = next) {
-        next = words.find(' ', at);
-        if (next == string::npos) next = words.size();
-        string word = words.substr(at, next - at);
-        if (next < words.size()) ++next;
-        if (const size_t arg = word.find('['); arg != string::npos) word.resize(arg);
-        if (word.empty()) continue;
-        if (word == "SelectAll") mark = the_mark::all;
-        // The other side of all of them is none, of none is all, and of some is
-        // some -- a part and its complement are both parts.
-        else if (word == "InvertSelection")
-            mark = mark == the_mark::all  ? the_mark::none
-                 : mark == the_mark::none ? the_mark::all
-                                          : the_mark::some;
-        // A selector only ever ADDS, so all stays all and nothing else gets there.
-        else if (word.starts_with("Select")) { if (mark != the_mark::all) mark = the_mark::some; }
-        else if (ranges::find(clearers, word) != end(clearers)) mark = the_mark::none;
-        // Every other word is an act, and an act hands its marks forward.
-    }
+    each_program_word(words, [&](std::string_view, node_type op) {
+        if (op == node_type::SelectAll) mark = the_mark::all;
+        else if (op == node_type::InvertSelection)
+            mark = mark == the_mark::all ? the_mark::none
+                 : mark == the_mark::none ? the_mark::all : the_mark::some;
+        else if (is_select_op(op)) {
+            if (mark != the_mark::all) mark = the_mark::some;
+        }
+        else if (clears_the_marks(op)) mark = the_mark::none;
+    });
     return mark;
 }
 
@@ -193,49 +176,25 @@ inline vector<string> programs_from(const said_reading& said) {
     return programs;
 }
 
-// A PROGRAM READ BACK AS ITS SENTENCES, one to a row. What the pane draws and
-// what the log writes, so neither has to know how a program is spelled. A pick
-// can take several words, so a sentence ends at the word that closes it (the
-// combine role in 11_dsl.cuh), not after a count of them.
+// A sentence ends at a combine operation. Keep only complete sentences,
+// as before; the same rows are used by the GUI and the log.
 inline vector<string> sentences_of(const string& program) {
-    static constexpr const char* const closers[] = {
-        "Union", "Underlay", "Withhold", "Intersection", "Difference" };
     vector<string> rows;
     string row;
-    for (size_t at = 0, next; at < program.size(); at = next) {
-        next = program.find(' ', at);
-        if (next == string::npos) next = program.size();
-        if (next > at) {
-            const string word = program.substr(at, next - at);
-            row += (row.empty() ? "" : " ") + word;
-            if (ranges::find(closers, word) != end(closers)) rows.push_back(exchange(row, string()));
-        }
-        if (next < program.size()) ++next;
-    }
+    each_program_word(program, [&](std::string_view word, node_type op) {
+        if (!row.empty()) row += ' ';
+        row += word;
+        if (is_combine_op(op)) rows.push_back(exchange(row, string()));
+    });
     return rows;
 }
 
-// EVERY SENTENCE MUST OPEN WITH A SOURCE. A sentence whose first word is not a
-// GET does not start from the input: it carves whatever the sentence before it
-// left in hand. That reads as a perfectly ordinary program, runs without
-// complaint, draws something plausible, and is wrong -- which is exactly how it
-// got past a footer, a log and two readers. So it is checked here, once, and a
-// program that breaks it is named rather than handed on.
-//
-// CurrentObjects is a GET and says "the ones I have" on purpose; carrying the
-// hand forward is only a bug when nobody said to.
+// Every sentence names its source, including CurrentObjects when it carries
+// the previous sentence's objects forward.
 inline const char* sentence_with_no_source(const string& program) {
-    // The GET-role ops, named here the way sentences_of names the closers: this
-    // file is read before the op table exists, so the words are spelled out. If
-    // a GET is ever added to NODE_PRIMITIVES it belongs in this list too.
-    static constexpr const char* const sources[] = {
-        "Input", "InputWithoutBackground", "Output", "CurrentObjects", "Seeds" };
     for (const string& sentence : sentences_of(program)) {
-        const size_t end = sentence.find(' ');
-        const string first = sentence.substr(0, end == string::npos ? sentence.size() : end);
-        bool opens = false;
-        for (const char* source : sources) opens |= first == source;
-        if (!opens) return "a sentence that opens with no source";
+        const auto first = std::string_view(sentence).substr(0, sentence.find(' '));
+        if (!is_get_op(operation_named(first))) return "a sentence that opens with no source";
     }
     return nullptr;
 }

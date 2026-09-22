@@ -5,6 +5,13 @@
 #pragma once
 #include <cstdint>
 
+// Shared helpers can run on the host and on the CUDA device.
+#ifdef __CUDACC__
+#define ARC_HOST_DEVICE __host__ __device__
+#else
+#define ARC_HOST_DEVICE
+#endif
+
 namespace arc {
 
 // The ARC cell and the ten colors it can hold.
@@ -14,9 +21,16 @@ enum class arc_color : int8_t {
 	cyan = 8, maroon = 9, count = 10
 };
 constexpr int COLOR_COUNT = (int)arc_color::count;
+constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
+constexpr int TRANSPARENT = -1;
+
+ARC_HOST_DEVICE constexpr bool is_color(int value) {
+    return value >= 0 && value < COLOR_COUNT;
+}
 
 // The ARC grid, its max size is 30 x 30.
 constexpr int MAX_GRID_DIM = 30;
+constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 struct grid {
 	int width = 0, height = 0;
 	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
@@ -49,13 +63,4 @@ struct example {
 // GPU_KERNEL_MAX_OBJECTS on its own side of the fence.
 constexpr int MAX_OBJECTS_IN_A_LIST = 32;
 
-// Human reading order.
-// Plural S = whole train set; no S = one pair.
-// enum class direction {
-//	across_input_output,
-//	across_inputs,
-//	across_outputs,
-//	across_inputs_outputs,
-// };
-
-}
+}  // namespace arc

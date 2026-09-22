@@ -6,13 +6,6 @@
 #include <vector>
 #include <utility>
 
-// Allow a function to run on both CPU and GPU when compiled with CUDA.
-#ifdef __CUDACC__
-#define ARC_HOST_DEVICE __host__ __device__
-#else
-#define ARC_HOST_DEVICE
-#endif
-
 namespace arc {
 using namespace std;
 
@@ -20,10 +13,6 @@ using namespace std;
 // Humans mostly decompose an ARC grid into objects when reading the grid,
 // so the code will match that level of abstraction
 // vs carrying each cell as its own entity.
-
-// A sentinel for an empty non-colored cell,
-// that will be used for masks and marks later.
-constexpr int TRANSPARENT = -1;
 
 // An object's bounding box and cell count, usable without storing its cells.
 struct object_summary {
@@ -44,7 +33,7 @@ struct object_summary {
 // another lane's cell has to compare-and-swap the enclosing word; without this
 // that word could reach past the store into whatever field sits next door.
 struct alignas(4) object_cells {
-    static constexpr int CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
+    static constexpr int CELLS = MAX_GRID_CELLS;
     static constexpr int BYTES = ((CELLS + 1) / 2 + 3) / 4 * 4;
     uint8_t bytes[BYTES];
 
@@ -198,9 +187,9 @@ enum class grouping : int8_t {
 // Caller-owned so host and device can lend memory they already hold.
 struct object_walk_scratch {
     bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
-    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM];
-    int16_t queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
-    int16_t cells[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_CELLS];
+    int16_t queue_col[MAX_GRID_CELLS];
+    int16_t cells[MAX_GRID_CELLS];
 };
 
 // Grouping of cells into an object is 8 way, "is this one object?".
@@ -263,7 +252,7 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
 template <class Blocked>
 inline void mark_outside(int height, int width, Blocked blocked,
                          bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
-    int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) outside[row][col] = false;
     auto claim = [&](int row, int col) {
@@ -384,11 +373,6 @@ inline int find_objects_by_color(const grid& one_grid, int background,
 }
 
 // Tallies; how much of each color, and where it sits
-
-// Only puzzle colors count; TRANSPARENT is excluded.
-ARC_HOST_DEVICE constexpr bool is_color(int value) {
-    return value >= 0 && value < COLOR_COUNT;
-}
 
 // Every cell wearing a color, in reading order, with one color left out if
 // asked. Single home of the walk: the bounds are the grid's own, held to what a
