@@ -1,4 +1,5 @@
-Split[0] SizeRankColorMap Underlay
+Input Split[0] SizeRankColorMap SelectAll Underlay
+
 Puzzle:       08ed6ac7
 Train:        Solved
 Test:         Solved

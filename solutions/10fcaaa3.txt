@@ -1,1 +1,1 @@
-Tile[0] Union Colors Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input Tile[0] Colors Union
+Input Tile[0] SelectAll Union Colors Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input Tile[0] Colors SelectAll Union

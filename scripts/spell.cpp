@@ -63,6 +63,14 @@ int main(int argc, char** argv) {
         node* tree = environment::parse(program);
         if (!tree) { printf("UNPARSED   %s\n", program.c_str()); continue; }
         const int nodes = environment::count_nodes(tree);
+        // Past the ceiling nothing runs and every pair draws an empty grid, which
+        // reads exactly like a program that paints nothing. Say which one it is.
+        if (too_long_to_run(nodes)) {
+            printf("TOO LONG   %d ops, the most a program may be is %d   %s\n",
+                   nodes, flat_program::MAX_OPS, program.c_str());
+            environment::remove(tree);
+            continue;
+        }
         int fits = 0;
         vector<grid> drew(task.train.size());
         for (size_t i = 0; i < task.train.size(); ++i) {

@@ -215,10 +215,10 @@ namespace arc {
 		} else { // ACT
 			// The first act clears any waiting selection; re-owes a landing.
 			n->sel_waiting = false; n->work_unlanded = true; n->last_combine = prev_combine;
-			// Marks ride along on the objects an act hands forward -- unless the
-			// act hands back different objects, and then there is nothing for a
-			// mark to be attached to.
-			n->something_picked = hands_back_new_objects(t) ? false : prev_picked;
+			// Marks ride along on the objects an act hands forward, carves
+			// included -- the pieces of a picked thing are picked. Only the two
+			// ops that clear for a reason of their own end the pick.
+			n->something_picked = clears_the_marks(t) ? false : prev_picked;
 		}
 	}
 
@@ -408,6 +408,15 @@ namespace arc {
 			return true;
 		}
 	};
+
+	// TOO LONG TO RUN, SAID OUT LOUD. flatten_unary_program refuses a chain that
+	// outgrows one batch slot and returns false, and every caller reads a false as
+	// "it drew nothing" -- which is also exactly what a program that paints nothing
+	// looks like. So the two paths that hand a WRITTEN program to the engine ask
+	// here first and name the refusal, rather than showing an empty grid and
+	// letting a reader decide the program was wrong. The search never asks: it
+	// cannot build a chain this long.
+	inline bool too_long_to_run(int op_count) { return op_count > flat_program::MAX_OPS; }
 
 	// A SENTENCE is one beat of the grammar: fetch a list, mark part of it, change
 	// what is marked, land it on the canvas. The rules the four roles obey live

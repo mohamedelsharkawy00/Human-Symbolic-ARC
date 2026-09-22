@@ -115,7 +115,14 @@ __device__ int gpu_count_pixels(const gpu_fixed_object& obj) {
 }
 
 __device__ gpu_object_list& gpu_acquire(gpu_exec_context& ctx) {
-    if (ctx.pool_head >= GPU_KERNEL_POOL_SIZE) ctx.pool_head = GPU_KERNEL_POOL_SIZE - 1;
+    // THE POOL IS A RING, NOT A RUN. Two lists are live at a time -- the one an
+    // op reads and the one it writes -- so a slot handed out a whole lap ago is
+    // long dead and taking it back is free. Clamping handed out the LAST slot
+    // for ever once a program passed POOL_SIZE producing ops, and that slot is
+    // the source the very next op reads: it overwrote what it was about to read,
+    // with no crash and no word, so a long program came back quietly wrong.
+    // How long a program may be is GPU_MAX_OPS' question, never this allocator's.
+    if (ctx.pool_head >= GPU_KERNEL_POOL_SIZE) ctx.pool_head = 0;
     auto& slot = ctx.pool[ctx.pool_head++];
     slot.count = 0;
     // Fresh lists have NOTHING selected (Excel model), and the flag is the
@@ -401,6 +408,11 @@ __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_obj
             gpu_fixed_object& obj = res.objects[res.count];
             obj.x0 = sobj.x0; obj.y0 = sobj.y0; obj.x1 = sobj.x1; obj.y1 = sobj.y1;
             obj.width = sobj.width; obj.height = sobj.height;
+            // A carve CLEARS, and that is what makes a carve useful: the pick
+            // that follows it is how a sentence narrows to one layer. Handing
+            // the mark down instead leaves every layer marked, and since
+            // selectors only ever ADD, the next pick can no longer say "just
+            // this one" -- measured on 05a7bcf2, where it recoloured all three.
             obj.selected = false;
             obj.mask.clear();
             for (int r = 0; r < h; ++r)
@@ -725,6 +737,10 @@ __device__ gpu_object_list& gpu_exec_intersection(gpu_exec_context& ctx, const g
     memset(covered, 0, sizeof(covered));
     for (int i = 0; i < src.count; ++i) {
         const auto& obj = src.objects[i];
+        // Only what was picked lands. A paint that ignored the mark would undo
+        // the pick the sentence just made -- which is why, until now, the only
+        // way to print one layer alone was to delete every other one first.
+        if (!obj.selected) continue;
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
             int gr = obj.y0 + r, gc = obj.x0 + c;
             if (gr >= 0 && gr < ctx.output.height && gc >= 0 && gc < ctx.output.width
@@ -764,6 +780,10 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     // Mark phase: every non-transparent src pixel marks its canvas cell covered.
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj = src->objects[i];
+        // Only what was picked lands. A paint that ignored the mark would undo
+        // the pick the sentence just made -- which is why, until now, the only
+        // way to print one layer alone was to delete every other one first.
+        if (!obj.selected) continue;
         int pw = obj.width, ph = obj.height;
         int total = pw * ph;
         int x0 = obj.x0, y0 = obj.y0;
@@ -816,6 +836,10 @@ __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
 
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj = src->objects[i];
+        // Only what was picked lands. A paint that ignored the mark would undo
+        // the pick the sentence just made -- which is why, until now, the only
+        // way to print one layer alone was to delete every other one first.
+        if (!obj.selected) continue;
         int pw = obj.width, ph = obj.height;
         int total = pw * ph;
         int x0 = obj.x0, y0 = obj.y0;
@@ -874,6 +898,10 @@ __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
 
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj = src->objects[i];
+        // Only what was picked lands. A paint that ignored the mark would undo
+        // the pick the sentence just made -- which is why, until now, the only
+        // way to print one layer alone was to delete every other one first.
+        if (!obj.selected) continue;
         int pw = obj.width, ph = obj.height;
         int total = pw * ph;
         int x0 = obj.x0, y0 = obj.y0;
@@ -904,6 +932,10 @@ __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
 __device__ gpu_object_list& gpu_exec_difference(gpu_exec_context& ctx, const gpu_object_list& src) {
     for (int i = 0; i < src.count; ++i) {
         const auto& obj = src.objects[i];
+        // Only what was picked lands. A paint that ignored the mark would undo
+        // the pick the sentence just made -- which is why, until now, the only
+        // way to print one layer alone was to delete every other one first.
+        if (!obj.selected) continue;
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
             int gr = obj.y0 + r, gc = obj.x0 + c;
             if (gr >= 0 && gr < ctx.output.height && gc >= 0 && gc < ctx.output.width) {
@@ -2809,6 +2841,9 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];
         if (o.width <= 0 || o.height <= 0) continue;
+        // Only what was picked is touched; the rest ride through as they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!o.selected) { res.objects[res.count++] = o; continue; }
         int8_t col = gpu_obj_first_color(o);
 
         int min_x = 1 << 30, min_y = 1 << 30, max_x = -(1 << 30), max_y = -(1 << 30);
@@ -2831,6 +2866,12 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
         int nh = min(max_y - min_y + 1, GPU_MAX_GRID);
 
         gpu_fixed_object& out = res.objects[res.count];
+        // The grown object is the SAME object, longer, so the mark it was picked
+        // by rides along with it -- clears_the_marks says so, and the
+        // kernel is what has to agree. Built fresh out of a slot gpu_acquire has
+        // just zeroed, this had to be said out loud or the next sentence found
+        // nothing picked and the chain stopped speaking to one layer.
+        out.selected = o.selected;
         out.x0 = (int16_t)min_x; out.y0 = (int16_t)min_y;
         out.x1 = (int16_t)(min_x + nw - 1); out.y1 = (int16_t)(min_y + nh - 1);
         out.width = (int16_t)nw; out.height = (int16_t)nh;
@@ -2879,6 +2920,9 @@ __device__ gpu_object_list& gpu_exec_read_under(gpu_exec_context& ctx, const gpu
     int ow = ctx.output.width, oh = ctx.output.height;
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];
+        // Only what was picked is touched; the rest ride through as they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!o.selected) { res.objects[res.count++] = o; continue; }
         gpu_fixed_object out = o;
         bool any = false;
         for (int r = 0; r < o.height; ++r)
@@ -2901,6 +2945,9 @@ __device__ gpu_object_list& gpu_exec_mask(gpu_exec_context& ctx, const gpu_objec
     bool any_color = (color == GPU_COLOR_ANY);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];
+        // Only what was picked is touched; the rest ride through as they are.
+        // Nothing picked means this op does nothing -- acts never fall back to all.
+        if (!o.selected) { res.objects[res.count++] = o; continue; }
         gpu_fixed_object out = o;
         bool any = false;
         for (int r = 0; r < o.height; ++r)
@@ -3619,6 +3666,32 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::NormalizeOrientation:
             case node_type::RestoreOrientation: result = &gpu_acquire(ctx); break;
             default: result = &gpu_acquire(ctx); break;
+            }
+            // ONE HOME FOR THE MARK. Most ops build their objects fresh, out of a
+            // slot gpu_acquire has just zeroed, so a mark handed in would die
+            // here unless every op remembered to carry it -- and five of them did
+            // not. Now that a paint respects the mark, forgetting means printing
+            // nothing, which is a silent wrong answer rather than a loud one.
+            // Carried once, here, so a new op cannot forget: what came in picked
+            // comes out picked. Positional when the op handed back as many
+            // objects as it took, all-or-nothing otherwise, since a carve's
+            // pieces have no one parent to ask.
+            // Only when the op marked NOTHING itself -- an op that has an opinion
+            // about which of its objects are picked keeps it. Selectors are
+            // excluded by role (marking IS their work), and the two ops that
+            // clear do so for reasons of their own.
+            if (result && last && result != last && is_act_op(type) && !clears_the_marks(type)) {
+                bool came_in_picked = false, went_out_picked = false;
+                for (int i = 0; i < last->count; ++i)
+                    came_in_picked |= last->objects[i].selected;
+                for (int i = 0; i < result->count; ++i)
+                    went_out_picked |= result->objects[i].selected;
+                if (came_in_picked && !went_out_picked) {
+                    const bool one_for_one = (result->count == last->count);
+                    for (int i = 0; i < result->count; ++i)
+                        result->objects[i].selected =
+                            one_for_one ? last->objects[i].selected : true;
+                }
             }
             // Publish the result location for other lanes
             ctx.current_objects_idx = (int)(result - ctx.pool);

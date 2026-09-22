@@ -1,3 +1,1 @@
-Split[1] Union
-Input Split[1] SelectColor[1] InvertSelection DeleteSelection SelectAll ExtendOrthogonal[1] SelectAll Recolor[7] Union
-Input Split[1] SelectColor[2] InvertSelection DeleteSelection SelectAll ExtendDiagonal[1] SelectAll Recolor[4] Union
+Input Split[1] SelectAll Union Input Split[1] SelectColor[1] InvertSelection DeleteSelection SelectAll ExtendOrthogonal[1] SelectAll Recolor[7] Union Input Split[1] SelectColor[2] InvertSelection DeleteSelection SelectAll ExtendDiagonal[1] SelectAll Recolor[4] Union

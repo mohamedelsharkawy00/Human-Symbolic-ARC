@@ -6,12 +6,13 @@
 
 namespace arc {
 
-	// The GPU pool must hold every object-list a max-depth program acquires
-	// (up to ~2 slots/op). If MAX_SEARCH_DEPTH grows past 24, bump
-	// GPU_KERNEL_POOL_SIZE in 11_dsl.cuh in lockstep or deep candidates get
-	// silently mis-scored (clamp in gpu_acquire). See that note.
-	static_assert(GPU_KERNEL_POOL_SIZE >= 2 * MAX_SEARCH_DEPTH,
-		"GPU pool too small for max-depth programs; raise GPU_KERNEL_POOL_SIZE");
+	// The GPU pool is a ring, so it must hold the object-lists that are live at
+	// once -- the one an op reads and the one it writes -- and no longer has to
+	// cover a whole program's worth of acquires. Depth may therefore grow without
+	// touching it. The floor is generous on purpose, so an op that someday held a
+	// third list is still safe; the ring itself is gpu_acquire in cuda_solver.cu.
+	static_assert(GPU_KERNEL_POOL_SIZE >= 8,
+		"GPU pool must hold more than the lists live at once; raise GPU_KERNEL_POOL_SIZE");
 
 	// ONE EXAMPLE, READY FOR THE KERNEL: what it starts from and what it must
 	// paint, into slot `ei` of an upload. The main search fills its active

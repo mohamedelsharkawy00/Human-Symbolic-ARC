@@ -1,4 +1,5 @@
-Split[2] Bridge Underlay
+Input Split[2] Bridge SelectAll Underlay
+
 Puzzle:       070dd51e
 Train:        Solved
 Test:         Solved

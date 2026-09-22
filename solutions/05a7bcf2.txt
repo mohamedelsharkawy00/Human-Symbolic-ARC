@@ -1,7 +1,14 @@
-Colors SelectAll SortBySize[1] SelectAll Trim NormalizeOrientation[1] Union
-Input Colors SelectColor[4] InvertSelection DeleteSelection ExtendTo[0] ReadUnder Split SelectColor[2] DeleteSelection Split[1] ExtendTo[0] Union
-Input Colors SelectColor[4] InvertSelection DeleteSelection SelectAll Recolor[3] Union
-Input Colors SelectColor[8] InvertSelection DeleteSelection Union
-Input Colors SelectColor[2] InvertSelection DeleteSelection MaskBy[8] Split[1] SelectAll MoveToEdge[0] Union
-Input Colors SelectColor[2] InvertSelection DeleteSelection MaskOut[8] Union
-Output RestoreOrientation Union
+Input          SelectAll       NormalizeOrientation[1] Union
+Input          SelectAll       Colors                  Withhold
+CurrentObjects SelectColor[4]  MoveRow[0]              Withhold
+CurrentObjects InvertSelection DeleteSelection         Withhold
+CurrentObjects SelectAll       ExtendTo[0]             Withhold
+CurrentObjects SelectAll       ReadUnder               Withhold
+CurrentObjects SelectAll       Split[0]                Withhold
+CurrentObjects SelectColor[2]  DeleteSelection         Withhold
+CurrentObjects SelectAll       ExtendTo[0]             Union
+Input          SelectAll       Colors                  Withhold
+CurrentObjects SelectColor[4]  Recolor[3]              Union
+CurrentObjects SelectColor[2]  MaskBy[8]               Withhold
+CurrentObjects SelectColor[2]  MoveToEdge[0]           Union
+Output         SelectAll       RestoreOrientation      Union

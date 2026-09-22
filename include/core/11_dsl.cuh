@@ -101,7 +101,13 @@ public:
 // --- Domain constants: single home; 12_environment.hpp derives its names from these ---
 static constexpr int GPU_MAX_GRID = arc::MAX_GRID_DIM;
 static constexpr int GPU_GRID_CELLS = GPU_MAX_GRID * GPU_MAX_GRID;
-static constexpr int GPU_MAX_OPS = 64;
+// How long one program may be. The batch stores a program's length and its node
+// count in an int8_t apiece (resize_exec_buffers, cuda_solver.cu), so 127 is as
+// far as this may go before those two widen -- and it is the ONLY thing binding
+// program length now that the object pool is a ring (gpu_acquire) rather than
+// one slot per producing op. A written program is what spends this; the search
+// stops at MAX_SEARCH_DEPTH, far below.
+static constexpr int GPU_MAX_OPS = 127;
 static constexpr int GPU_MAX_OBJECTS = 900;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 // A grid cut both ways leaves at most this many panes worth carrying.
@@ -357,15 +363,25 @@ inline constexpr inferred_amount how_much_is_inferred(node_type t) {
     }
 }
 
-// Ops that hand back objects OTHER than the ones they were given, so no mark
-// can cross them. A mark is attached to an object's identity: a carve turns one
-// object into several, and the several are new; DeleteSelection keeps exactly
-// the ones that were NOT picked. Everything else passes its objects forward, so
-// the marks ride along with them.
-// The same property decides whether an op can be selection-gated at all -- every
-// gated act is one-object-in, one-object-out. Kernel is the truth, this is the
-// claim; the drift-proof version is a column plus a startup self-check.
-inline constexpr bool hands_back_new_objects(node_type t) {
+// Ops after which NOTHING is marked any more. It used to be every op that handed
+// back objects other than the ones it was given, on the reading that a mark is
+// attached to an identity and a carve makes new identities. That cost more than
+// it said: it made cutting a thing you had picked DESELECT it, so a sentence
+// could carve and then had nothing left to print. A carve now hands the mark
+// down to its pieces (gpu_exec_colors, gpu_exec_split), because the pieces are
+// the thing you picked, divided.
+// A carve is here on purpose, and it was tried the other way first. Handing the
+// mark down to the pieces reads well -- the pieces ARE what you picked, divided
+// -- but it leaves every piece marked, and selectors only ADD, so the pick after
+// a carve can no longer narrow to one of them. Measured: `SelectAll Colors
+// SelectColor[4] Recolor[3]` recoloured all three layers. A carve clearing is
+// what makes the pick that follows it mean something.
+// The other two clear for reasons of their own: Partition reads a mark as a ROLE
+// -- marked means "you are a wall" -- and the tiles it cuts are not walls;
+// DeleteSelection hands back the survivors, which are exactly the NOT picked.
+// Kernel is the truth, this is the claim; the drift-proof version is a column
+// plus a startup self-check.
+inline constexpr bool clears_the_marks(node_type t) {
     return t == node_type::Split || t == node_type::Colors ||
            t == node_type::Partition || t == node_type::DeleteSelection;
 }
@@ -396,7 +412,13 @@ inline constexpr bool needs_a_pick(node_type t) {
            t == node_type::TileX || t == node_type::TileY ||
            t == node_type::Fractal || t == node_type::AddColor ||
            t == node_type::Pattern || t == node_type::ExtendOrthogonal ||
-           t == node_type::ExtendDiagonal;
+           t == node_type::ExtendDiagonal ||
+           // Taught to read the marks 2026-09-22, so they belong here now: with
+           // nothing picked each one hands its whole list back untouched. Gating
+           // them is what lets a chain keep every layer in hand and speak to one
+           // at a time, instead of deleting the others to feed an op one thing.
+           t == node_type::ExtendTo || t == node_type::ReadUnder ||
+           t == node_type::MaskBy || t == node_type::MaskOut;
 }
 
 // =====================================================================
@@ -408,14 +430,14 @@ inline constexpr bool needs_a_pick(node_type t) {
 // the context small for L2 reuse. MAX_OBJECTS=32 truncates scenes with >32
 // objects (ops already cap).
 //
-// POOL_SIZE must cover the live object-lists a program acquires. gpu_acquire is
-// called per producing op, and some ops grab 2 slots (a pass buffer + publish),
-// so worst case ~2 * MAX_SEARCH_DEPTH. At 24 slots, programs past ~14 ops hit
-// the clamp in gpu_acquire (cuda_solver.cu) and silently overwrite slot N-1 ->
-// corrupted scores for deep candidates (which the search DOES generate, up to
-// MAX_SEARCH_DEPTH). Sized to 2*MAX_SEARCH_DEPTH so no deep program clamps; this
-// header is GPU-only and must not pull in 12_environment.hpp, so the value is a
-// literal — keep it >= 2*MAX_SEARCH_DEPTH (17_dsl_executor.hpp static_asserts it).
+// POOL_SIZE must cover the object-lists that are LIVE AT ONCE, which is two --
+// the list an op reads and the list it writes -- not the number a program
+// acquires over its whole length, because gpu_acquire wraps (cuda_solver.cu).
+// It had to cover the whole program while that allocator clamped instead of
+// wrapping: past POOL_SIZE producing ops every op wrote the slot it was reading
+// and the scores came back quietly wrong. 64 is kept, far past the two, so an op
+// that ever held a third list is still safe; this header is GPU-only and must
+// not pull in 12_environment.hpp, so the value stays a literal.
 static constexpr int GPU_KERNEL_MAX_OBJECTS = arc::MAX_OBJECTS_IN_A_LIST;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 

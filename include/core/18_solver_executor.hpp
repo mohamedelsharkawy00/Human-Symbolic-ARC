@@ -1982,6 +1982,15 @@ namespace arc {
     if (const char* wrong = sentence_with_no_source(program))
         log_debug(string(wrong) + ": " + program);
     task.best_node_count = environment::count_nodes(task.best_tree);
+    // Longer than one batch slot never reaches the GPU: every example would come
+    // back empty, which reads as a program that draws nothing rather than one
+    // that was never run. Say which it is, and keep the old verdict cleared.
+    if (too_long_to_run(task.best_node_count)) {
+        log_debug(to_text("%d ops is past the %d a program may be, so this one was "
+                          "not run: %s", task.best_node_count,
+                          flat_program::MAX_OPS, program.c_str()));
+        return;
+    }
 
     string tree_str = environment::stringify_tree_via_flat(task.best_tree);
     // Straight from the kernel that scored it, so the printed sum IS the score.
