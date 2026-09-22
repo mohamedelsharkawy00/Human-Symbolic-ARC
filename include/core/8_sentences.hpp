@@ -18,7 +18,7 @@
 
 #pragma once
 #include "7_infer.hpp"
-#include "0_vocabulary.hpp"
+#include "7_vocabulary.hpp"
 #include <optional>
 #include <string>
 #include <vector>

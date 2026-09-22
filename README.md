@@ -38,7 +38,7 @@ NVCC builds, which define nothing, keep the API.
 2. `include\gui` is the window: the puzzle list, pause, settings, sounds, and the pictures of what the search is doing. It never runs the solver itself (section 4).
 3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` links the solver's headers but not its GPU code, so GUI code that reached for the GPU would not link.
 4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every search the GUI shows, and the Kaggle run. Both come out of every build.
-5. Headers are numbered in the order the compiler reads them, core first.
+5. Headers are numbered in the order they are meant to be read, core first. The number says where a file sits in the story, not what it may include: `7_vocabulary.hpp` needs only `0_core.hpp`, but its words mean nothing before 1 to 7.
 
 # 4. One puzzle, one process
 1. Every search runs in a fresh `arc_headless` process, one per puzzle. A solver that has worked through one puzzle carries its memory and state into the next, and freeing it by hand never cleaned up as thoroughly as ending the process does; puzzles that ran after another went measurably worse than the same puzzle run first. The GUI creates no CUDA context at all.

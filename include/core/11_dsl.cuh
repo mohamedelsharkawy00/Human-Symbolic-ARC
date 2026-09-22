@@ -7,13 +7,13 @@
 // Its operators can find objects, move them, change their colors,
 // and draw the result.
 //
-// 0_vocabulary.hpp defines the operators; here we define the data sent to the GPU,
+// 7_vocabulary.hpp defines the operators; here we define the data sent to the GPU,
 // and the results returned so the solver can judge each candidate program.
 #pragma once
 // Single home of the grid/color limits the GPU_* names below alias, and of
 // output_dimension_rule, whose cases the kernel switches on.
 #include "7_infer.hpp"
-#include "0_vocabulary.hpp"
+#include "7_vocabulary.hpp"
 
 #include <vector>
 #include <cstdint>

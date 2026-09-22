@@ -1,6 +1,6 @@
 // From a Visual Studio developer shell at the repository root:
 // cl /nologo /std:c++20 /EHsc /Iinclude/core tests/core_vocabulary.cpp /Fe:out/core_vocabulary.exe /Fo:out/core_vocabulary.obj
-#include "0_vocabulary.hpp"
+#include "7_vocabulary.hpp"
 #include "8_sentences.hpp"
 #include "11_dsl.cuh"
 #include <cstdlib>

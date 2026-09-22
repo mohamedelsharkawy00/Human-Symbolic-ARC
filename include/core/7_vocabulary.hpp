@@ -1,5 +1,9 @@
-// Shared program vocabulary: names, roles, and selection behavior.
-// Sentence generation and CPU/GPU execution read the same definitions.
+// The words a program is written in, as 0_core.hpp holds the words a grid is.
+// Numbered for where it is read, not for what it includes: the ops are named
+// for what 1-6 find in a grid, and some lean on facts 7_infer.hpp elects. It
+// compiles against 0_core.hpp alone, and the 7 is no licence to change that.
+// Read by 8_sentences.hpp, which spells programs, and 11_dsl.cuh, which runs
+// them, from the same definitions.
 #pragma once
 #include "0_core.hpp"
 #include <string_view>
