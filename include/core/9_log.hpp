@@ -192,6 +192,11 @@ inline void report_diagonal_continuation(ostream& report, const diagonal_continu
     report << "\n\n";
 }
 
+// Whether the vote over the input's repeats draws every output.
+inline void report_periodic_denoise(ostream& report, const periodic_denoise_rule& denoise) {
+    report << "[periodic_denoise] holds " << denoise.holds() << "\n\n";
+}
+
 // Whether the pieces were laid out as one corner chain, each hung off the last.
 inline void report_overlap_corner(ostream& report, const overlap_corner_rule& chain) {
     report << "[overlap_corner] holds " << chain.holds() << "\n\n";
@@ -459,6 +464,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
     report_diagonal_continuation(report, inf.diagonal_continuation);
+    report_periodic_denoise(report, inf.periodic_denoise);
     report_piece_slam(report, inf.piece_slam);
     report_overlap_corner(report, inf.overlap_corner);
     report_slide_to_touch(report, inf.slide_to_touch);

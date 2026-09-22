@@ -575,6 +575,41 @@ struct diagonal_continuation_rule {
     }
 };
 
+// A REPEATING PICTURE WITH NOISE ON IT, AND THE OUTPUT IS THE PICTURE CLEAN.
+// The input is a lattice of copies that noise has scribbled over, so no cut of
+// it finds the copies -- 0607ce86 cuts into rubble every way it is read. What
+// finds them is the vote: each cell takes the majority of the cells whole
+// periods away. Asked by running that vote, VoteDenoise's own arithmetic, on
+// every input under the elected ground and holding only where it draws every
+// output exactly. The ground is kept in, because it is the evidence the period
+// search is built on (notes/4 - To Do/VoteDenoise Needs The Background.md).
+//
+// AND IT HAS TO CLEAN SOMETHING. An output the input already was is a grid
+// that happens to repeat, which says nothing about noise.
+struct periodic_denoise_rule {
+    bool held = false;
+    bool holds() const { return held; }
+
+    static periodic_denoise_rule detect(const vector<example>& train, int8_t background) {
+        if (train.empty() || !is_color(background)) return {};
+        bool cleaned_something = false;
+        for (const auto& pair : train) {
+            const grid& input = pair.input;
+            if (input.width != pair.output.width || input.height != pair.output.height) return {};
+            grid drawn = input;
+            const bool voted = vote_denoise_cells(input.width, input.height, background,
+                [&](int r, int c) -> int8_t {
+                    const int8_t v = (int8_t)input.data[r][c];
+                    return v == TRANSPARENT ? background : v;
+                },
+                [&](int r, int c, int8_t v) { drawn.data[r][c] = v; });
+            if (!voted || drawn != pair.output) return {};
+            cleaned_something = cleaned_something || drawn != input;
+        }
+        return { cleaned_something };
+    }
+};
+
 // WHAT A CUT IS ALLOWED TO FOLLOW. Where the cut falls -- which axis, which
 // color, how many panes -- is read off the grid; these are only the permissions,
 // the way degrees_of_freedom holds them for matching.
@@ -1677,6 +1712,7 @@ struct inference {
     color_swap_candidates color_swaps;
     motif_continuation_rule motif_continuation;
     diagonal_continuation_rule diagonal_continuation;
+    periodic_denoise_rule periodic_denoise;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
     slide_to_touch_rule slide_to_touch;
@@ -1722,6 +1758,10 @@ inline inference infer(const vector<example>& train) {
     // because a repeating box is the plainer claim and should get first refusal.
     inf.diagonal_continuation = diagonal_continuation_rule::detect(train,
         inf.correspondence, inf.background.input_elected());
+    // A noisy lattice cleaned by the vote. It reads the whole input, not the
+    // pieces, so it needs nothing the election chose -- only the ground.
+    inf.periodic_denoise = periodic_denoise_rule::detect(train,
+        inf.background.input_elected());
     inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
     inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,

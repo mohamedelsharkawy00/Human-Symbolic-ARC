@@ -90,6 +90,104 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     height = smallest_period(g.height, false);
 }
 
+// VoteDenoise's arithmetic, in one place for the kernel and for inference.
+// Period per axis: a spacing qualifies when the structure it aligns agrees
+// >=70% (pairs with both cells non-background), and the winner is the
+// qualifier with the best agreements-minus-disagreements margin, where
+// aligning structure against background counts as disagreement -- a true
+// period only loses margin to noise, a false one bleeds it everywhere.
+// Rows/columns whose cells match their residue-class majority <70% are
+// outside the pattern and become background. Inside, each cell becomes the
+// most common value among in-pattern cells whole periods away on both axes;
+// ties keep the cell. `ground_at(r, c)` reads a cell and must return a color --
+// a hole is read as the ground, which is what makes the ground the evidence it
+// is (notes/4 - To Do/VoteDenoise Needs The Background.md). `put(r, c, v)`
+// writes the result somewhere else. False, and nothing written, when neither
+// axis repeats.
+template <typename At, typename Put>
+ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At ground_at, Put put) {
+    // Period per axis (0 = no repeat found).
+    int px = 0, py = 0;
+    for (int axis = 0; axis < 2; ++axis) {
+        const int dim = axis ? h : w;
+        int best_margin = 0; bool found = false;
+        for (int p = 2; p <= dim / 2; ++p) {
+            int agree = 0, dis = 0, both = 0;
+            for (int r = 0; r < (axis ? h - p : h); ++r)
+                for (int c = 0; c < (axis ? w : w - p); ++c) {
+                    int8_t a = ground_at(r, c);
+                    int8_t b = axis ? ground_at(r + p, c) : ground_at(r, c + p);
+                    if (a == bg && b == bg) continue;
+                    if (a != bg && b != bg) {
+                        ++both;
+                        if (a == b) ++agree; else ++dis;
+                    } else ++dis;
+                }
+            if (agree < 8 || agree * 10 < both * 7) continue;
+            int margin = agree - dis;
+            if (!found || margin > best_margin) {
+                found = true; best_margin = margin;
+                (axis ? py : px) = p;
+            }
+        }
+    }
+    if (px == 0 && py == 0) return false;
+
+    // In-pattern lines: a line is inside iff >=70% of its cells equal the
+    // per-cell majority of its residue class along that axis alone -- the
+    // voted template is noise-free, so a noisy copy only pays for its own
+    // noise, while an off-pattern line disagrees almost everywhere.
+    bool col_in[MAX_GRID_DIM], row_in[MAX_GRID_DIM];
+    for (int c = 0; c < w; ++c) col_in[c] = true;
+    for (int r = 0; r < h; ++r) row_in[r] = true;
+    if (px > 0)
+        for (int c = 0; c < w; ++c) {
+            int agree = 0;
+            for (int r = 0; r < h; ++r) {
+                int counts[COLOR_COUNT] = {};
+                int8_t tmpl = bg; int tn = 0;
+                for (int sc = c % px; sc < w; sc += px) {
+                    int8_t v = ground_at(r, sc);
+                    if (++counts[v] > tn) { tn = counts[v]; tmpl = v; }
+                }
+                if (ground_at(r, c) == tmpl) ++agree;
+            }
+            col_in[c] = agree * 10 >= h * 7;
+        }
+    if (py > 0)
+        for (int r = 0; r < h; ++r) {
+            int agree = 0;
+            for (int c = 0; c < w; ++c) {
+                int counts[COLOR_COUNT] = {};
+                int8_t tmpl = bg; int tn = 0;
+                for (int sr = r % py; sr < h; sr += py) {
+                    int8_t v = ground_at(sr, c);
+                    if (++counts[v] > tn) { tn = counts[v]; tmpl = v; }
+                }
+                if (ground_at(r, c) == tmpl) ++agree;
+            }
+            row_in[r] = agree * 10 >= w * 7;
+        }
+
+    for (int r = 0; r < h; ++r)
+        for (int c = 0; c < w; ++c) {
+            if (!row_in[r] || !col_in[c]) { put(r, c, bg); continue; }
+            int counts[COLOR_COUNT] = {};
+            for (int sr = (py > 0 ? r % py : r); sr < h; sr += (py > 0 ? py : h))
+                for (int sc = (px > 0 ? c % px : c); sc < w; sc += (px > 0 ? px : w)) {
+                    if (!row_in[sr] || !col_in[sc]) continue;
+                    ++counts[ground_at(sr, sc)];
+                }
+            int8_t own = ground_at(r, c);
+            int8_t best_v = own;
+            int best_n = counts[own];
+            for (int v = 0; v < COLOR_COUNT; ++v)
+                if (counts[v] > best_n) { best_n = counts[v]; best_v = (int8_t)v; }
+            put(r, c, best_v);
+        }
+    return true;
+}
+
 // The object records and the operations that build and group them.
 struct object_segmentation {
     struct object_info {

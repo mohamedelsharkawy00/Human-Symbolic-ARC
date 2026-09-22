@@ -540,6 +540,12 @@ inline said_reading say_the_reading(const inference& inf) {
     if (say_panes(inf, said)) return said;
     if (say_pane_pick(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
+    // A noisy lattice, voted clean. The whole input is the one piece the vote
+    // reads, so there is nothing to cut first and nothing left to explain.
+    if (inf.periodic_denoise.holds()) {
+        say_sentence(said, "Input", "SelectAll", "VoteDenoise", "Union");
+        return said;
+    }
     if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until

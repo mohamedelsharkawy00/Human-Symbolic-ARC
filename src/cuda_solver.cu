@@ -2247,16 +2247,9 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
     return res;
 }
 
-// VoteDenoise: noise-tolerant majority vote across repeating structure.
-// Period per axis: a spacing qualifies when the structure it aligns agrees
-// >=70% (pairs with both cells non-background), and the winner is the
-// qualifier with the best agreements-minus-disagreements margin, where
-// aligning structure against background counts as disagreement -- a true
-// period only loses margin to noise, a false one bleeds it everywhere.
-// Rows/columns whose cells match their residue-class majority <70% are
-// outside the pattern and become background. Inside, each cell becomes the
-// most common value among in-pattern cells whole periods away on both axes;
-// ties keep the cell. No period on either axis -> object passes unchanged.
+// VoteDenoise: noise-tolerant majority vote across repeating structure. The
+// arithmetic is vote_denoise_cells (4_objects.hpp), shared with inference.
+// No period on either axis -> object passes unchanged.
 __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
@@ -2289,91 +2282,8 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
             return v == GPU_TRANSPARENT ? bg : v;
         };
 
-        // Period per axis (0 = no repeat found).
-        int px = 0, py = 0;
-        for (int axis = 0; axis < 2; ++axis) {
-            const int dim = axis ? h : w;
-            int best_margin = 0; bool found = false;
-            for (int p = 2; p <= dim / 2; ++p) {
-                int agree = 0, dis = 0, both = 0;
-                for (int r = 0; r < (axis ? h - p : h); ++r)
-                    for (int c = 0; c < (axis ? w : w - p); ++c) {
-                        int8_t a = ground_at(r, c);
-                        int8_t b = axis ? ground_at(r + p, c) : ground_at(r, c + p);
-                        if (a == bg && b == bg) continue;
-                        if (a != bg && b != bg) {
-                            ++both;
-                            if (a == b) ++agree; else ++dis;
-                        } else ++dis;
-                    }
-                if (agree < 8 || agree * 10 < both * 7) continue;
-                int margin = agree - dis;
-                if (!found || margin > best_margin) {
-                    found = true; best_margin = margin;
-                    (axis ? py : px) = p;
-                }
-            }
-        }
-        if (px == 0 && py == 0) { res.objects[res.count++] = obj; continue; }
-
-        // In-pattern lines: a line is inside iff >=70% of its cells equal the
-        // per-cell majority of its residue class along that axis alone -- the
-        // voted template is noise-free, so a noisy copy only pays for its own
-        // noise, while an off-pattern line disagrees almost everywhere.
-        bool col_in[GPU_MAX_GRID], row_in[GPU_MAX_GRID];
-        for (int c = 0; c < w; ++c) col_in[c] = true;
-        for (int r = 0; r < h; ++r) row_in[r] = true;
-        if (px > 0)
-            for (int c = 0; c < w; ++c) {
-                int agree = 0;
-                for (int r = 0; r < h; ++r) {
-                    // One bucket past the colors, because a transparent cell can
-                    // win this vote and become the template.
-                    int counts[GPU_MAX_COLORS + 1]; memset(counts, 0, sizeof(counts));
-                    int8_t tmpl = GPU_TRANSPARENT; int tn = 0;
-                    for (int sc = c % px; sc < w; sc += px) {
-                        int8_t v = ground_at(r, sc);
-                        int slot = arc::is_color(v) ? v : GPU_MAX_COLORS;
-                        if (++counts[slot] > tn) { tn = counts[slot]; tmpl = v; }
-                    }
-                    if (ground_at(r, c) == tmpl) ++agree;
-                }
-                col_in[c] = agree * 10 >= h * 7;
-            }
-        if (py > 0)
-            for (int r = 0; r < h; ++r) {
-                int agree = 0;
-                for (int c = 0; c < w; ++c) {
-                    // One bucket past the colors, same reason as above.
-                    int counts[GPU_MAX_COLORS + 1]; memset(counts, 0, sizeof(counts));
-                    int8_t tmpl = GPU_TRANSPARENT; int tn = 0;
-                    for (int sr = r % py; sr < h; sr += py) {
-                        int8_t v = ground_at(sr, c);
-                        int slot = arc::is_color(v) ? v : GPU_MAX_COLORS;
-                        if (++counts[slot] > tn) { tn = counts[slot]; tmpl = v; }
-                    }
-                    if (ground_at(r, c) == tmpl) ++agree;
-                }
-                row_in[r] = agree * 10 >= w * 7;
-            }
-
-        for (int r = 0; r < h; ++r)
-            for (int c = 0; c < w; ++c) {
-                if (!row_in[r] || !col_in[c]) { obj.mask[r][c] = bg; continue; }
-                int counts[GPU_MAX_COLORS]; memset(counts, 0, sizeof(counts));
-                for (int sr = (py > 0 ? r % py : r); sr < h; sr += (py > 0 ? py : h))
-                    for (int sc = (px > 0 ? c % px : c); sc < w; sc += (px > 0 ? px : w)) {
-                        if (!row_in[sr] || !col_in[sc]) continue;
-                        int8_t v = ground_at(sr, sc);
-                        if (arc::is_color(v)) ++counts[v];
-                    }
-                int8_t own = ground_at(r, c);
-                int8_t best_v = own;
-                int best_n = arc::is_color(own) ? counts[own] : 0;
-                for (int v = 0; v < GPU_MAX_COLORS; ++v)
-                    if (counts[v] > best_n) { best_n = counts[v]; best_v = (int8_t)v; }
-                obj.mask[r][c] = best_v;
-            }
+        arc::vote_denoise_cells(w, h, bg, ground_at,
+                           [&](int r, int c, int8_t v) { obj.mask[r][c] = v; });
         res.objects[res.count++] = obj;
     }
     return res;
