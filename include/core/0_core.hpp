@@ -20,6 +20,21 @@ constexpr int MAX_GRID_DIM = 30;
 struct grid {
 	int width = 0, height = 0;
 	int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
+
+	void fill(int color) {
+		for (int row = 0; row < height; ++row)
+			for (int col = 0; col < width; ++col)
+				data[row][col] = color;
+	}
+
+	// Only the drawing counts; unused storage outside its dimensions does not.
+	bool operator==(const grid& other) const {
+		if (width != other.width || height != other.height) return false;
+		for (int row = 0; row < height; ++row)
+			for (int col = 0; col < width; ++col)
+				if (data[row][col] != other.data[row][col]) return false;
+		return true;
+	}
 };
 
 // The ARC demonstration example.

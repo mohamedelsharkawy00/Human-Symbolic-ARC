@@ -308,8 +308,8 @@ inline void report_said_reading(ostream& report, const inference& inf) {
 // neighbours can be set beside them. Readings nobody agreed in are not listed:
 // a page of empty lines says nothing that their absence does not.
 inline void report_agreed_moves(ostream& report, const correspondence_election& correspondence) {
-    for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
-        const auto& pairs = correspondence.reading_pairs[i];
+    for (size_t i = 0; i < correspondence.readings.size(); ++i) {
+        const auto& pairs = correspondence.readings[i].pairs;
         if (ranges::all_of(pairs, [](const auto& pair) {
                 return pair.agreed_moves.empty(); })) continue;
         report << "  reading " << i << " moved together   "
@@ -335,11 +335,11 @@ inline void report_agreed_moves(ostream& report, const correspondence_election& 
 // handed a screen-shaped copy of them, and could only say what that copy kept.
 inline void report_pieces_seen(ostream& report, const correspondence_election& correspondence) {
     const char* newline = "\n";
-    for (size_t i = 0; i < correspondence.reading_pairs.size(); ++i) {
+    for (size_t i = 0; i < correspondence.readings.size(); ++i) {
         report << "  reading " << i << " pieces   "
           << segmentation_names[(int)correspondence.readings[i].segmentation]
           << "  [" << correspondence.readings[i].allowed.label() << "]" << newline;
-        const auto& pairs = correspondence.reading_pairs[i];
+        const auto& pairs = correspondence.readings[i].pairs;
         for (size_t which = 0; which < pairs.size(); ++which)
             for (int side = 0; side < 2; ++side) {
                 const auto& list = side ? pairs[which].output_info
@@ -466,8 +466,8 @@ inline void log_inference(const string& id, const inference& inf,
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);
-    for (size_t i = 0; i < inf.correspondence.pairs.size(); ++i)
-        report_one_pair(report, i, inf.correspondence.pairs[i]);
+    for (size_t i = 0; i < inf.correspondence.chosen_pairs().size(); ++i)
+        report_one_pair(report, i, inf.correspondence.chosen_pairs()[i]);
 }
 
 }  // namespace arc

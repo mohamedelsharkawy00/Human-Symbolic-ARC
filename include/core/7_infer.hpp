@@ -369,12 +369,9 @@ struct shape_color_map_rule {
             // Hash the key glyph's occupancy.
             const int key_width = box[key].width();
             const int key_height = box[key].height();
-            bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
-            for (int row = 0; row < key_height; ++row)
-                for (int col = 0; col < key_width; ++col)
-                    occupied[row * key_width + col] =
-                        (in.data[box[key].row0 + row][box[key].col0 + col] == key);
-            uint32_t key_shape = shape_occupancy_hash(key_width, key_height, occupied);
+            uint32_t key_shape = shape_occupancy_hash(key_width, key_height, [&](int i) {
+                return in.data[box[key].row0 + i / key_width][box[key].col0 + i % key_width] == key;
+            });
 
             // Insert with the consistency gate.
             if (!rule.learn(key_shape, repainted_to)) return {};
@@ -462,10 +459,10 @@ struct motif_continuation_rule {
     static motif_continuation_rule detect(const vector<example>& train,
                                           const correspondence_election& correspondence) {
         motif_continuation_rule rule;
-        if (train.empty() || correspondence.pairs.size() != train.size() ||
+        if (train.empty() || correspondence.chosen_pairs().size() != train.size() ||
             correspondence.segmentation != segmentation_methods::minimal_repeating_set) return rule;
         for (size_t i = 0; i < train.size(); ++i) {
-            const auto& pair = correspondence.pairs[i];
+            const auto& pair = correspondence.chosen_pairs()[i];
             if (pair.edges.size() != 1 || !pair.left_over.empty()) return {};
             const auto& edge = pair.edges.front();
             if (!edge.from_input || !edge.same_shape || edge.pose || edge.hidden || edge.outside ||
@@ -982,12 +979,7 @@ struct pane_mask_rule {
             for (const auto& train_pair : train) {
                 grid drawn;
                 if (!rule.draw(train_pair.input, split, background, drawn) ||
-                    drawn.width != train_pair.output.width ||
-                    drawn.height != train_pair.output.height) { every = false; break; }
-                for (int r = 0; r < drawn.height && every; ++r)
-                    for (int c = 0; c < drawn.width && every; ++c)
-                        every = drawn.data[r][c] == train_pair.output.data[r][c];
-                if (!every) break;
+                    drawn != train_pair.output) { every = false; break; }
             }
             if (every) return rule;
         }
@@ -1161,11 +1153,7 @@ struct pane_pick_rule {
                 trying.held = true;
                 grid drawn;
                 if (!trying.draw(train_pair.input, split, background, drawn)) return false;
-                if (drawn.width != train_pair.output.width ||
-                    drawn.height != train_pair.output.height) return false;
-                for (int r = 0; r < drawn.height; ++r)
-                    for (int c = 0; c < drawn.width; ++c)
-                        if (drawn.data[r][c] != train_pair.output.data[r][c]) return false;
+                if (drawn != train_pair.output) return false;
             }
             return true;
         };
@@ -1322,11 +1310,8 @@ struct piece_slam_rule {
                 vector<object> pieces;
                 object_segmentation::segment_for_correspondence(pair.input, input_background,
                                                                 correspondence.segmentation, info, &pieces);
-                grid drawn;
-                drawn.width = pair.output.width;
-                drawn.height = pair.output.height;
-                for (int r = 0; r < drawn.height; ++r)
-                    for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+                grid drawn(pair.output.width, pair.output.height);
+                drawn.fill(output_background);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
                     const int lines = rows ? piece.summary.h : piece.summary.w;
@@ -1351,9 +1336,7 @@ struct piece_slam_rule {
                         }
                     }
                 }
-                for (int r = 0; r < drawn.height; ++r)
-                    for (int c = 0; c < drawn.width; ++c)
-                        if (drawn.data[r][c] != pair.output.data[r][c]) return false;
+                if (drawn != pair.output) return false;
             }
             return true;
         };
@@ -1406,11 +1389,8 @@ struct overlap_corner_rule {
                      ? one->summary.x0 < other->summary.x0
                      : one->summary.y0 < other->summary.y0;
             });
-            grid drawn;
-            drawn.width = pair.output.width;
-            drawn.height = pair.output.height;
-            for (int r = 0; r < drawn.height; ++r)
-                for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+            grid drawn(pair.output.width, pair.output.height);
+            drawn.fill(output_background);
             // The head of the chain sits in the corner; each piece after it puts
             // its top-left on the last one's bottom-right and paints over it,
             // which is the paint order the closing Union gives them for free.
@@ -1431,9 +1411,7 @@ struct overlap_corner_rule {
                 x += piece->summary.w - 1;
                 y += piece->summary.h - 1;
             }
-            for (int r = 0; r < drawn.height; ++r)
-                for (int c = 0; c < drawn.width; ++c)
-                    if (drawn.data[r][c] != pair.output.data[r][c]) return {};
+            if (drawn != pair.output) return {};
         }
         // Pieces already sitting in the chain were never laid into one.
         return { laid_any_piece_somewhere_new };
@@ -1502,11 +1480,8 @@ struct slide_to_touch_rule {
                 vector<object> pieces;
                 object_segmentation::segment_for_correspondence(pair.input, input_background,
                                                                 correspondence.segmentation, info, &pieces);
-                grid drawn;
-                drawn.width = pair.output.width;
-                drawn.height = pair.output.height;
-                for (int r = 0; r < drawn.height; ++r)
-                    for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = output_background;
+                grid drawn(pair.output.width, pair.output.height);
+                drawn.fill(output_background);
                 auto paint = [&](const object& piece, int down, int across) {
                     for (int r = 0; r < piece.summary.h; ++r)
                         for (int c = 0; c < piece.summary.w; ++c) {
@@ -1557,9 +1532,7 @@ struct slide_to_touch_rule {
                     moved = moved || down != 0 || across != 0;
                 }
                 if (!anything_slid) return false;
-                for (int r = 0; r < drawn.height; ++r)
-                    for (int c = 0; c < drawn.width; ++c)
-                        if (drawn.data[r][c] != pair.output.data[r][c]) return false;
+                if (drawn != pair.output) return false;
             }
             return true;
         };
@@ -1691,9 +1664,7 @@ struct project_on_seeds_rule {
             // Nothing stamped is the input handed straight back, which every
             // other reading already says without a word this long.
             if (stamped == 0) return {};
-            for (int r = 0; r < drawn.height; ++r)
-                for (int c = 0; c < drawn.width; ++c)
-                    if (drawn.data[r][c] != pair.output.data[r][c]) return {};
+            if (drawn != pair.output) return {};
         }
         return { true };
     }

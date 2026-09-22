@@ -398,16 +398,7 @@ private:
         for (int pose = 0; pose < pose_limit; ++pose) {
             grid posed = posed_cells(cells, pose);
             // A symmetric object reads the same several ways round; count it once.
-            bool repeat = false;
-            for (const grid& already : tried) {
-                if (already.width != posed.width || already.height != posed.height) continue;
-                bool same = true;
-                for (int row = 0; same && row < posed.height; ++row)
-                    for (int col = 0; col < posed.width; ++col)
-                        if (already.data[row][col] != posed.data[row][col]) { same = false; break; }
-                if (same) { repeat = true; break; }
-            }
-            if (repeat) continue;
+            if (ranges::find(tried, posed) != tried.end()) continue;
             if (!may_hang_off &&
                 (posed.width > where.width || posed.height > where.height)) continue;
             if (fixed && !may_hang_off &&

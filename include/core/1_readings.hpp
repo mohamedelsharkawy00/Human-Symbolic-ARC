@@ -137,6 +137,20 @@ struct object {
     // Stored relative to the box's top-left.
     object_cells cells;
 
+    // Build from the grid-cell indices returned by each_object.
+    // Cells outside the group stay transparent, including holes in its box.
+    static object from_cells(const grid& source, const object_summary& box,
+                             const int16_t* indices, int count) {
+        object made;
+        made.summary = box;
+        made.cells.clear();
+        for (int i = 0; i < count; ++i) {
+            const int row = indices[i] / MAX_GRID_DIM, col = indices[i] % MAX_GRID_DIM;
+            made.cells[row - box.y0][col - box.x0] = (int8_t)source.data[row][col];
+        }
+        return made;
+    }
+
     // Object cell accessors here take grid coordinates, not box-local coordinates; they do the shift.
     // Gaps or holes within the box read as TRANSPARENT, and so does anything outside it.
     ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
@@ -344,24 +358,13 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
 }
 
 // The groups themselves, cells and all, in the order the grid gives them up.
-// One allocation per group, which is nothing for the handful of objects a
-// normal puzzle breaks into and 900 small allocations for a grid that is all
-// single cells. If that worst case ever lands on a hot path, the answer is to
-// pack every group's cells into one block and hand out runs of it -- not to
-// go back to making the caller hold the cells separately.
+// The vector owns the objects; each object holds its packed cells inline.
 inline vector<object> find_objects(const grid& one_grid, int background) {
     vector<object> found;
     object_walk_scratch scratch;
     each_object(one_grid, background, grouping::touching_same_color, scratch, [&](const object_summary& one,
                                        const int16_t* cells, int n) {
-        found.push_back({});
-        object& made = found.back();
-        made.summary = one;
-        made.cells.clear();  // every cell TRANSPARENT until the group claims it
-        for (int i = 0; i < n; ++i) {
-            const int row = cells[i] / MAX_GRID_DIM, col = cells[i] % MAX_GRID_DIM;
-            made.cells[row - one.y0][col - one.x0] = (int8_t)one_grid.data[row][col];
-        }
+        found.push_back(object::from_cells(one_grid, one, cells, n));
     });
     return found;
 }
@@ -525,20 +528,28 @@ inline int compose_poses(int first, int then) {
 
 // Canonical (orientationless, positionless) shape identity: the smallest
 // shape_occupancy_hash over the eight ways round, done by index arithmetic —
-// no pose grids are built. Two objects share a shape, in any orientation, iff
-// their canonical hashes are equal.
-inline uint32_t canonical_shape_hash(int width, int height, const bool* occupied) {
+// no pose grids are built. Equal shapes have equal hashes; collisions are possible.
+// occupied(row, col) reads the original shape without copying its storage.
+template <typename OccupancyAt,
+          typename = decltype(std::declval<OccupancyAt&>()(0, 0))>
+inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied) {
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, width, height);
         uint32_t hash = arc::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
             const auto [row, col] = pose_source(pose, width, height, i / posed_width,
                                                 i % posed_width);
-            return occupied[row * width + col];
+            return occupied(row, col);
         });
         best = min(best, hash);
     }
     return best;
+}
+
+inline uint32_t canonical_shape_hash(int width, int height, const bool* occupied) {
+    return canonical_shape_hash(width, height, [&](int row, int col) {
+        return occupied[row * width + col];
+    });
 }
 
 }  // namespace arc

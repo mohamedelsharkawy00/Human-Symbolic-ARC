@@ -73,8 +73,6 @@ struct correspondence_election {
         // Non-background into cells no exact edge covers â€” made, not carried
         int created_cells = 0;
     };
-    // One entry per train pair
-    vector<pair_info> pairs;
     // Total non-background cells in all training grids, used to normalize leftover counts.
     int cells = 0;
     // The selected segmentation, shared by all training pairs.
@@ -82,6 +80,8 @@ struct correspondence_election {
     // Scores for each segmentation and permission combination.
     // Table index: segmentation * degrees_of_freedom::COMBINATIONS + allowed.index().
     struct reading {
+        // The matched evidence belongs to the interpretation it describes.
+        vector<pair_info> pairs;
         // Which segmentation, and what a match was allowed to change
         segmentation_methods segmentation = segmentation_methods::unset;
         degrees_of_freedom allowed;
@@ -103,9 +103,12 @@ struct correspondence_election {
     int8_t chosen = 0;
     // Indices of other segmentations whose best readings tie with the winner.
     vector<int8_t> tied_with_chosen;
-    // Cached results for every reading, in readings order.
-    // pairs holds a copy of reading_pairs[chosen].
-    vector<vector<pair_info>> reading_pairs;
+    // Read the winner directly, without keeping a second copy of its evidence.
+    // A default election has no readings yet.
+    const vector<pair_info>& chosen_pairs() const {
+        static const vector<pair_info> empty;
+        return readings.empty() ? empty : readings[chosen].pairs;
+    }
 
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
@@ -126,24 +129,26 @@ struct correspondence_election {
             return left.look.describe_cost < right.look.describe_cost;
         });
 
-        // Keep each reading score with its matched pairs to avoid repeating the search.
-        struct scored_reading {
-            correspondence_election::reading summary;
-            vector<correspondence_election::pair_info> pairs;
+        correspondence_election facts;
+        facts.cells = facts_cells;
+        facts.readings.resize((int)segmentation_methods::count * degrees_of_freedom::COMBINATIONS);
+        auto better_match = [](const reading& left, const reading& right) {
+            if (left.left_over != right.left_over) return left.left_over < right.left_over;
+            if (left.objects_used != right.objects_used) return left.objects_used < right.objects_used;
+            return left.box_cells < right.box_cells;
         };
-        auto search_one = [&](const prepared_segmentation& prepared) {
-            const auto& look = prepared.look;
-            vector<scored_reading> pass;
+        // Keep every reading in its final table slot. Only the best permission
+        // combination per segmentation enters the election; ties keep the first.
+        vector<int> best_of_method;
+        for (const auto& prepared : preparations) {
+            int best = -1;
             for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
-                const degrees_of_freedom allowed = degrees_of_freedom::from_index(packed);
-                correspondence_election tried = detect_correspondence(
-                    train, background, prepared, allowed);
-                correspondence_election::reading scored;
-                scored.segmentation = look.segmentation;
-                scored.allowed = allowed;
-                scored.objects_can_fit = look.objects_can_fit;
+                const int cell = (int)prepared.look.segmentation * degrees_of_freedom::COMBINATIONS + packed;
+                reading& scored = facts.readings[cell];
+                scored = detect_correspondence(train, background, prepared,
+                                                degrees_of_freedom::from_index(packed));
                 double shares = 0.0;
-                for (const auto& pair : tried.pairs) {
+                for (const auto& pair : scored.pairs) {
                     scored.left_over += (int)pair.left_over.size();
                     scored.made += (int)ranges::count_if(pair.left_over,
                         [](const auto& cell) { return cell.made_or_gone && !cell.from_input; });
@@ -161,24 +166,12 @@ struct correspondence_election {
                     for (const auto& landing : pair.output_info)
                         scored.box_cells += landing.summary.w * landing.summary.h;
                 }
-                if (!tried.pairs.empty())
-                    scored.describe_cost = shares / tried.pairs.size();
-                pass.push_back({ scored, std::move(tried.pairs) });
+                if (!scored.pairs.empty())
+                    scored.describe_cost = shares / scored.pairs.size();
+                if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
-            stable_sort(pass.begin(), pass.end(),
-                        [](const scored_reading& left, const scored_reading& right) {
-                if (left.summary.left_over != right.summary.left_over)
-                    return left.summary.left_over < right.summary.left_over;
-                if (left.summary.objects_used != right.summary.objects_used)
-                    return left.summary.objects_used < right.summary.objects_used;
-                return left.summary.box_cells < right.summary.box_cells;
-            });
-            return pass;
-        };
-
-        // Search every segmentation and keep all results for the table.
-        vector<vector<scored_reading>> passes;
-        for (const auto& prepared : preparations) passes.push_back(search_one(prepared));
+            best_of_method.push_back(best);
+        }
 
         // Combine compression cost with the cost of unexplained cells.
         // Treat prices within this margin as tied, then compare object counts.
@@ -193,9 +186,9 @@ struct correspondence_election {
             return one.describe_cost + unsaid * spelling_out;
         };
         size_t elected = 0;
-        for (size_t i = 1; i < passes.size(); ++i) {
-            const auto& best = passes[elected].front().summary;
-            const auto& here = passes[i].front().summary;
+        for (size_t i = 1; i < best_of_method.size(); ++i) {
+            const auto& best = facts.readings[best_of_method[elected]];
+            const auto& here = facts.readings[best_of_method[i]];
             if ((here.objects_used > 0) != (best.objects_used > 0)) {
                 if (here.objects_used > 0) elected = i;
             } else if (abs(price_of(here) - price_of(best)) > same_price) {
@@ -205,33 +198,19 @@ struct correspondence_election {
             }
         }
 
-        // Store results in table order and record the winner separately.
-        correspondence_election facts;
-        facts.cells = facts_cells;
-        facts.segmentation = passes[elected].front().summary.segmentation;
-        auto cell_of = [](const correspondence_election::reading& one) {
-            return (int)one.segmentation * degrees_of_freedom::COMBINATIONS + one.allowed.index();
-        };
-        facts.readings.resize((int)segmentation_methods::count * degrees_of_freedom::COMBINATIONS);
-        facts.reading_pairs.resize(facts.readings.size());
-        for (auto& pass : passes)
-            for (auto& one : pass) {
-                facts.readings[cell_of(one.summary)] = one.summary;
-                facts.reading_pairs[cell_of(one.summary)] = std::move(one.pairs);
-            }
-        facts.chosen = (int8_t)cell_of(passes[elected].front().summary);
+        facts.chosen = (int8_t)best_of_method[elected];
+        facts.segmentation = facts.readings[facts.chosen].segmentation;
         {
-            const auto& winner = passes[elected].front().summary;
-            for (size_t i = 0; i < passes.size(); ++i) {
+            const auto& winner = facts.readings[best_of_method[elected]];
+            for (size_t i = 0; i < best_of_method.size(); ++i) {
                 if (i == elected) continue;
-                const auto& here = passes[i].front().summary;
+                const auto& here = facts.readings[best_of_method[i]];
                 if ((here.objects_used > 0) != (winner.objects_used > 0)) continue;
                 if (abs(price_of(here) - price_of(winner)) > same_price) continue;
                 if (here.objects_used != winner.objects_used) continue;
-                facts.tied_with_chosen.push_back((int8_t)cell_of(here));
+                facts.tied_with_chosen.push_back((int8_t)best_of_method[i]);
             }
         }
-        facts.pairs = facts.reading_pairs[facts.chosen];
         return facts;
     }
 
@@ -308,13 +287,13 @@ private:
 
     // 3. Follow one reading through the examples.
     // One reading: match each example, reconcile their evidence, then describe what survived.
-    static correspondence_election detect_correspondence(const vector<example>& train, int8_t background,
+    static reading detect_correspondence(const vector<example>& train, int8_t background,
                                                        const prepared_segmentation& prepared,
                                                        degrees_of_freedom allowed) {
-        correspondence_election facts;
+        reading facts = prepared.look;
+        facts.allowed = allowed;
         if (train.empty()) return facts;
         facts.pairs = prepared.pairs;
-        facts.segmentation = prepared.look.segmentation;
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.read[i])
                 match_one_pair(train, background, prepared, allowed, facts, i, nullptr);
@@ -327,7 +306,7 @@ private:
     // Match both directions, merge duplicate links, and record shared movements.
     static void match_one_pair(const vector<example>& train, int8_t background,
                                const prepared_segmentation& prepared, degrees_of_freedom allowed,
-                               correspondence_election& facts, size_t pair_index,
+                               reading& facts, size_t pair_index,
                                const what_the_pairs_agreed* agreed) {
         const bool pattern_reading =
             facts.segmentation == segmentation_methods::minimal_repeating_set ||
@@ -478,7 +457,7 @@ private:
     // Let movements supported by all examples constrain ambiguous matches.
     static void reconcile_examples(const vector<example>& train, int8_t background,
                                    const prepared_segmentation& prepared, degrees_of_freedom allowed,
-                                   correspondence_election& facts) {
+                                   reading& facts) {
         // Use a color to constrain matches only when every read pair has one shared,
         // nonzero movement for it. The movement may differ between pairs.
         // Return null when this pair has no such movement or has several.
@@ -532,7 +511,7 @@ private:
     // Describe the final links, unmatched objects, and unexplained cells of one pair.
     static void summarize_pair(const vector<example>& train, int8_t background,
                                const prepared_segmentation& prepared,
-                               correspondence_election& facts, size_t pair_index) {
+                               reading& facts, size_t pair_index) {
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];

@@ -581,7 +581,7 @@ inline said_reading say_the_reading(const inference& inf) {
     if (say_panes(inf, said)) return said;
     if (say_pane_pick(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
-    if (facts.pairs.empty()) return said;
+    if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until
     // its placement is explained, copying it has no complete sentence here.
@@ -591,7 +591,7 @@ inline said_reading say_the_reading(const inference& inf) {
     }
 
     // A piece that sits on what is already there is laid under it, not over.
-    const bool some_sit_on = ranges::any_of(facts.pairs, [](const auto& pair) {
+    const bool some_sit_on = ranges::any_of(facts.chosen_pairs(), [](const auto& pair) {
         return pair.sits_on > 0; });
     const char* combine = some_sit_on ? "Underlay" : "Union";
     // Read again below: a reading that turns out to be one of the layouts lays
@@ -736,8 +736,8 @@ inline said_reading say_the_reading(const inference& inf) {
     // Whether any piece landed anywhere but where it started, whether or not
     // the act that did it survived being asked of every pair.
     bool a_piece_moved = false;
-    for (size_t which = 0; which < facts.pairs.size(); ++which) {
-        const auto& pair = facts.pairs[which];
+    for (size_t which = 0; which < facts.chosen_pairs().size(); ++which) {
+        const auto& pair = facts.chosen_pairs()[which];
         vector<seen_act> here;
         auto note = [&](int8_t color, int8_t what, int8_t value) {
             if (value == 0 && what != act_recolor) return;   // nothing happened
@@ -820,7 +820,7 @@ inline said_reading say_the_reading(const inference& inf) {
                 say("BidiColorMap[" + to_string(variant) + "]");
 
     if (allowed.recolor)
-        for (const auto& pair : facts.pairs)
+        for (const auto& pair : facts.chosen_pairs())
             if (pair.found_recolored > 0) {
                 if (const char* word = word_for_learned_recolor(inf.shape_color_map))
                     say(word);

@@ -27,14 +27,6 @@ static void show(const char* label, const grid& g) {
     }
 }
 
-static bool same(const grid& drawn, const grid& wanted) {
-    if (drawn.width != wanted.width || drawn.height != wanted.height) return false;
-    for (int r = 0; r < wanted.height; ++r)
-        for (int c = 0; c < wanted.width; ++c)
-            if (drawn.data[r][c] != wanted.data[r][c]) return false;
-    return true;
-}
-
 int main(int argc, char** argv) {
     if (argc < 3) { fprintf(stderr, "spell <task-id> \"<program>\" | --file <path>\n"); return 2; }
     const string id = argv[1];
@@ -76,7 +68,7 @@ int main(int argc, char** argv) {
         for (size_t i = 0; i < task.train.size(); ++i) {
             float score = 0; bool solved = false;
             environment::execute_tree_via_flat(tree, task.train[i], drew[i], task, nodes, score, solved);
-            fits += same(drew[i], task.train[i].output);
+            fits += (drew[i] == task.train[i].output);
         }
         printf("%s  %zu/%zu train pairs   %s\n",
                fits == (int)task.train.size() ? "FITS      " : "no        ",
@@ -93,7 +85,7 @@ int main(int argc, char** argv) {
                 grid drawn; float score = 0; bool solved = false;
                 environment::execute_tree_via_flat(tree, task.test[i], drawn, task, nodes, score, solved);
                 printf("            test %zu: %s\n", i,
-                       same(drawn, (*answers)[i]) ? "RIGHT" : "wrong");
+                       (drawn == (*answers)[i]) ? "RIGHT" : "wrong");
             }
         }
         environment::remove(tree);

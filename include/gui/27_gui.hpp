@@ -1023,8 +1023,8 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
                                 nested_outlines &rings) {
   int inputs_n = (int)(task.train.size() + task.test.size());
   const auto& correspondence = task.inf.correspondence;
-  if (inputs_n <= 0 || rank >= (int)correspondence.reading_pairs.size()) return;
-  const auto& pairs = correspondence.reading_pairs[rank];
+  if (inputs_n <= 0 || rank >= (int)correspondence.readings.size()) return;
+  const auto& pairs = correspondence.readings[rank].pairs;
   int slot_h = (lay.footer1_y - lay.grid_data_start_y) / inputs_n;
   int col_w = lay.screen_w / 4;
   int t = max(1, lay.scale);
@@ -1342,7 +1342,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       };
       if (rank >= readings) return;
       const auto& R = correspondence.readings[rank];
-      const auto& pairs = correspondence.reading_pairs[rank];
+      const auto& pairs = correspondence.readings[rank].pairs;
       // WHICH READING THIS IS, in words. The table below says it too, but only by
       // where the boxed cell sits, and hunting for it is work the reader should
       // not have to do to know what is on screen.
@@ -1858,8 +1858,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                       "INSERTED", "FROM ONE", "MERGED", "CLASS", "CARRIED", "MADE"),
               tx, ty, scale);
     ty += line_h;
-    for (size_t i = 0; i < correspondence.pairs.size(); ++i) {
-      const auto& p = correspondence.pairs[i];
+    for (size_t i = 0; i < correspondence.chosen_pairs().size(); ++i) {
+      const auto& p = correspondence.chosen_pairs()[i];
       line(to_text(pair_columns_wide,
                    to_string(i).c_str(), to_string(p.deleted).c_str(),
                    to_string(p.persisted).c_str(), to_string(p.copied).c_str(),
@@ -2349,8 +2349,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
     // WALKED FOR THE ONE READING ON SCREEN, and worked out here rather than
     // stored: these are places in the facts, not copies of them.
     static const vector<correspondence_election::pair_info> nothing;
-    const auto &pairs = rank < (int)correspondence.reading_pairs.size()
-                          ? correspondence.reading_pairs[rank] : nothing;
+    const auto &pairs = rank < (int)correspondence.readings.size()
+                          ? correspondence.readings[rank].pairs : nothing;
     reading_on_screen walked;
     walked.pairs = &pairs;
     walked.pieces = pieces_of(pairs);

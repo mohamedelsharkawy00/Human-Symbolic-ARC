@@ -22,14 +22,6 @@
 using namespace arc;
 using namespace std;
 
-static bool same(const grid& a, const grid& b) {
-    if (a.width != b.width || a.height != b.height) return false;
-    for (int r = 0; r < b.height; ++r)
-        for (int c = 0; c < b.width; ++c)
-            if (a.data[r][c] != b.data[r][c]) return false;
-    return true;
-}
-
 int main() {
     if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
     task_set set = load_task_set(DS_TRAIN);
@@ -53,7 +45,7 @@ int main() {
             for (const auto& pair : task.train) {
                 grid drawn; float score = 0; bool solved = false;
                 environment::execute_tree_via_flat(tree, pair, drawn, task, nodes, score, solved);
-                if (!same(drawn, pair.output)) { all_fit = false; break; }
+                if (drawn != pair.output) { all_fit = false; break; }
             }
             if (all_fit) {
                 ++fitted;
@@ -62,7 +54,7 @@ int main() {
                 for (size_t i = 0; i < task.test.size() && every; ++i) {
                     grid drawn; float score = 0; bool solved = false;
                     environment::execute_tree_via_flat(tree, task.test[i], drawn, task, nodes, score, solved);
-                    every = same(drawn, (*answers)[i]);
+                    every = drawn == (*answers)[i];
                 }
                 (every ? right : wrong)++;
                 if (panes) (every ? pane_right : pane_wrong)++;

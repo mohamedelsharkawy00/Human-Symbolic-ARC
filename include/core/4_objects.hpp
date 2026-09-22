@@ -258,7 +258,6 @@ private:
         if (segmentation == segmentation_methods::smallest_of_two_grids ||
             segmentation == segmentation_methods::minimal_repeating_set) {
             if (step_width <= 0 || step_height <= 0) return;
-            bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
             for (int block_top = 0; block_top < one_grid.height; block_top += step_height)
             for (int block_left = 0; block_left < one_grid.width; block_left += step_width) {
                 if ((int)info.size() >= MAX_OBJECTS) return;
@@ -273,7 +272,6 @@ private:
                     for (int col = 0; col < block_width; ++col) {
                         int color = one_grid.data[block_top + row][block_left + col];
                         bool is_colored = (color >= 0 && color != background);
-                        occupied[row * block_width + col] = is_colored;
                         if (is_colored) piece.cells[row][col] = (int8_t)color;
                         lit += is_colored;
                     }
@@ -283,7 +281,10 @@ private:
                 one_object.summary.x0 = (int8_t)block_left; one_object.summary.y0 = (int8_t)block_top;
                 one_object.summary.w = (int8_t)block_width; one_object.summary.h = (int8_t)block_height;
                 one_object.summary.count = (int16_t)lit;
-                one_object.shape = canonical_shape_hash(block_width, block_height, occupied);
+                one_object.shape = canonical_shape_hash(block_width, block_height, [&](int row, int col) {
+                    const int color = one_grid.data[block_top + row][block_left + col];
+                    return color >= 0 && color != background;
+                });
                 info.push_back(one_object);
                 if (objects) { piece.summary = one_object.summary; objects->push_back(piece); }
             }
@@ -321,17 +322,8 @@ private:
                          (col_of(found_cells[i]) - found.x0)] = true;
             one_object.shape = canonical_shape_hash(found.w, found.h, occupied);
             info.push_back(one_object);
-            if (objects) {
-                // Each cell keeps its own color, so an object of several reads as it
-                // looks. For a one-color object that is the color it already had.
-                object piece;
-                piece.summary = found;
-                piece.cells.clear();  // every cell TRANSPARENT until the walk claims it
-                for (int i = 0; i < how_many; ++i)
-                    piece.cells[row_of(found_cells[i]) - found.y0][col_of(found_cells[i]) - found.x0] =
-                        (int8_t)one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])];
-                objects->push_back(piece);
-            }
+            if (objects)
+                objects->push_back(object::from_cells(one_grid, found, found_cells, how_many));
         });
     }
 
@@ -350,10 +342,8 @@ private:
         int apart = 0;
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col) {
-                const int here = (row < left.summary.h && col < left.summary.w)
-                               ? left.cells[row][col] : TRANSPARENT;
-                const int there = (row < right.summary.h && col < right.summary.w)
-                                ? right.cells[row][col] : TRANSPARENT;
+                const int here = left.color_at(left.summary.y0 + row, left.summary.x0 + col);
+                const int there = right.color_at(right.summary.y0 + row, right.summary.x0 + col);
                 apart += (here != there);
             }
         return apart;
