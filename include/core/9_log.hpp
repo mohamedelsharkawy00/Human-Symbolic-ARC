@@ -454,12 +454,11 @@ inline void report_one_pair(ostream& report, size_t pair_index,
         report << "\n";
     }
 
-    for (size_t i = 0; i < pair.discarded.size(); ++i) {
-        const auto& edge = pair.discarded[i];
+    for (const auto& [edge, reason] : pair.discarded) {
         report << "  dropped " << edge_side(edge) << " [" << (int)edge.from
           << "] at " << (int)edge.col << ','
           << (int)edge.row << edge_kind(edge)
-          << "  " << correspondence_election::refusal_names[pair.discard_why[i]] << "\n";
+          << "  " << correspondence_election::refusal_names[reason] << "\n";
     }
 }
 

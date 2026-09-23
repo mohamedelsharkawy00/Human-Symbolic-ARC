@@ -271,6 +271,36 @@ inline void mark_outside(int height, int width, Blocked blocked,
     walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
 }
 
+// A box in grid coordinates, with inclusive bottom and right edges.
+// An empty box has its last row or column before its first.
+struct cell_box {
+    int row0 = 0, col0 = 0, row1 = -1, col1 = -1;
+
+    // Its own size, so no caller has to spell the +1 out and none can spell it
+    // differently. A box nobody wrote to has no cells, and says so itself
+    // rather than leaving the reader to check the tally beside it.
+    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
+    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
+    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
+    ARC_HOST_DEVICE int area()   const { return width() * height(); }
+
+    ARC_HOST_DEVICE void include_cell(int row, int col) {
+        if (empty()) {
+            row0 = row1 = row;
+            col0 = col1 = col;
+            return;
+        }
+        if (row < row0) row0 = row;
+        if (row > row1) row1 = row;
+        if (col < col0) col0 = col;
+        if (col > col1) col1 = col;
+    }
+};
+
+inline cell_box box_of(const object_summary& summary) {
+    return { summary.y0, summary.x0, summary.y0 + summary.h - 1, summary.x0 + summary.w - 1 };
+}
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.
@@ -308,7 +338,7 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
             object_summary found;
             int seen = 0;
             int seeded = 1;
-            int x0 = col, y0 = row, x1 = col, y1 = row;
+            cell_box box;
             // Every other cell of this color joins before the walk starts, and
             // the walk below then claims nothing, so the group is the color.
             if (whole_color)
@@ -335,13 +365,12 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
                 },
                 [&](int seen_row, int seen_col) {
                     found_cells[seen++] = (int16_t)(seen_row * MAX_GRID_DIM + seen_col);
-                    x0 = min(x0, seen_col); x1 = max(x1, seen_col);
-                    y0 = min(y0, seen_row); y1 = max(y1, seen_row);
+                    box.include_cell(seen_row, seen_col);
                 });
-            found.x0 = (int8_t)x0;
-            found.y0 = (int8_t)y0;
-            found.w  = (int8_t)(x1 - x0 + 1);
-            found.h  = (int8_t)(y1 - y0 + 1);
+            found.x0 = (int8_t)box.col0;
+            found.y0 = (int8_t)box.row0;
+            found.w  = (int8_t)box.width();
+            found.h  = (int8_t)box.height();
             take(found, found_cells, seen);
         }
 }
@@ -395,6 +424,13 @@ inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT],
     walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
 }
 
+// Which colors occur, using the same cell filtering as counts and color boxes.
+inline void present_colors(const grid& one_grid, bool seen[COLOR_COUNT]) {
+    ranges::fill_n(seen, COLOR_COUNT, false);
+    walk_colored_cells(one_grid, TRANSPARENT,
+                       [&](int, int, int color) { seen[color] = true; });
+}
+
 // The one color every cell off the ground wears, or TRANSPARENT when there is no
 // figure or it wears several. What a person means by "the shape's color": read
 // off the grid in hand, so a rule that asks for it names a color no example
@@ -409,36 +445,6 @@ inline int8_t the_figure_color(const grid& one_grid, int ground) {
         figure = (int8_t)color;
     }
     return figure;
-}
-
-// A box in grid coordinates, with inclusive bottom and right edges.
-// An empty box has its last row or column before its first.
-struct cell_box {
-    int row0 = 0, col0 = 0, row1 = -1, col1 = -1;
-
-    // Its own size, so no caller has to spell the +1 out and none can spell it
-    // differently. A box nobody wrote to has no cells, and says so itself
-    // rather than leaving the reader to check the tally beside it.
-    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
-    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
-    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
-    ARC_HOST_DEVICE int area()   const { return width() * height(); }
-
-    ARC_HOST_DEVICE void include_cell(int row, int col) {
-        if (empty()) {
-            row0 = row1 = row;
-            col0 = col1 = col;
-            return;
-        }
-        if (row < row0) row0 = row;
-        if (row > row1) row1 = row;
-        if (col < col0) col0 = col;
-        if (col > col1) col1 = col;
-    }
-};
-
-inline cell_box box_of(const object_summary& summary) {
-    return { summary.y0, summary.x0, summary.y0 + summary.h - 1, summary.x0 + summary.w - 1 };
 }
 
 inline void color_boxes(const grid& one_grid, cell_box boxes[COLOR_COUNT],

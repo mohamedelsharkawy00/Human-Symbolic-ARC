@@ -123,12 +123,6 @@ private:
     void detect_presence(const vector<example>& train) {
         if (train.empty()) return;
 
-        auto present = [](const grid& one_grid, bool seen[COLOR_COUNT]) {
-            for (int i = 0; i < COLOR_COUNT; ++i) seen[i] = false;
-            walk_colored_cells(one_grid, TRANSPARENT,
-                               [&](int, int, int color) { seen[color] = true; });
-        };
-
         for (int i = 0; i < COLOR_COUNT; ++i) {
             in_every_input[i]  = true;
             in_every_output[i] = true;
@@ -138,8 +132,8 @@ private:
 
         for (const auto& ex : train) {
             bool in[COLOR_COUNT], out[COLOR_COUNT];
-            present(ex.input, in);
-            present(ex.output, out);
+            present_colors(ex.input, in);
+            present_colors(ex.output, out);
             for (int i = 0; i < COLOR_COUNT; ++i) {
                 in_every_input[i]  = in_every_input[i]  && in[i];
                 in_any_input[i]    = in_any_input[i]    || in[i];
@@ -672,7 +666,15 @@ struct pane_split_facts {
     int8_t down = 1, across = 1;
 
     // Where the panes sit in one training input, in reading order.
-    struct pane { int8_t top = 0, left = 0, width = 0, height = 0; };
+    struct pane {
+        int8_t top = 0, left = 0, width = 0, height = 0;
+
+        // Read local coordinates, optionally through a rotation or reflection.
+        int color_at(const grid& source, int row, int col, int pose = 0) const {
+            const auto [source_row, source_col] = pose_source(pose, width, height, row, col);
+            return source.data[top + source_row][left + source_col];
+        }
+    };
     vector<vector<pane>> pairs;
 
     bool held = false;
@@ -900,15 +902,6 @@ struct pane_mask_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    // The cells of one pane, read through a pose. The pose must keep the pane's
-    // shape or the panes stop lining up, which posed_size is asked first.
-    static int cell_of(const grid& one, const pane_split_facts::pane& box,
-                       int pose, int row, int col) {
-        const auto [source_row, source_col] =
-            pose_source(pose, box.width, box.height, row, col);
-        return one.data[box.top + source_row][box.left + source_col];
-    }
-
     // Reads every training pair under one pose and says what each mask means,
     // or says nothing when two cells with the same mask disagree beyond repair.
     static pane_mask_rule read_with(const vector<example>& train,
@@ -941,12 +934,12 @@ struct pane_mask_rule {
                     for (int p = 0; p < panes; ++p) {
                         // The first pane is read as it lies; the rest are turned
                         // into its frame, which is what makes them comparable.
-                        const int was = cell_of(input, boxes[p], p ? pose : 0, r, c);
+                        const int was = boxes[p].color_at(input, r, c, p ? pose : 0);
                         if (was != background) mask |= 1 << p;
                     }
                     const int now = output.data[r][c];
                     for (int p = 0; p < panes; ++p)
-                        if (cell_of(input, boxes[p], p ? pose : 0, r, c) != now)
+                        if (boxes[p].color_at(input, r, c, p ? pose : 0) != now)
                             may_copy[mask] &= (uint8_t)~(1u << p);
                     if (!painted[mask]) {
                         painted[mask] = 1;
@@ -991,13 +984,13 @@ struct pane_mask_rule {
             for (int c = 0; c < drawn.width; ++c) {
                 int mask = 0;
                 for (int p = 0; p < panes; ++p)
-                    if (cell_of(input, boxes[p], p ? posed : 0, r, c) != background)
+                    if (boxes[p].color_at(input, r, c, p ? posed : 0) != background)
                         mask |= 1 << p;
                 const answer& says = by_mask[mask];
                 if (!says.said()) return false;
                 drawn.data[r][c] = says.paint >= 0
                     ? says.paint
-                    : cell_of(input, boxes[says.copy_pane], says.copy_pane ? posed : 0, r, c);
+                    : boxes[says.copy_pane].color_at(input, r, c, says.copy_pane ? posed : 0);
             }
         return true;
     }
@@ -1056,15 +1049,12 @@ struct pane_pick_rule {
     // top to bottom, left to right, and half way round.
     static constexpr int8_t FOLDS[] = { 1, 2, 4, 6 };
 
-    static int cell_of(const grid& one, const pane_split_facts::pane& box, int r, int c) {
-        return one.data[box.top + r][box.left + c];
-    }
     static bool same_drawing(const grid& one, const pane_split_facts::pane& left,
                              const pane_split_facts::pane& right) {
         if (left.width != right.width || left.height != right.height) return false;
         for (int r = 0; r < left.height; ++r)
             for (int c = 0; c < left.width; ++c)
-                if (cell_of(one, left, r, c) != cell_of(one, right, r, c)) return false;
+                if (left.color_at(one, r, c) != right.color_at(one, r, c)) return false;
         return true;
     }
     static bool folds_onto_itself(const grid& one, const pane_split_facts::pane& box, int pose) {
@@ -1072,8 +1062,7 @@ struct pane_pick_rule {
             return false;
         for (int r = 0; r < box.height; ++r)
             for (int c = 0; c < box.width; ++c) {
-                const auto [row, col] = pose_source(pose, box.width, box.height, r, c);
-                if (cell_of(one, box, r, c) != cell_of(one, box, row, col)) return false;
+                if (box.color_at(one, r, c) != box.color_at(one, r, c, pose)) return false;
             }
         return true;
     }
@@ -1081,7 +1070,7 @@ struct pane_pick_rule {
         uint16_t seen = 0;
         for (int r = 0; r < box.height; ++r)
             for (int c = 0; c < box.width; ++c) {
-                const int was = cell_of(one, box, r, c);
+                const int was = box.color_at(one, r, c);
                 if (is_color(was)) seen |= (uint16_t)(1u << was);
             }
         return seen;
@@ -1090,7 +1079,7 @@ struct pane_pick_rule {
         int count = 0;
         for (int r = 0; r < box.height; ++r)
             for (int c = 0; c < box.width; ++c)
-                count += cell_of(one, box, r, c) != background;
+                count += box.color_at(one, r, c) != background;
         return count;
     }
 
@@ -1171,7 +1160,7 @@ struct pane_pick_rule {
         drawn.height = box.height;
         for (int r = 0; r < box.height; ++r)
             for (int c = 0; c < box.width; ++c)
-                drawn.data[r][c] = cell_of(input, box, r, c);
+                drawn.data[r][c] = box.color_at(input, r, c);
         return true;
     }
 

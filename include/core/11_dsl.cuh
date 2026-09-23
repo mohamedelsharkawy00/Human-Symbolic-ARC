@@ -224,17 +224,11 @@ struct gpu_object_list {
 struct gpu_painted_box { int x0, y0, width, height; };
 
 inline ARC_HOST_DEVICE gpu_painted_box gpu_box_of_paint(const gpu_fixed_object& obj) {
-    int x0 = obj.width, y0 = obj.height, x1 = -1, y1 = -1;
+    arc::cell_box box;
     for (int row = 0; row < obj.height; ++row)
         for (int col = 0; col < obj.width; ++col)
-            if (obj.mask[row][col] != GPU_TRANSPARENT) {
-                if (col < x0) x0 = col;
-                if (col > x1) x1 = col;
-                if (row < y0) y0 = row;
-                if (row > y1) y1 = row;
-            }
-    if (x1 < 0) return {0, 0, 0, 0};
-    return {x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+            if (obj.mask[row][col] != GPU_TRANSPARENT) box.include_cell(row, col);
+    return {box.col0, box.row0, box.width(), box.height()};
 }
 
 // The glyph's fingerprint, read off the paint. Inference learns its keys from

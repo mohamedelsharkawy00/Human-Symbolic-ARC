@@ -140,34 +140,30 @@ ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At groun
     bool col_in[MAX_GRID_DIM], row_in[MAX_GRID_DIM];
     for (int c = 0; c < w; ++c) col_in[c] = true;
     for (int r = 0; r < h; ++r) row_in[r] = true;
-    if (px > 0)
-        for (int c = 0; c < w; ++c) {
+    // Read either axis as lines of cells. Keeping the scan order also keeps
+    // the existing tie rule: the first color to reach the winning count wins.
+    auto mark_pattern_lines = [&](int lines, int length, int period, bool across, bool* inside) {
+        if (period <= 0) return;
+        auto at = [&](int line, int cell) {
+            return across ? ground_at(cell, line) : ground_at(line, cell);
+        };
+        for (int line = 0; line < lines; ++line) {
             int agree = 0;
-            for (int r = 0; r < h; ++r) {
+            for (int cell = 0; cell < length; ++cell) {
                 int counts[COLOR_COUNT] = {};
-                int8_t tmpl = bg; int tn = 0;
-                for (int sc = c % px; sc < w; sc += px) {
-                    int8_t v = ground_at(r, sc);
-                    if (++counts[v] > tn) { tn = counts[v]; tmpl = v; }
+                int8_t most_common = bg;
+                int most = 0;
+                for (int source = line % period; source < lines; source += period) {
+                    const int8_t color = at(source, cell);
+                    if (++counts[color] > most) { most = counts[color]; most_common = color; }
                 }
-                if (ground_at(r, c) == tmpl) ++agree;
+                if (at(line, cell) == most_common) ++agree;
             }
-            col_in[c] = agree * 10 >= h * 7;
+            inside[line] = agree * 10 >= length * 7;
         }
-    if (py > 0)
-        for (int r = 0; r < h; ++r) {
-            int agree = 0;
-            for (int c = 0; c < w; ++c) {
-                int counts[COLOR_COUNT] = {};
-                int8_t tmpl = bg; int tn = 0;
-                for (int sr = r % py; sr < h; sr += py) {
-                    int8_t v = ground_at(sr, c);
-                    if (++counts[v] > tn) { tn = counts[v]; tmpl = v; }
-                }
-                if (ground_at(r, c) == tmpl) ++agree;
-            }
-            row_in[r] = agree * 10 >= w * 7;
-        }
+    };
+    mark_pattern_lines(w, h, px, true, col_in);
+    mark_pattern_lines(h, w, py, false, row_in);
 
     for (int r = 0; r < h; ++r)
         for (int c = 0; c < w; ++c) {

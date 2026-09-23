@@ -92,6 +92,11 @@ struct object_matching {
     // Why a match that was found did not survive.
     enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_object,
                     the_other_examples_disagreed };
+    // A rejected match and its reason travel together through filtering and reporting.
+    struct rejection {
+        edge match;
+        refusal_reason reason;
+    };
     // Said the same way wherever it is said. Each one finishes "it was refused
     // because", so it has to be a reason on its own and not a name for one.
     static constexpr const char* const refusal_names[] = {
@@ -112,7 +117,7 @@ struct object_matching {
     // Operations used by the later chapters.
     // Returns the cells used to work out what a match covers in the target grid.
     // Uses the matched target object if known; otherwise, the source object turned or flipped as matched.
-    static grid edge_footprint(const object_matching::edge& edge,
+    static grid edge_footprint(const edge& edge,
                                const vector<object>& from_objects,
                                const vector<object>& into_objects) {
         if (edge.to >= 0 && (size_t)edge.to < into_objects.size()) return into_objects[edge.to].drawn();
@@ -121,7 +126,7 @@ struct object_matching {
 
     // A cell of a landing that the grid actually shows: on it, and not behind
     // another object. Off the edge or covered, the object did not put it there.
-    static bool landing_shows(const object_matching::edge& edge, const grid& cells,
+    static bool landing_shows(const edge& edge, const grid& cells,
                               const grid& into, int row, int col) {
         if (cells.data[row][col] == TRANSPARENT) return false;
         const int into_row = edge.row + row, into_col = edge.col + col;
@@ -131,8 +136,8 @@ struct object_matching {
 
     // Movement from input to output in the original grid coordinates.
     // Reverse an output-to-input correspondence so both directions agree.
-    static pair<int, int> move_of(const object_matching::edge& edge,
-                                  const object_matching::object_info& one_object) {
+    static pair<int, int> move_of(const edge& edge,
+                                  const object_info& one_object) {
         const int down = edge.row - one_object.summary.y0;
         const int across = edge.col - one_object.summary.x0;
         return edge.from_input ? pair<int, int>{down, across}
@@ -142,8 +147,8 @@ struct object_matching {
     // Reject shape matches whose movement disagrees with the color's agreed move.
     // Stationary matches are always allowed.
     static bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
-                                   const object_matching::edge& edge,
-                                   const object_matching::object_info& one_object) {
+                                   const edge& edge,
+                                   const object_info& one_object) {
         if (!edge.same_shape) return false;
         const auto went = move_of(edge, one_object);
         if (!went.first && !went.second) return false;
@@ -157,20 +162,19 @@ struct object_matching {
     }
 
     // Find and select matches from one grid to the other. Swap grids for the reverse direction.
-    static fit_verdict collect_edges(const vector<object_matching::object_info>& from_info,
+    static fit_verdict collect_edges(const vector<object_info>& from_info,
                               const vector<object>& from_objects,
-                              const vector<object_matching::object_info>& into_info,
+                              const vector<object_info>& into_info,
                               const vector<object>& into_objects,
                               const grid& into, bool from_input,
                               int8_t background, bool may_hang_off,
-                              vector<object_matching::edge>& edges,
-                              vector<object_matching::edge>* discarded = nullptr,
-                              vector<int8_t>* discard_why = nullptr,
+                              vector<edge>& edges,
+                              vector<rejection>* discarded = nullptr,
                               degrees_of_freedom allowed = {},
                               const what_the_pairs_agreed* agreed = nullptr) {
-        vector<object_matching::edge> found =
+        vector<edge> found =
             gather_matches(from_info, from_objects, into_info, into,
-                           background, may_hang_off, discarded, discard_why, allowed);
+                           background, may_hang_off, discarded, allowed);
         for (auto& edge : found) edge.from_input = from_input;
 
         // Remove conflicting matches before fitting so their alternatives can still be chosen.
@@ -178,8 +182,8 @@ struct object_matching {
             for (size_t i = found.size(); i-- > 0; ) {
                 const auto& one_object = from_info[found[i].from];
                 if (!the_pairs_disagree(*agreed, found[i], one_object)) continue;
-                throw_away(found, i, object_matching::the_other_examples_disagreed,
-                           discarded, discard_why);
+                throw_away(found[i], object_matching::the_other_examples_disagreed,
+                           discarded);
                 found.erase(found.begin() + i);
             }
 
@@ -189,26 +193,26 @@ struct object_matching {
         const fit_verdict searched =
             fit_the_objects_together(laid_out, chosen);
         if (searched == fit_verdict::fitted) {
-            keep_what_fitted(chosen, laid_out, found, edges, discarded, discard_why);
+            keep_what_fitted(chosen, laid_out, found, edges, discarded);
             return fit_verdict::fitted;
         }
 
         fall_back_to_greedy(found, from_objects, into_objects, into,
-                            edges, discarded, discard_why);
+                            edges, discarded);
         return searched;
     }
 
     // Match each unmatched object to the same-color object with the most overlap,
     // requiring that the other object has at least as many cells.
-    static void sit_on_top(const vector<object_matching::object_info>& from_info,
+    static void sit_on_top(const vector<object_info>& from_info,
                            const vector<object>& from_objects,
-                           const vector<object_matching::object_info>& into_info,
+                           const vector<object_info>& into_info,
                            const vector<object>& into_objects,
-                           vector<object_matching::edge>& edges) {
+                           vector<edge>& edges) {
         for (size_t from_index = 0; from_index < from_info.size(); ++from_index) {
             // Only objects nothing else accounted for. Asked of the edges themselves,
             // so this does not depend on a tally someone remembered to keep.
-            if (ranges::any_of(edges, [&](const object_matching::edge& edge) {
+            if (ranges::any_of(edges, [&](const edge& edge) {
                     return edge.from == (int16_t)from_index; }))
                 continue;
             const auto& one_object = from_info[from_index];
@@ -280,18 +284,18 @@ struct object_matching {
     // Match repeated blocks in both directions so every matching block gets a partner.
     // Prefer a source block at the same position when possible.
     static fit_verdict collect_motif_edges(
-            const vector<object_matching::object_info>& from_info,
+            const vector<object_info>& from_info,
             const vector<object>& from_objects,
-            const vector<object_matching::object_info>& into_info,
+            const vector<object_info>& into_info,
             const grid& into, int8_t background, int step_w, int step_h,
-            vector<object_matching::edge>& edges, degrees_of_freedom allowed = {}) {
+            vector<edge>& edges, degrees_of_freedom allowed = {}) {
         if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
         const int poses = allowed.pose ? 8 : 1;
 
         // Does this from block sit at that place on the other grid? The answer is
         // the same question both sweeps ask, so it is written once. `ways` is
         // every way round it sits there in the colors of the one kept.
-        auto sits_at = [&](int from_index, const object_matching::object_info& target,
+        auto sits_at = [&](int from_index, const object_info& target,
                            object_match& found, uint8_t& ways) {
             // A copy on another block has moved, so it needs the freedom to --
             // the same rule the representative edge above keeps.
@@ -539,7 +543,7 @@ private:
 
     // Did any cell of the object land on a non-background cell? Background has no
     // shape, so every shape fits it, and a match there is no evidence.
-    static bool landed_on_non_background(const object_matching::edge& edge,
+    static bool landed_on_non_background(const edge& edge,
                                          const grid& cells, const grid& into,
                                          int8_t background) {
         const grid posed = posed_cells(cells, edge.pose);
@@ -568,16 +572,13 @@ private:
     }
 
     // A match that was found and then thrown away, with the reason.
-    static void throw_away(const vector<object_matching::edge>& found, size_t found_index,
-                           int8_t why, vector<object_matching::edge>* discarded,
-                           vector<int8_t>* discard_why) {
-        if (!discarded || !discard_why) return;
-        discarded->push_back(found[found_index]);
-        discard_why->push_back(why);
+    static void throw_away(const edge& match, refusal_reason reason,
+                           vector<rejection>* discarded) {
+        if (discarded) discarded->push_back({match, reason});
     }
 
     // Copy a search hit into a correspondence, including its color changes.
-    static object_matching::edge edge_from_match(const object_match& hit, int from_index,
+    static edge edge_from_match(const object_match& hit, int from_index,
                                                       int source_color, bool stayed_put) {
         object_matching::edge edge;
         edge.from = (int16_t)from_index;
@@ -594,13 +595,12 @@ private:
     }
 
     // Find possible matches for each object in the other grid.
-    static vector<object_matching::edge> gather_matches(
-            const vector<object_matching::object_info>& from_info,
+    static vector<edge> gather_matches(
+            const vector<object_info>& from_info,
             const vector<object>& from_objects,
-            const vector<object_matching::object_info>& into_info,
+            const vector<object_info>& into_info,
             const grid& into, int8_t background, bool may_hang_off,
-            vector<object_matching::edge>* discarded,
-            vector<int8_t>* discard_why, degrees_of_freedom allowed) {
+            vector<rejection>* discarded, degrees_of_freedom allowed) {
         double share[COLOR_COUNT];
         color_shares(into, share);
 
@@ -612,7 +612,7 @@ private:
             return false;
         };
 
-        vector<object_matching::edge> found;
+        vector<edge> found;
 
         for (size_t from_index = 0; from_index < from_objects.size(); ++from_index) {
             const auto& one_object = from_info[from_index];
@@ -643,10 +643,7 @@ private:
                 // EXPERIMENT: every match must pass the chance test, not only the
                 // stationary, hidden, or recolored ones.
                 if (!stands_alone) {
-                    if (discarded && discard_why) {
-                        discarded->push_back(edge);
-                        discard_why->push_back(object_matching::lost_to_chance);
-                    }
+                    throw_away(edge, object_matching::lost_to_chance, discarded);
                     continue;
                 }
                 found.push_back(edge);
@@ -699,25 +696,22 @@ private:
                 // Same bar as source 1: a recolor is the weaker claim either way it
                 // was found, so it earns its place alone or not at all.
                 if (!edge.exact && !stands_alone) {
-                    if (discarded && discard_why) {
-                        discarded->push_back(edge);
-                        discard_why->push_back(object_matching::lost_to_chance);
-                    }
+                    throw_away(edge, object_matching::lost_to_chance, discarded);
                     continue;
                 }
                 found.push_back(edge);
             }
         }
         // Asked once, of every source, where the whole list is in one place.
-        vector<object_matching::edge> on_non_background;
+        vector<edge> on_non_background;
         for (size_t i = 0; i < found.size(); ++i) {
             if (landed_on_non_background(found[i], from_objects[found[i].from].drawn(),
                                          into, background)) {
                 on_non_background.push_back(found[i]);
                 continue;
             }
-            throw_away(found, i, object_matching::lost_to_chance,
-                       discarded, discard_why);
+            throw_away(found[i], object_matching::lost_to_chance,
+                       discarded);
         }
         return on_non_background;
     }
@@ -742,20 +736,20 @@ private:
     };
     // Lower scores prefer matches that did not move, change color, turn or flip,
     // or extend outside the grid, in that order of importance.
-    static int freedom_spent(const object_matching::edge& edge) {
+    static int freedom_spent(const edge& edge) {
         return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
                (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 ? 0 : 1);
     }
 
     // Prefer more cells; break ties with the lower freedom_spent score.
-    static bool says_more(const object_matching::edge& left, size_t left_cells,
-                          const object_matching::edge& right, size_t right_cells) {
+    static bool says_more(const edge& left, size_t left_cells,
+                          const edge& right, size_t right_cells) {
         if (left_cells != right_cells) return left_cells > right_cells;
         return freedom_spent(left) < freedom_spent(right);
     }
 
     // For each target cell, list the matches that can cover it.
-    static fitting set_up_the_fitting(const vector<object_matching::edge>& found,
+    static fitting set_up_the_fitting(const vector<edge>& found,
                              const vector<object>& from_objects,
                              const vector<object>& into_objects,
                              const grid& into) {
@@ -877,10 +871,9 @@ private:
 
     // Keep the chosen matches and any extras that do not overlap; log rejected overlaps.
     static void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
-                               const vector<object_matching::edge>& found,
-                               vector<object_matching::edge>& edges,
-                               vector<object_matching::edge>* discarded,
-                               vector<int8_t>* discard_why) {
+                               const vector<edge>& found,
+                               vector<edge>& edges,
+                               vector<rejection>* discarded) {
         sort(chosen.begin(), chosen.end());
         vector<bool> kept(found.size(), false);
         vector<bool> painted(laid_out.cell_count, false);
@@ -913,19 +906,18 @@ private:
         }
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             if (!kept[found_index])
-                throw_away(found, found_index, object_matching::overlaps_a_kept_object,
-                           discarded, discard_why);
+                throw_away(found[found_index], object_matching::overlaps_a_kept_object,
+                           discarded);
     }
 
     // Try better matches first; keep each only if it covers at least one new cell.
-    static void fall_back_to_greedy(const vector<object_matching::edge>& found,
+    static void fall_back_to_greedy(const vector<edge>& found,
                                     const vector<object>& from_objects,
                                     const vector<object>& into_objects,
                                     const grid& into,
-                                    vector<object_matching::edge>& edges,
-                                    vector<object_matching::edge>* discarded,
-                                    vector<int8_t>* discard_why) {
-        auto footprint_of = [&](const object_matching::edge& edge) {
+                                    vector<edge>& edges,
+                                    vector<rejection>* discarded) {
+        auto footprint_of = [&](const edge& edge) {
             return edge_footprint(edge, from_objects, into_objects);
         };
         // Use the same match preference as the fitting search.
@@ -949,8 +941,8 @@ private:
                         adds = true; break;
                     }
             if (!adds) {
-                throw_away(found, found_index, object_matching::cells_already_explained,
-                           discarded, discard_why);
+                throw_away(found[found_index], object_matching::cells_already_explained,
+                           discarded);
                 continue;
             }
             for (int row = 0; row < cells.height; ++row)

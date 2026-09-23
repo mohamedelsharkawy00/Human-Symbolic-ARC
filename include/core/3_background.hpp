@@ -431,9 +431,8 @@ inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
 inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
     for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
     for (const grid* grid_ptr : grids) {
-        bool seen[COLOR_COUNT] = {};
-        walk_colored_cells(*grid_ptr, TRANSPARENT,
-                           [&](int, int, int color) { seen[color] = true; });
+        bool seen[COLOR_COUNT];
+        present_colors(*grid_ptr, seen);
         for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && seen[i];
     }
 }

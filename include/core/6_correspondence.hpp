@@ -29,6 +29,7 @@ using namespace std;
 struct correspondence_election {
     using object_info = object_segmentation::object_info;
     using edge = object_matching::edge;
+    using rejection = object_matching::rejection;
 
     // An uncovered cell. made_or_gone means its object has no identified partner.
     struct left_over_cell {
@@ -46,8 +47,7 @@ struct correspondence_election {
         vector<edge> edges;
         // Matches that were found and then thrown away, with why â€” otherwise
         // "never matched" and "matched and lost" look the same in the log.
-        vector<edge> discarded;
-        vector<int8_t> discard_why;
+        vector<rejection> discarded;
         // 0 = fitted, 1 = greedy fallback, 2 = search budget exhausted.
         int8_t verdict = 0;
         // Unexplained cells on both grids and the number of matches used.
@@ -327,7 +327,7 @@ private:
         const vector<object>& output_objects = prepared.pairs[pair_index].output_objects;
         const int step_width = prepared.pairs[pair_index].step_width;
         const int step_height = prepared.pairs[pair_index].step_height;
-        pair.edges.clear(); pair.discarded.clear(); pair.discard_why.clear();
+        pair.edges.clear(); pair.discarded.clear();
         pair.agreed_moves.clear(); pair.verdict = 0;
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
@@ -337,8 +337,8 @@ private:
             const auto& from_objects = from_input ? input_objects : output_objects;
             const auto& into_objects = from_input ? output_objects : input_objects;
             const grid& into = from_input ? output : input;
-            vector<correspondence_election::edge> edges, discarded;
-            vector<int8_t> discard_why;
+            vector<edge> edges;
+            vector<rejection> discarded;
             fit_verdict verdict;
             if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
                 verdict = object_matching::collect_representative_edge(from_info, from_objects,
@@ -351,18 +351,16 @@ private:
                 verdict = object_matching::collect_edges(from_info, from_objects, into_info,
                                         into_objects, into, from_input,
                                         background, allowed.hang_off,
-                                        edges, &discarded, &discard_why, allowed, agreed);
+                                        edges, &discarded, allowed, agreed);
                 object_matching::sit_on_top(from_info, from_objects, into_info, into_objects, edges);
             }
             for (auto& edge : edges) edge.from_input = from_input;
-            for (auto& edge : discarded) edge.from_input = from_input;
+            for (auto& rejected : discarded) rejected.match.from_input = from_input;
             // The weaker of the two readings names the pass: a fit both ways is
             // a fit, and a giveup anywhere is still a giveup.
             pair.verdict = max(pair.verdict, (int8_t)verdict);
             pair.edges.insert(pair.edges.end(), edges.begin(), edges.end());
             pair.discarded.insert(pair.discarded.end(), discarded.begin(), discarded.end());
-            pair.discard_why.insert(pair.discard_why.end(),
-                                    discard_why.begin(), discard_why.end());
         };
         read_one_way(true);
         read_one_way(false);
@@ -371,23 +369,23 @@ private:
         // Prefer exact over recolored over overlap-only; ties prefer the forward match.
         // Matches without a target object stay separate.
         struct two_ends { int16_t on_input, on_output; };
-        auto both_ends = [](const correspondence_election::edge& edge) {
+        auto both_ends = [](const edge& edge) {
             return edge.from_input ? two_ends{ edge.from, edge.to }
                                    : two_ends{ edge.to, edge.from };
         };
-        auto joins_the_same = [&](const correspondence_election::edge& left,
-                                  const correspondence_election::edge& right) {
+        auto joins_the_same = [&](const edge& left,
+                                  const edge& right) {
             const two_ends mine = both_ends(left), theirs = both_ends(right);
             return mine.on_input >= 0 && mine.on_output >= 0 &&
                    mine.on_input == theirs.on_input &&
                    mine.on_output == theirs.on_output;
         };
-        auto claim_strength = [](const correspondence_election::edge& edge) {
+        auto claim_strength = [](const edge& edge) {
             return !edge.same_shape ? 0 : edge.exact ? 2 : 1;
         };
-        vector<correspondence_election::edge> kept;
+        vector<edge> kept;
         for (const auto& link : pair.edges) {
-            auto same = ranges::find_if(kept, [&](const correspondence_election::edge& seen) {
+            auto same = ranges::find_if(kept, [&](const edge& seen) {
                 return joins_the_same(link, seen); });
             if (same == kept.end()) { kept.push_back(link); continue; }
             const int mine = claim_strength(link), theirs = claim_strength(*same);
@@ -398,8 +396,8 @@ private:
 
         // Sort by source grid, source position, then target position for display.
         stable_sort(pair.edges.begin(), pair.edges.end(),
-                    [&](const correspondence_election::edge& left,
-                        const correspondence_election::edge& right) {
+                    [&](const edge& left,
+                        const edge& right) {
             if (left.from_input != right.from_input) return left.from_input;
             const auto& objects = left.from_input ? pair.input_info
                                                   : pair.output_info;
@@ -414,7 +412,7 @@ private:
         // Group equal input-to-output movements within this pair.
         // Count each input object once per movement, using its input color.
         // A backward positional correspondence needs an identifiable input object.
-        auto input_object_of = [&](const correspondence_election::edge& edge) {
+        auto input_object_of = [&](const edge& edge) {
             if (edge.from_input) return (int)edge.from;
             if (edge.to >= 0) return (int)edge.to;
             if (edge.hidden || edge.outside) return -1;
@@ -432,7 +430,7 @@ private:
             }
             return found;
         };
-        vector<correspondence_election::pair_info::moved_together> moves;
+        vector<pair_info::moved_together> moves;
         vector<vector<int>> who_moved;
         for (const auto& edge : pair.edges) {
             if (!edge.same_shape) continue;
@@ -471,10 +469,10 @@ private:
         // nonzero movement for it. The movement may differ between pairs.
         // Return null when this pair has no such movement or has several.
         auto lone_move_of = [&](size_t which, int color) {
-            const correspondence_election::pair_info::moved_together* only = nullptr;
+            const pair_info::moved_together* only = nullptr;
             for (const auto& said : facts.pairs[which].agreed_moves) {
                 if (said.color != color || (!said.down && !said.across)) continue;
-                if (only) return (const correspondence_election::pair_info::moved_together*)nullptr;
+                if (only) return (const pair_info::moved_together*)nullptr;
                 only = &said;
             }
             return only;
@@ -529,7 +527,7 @@ private:
 
         // The two halves of the merged list, each in its own frame, so every
         // helper below stays the one-direction function it always was.
-        vector<correspondence_election::edge> forward, backward;
+        vector<edge> forward, backward;
         for (const auto& edge : pair.edges)
             (edge.from_input ? forward : backward).push_back(edge);
 
@@ -564,22 +562,15 @@ private:
         }
 
         // Keep rejection records only for objects that still have no partner.
-        size_t still_refused = 0;
-        for (size_t gone = 0; gone < pair.discarded.size(); ++gone) {
-            const auto& thrown = pair.discarded[gone];
-            const auto& objects = thrown.from_input ? pair.input_info
-                                                    : pair.output_info;
-            if (thrown.from >= 0 && (size_t)thrown.from < objects.size() &&
-                objects[thrown.from].has_partner) continue;
-            pair.discarded[still_refused] = thrown;
-            pair.discard_why[still_refused] = pair.discard_why[gone];
-            ++still_refused;
-        }
-        pair.discarded.resize(still_refused);
-        pair.discard_why.resize(still_refused);
+        erase_if(pair.discarded, [&](const rejection& rejected) {
+            const auto& match = rejected.match;
+            const auto& objects = match.from_input ? pair.input_info : pair.output_info;
+            return match.from >= 0 && (size_t)match.from < objects.size() &&
+                   objects[match.from].has_partner;
+        });
 
         // Record the background region touched by each unmatched object on the other grid.
-        auto note_blanks = [&](vector<correspondence_election::object_info>& info,
+        auto note_blanks = [&](vector<object_info>& info,
                                const vector<object>& objects, const grid& other) {
             if (ranges::all_of(info, [](const auto& one) {
                     return one.has_partner; })) return;
@@ -633,11 +624,11 @@ private:
 
         // Find uncovered cells on both grids, counting recolored shape matches as coverage.
         auto unexplained = [&](const grid& one_grid,
-                               const vector<correspondence_election::edge>& landing_here,
+                               const vector<edge>& landing_here,
                                const vector<object>& their_objects,
                                const vector<object>& our_objects,
-                               const vector<correspondence_election::object_info>& ours,
-                               const vector<correspondence_election::edge>& leaving_here,
+                               const vector<object_info>& ours,
+                               const vector<edge>& leaving_here,
                                bool from_input) {
             // Mark cells actually covered by incoming shape matches.
             bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -698,8 +689,8 @@ private:
 
     // 4. Count what the final matches explain and describe the empty regions.
     // Count the matches starting from each source object.
-    static void count_edges_leaving(const vector<correspondence_election::edge>& edges,
-                                    vector<correspondence_election::object_info>& from_info) {
+    static void count_edges_leaving(const vector<edge>& edges,
+                                    vector<object_info>& from_info) {
         for (auto& one_object : from_info) one_object.edges_touching = 0;
         for (const auto& edge : edges)
             if (edge.from >= 0 && (size_t)edge.from < from_info.size()) {
@@ -709,9 +700,9 @@ private:
     }
 
     // Count the matches that overlap each target object.
-    static void count_edges_arriving(const vector<correspondence_election::edge>& edges,
+    static void count_edges_arriving(const vector<edge>& edges,
                                 const vector<object>& from_objects,
-                                vector<correspondence_election::object_info>& into_info,
+                                vector<object_info>& into_info,
                                 const vector<object>& into_objects) {
         for (const auto& edge : edges) {
             const grid footprint = object_matching::edge_footprint(edge, from_objects, into_objects);
@@ -740,7 +731,7 @@ private:
         }
     }
 
-    static void mark_painted(const vector<correspondence_election::edge>& edges,
+    static void mark_painted(const vector<edge>& edges,
                              const vector<object>& from_objects,
                              const vector<object>& into_objects,
                              const grid& into,
@@ -777,11 +768,11 @@ private:
                 if (one_grid.data[row][col] != background) continue;
                 if (patch_of[row][col] >= 0) continue;
                 const int16_t mine = (int16_t)patches.size();
-                int left = col, right = col, top = row, bottom = row, cells = 0;
+                cell_box box;
                 bool open = false;
                 queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
                 patch_of[row][col] = mine;
-                cells = walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, 1,
+                const int cells = walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, 1,
                     [&](int next_row, int next_col) {
                         if (one_grid.data[next_row][next_col] != background ||
                             patch_of[next_row][next_col] >= 0) return false;
@@ -789,15 +780,14 @@ private:
                         return true;
                     },
                     [&](int at_row, int at_col) {
-                        left = min(left, at_col); right = max(right, at_col);
-                        top = min(top, at_row); bottom = max(bottom, at_row);
+                        box.include_cell(at_row, at_col);
                         open = open || at_row == 0 || at_col == 0 ||
                                at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
                     });
                 blank_patch patch;
-                patch.left = (int8_t)left;  patch.top = (int8_t)top;
-                patch.width = (int8_t)(right - left + 1);
-                patch.height = (int8_t)(bottom - top + 1);
+                patch.left = (int8_t)box.col0;  patch.top = (int8_t)box.row0;
+                patch.width = (int8_t)box.width();
+                patch.height = (int8_t)box.height();
                 patch.cells = (int16_t)cells;
                 patch.enclosed = !open;
                 patches.push_back(patch);

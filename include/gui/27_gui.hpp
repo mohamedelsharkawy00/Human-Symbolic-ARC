@@ -919,8 +919,8 @@ inline vector<row_place> refusals_of(const vector<correspondence_election::pair_
     for (size_t i = 0; i < pairs[pair].discarded.size(); ++i)
       all.push_back({ (int8_t)pair, (int16_t)i });
   stable_sort(all.begin(), all.end(), [&](const row_place& a, const row_place& b) {
-    const auto& one = pairs[a.pair].discarded[a.which];
-    const auto& two = pairs[b.pair].discarded[b.which];
+    const auto& one = pairs[a.pair].discarded[a.which].match;
+    const auto& two = pairs[b.pair].discarded[b.which].match;
     const auto& mine = one.from_input ? pairs[a.pair].input_info : pairs[a.pair].output_info;
     const auto& theirs = two.from_input ? pairs[b.pair].input_info : pairs[b.pair].output_info;
     return tuple{ a.pair, !one.from_input, mine[one.from].summary.y0, mine[one.from].summary.x0 } <
@@ -1395,12 +1395,12 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         string said;
         if (dropped_at >= 0 && dropped_at < dropped_n) {
           const row_place& at = refused[dropped_at];
-          const auto& dr = pairs[at.pair].discarded[at.which];
+          const auto& [dr, reason] = pairs[at.pair].discarded[at.which];
           said = to_text("PAIR %d  PIECE %d  WANTED %d,%d  %s  %s",
                          (int)at.pair, (int)dr.from, (int)dr.col, (int)dr.row,
                          kind_name[claim_of(dr)],
                          correspondence_election::refusal_names[
-                             clamp((int)pairs[at.pair].discard_why[at.which], 0, 3)]);
+                             clamp((int)reason, 0, 3)]);
           if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
         }
         detail(said);
@@ -1690,8 +1690,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         const int reasons = (int)size(correspondence_election::refusal_names);
         vector<int> by_reason(reasons, 0);
         for (const auto& pr : pairs)
-          for (int8_t why : pr.discard_why)
-            if (why >= 0 && why < reasons) by_reason[why]++;
+          for (const auto& rejected : pr.discarded)
+            if (rejected.reason >= 0 && rejected.reason < reasons) by_reason[rejected.reason]++;
         // ONE REASON A LINE. All three on one line came to more characters than
         // the panel is wide, and the widest screen is the tighter of the two:
         // the label column grows with the font while the panel grows with the
@@ -2384,7 +2384,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
       for (int i = 0; i < dropped_n; ++i) {
         if (dropped_at != SHOW_ALL && dropped_at != i) continue;
         const row_place &at = refused[i];
-        const auto &dr = pairs[at.pair].discarded[at.which];
+        const auto &dr = pairs[at.pair].discarded[at.which].match;
         const line_ends ends = ends_of(pairs[at.pair], dr);
         const bool one = (dropped_at == i);
         // ONE shows the refused piece and where it wanted to go; ALL shows only
