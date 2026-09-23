@@ -78,8 +78,8 @@ inline optional<string> word_for_color_map(const int8_t* map) {
         const int mapped = c == first ? second : c == second ? first : c;
         if (map[c] >= 0 && map[c] != mapped) return nullopt;
     }
-    const int a = min(first, second), b = max(first, second);
-    const int variant = a * (2 * COLOR_COUNT - a - 1) / 2 + b - a - 1;
+    const int variant = color_pair{first, second}.index();
+    if (variant < 0) return nullopt;
     return "BidiColorMap[" + to_string(variant) + "]";
 }
 

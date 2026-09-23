@@ -8,6 +8,35 @@
 #include "0_core.hpp"
 #include <string_view>
 
+namespace arc {
+
+constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
+
+// Unordered color pairs, numbered {0,1}, {0,2}, ... {8,9}.
+// Inference, program text, and CUDA all use this same numbering.
+struct color_pair {
+    int first = TRANSPARENT, second = TRANSPARENT;
+
+    ARC_HOST_DEVICE constexpr int index() const {
+        if (!is_color(first) || !is_color(second) || first == second) return -1;
+        const int low = first < second ? first : second;
+        const int high = first < second ? second : first;
+        return low * (2 * COLOR_COUNT - low - 1) / 2 + high - low - 1;
+    }
+
+    ARC_HOST_DEVICE static constexpr color_pair from_index(int index) {
+        if (index < 0 || index >= COLOR_PAIR_COUNT) return {};
+        for (int first = 0; first < COLOR_COUNT - 1; ++first) {
+            const int remaining = COLOR_COUNT - first - 1;
+            if (index < remaining) return { first, first + 1 + index };
+            index -= remaining;
+        }
+        return {};
+    }
+};
+
+}  // namespace arc
+
 // What an op does to the layer, in pipeline-authoring order (a single solution
 // line reads left-to-right through these): bring a source in (GET) -> cut it
 // down (REDUCE) -> pick objects (SELECT) -> move it (TRANSLATE) -> recolor or
@@ -16,9 +45,16 @@
 // Order is frozen — the GUI indexes its tab rows by these ordinals.
 enum class op_role { get, reduce, select, translate, map, generate, combine, count };
 
+// How much an operation depends on inferred facts: none, some, or entirely.
+enum class inferred_amount { none, some, all };
+
 // --- Op vocabulary: the single home of the DSL op list ---
 // CPU (search, GUI, serializer) and GPU (kernel dispatch) both derive from
 // this one macro, so the two sides cannot drift apart.
+// INFERRED says how much the op depends on learned facts.
+// PICK means it does nothing without selected objects; CLEARS means it removes
+// selection marks. These describe kernel behavior, so update both together.
+// The ID also supplies its text spelling (#id), so names cannot drift.
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
 // without saying what it does — the macro will not compile without it.
@@ -30,95 +66,95 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
 // THE ORDER IS THE SEARCH ORDER, simplest first: fewest variants, then fewest
 // lines of code. Ties: turns before flips, rights before lefts, inputs before
 // outputs, canvas as Union/Underlay/Intersection/Difference, then fewer letters.
-#define NODE_PRIMITIVES /* Schema: X(ID, NAME, LOW, HIGH, ROLE) */               \
-  X(SelectAll, "SelectAll", 0, 0, select)                                                                        \
-  X(InvertSelection, "InvertSelection", 0, 0, select)                                                            \
-  X(TurnRight, "TurnRight", 0, 0, translate)                                                                     \
-  X(TurnLeft, "TurnLeft", 0, 0, translate)                                                                       \
-  X(FlipHorizontal, "FlipHorizontal", 0, 0, translate)                                                           \
-  X(FlipVertical, "FlipVertical", 0, 0, translate)                                                               \
-  X(Input, "Input", 0, 0, get)                                                                                   \
-  X(InputWithoutBackground, "InputWithoutBackground", 0, 0, get)                                                 \
-  X(Output, "Output", 0, 0, get)                                                                                 \
-  X(CurrentObjects, "CurrentObjects", 0, 0, get)                                                                 \
-  X(Origin, "Origin", 0, 0, translate)                                                                           \
-  X(Union, "Union", 0, 0, combine)                                                                               \
+#define NODE_PRIMITIVES /* Schema: X(ID, LOW, HIGH, ROLE, INFERRED, PICK, CLEARS) */                            \
+  X(SelectAll                   , 0                 , 0                        , select   , none, false, false) \
+  X(InvertSelection             , 0                 , 0                        , select   , none, false, false) \
+  X(TurnRight                   , 0                 , 0                        , translate, none, true , false) \
+  X(TurnLeft                    , 0                 , 0                        , translate, none, true , false) \
+  X(FlipHorizontal              , 0                 , 0                        , translate, none, true , false) \
+  X(FlipVertical                , 0                 , 0                        , translate, none, true , false) \
+  X(Input                       , 0                 , 0                        , get      , none, false, false) \
+  X(InputWithoutBackground      , 0                 , 0                        , get      , all , false, false) \
+  X(Output                      , 0                 , 0                        , get      , none, false, false) \
+  X(CurrentObjects              , 0                 , 0                        , get      , none, false, false) \
+  X(Origin                      , 0                 , 0                        , translate, none, true , false) \
+  X(Union                       , 0                 , 0                        , combine  , none, false, false) \
   /* DeleteSelection consumes the marks, it does not make them: an act. */       \
-  X(DeleteSelection, "DeleteSelection", 0, 0, reduce)                                                            \
+  X(DeleteSelection             , 0                 , 0                        , reduce   , none, true , true ) \
   /* The canvas-readers judge by what lies beneath, not by the object: acts. */  \
-  X(ReadUnder, "ReadUnder", 0, 0, map)                                                                           \
-  X(Outline, "Outline", 0, 0, reduce)                                                                            \
-  X(SelectMostCommonColor, "SelectMostCommonColor", 0, 0, select)                                                \
+  X(ReadUnder                   , 0                 , 0                        , map      , none, true , false) \
+  X(Outline                     , 0                 , 0                        , reduce   , none, true , false) \
+  X(SelectMostCommonColor       , 0                 , 0                        , select   , none, false, false) \
   /* Colors extracts the palette as objects — a producing act, not a source. */  \
-  X(Colors, "Colors", 0, 0, map)                                                                                 \
-  X(Trim, "Trim", 0, 0, reduce)                                                                                  \
-  X(OverlapCorner, "OverlapCorner", 0, 0, map)                                                                   \
-  X(Underlay, "Underlay", 0, 0, combine)                                                                         \
+  X(Colors                      , 0                 , 0                        , map      , some, false, true ) \
+  X(Trim                        , 0                 , 0                        , reduce   , none, true , false) \
+  X(OverlapCorner               , 0                 , 0                        , map      , none, false, false) \
+  X(Underlay                    , 0                 , 0                        , combine  , none, false, false) \
   /* Withhold closes the beat without painting, so a sentence that only sets  */ \
   /* up the hand is sayable and does not read as damage to the canvas.        */ \
-  X(Withhold, "Withhold", 0, 0, combine)                                                                         \
-  X(Fit, "Fit", 0, 0, reduce)                                                                                    \
-  X(Intersection, "Intersection", 0, 0, combine)                                                                 \
-  X(Fractal, "Fractal", 0, 0, generate)                                                                          \
-  X(Difference, "Difference", 0, 0, combine)                                                                     \
-  X(UnionList, "UnionList", 0, 0, reduce)                                                                        \
-  X(AlignToCanvas, "AlignToCanvas", 0, 0, translate)                                                             \
-  X(IntersectionList, "IntersectionList", 0, 0, reduce)                                                          \
-  X(SizeRankColorMap, "SizeRankColorMap", 0, 0, map)                                                             \
-  X(Pattern, "Pattern", 0, 0, generate)                                                                          \
-  X(ProjectOnSeeds, "ProjectOnSeeds", 0, 0, map)                                                                 \
-  X(Bridge, "Bridge", 0, 0, generate)                                                                            \
-  X(Partition, "Partition", 0, 0, generate)                                                                      \
-  X(RestoreOrientation, "RestoreOrientation", 0, 0, translate)                                                   \
-  X(ShapeColorMap, "ShapeColorMap", 0, 0, map)                                                                   \
-  X(Seeds, "Seeds", 0, 0, get)                                                                                   \
+  X(Withhold                    , 0                 , 0                        , combine  , none, false, false) \
+  X(Fit                         , 0                 , 0                        , reduce   , none, true , false) \
+  X(Intersection                , 0                 , 0                        , combine  , none, false, false) \
+  X(Fractal                     , 0                 , 0                        , generate , none, true , false) \
+  X(Difference                  , 0                 , 0                        , combine  , none, false, false) \
+  X(UnionList                   , 0                 , 0                        , reduce   , none, false, false) \
+  X(AlignToCanvas               , 0                 , 0                        , translate, none, true , false) \
+  X(IntersectionList            , 0                 , 0                        , reduce   , none, false, false) \
+  X(SizeRankColorMap            , 0                 , 0                        , map      , all , false, false) \
+  X(Pattern                     , 0                 , 0                        , generate , none, true , false) \
+  X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false, false) \
+  X(Bridge                      , 0                 , 0                        , generate , none, false, false) \
+  X(Partition                   , 0                 , 0                        , generate , none, true , true ) \
+  X(RestoreOrientation          , 0                 , 0                        , translate, none, false, false) \
+  X(ShapeColorMap               , 0                 , 0                        , map      , all , false, false) \
+  X(Seeds                       , 0                 , 0                        , get      , some, false, false) \
   /* Partition cuts on the walls a selection marks; Panes cuts on the cut  */    \
   /* the split elected, which is the same act with a surer hand.           */        \
-  X(Panes, "Panes", 0, 0, generate)                                                                              \
-  X(VoteDenoise, "VoteDenoise", 0, 0, map)                                                                       \
-  X(ShapeToInteriorColorMap, "ShapeToInteriorColorMap", 0, 0, map)                                               \
-  X(SnapToAnchors, "SnapToAnchors", 0, 0, map)                                                                   \
-  X(SortBySize, "SortBySize", 0, 1, map)                                                                         \
-  X(DiagTile, "DiagTile", 0, 1, generate)                                                                        \
-  X(NormalizeOrientation, "NormalizeOrientation", 0, 1, translate)                                               \
+  X(Panes                       , 0                 , 0                        , generate , all , false, false) \
+  X(VoteDenoise                 , 0                 , 0                        , map      , some, true , false) \
+  X(ShapeToInteriorColorMap     , 0                 , 0                        , map      , all , true , false) \
+  X(SnapToAnchors               , 0                 , 0                        , map      , none, false, false) \
+  X(SortBySize                  , 0                 , 1                        , map      , none, true , false) \
+  X(DiagTile                    , 0                 , 1                        , generate , none, false, false) \
+  X(NormalizeOrientation        , 0                 , 1                        , translate, none, false, false) \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
-  X(Skew, "Skew", -1, 1, translate)                                                                              \
-  X(Split, "Split", 0, 2, generate)                                                                              \
+  X(Skew                        , -1                , 1                        , translate, none, true , false) \
+  X(Split                       , 0                 , 2                        , generate , some, false, true ) \
   /* Cells slide a step and pile at the wall, so a step past the wall says */    \
-  X(SlamColumn, "SlamColumn", -1, 1, translate)                                                                  \
+  X(SlamColumn                  , -1                , 1                        , translate, none, true , false) \
   /* nothing new: the answers run out at the object, not at the grid. */         \
-  X(SlamRow, "SlamRow", -1, 1, translate)                                                                        \
-  X(Tile, "Tile", 0, 3, generate)                                                                                \
-  X(SelectObjectsWithHoles, "SelectObjectsWithHoles", 0, 4, select)                                              \
-  X(Shift, "Shift", 0, 7, translate)                                                                             \
-  X(MoveToEdge, "MoveToEdge", 0, 7, translate)                                                                   \
-  X(ExtendTo, "ExtendTo", 0, 7, generate)                                                                        \
-  X(ExtendDiagonal, "ExtendDiagonal", 2, 10, generate)                                                           \
-  X(ExtendOrthogonal, "ExtendOrthogonal", 2, 10, generate)                                                       \
-  X(ScaleUp, "ScaleUp", 2, 10, translate)                                                                        \
-  X(ScaleDown, "ScaleDown", 2, 10, translate)                                                                    \
-  X(Layout, "Layout", 2, 10, translate)                                                                          \
-  X(SelectColor, "SelectColor", 0, arc::COLOR_COUNT - 1, select)                                                 \
-  X(SelectObjectsContainingColor, "SelectObjectsContainingColor", 0, arc::COLOR_COUNT - 1, select)               \
-  X(SelectLargestObject, "SelectLargestObject", 0, 9, select)                                                    \
-  X(SelectSmallestObject, "SelectSmallestObject", 0, 9, select)                                                  \
-  X(AddColor, "AddColor", 0, arc::COLOR_COUNT - 1, generate)                                                     \
-  X(MaskBy, "MaskBy", 0, 10, map)                                                                                \
-  X(MaskOut, "MaskOut", 0, 10, map)                                                                              \
-  X(InteriorColor, "InteriorColor", -1, arc::COLOR_COUNT - 1, map)                                               \
-  X(Recolor, "Recolor", 0, 11, map)                                                                              \
-  X(TileX, "TileX", 1, arc::MAX_GRID_DIM, generate)                                                              \
-  X(TileY, "TileY", 1, arc::MAX_GRID_DIM, generate)                                                              \
+  X(SlamRow                     , -1                , 1                        , translate, none, true , false) \
+  X(Tile                        , 0                 , 3                        , generate , none, false, false) \
+  X(SelectObjectsWithHoles      , 0                 , 4                        , select   , none, false, false) \
+  X(Shift                       , 0                 , 7                        , translate, none, true , false) \
+  X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
+  X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
+  X(ExtendDiagonal              , 2                 , 10                       , generate , none, true , false) \
+  X(ExtendOrthogonal            , 2                 , 10                       , generate , none, true , false) \
+  X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
+  X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
+  X(Layout                      , 2                 , 10                       , translate, none, false, false) \
+  X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
+  X(SelectObjectsContainingColor, 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
+  X(SelectLargestObject         , 0                 , 9                        , select   , none, false, false) \
+  X(SelectSmallestObject        , 0                 , 9                        , select   , none, false, false) \
+  X(AddColor                    , 0                 , arc::COLOR_COUNT - 1     , generate , none, true , false) \
+  X(MaskBy                      , 0                 , 10                       , map      , none, true , false) \
+  X(MaskOut                     , 0                 , 10                       , map      , none, true , false) \
+  X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, true , false) \
+  X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
+  X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
+  X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
-  X(SelectRow, "SelectRow", 0, arc::MAX_GRID_DIM - 1, select)                                                    \
-  X(SelectColumn, "SelectColumn", 0, arc::MAX_GRID_DIM - 1, select)                                              \
-  X(BidiColorMap, "BidiColorMap", 0, arc::COLOR_PAIR_COUNT - 1, map)                                             \
+  X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
+  X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
+  X(BidiColorMap                , 0                 , arc::COLOR_PAIR_COUNT - 1, map      , none, true , false) \
   /* The move IS the number of cells, so the whole grid is sayable in one. */    \
-  X(MoveRow, "MoveRow", -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM, translate)                                        \
-  X(MoveColumn, "MoveColumn", -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM, translate)
+  X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
+  X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false)
 
 enum class node_type : uint8_t {
-#define X(id, n, low, high, role) id,
+#define X(id, low, high, role, inferred, pick, clears) id,
     NODE_PRIMITIVES
 #undef X
     type_count
@@ -132,7 +168,7 @@ enum class node_type : uint8_t {
 // this must stay pure comparison with nothing to dereference.
 inline constexpr op_role role_of(node_type t) {
     switch (t) {
-#define X(id, n, low, high, role) case node_type::id: return op_role::role;
+#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return op_role::role;
     NODE_PRIMITIVES
 #undef X
     default: return op_role::map;
@@ -167,86 +203,46 @@ inline constexpr bool is_act_op(node_type t) {
 // it never spells an argument the op has no variant for.
 inline constexpr bool takes_value(node_type t, int value) {
     switch (t) {
-#define X(id, n, low, high, role) case node_type::id: return (low) <= value && value <= (high);
+#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return (low) <= value && value <= (high);
     NODE_PRIMITIVES
 #undef X
     default: return false;
     }
 }
 
-// How much of what an op does comes from a fact inference elected. ALL means the
-// op is nothing without that fact, which is exactly when a dead-op guard is an
-// honest verdict -- so the ALL ops are the ops that carry one, and that is the
-// whole guard list. SOME means it reads the fact and still does real work with
-// no fact to read: Split still segments, Colors still layers with the ground
-// included, VoteDenoise falls back to a local background, and the seed pool just
-// keeps the objects the ground would have taken out.
-// The palette paints ALL yellow and SOME orange.
-enum class inferred_amount { none, some, all };
+// Properties come from the op's row, like its role and argument range.
 inline constexpr inferred_amount how_much_is_inferred(node_type t) {
     switch (t) {
-    case node_type::InputWithoutBackground:
-    case node_type::SizeRankColorMap:
-    case node_type::ShapeColorMap:
-    case node_type::ShapeToInteriorColorMap:
-    case node_type::Panes:                    return inferred_amount::all;
-    case node_type::Colors:
-    case node_type::Split:
-    case node_type::VoteDenoise:
-    case node_type::Seeds:
-    case node_type::ProjectOnSeeds:           return inferred_amount::some;
-    default:                                  return inferred_amount::none;
+#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return inferred_amount::inferred;
+    NODE_PRIMITIVES
+#undef X
+    default: return inferred_amount::none;
     }
 }
 
-// Carving clears selection so the next selector can choose individual pieces.
-// Partition consumes selected walls; DeleteSelection keeps unselected survivors.
-// These declarations must agree with the kernel implementations.
 inline constexpr bool clears_the_marks(node_type t) {
-    return t == node_type::Split || t == node_type::Colors ||
-           t == node_type::Partition || t == node_type::DeleteSelection;
+    switch (t) {
+#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return clears;
+    NODE_PRIMITIVES
+#undef X
+    default: return false;
+    }
 }
 
-// Ops that do NOTHING when nothing is picked, so offering one before a pick is
-// pure waste: it spells a program the search already has, one op longer. The
-// generator refuses them until something is marked (legal_next).
-// Each entry is kernel-checked, never guessed — Recolor and Shift pass unpicked
-// objects through untouched, DeleteSelection deletes nothing, Partition cuts
-// nothing without walls. Grows as more acts are taught to read the marks.
-// NOT here: UnionList / IntersectionList, which do real work either way (with
-// no marks they merge everything into one).
 inline constexpr bool needs_a_pick(node_type t) {
-    return t == node_type::Recolor || t == node_type::Shift ||
-           t == node_type::DeleteSelection || t == node_type::Partition ||
-           t == node_type::TurnRight || t == node_type::TurnLeft ||
-           t == node_type::FlipHorizontal || t == node_type::FlipVertical ||
-           t == node_type::MoveRow || t == node_type::MoveColumn ||
-           t == node_type::SlamRow || t == node_type::SlamColumn ||
-           t == node_type::MoveToEdge || t == node_type::Origin ||
-           t == node_type::AlignToCanvas || t == node_type::Skew ||
-           t == node_type::ScaleUp || t == node_type::ScaleDown ||
-           t == node_type::Trim || t == node_type::Fit ||
-           t == node_type::Outline ||
-           t == node_type::InteriorColor || t == node_type::BidiColorMap ||
-           t == node_type::VoteDenoise || t == node_type::ShapeToInteriorColorMap ||
-           t == node_type::SortBySize ||
-           t == node_type::TileX || t == node_type::TileY ||
-           t == node_type::Fractal || t == node_type::AddColor ||
-           t == node_type::Pattern || t == node_type::ExtendOrthogonal ||
-           t == node_type::ExtendDiagonal ||
-           // Taught to read the marks 2026-09-22, so they belong here now: with
-           // nothing picked each one hands its whole list back untouched. Gating
-           // them is what lets a chain keep every layer in hand and speak to one
-           // at a time, instead of deleting the others to feed an op one thing.
-           t == node_type::ExtendTo || t == node_type::ReadUnder ||
-           t == node_type::MaskBy || t == node_type::MaskOut;
+    switch (t) {
+#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return pick;
+    NODE_PRIMITIVES
+#undef X
+    default: return false;
+    }
 }
 
 // Read a word's operation name; arguments remain the caller's concern.
 // Unknown words (including the inference placeholder "?") have no operation.
 inline constexpr node_type operation_named(std::string_view word) {
     word = word.substr(0, word.find('['));
-#define X(id, name, low, high, role) if (word == name) return node_type::id;
+#define X(id, low, high, role, inferred, pick, clears) if (word == #id) return node_type::id;
     NODE_PRIMITIVES
 #undef X
     return node_type::type_count;

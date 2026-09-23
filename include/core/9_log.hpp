@@ -112,11 +112,11 @@ inline void report_background(ostream& report, const background_election& backgr
 
 inline void report_color_swaps(ostream& report, const color_swap_candidates& swaps) {
     report << "[color_swaps] count " << swaps.count << "\n";
-    int variant = 0;
-    for (int first = 0; first < COLOR_COUNT; ++first)
-        for (int second = first + 1; second < COLOR_COUNT; ++second, ++variant)
-            if (swaps.variant[variant])
-                report << "candidate " << first << "<->" << second << "\n";
+    for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant) {
+        if (!swaps.variant[variant]) continue;
+        const auto [first, second] = color_pair::from_index(variant);
+        report << "candidate " << first << "<->" << second << "\n";
+    }
     report << "\n";
 }
 

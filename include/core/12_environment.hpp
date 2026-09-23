@@ -71,16 +71,16 @@ namespace arc {
 	// Max distinct (color,w,h,count) tuples we track per target example.
 	constexpr int MAX_TARGET_OBJECTS = 16;
 
-	// node_type and the NODE_PRIMITIVES op list live in 11_dsl.cuh (single home).
+	// node_type and the NODE_PRIMITIVES op list live in 7_vocabulary.hpp (single home).
 
 	inline constexpr const char* type_name[] = {
-	#define X(id, name, low, high, role) name,
+	#define X(id, low, high, role, inferred, pick, clears) #id,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
 	inline constexpr node_type primitive_types[] = {
-	#define X(id, n, low, high, role) node_type::id,
+	#define X(id, low, high, role, inferred, pick, clears) node_type::id,
 		NODE_PRIMITIVES
 	#undef X
 	};
@@ -89,13 +89,13 @@ namespace arc {
 	// --- Shared node-type metadata helpers (used by serializer, GUI, solver) ---
 
 	inline constexpr int type_var_low[] = {
-	#define X(id, n, low, high, role) low,
+	#define X(id, low, high, role, inferred, pick, clears) low,
 		NODE_PRIMITIVES
 	#undef X
 	};
 
 	inline constexpr int type_var_high[] = {
-	#define X(id, n, low, high, role) high,
+	#define X(id, low, high, role, inferred, pick, clears) high,
 		NODE_PRIMITIVES
 	#undef X
 	};

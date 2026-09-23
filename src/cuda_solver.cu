@@ -1184,18 +1184,8 @@ __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int l
 // Colors not in the pair are untouched, so disjoint swaps compose order-free.
 __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const gpu_object_list& src, int8_t k) {
     auto& res = gpu_acquire(ctx);
-    if (k < 0 || k > 44) { res = src; return res; }  // out of range -> passthrough
-
-    // Decode k -> unordered pair (a,b), a<b. Row-major over {0..9}.
-    int a = 0, b = 1, idx = 0;
-    for (a = 0; a < GPU_MAX_COLORS; ++a) {
-        bool found = false;
-        for (b = a + 1; b < GPU_MAX_COLORS; ++b) {
-            if (idx == k) { found = true; break; }
-            ++idx;
-        }
-        if (found) break;
-    }
+    if (k < 0 || k >= arc::COLOR_PAIR_COUNT) { res = src; return res; }
+    const auto [a, b] = arc::color_pair::from_index(k);
 
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];

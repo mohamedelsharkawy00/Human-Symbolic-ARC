@@ -21,7 +21,6 @@ enum class arc_color : int8_t {
 	cyan = 8, maroon = 9, count = 10
 };
 constexpr int COLOR_COUNT = (int)arc_color::count;
-constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 constexpr int TRANSPARENT = -1;
 
 ARC_HOST_DEVICE constexpr bool is_color(int value) {

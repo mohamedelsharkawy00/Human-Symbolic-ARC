@@ -13,6 +13,7 @@
 #include "2_size.hpp"
 #include "3_background.hpp"
 #include "6_correspondence.hpp"
+#include "7_vocabulary.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -272,44 +273,43 @@ struct color_swap_candidates {
         color_swap_candidates candidates;
         if (!diff.computed || !pairs_overlay(train)) return candidates;
 
-        int variant = 0;
-        for (int first = 0; first < COLOR_COUNT; ++first)
-            for (int second = first + 1; second < COLOR_COUNT; ++second, ++variant) {
-                // Neither color ever changes anywhere, so this pair says nothing
-                if (diff.lost_count[first] == 0 && diff.lost_count[second] == 0) continue;
-                bool swaps = true;
-                for (size_t i = 0; swaps && i < train.size(); ++i) {
-                    const grid& out = train[i].output;
-                    auto became = [&](const vector<pair<int8_t, int8_t>>& cells, int want) {
-                        for (auto [row, col] : cells)
-                            if (out.data[row][col] != want) return false;
-                        return true;
-                    };
-                    swaps = became(diff.lost[i][first], second) &&
-                            became(diff.lost[i][second], first);
-                }
-                if (!swaps) continue;
-                candidates.variant[variant] = true;
-                candidates.count++;
-
-                bool in_every_piece = true;
-                for (const auto& pair : train) {
-                    const grid& in = pair.input;
-                    const grid& out = pair.output;
-                    for (int row = 0; in_every_piece && row < in.height; ++row)
-                        for (int col = 0; col < in.width; ++col) {
-                            const int was = in.data[row][col];
-                            if (was == background) continue;   // in no piece to be swapped
-                            if ((was == first && out.data[row][col] != second) ||
-                                (was == second && out.data[row][col] != first)) {
-                                in_every_piece = false;
-                                break;
-                            }
-                        }
-                    if (!in_every_piece) break;
-                }
-                candidates.over_the_pieces[variant] = in_every_piece;
+        for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant) {
+            const auto [first, second] = color_pair::from_index(variant);
+            // Neither color ever changes anywhere, so this pair says nothing
+            if (diff.lost_count[first] == 0 && diff.lost_count[second] == 0) continue;
+            bool swaps = true;
+            for (size_t i = 0; swaps && i < train.size(); ++i) {
+                const grid& out = train[i].output;
+                auto became = [&](const vector<pair<int8_t, int8_t>>& cells, int want) {
+                    for (auto [row, col] : cells)
+                        if (out.data[row][col] != want) return false;
+                    return true;
+                };
+                swaps = became(diff.lost[i][first], second) &&
+                        became(diff.lost[i][second], first);
             }
+            if (!swaps) continue;
+            candidates.variant[variant] = true;
+            candidates.count++;
+
+            bool in_every_piece = true;
+            for (const auto& pair : train) {
+                const grid& in = pair.input;
+                const grid& out = pair.output;
+                for (int row = 0; in_every_piece && row < in.height; ++row)
+                    for (int col = 0; col < in.width; ++col) {
+                        const int was = in.data[row][col];
+                        if (was == background) continue;   // in no piece to be swapped
+                        if ((was == first && out.data[row][col] != second) ||
+                            (was == second && out.data[row][col] != first)) {
+                            in_every_piece = false;
+                            break;
+                        }
+                    }
+                if (!in_every_piece) break;
+            }
+            candidates.over_the_pieces[variant] = in_every_piece;
+        }
         return candidates;
     }
 };

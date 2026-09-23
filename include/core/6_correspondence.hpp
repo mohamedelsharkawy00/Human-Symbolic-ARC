@@ -228,10 +228,13 @@ private:
     // Objects and grid-only scores shared by every permission combination.
     struct prepared_segmentation {
         correspondence_election::reading look;
-        vector<correspondence_election::pair_info> pairs;
-        vector<vector<object>> input_objects, output_objects;
-        vector<int> step_width, step_height;
-        vector<bool> read;
+        struct prepared_pair {
+            pair_info info;
+            vector<object> input_objects, output_objects;
+            int step_width = 0, step_height = 0;
+            bool read = false;
+        };
+        vector<prepared_pair> pairs;
     };
 
     using what_the_pairs_agreed = object_matching::what_the_pairs_agreed;
@@ -243,28 +246,24 @@ private:
         prepared_segmentation prepared;
         prepared.look.segmentation = segmentation;
         prepared.pairs.resize(train.size());
-        prepared.input_objects.resize(train.size());
-        prepared.output_objects.resize(train.size());
-        prepared.step_width.resize(train.size());
-        prepared.step_height.resize(train.size());
-        for (const auto& pair : train)
-            prepared.read.push_back(pair.input.width > 0 && pair.input.height > 0 &&
-                                    pair.output.width > 0 && pair.output.height > 0);
         double shares = 0.0;
         int counted = 0;
         // Segment before matching so another matching pass can reuse the objects.
         for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
-            if (!prepared.read[pair_index]) continue;
+            auto& saved = prepared.pairs[pair_index];
             const grid& input = train[pair_index].input;
             const grid& output = train[pair_index].output;
-            auto& pair = prepared.pairs[pair_index];
+            saved.read = input.width > 0 && input.height > 0 &&
+                         output.width > 0 && output.height > 0;
+            if (!saved.read) continue;
+            auto& pair = saved.info;
             // Use the same block size for both grids.
             const auto [smaller_width, smaller_height] =
                 object_segmentation::smaller_grid_step(train[pair_index]);
             const auto [step_width, step_height] = object_segmentation::block_of(input, output, background,
                                                             segmentation, smaller_width, smaller_height);
-            vector<object>& input_objects = prepared.input_objects[pair_index];
-            vector<object>& output_objects = prepared.output_objects[pair_index];
+            vector<object>& input_objects = saved.input_objects;
+            vector<object>& output_objects = saved.output_objects;
             object_segmentation::segment_for_correspondence(input, background, segmentation, pair.input_info,
                                        &input_objects, step_width, step_height);
             object_segmentation::segment_for_correspondence(output, background, segmentation, pair.output_info,
@@ -287,8 +286,8 @@ private:
             // Preliminary ordering ignores rotations and clipping; all readings are still searched.
             if (!any_fits(pair.input_info, output) && !any_fits(pair.output_info, input))
                 prepared.look.objects_can_fit = false;
-            prepared.step_width[pair_index] = step_width;
-            prepared.step_height[pair_index] = step_height;
+            saved.step_width = step_width;
+            saved.step_height = step_height;
         }
 
         if (counted) prepared.look.describe_cost = shares / counted;
@@ -303,13 +302,13 @@ private:
         reading facts = prepared.look;
         facts.allowed = allowed;
         if (train.empty()) return facts;
-        facts.pairs = prepared.pairs;
+        for (const auto& pair : prepared.pairs) facts.pairs.push_back(pair.info);
         for (size_t i = 0; i < train.size(); ++i)
-            if (prepared.read[i])
+            if (prepared.pairs[i].read)
                 match_one_pair(train, background, prepared, allowed, facts, i, nullptr);
         reconcile_examples(train, background, prepared, allowed, facts);
         for (size_t i = 0; i < train.size(); ++i)
-            if (prepared.read[i]) summarize_pair(train, background, prepared, facts, i);
+            if (prepared.pairs[i].read) summarize_pair(train, background, prepared, facts, i);
         return facts;
     }
 
@@ -324,10 +323,10 @@ private:
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
-        const vector<object>& input_objects = prepared.input_objects[pair_index];
-        const vector<object>& output_objects = prepared.output_objects[pair_index];
-        const int step_width = prepared.step_width[pair_index];
-        const int step_height = prepared.step_height[pair_index];
+        const vector<object>& input_objects = prepared.pairs[pair_index].input_objects;
+        const vector<object>& output_objects = prepared.pairs[pair_index].output_objects;
+        const int step_width = prepared.pairs[pair_index].step_width;
+        const int step_height = prepared.pairs[pair_index].step_height;
         pair.edges.clear(); pair.discarded.clear(); pair.discard_why.clear();
         pair.agreed_moves.clear(); pair.verdict = 0;
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
@@ -485,14 +484,14 @@ private:
         for (int color = 0; color < COLOR_COUNT; ++color) {
             int read = 0, said_once = 0;
             for (size_t which = 0; which < facts.pairs.size(); ++which) {
-                if (!prepared.read[which]) continue;
+                if (!prepared.pairs[which].read) continue;
                 ++read;
                 said_once += (lone_move_of(which, color) != nullptr);
             }
             if (read == 0 || said_once != read) continue;
             anything_agreed = true;
             for (size_t which = 0; which < facts.pairs.size(); ++which) {
-                if (!prepared.read[which]) continue;
+                if (!prepared.pairs[which].read) continue;
                 const auto* rule = lone_move_of(which, color);
                 agreed[which].color_speaks[color] = true;
                 agreed[which].down[color] = rule->down;
@@ -501,7 +500,7 @@ private:
         }
         if (anything_agreed)
             for (size_t which = 0; which < facts.pairs.size(); ++which) {
-                if (!prepared.read[which]) continue;
+                if (!prepared.pairs[which].read) continue;
                 // Rematch only if an existing match disagrees.
                 const auto& pair = facts.pairs[which];
                 bool any_disagrees = false;
@@ -525,8 +524,8 @@ private:
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
-        const vector<object>& input_objects = prepared.input_objects[pair_index];
-        const vector<object>& output_objects = prepared.output_objects[pair_index];
+        const vector<object>& input_objects = prepared.pairs[pair_index].input_objects;
+        const vector<object>& output_objects = prepared.pairs[pair_index].output_objects;
 
         // The two halves of the merged list, each in its own frame, so every
         // helper below stays the one-direction function it always was.
