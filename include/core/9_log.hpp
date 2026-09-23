@@ -439,6 +439,11 @@ inline void report_one_pair(ostream& report, size_t pair_index,
         report << " at " << (int)edge.col << ',' << (int)edge.row << edge_kind(edge);
         if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
         if (edge.recolored_to >= 0) report << " -> " << (int)edge.recolored_to;
+        // A piece of several colors has no one color it went to, so its map is said whole.
+        else if (!edge.exact)
+            for (int was = 0; was < COLOR_COUNT; ++was)
+                if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
+                    report << " " << was << "->" << (int)edge.color_map[was];
         // Which way round it was sitting: turned, and/or mirrored
         if (edge.pose) {
             report << "  ";

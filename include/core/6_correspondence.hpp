@@ -101,6 +101,14 @@ struct correspondence_election {
     vector<reading> readings;
     // Index of the selected reading in readings.
     int8_t chosen = 0;
+    // Each segmentation's best reading, as its index in readings, so a rule
+    // about one way of cutting can read that cut's own evidence, elected or not.
+    vector<int16_t> best_of;
+    const reading* best_reading_of(segmentation_methods segmentation) const {
+        const size_t method = (size_t)segmentation;
+        if (method >= best_of.size() || best_of[method] < 0) return nullptr;
+        return &readings[best_of[method]];
+    }
     // Indices of other segmentations whose best readings tie with the winner.
     vector<int8_t> tied_with_chosen;
     // Read the winner directly, without keeping a second copy of its evidence.
@@ -140,6 +148,7 @@ struct correspondence_election {
         // Keep every reading in its final table slot. Only the best permission
         // combination per segmentation enters the election; ties keep the first.
         vector<int> best_of_method;
+        facts.best_of.assign((size_t)segmentation_methods::count, -1);
         for (const auto& prepared : preparations) {
             int best = -1;
             for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
@@ -171,6 +180,7 @@ struct correspondence_election {
                 if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
             best_of_method.push_back(best);
+            facts.best_of[(size_t)prepared.look.segmentation] = (int16_t)best;
         }
 
         // Combine compression cost with the cost of unexplained cells.
@@ -240,7 +250,6 @@ private:
         for (const auto& pair : train)
             prepared.read.push_back(pair.input.width > 0 && pair.input.height > 0 &&
                                     pair.output.width > 0 && pair.output.height > 0);
-        const auto [sizes_step_width, sizes_step_height] = object_segmentation::repeating_step_of(train);
         double shares = 0.0;
         int counted = 0;
         // Segment before matching so another matching pass can reuse the objects.
@@ -250,9 +259,10 @@ private:
             const grid& output = train[pair_index].output;
             auto& pair = prepared.pairs[pair_index];
             // Use the same block size for both grids.
+            const auto [smaller_width, smaller_height] =
+                object_segmentation::smaller_grid_step(train[pair_index]);
             const auto [step_width, step_height] = object_segmentation::block_of(input, output, background,
-                                                            segmentation, sizes_step_width,
-                                                            sizes_step_height);
+                                                            segmentation, smaller_width, smaller_height);
             vector<object>& input_objects = prepared.input_objects[pair_index];
             vector<object>& output_objects = prepared.output_objects[pair_index];
             object_segmentation::segment_for_correspondence(input, background, segmentation, pair.input_info,

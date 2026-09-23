@@ -1206,6 +1206,7 @@ struct pane_pick_rule {
 
 // The output is a grid of input-sized blocks, each one a turned copy of the
 // input or plain background. Every pose that draws a block is kept, not just one.
+// Which blocks are copies is the correspondence's to say; this is what it adds.
 struct input_blocks_rule {
     bool held = false;
     // One cell-level map shared by every copy; -1 means the color keeps itself.
@@ -1226,121 +1227,108 @@ struct input_blocks_rule {
     vector<layout> pairs;
     bool holds() const { return held; }
 
-    // Cuts each output into input-sized blocks and records how every block is drawn.
+    // Reads the copies off the correspondence, where every block was already
+    // asked whether it is the input, turned and recolored: the block cut's own
+    // best reading, elected or not. What is asked here is only what places the
+    // copies and what they wear -- never, a second time, whether they are copies.
     static input_blocks_rule detect(const vector<example>& train,
+                                    const correspondence_election& correspondence,
                                     int input_background, int output_background) {
         if (train.empty()) return {};
         for (const auto& pair : train)
             if (pair.input.width <= 0 || pair.input.height <= 0 ||
                 pair.output.width % pair.input.width || pair.output.height % pair.input.height) return {};
+        const auto* blocks = correspondence.best_reading_of(segmentation_methods::smallest_of_two_grids);
+        if (!blocks || blocks->pairs.size() != train.size()) return {};
         // Background blocks need a ground both sides agree on.
         const int ground = is_color(input_background) && input_background == output_background
                            ? input_background : -1;
-        auto is_ground = [&](const grid& output, int top, int left, int width, int height) {
-            if (ground < 0) return false;
-            for (int r = 0; r < height; ++r)
-                for (int c = 0; c < width; ++c)
-                    if (output.data[top + r][left + c] != ground) return false;
-            return true;
-        };
-        // Visits each cell of the input posed into the block at (top, left) as
-        // (was, now); stops and says false as soon as `cell` does.
-        auto each_posed_cell = [](const example& pair, int top, int left, int pose, auto cell) {
-            const auto& input = pair.input;
-            if (posed_size(pose, input.width, input.height) != make_pair(input.width, input.height))
-                return false;
-            for (int r = 0; r < input.height; ++r)
-                for (int c = 0; c < input.width; ++c) {
-                    const auto [row, col] = pose_source(pose, input.width, input.height, r, c);
-                    if (!cell(input.data[row][col], pair.output.data[top + r][left + c])) return false;
-                }
-            return true;
-        };
 
-        // `map_of` names the map each pair's copies are read through.
-        auto read_with = [&](auto map_of) {
-            input_blocks_rule candidate;
-            candidate.figure_poses = ground < 0 ? 0 : 0xFF;
-            for (size_t which = 0; which < train.size(); ++which) {
-                const auto& pair = train[which];
-                const int8_t* map = map_of(which);
-                const int width = pair.input.width, height = pair.input.height;
-                layout at;
-                at.rows = (int8_t)(pair.output.height / height);
-                at.cols = (int8_t)(pair.output.width / width);
-                for (int r = 0; r < at.rows; ++r)
-                    for (int c = 0; c < at.cols; ++c) {
-                        for (int pose = 0; pose < POSE_COUNT; ++pose)
-                            if (each_posed_cell(pair, r * height, c * width, pose, [&](int was, int now) {
-                                    return (map[was] >= 0 ? map[was] : was) == now; }))
-                                at.poses[r][c] |= (uint8_t)(1 << pose);
-                        if (!at.poses[r][c] && !is_ground(pair.output, r * height, c * width, width, height))
-                            return input_blocks_rule{};
-                    }
-                for (int pose = 0; pose < POSE_COUNT; ++pose) {
-                    const auto [posed_width, posed_height] = posed_size(pose, width, height);
-                    bool figure = posed_width == at.cols && posed_height == at.rows;
-                    for (int r = 0; r < at.rows && figure; ++r)
-                        for (int c = 0; c < at.cols && figure; ++c) {
-                            const auto [row, col] = pose_source(pose, width, height, r, c);
-                            figure = pair.input.data[row][col] != ground
-                                     ? (at.poses[r][c] >> pose & 1) != 0 : at.poses[r][c] == 0;
-                        }
-                    if (!figure) candidate.figure_poses &= (uint8_t)~(1 << pose);
-                }
-                candidate.pairs.push_back(at);
-            }
-            candidate.held = true;
-            return candidate;
-        };
-
-        // The map is read off the first block that is not background, once per pose
-        // it could be; the reading that changes the fewest colors wins.
-        const auto& first = train.front();
-        int top = 0, left = 0;
-        while (is_ground(first.output, top, left, first.input.width, first.input.height)) {
-            left += first.input.width;
-            if (left >= first.output.width) { left = 0; top += first.input.height; }
-            if (top >= first.output.height) return {};
-        }
-        input_blocks_rule best;
-        int fewest_changes = COLOR_COUNT + 1;
-        for (int pose = 0; pose < POSE_COUNT; ++pose) {
-            int8_t map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
-            const bool consistent = each_posed_cell(first, top, left, pose, [&](int was, int now) {
-                if (!is_color(was) || !is_color(now) || (map[was] >= 0 && map[was] != now)) return false;
-                map[was] = (int8_t)now;
-                return true;
-            });
-            if (!consistent) continue;
-            int changes = 0;
-            for (int was = 0; was < COLOR_COUNT; ++was) changes += map[was] >= 0 && map[was] != was;
-            if (changes >= fewest_changes) continue;
-            if (input_blocks_rule candidate = read_with([&](size_t) { return map; });
-                candidate.holds()) {
-                best = move(candidate);
-                copy_n(map, COLOR_COUNT, best.color_map);
-                fewest_changes = changes;
-            }
-        }
-        if (best.holds() || ground < 0) return best;
-
-        // NO ONE TABLE HOLDS, so the colors are asked by what they are rather
-        // than which they are. A table the pairs agree on is what they literally
-        // show; colors that change from pair to pair are the evidence that the
-        // copy takes its ink from its own input. A figure of several colors has
-        // no one negative, and nothing is claimed for it.
-        vector<array<int8_t, COLOR_COUNT>> negatives(train.size());
+        input_blocks_rule rule;
+        rule.figure_poses = ground < 0 ? 0 : 0xFF;
+        // What each pair's copies wear, color by color of its input; -1 for a
+        // color the input does not have, and everywhere in a pair with no copy.
+        vector<array<int8_t, COLOR_COUNT>> worn(train.size());
+        bool copied_any = false;
         for (size_t which = 0; which < train.size(); ++which) {
-            const int8_t figure = the_figure_color(train[which].input, ground);
-            if (!is_color(figure)) return best;
-            negatives[which].fill(-1);
-            negatives[which][ground] = figure;
-            negatives[which][figure] = (int8_t)ground;
+            const example& pair = train[which];
+            const auto& read = blocks->pairs[which];
+            const int width = pair.input.width, height = pair.input.height;
+            // The input is the one block the output was cut into copies of.
+            if (read.input_info.size() != 1) return {};
+            layout at;
+            at.rows = (int8_t)(pair.output.height / height);
+            at.cols = (int8_t)(pair.output.width / width);
+            worn[which].fill(-1);
+            vector<bool> copied(read.output_info.size(), false);
+            bool has_copy = false;
+            for (const auto& edge : read.edges) {
+                if (!edge.from_input || edge.to < 0 || edge.to >= (int)read.output_info.size()) continue;
+                const auto& landing = read.output_info[edge.to].summary;
+                at.poses[landing.y0 / height][landing.x0 / width] |= edge.ways_round;
+                array<int8_t, COLOR_COUNT> wears;
+                wears.fill(-1);
+                walk_colored_cells(pair.input, TRANSPARENT, [&](int, int, int was) {
+                    wears[was] = edge.color_map[was] >= 0 ? edge.color_map[was] : (int8_t)was;
+                });
+                // Copies of one rule wear one set of colors, within a pair at least.
+                if (has_copy && wears != worn[which]) return {};
+                worn[which] = wears;
+                copied[edge.to] = true;
+                has_copy = true;
+            }
+            copied_any = copied_any || has_copy;
+            // A block with anything in it that is no copy is something else drawn
+            // there; a block with nothing in it is ground, where there is one.
+            if (!ranges::all_of(copied, [](bool one) { return one; })) return {};
+            for (int r = 0; r < at.rows; ++r)
+                for (int c = 0; c < at.cols; ++c)
+                    if (!at.poses[r][c] && ground < 0) return {};
+            for (int pose = 0; pose < POSE_COUNT; ++pose) {
+                const auto [posed_width, posed_height] = posed_size(pose, width, height);
+                bool figure = posed_width == at.cols && posed_height == at.rows;
+                for (int r = 0; r < at.rows && figure; ++r)
+                    for (int c = 0; c < at.cols && figure; ++c) {
+                        const auto [row, col] = pose_source(pose, width, height, r, c);
+                        figure = pair.input.data[row][col] != ground
+                                 ? (at.poses[r][c] >> pose & 1) != 0 : at.poses[r][c] == 0;
+                    }
+                if (!figure) rule.figure_poses &= (uint8_t)~(1 << pose);
+            }
+            rule.pairs.push_back(at);
         }
-        best = read_with([&](size_t which) { return negatives[which].data(); });
-        best.negative = best.holds();
-        return best;
+        if (!copied_any) return {};
+
+        // WHAT THE COPIES WEAR. One table every pair agrees on is what they
+        // literally show, so it is asked first. Colors that change from pair to
+        // pair are the evidence that each copy takes its ink from its own input,
+        // and the one such reading claimed is the negative: figure and ground
+        // trading places. A figure of several colors has no one negative.
+        int8_t table[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+        bool one_table = true;
+        for (const auto& wears : worn)
+            for (int was = 0; was < COLOR_COUNT; ++was) {
+                if (wears[was] < 0) continue;
+                one_table = one_table && (table[was] < 0 || table[was] == wears[was]);
+                table[was] = wears[was];
+            }
+        if (one_table) {
+            for (int was = 0; was < COLOR_COUNT; ++was)
+                rule.color_map[was] = table[was] != was ? table[was] : (int8_t)-1;
+        } else {
+            if (ground < 0) return {};
+            for (size_t which = 0; which < train.size(); ++which) {
+                const auto& wears = worn[which];
+                if (ranges::all_of(wears, [](int8_t one) { return one < 0; })) continue;
+                const int8_t figure = the_figure_color(train[which].input, ground);
+                if (!is_color(figure) ||
+                    (wears[ground] >= 0 && wears[ground] != figure) ||
+                    wears[figure] != ground) return {};
+            }
+            rule.negative = true;
+        }
+        rule.held = true;
+        return rule;
     }
 };
 
@@ -1799,7 +1787,7 @@ inline inference infer(const vector<example>& train) {
         inf.background.input_elected(), inf.background.output_elected());
     inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence,
         inf.background.input_elected());
-    inf.input_blocks = input_blocks_rule::detect(train,
+    inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence,
         inf.background.input_elected(), inf.background.output_elected());
 
     // Dims is detector #0: its rule decides which questions even apply

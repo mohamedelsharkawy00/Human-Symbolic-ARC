@@ -214,27 +214,20 @@ struct object_segmentation {
         bool blank_enclosed = false;
     };
     // Operations used by the later chapters.
-    // Return the smaller grid size when all pairs share the same block size and
-    // whole-number size ratios. Return {0, 0} if they do not.
-    static pair<int, int> repeating_step_of(const vector<example>& train) {
-        if (train.empty()) return { 0, 0 };
-        // Keep the first pair's growth direction and smaller grid size across all pairs.
-        const bool output_grows =
-            train[0].output.width >= train[0].input.width &&
-            train[0].output.height >= train[0].input.height;
-        const grid& first_block = output_grows ? train[0].input : train[0].output;
-        if (first_block.width <= 0 || first_block.height <= 0) return { 0, 0 };
-        for (const auto& ex : train) {
-            const grid& block = output_grows ? ex.input : ex.output;
-            const grid& tiled = output_grows ? ex.output : ex.input;
-            if (block.width != first_block.width || block.height != first_block.height)
-                return { 0, 0 };
-            if (tiled.width % block.width || tiled.height % block.height)
-                return { 0, 0 };
-            if (tiled.width == block.width && tiled.height == block.height)
-                return { 0, 0 };
-        }
-        return { first_block.width, first_block.height };
+    // THE SMALLER OF ONE PAIR'S TWO GRIDS, as the block the larger one is cut
+    // into: its size when the larger is a whole number of it both ways, equal
+    // sizes included -- one block each, the whole grid, which is how an output
+    // that is its input turned reads. {0, 0} when neither divides the other.
+    // Asked pair by pair: an output made of copies of its input is made of THIS
+    // input, whatever size the other pairs' inputs were.
+    static pair<int, int> smaller_grid_step(const example& pair) {
+        const bool output_grows = pair.output.width >= pair.input.width &&
+                                  pair.output.height >= pair.input.height;
+        const grid& block = output_grows ? pair.input : pair.output;
+        const grid& tiled = output_grows ? pair.output : pair.input;
+        if (block.width <= 0 || block.height <= 0) return { 0, 0 };
+        if (tiled.width % block.width || tiled.height % block.height) return { 0, 0 };
+        return { block.width, block.height };
     }
 
     // Divides a grid into objects, then sorts them by size (largest first) and position.

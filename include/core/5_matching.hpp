@@ -84,6 +84,10 @@ struct object_matching {
         int8_t recolored_to = -1;
         // Target color for each source color; -1 means that source color is absent.
         int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+        // Every pose that lands the object here in these colors, its own among
+        // them; bit p is pose p. Said for blocks, where a symmetric copy lands
+        // several ways and the rule that places the copies may need any of them.
+        uint8_t ways_round = 0;
     };
     // Why a match that was found did not survive.
     enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_object,
@@ -286,11 +290,18 @@ struct object_matching {
         const int poses = allowed.pose ? 8 : 1;
 
         // Does this from block sit at that place on the other grid? The answer is
-        // the same question both sweeps ask, so it is written once.
+        // the same question both sweeps ask, so it is written once. `ways` is
+        // every way round it sits there in the colors of the one kept.
         auto sits_at = [&](int from_index, const object_matching::object_info& target,
-                           object_match& found) {
+                           object_match& found, uint8_t& ways) {
+            // A copy on another block has moved, so it needs the freedom to --
+            // the same rule the representative edge above keeps.
+            if (!allowed.translate &&
+                (from_info[from_index].summary.y0 != target.summary.y0 ||
+                 from_info[from_index].summary.x0 != target.summary.x0)) return false;
+            const grid cells = from_objects[from_index].drawn();
             const object_matches matches =
-                find_in(from_objects[from_index].drawn(), into, background, true,
+                find_in(cells, into, background, true,
                         target.summary.y0, target.summary.x0, true, poses);
             // Prefer a match with unchanged colors, even if it uses a later rotation or reflection.
             const object_match* best = nullptr;
@@ -301,14 +312,25 @@ struct object_matching {
             }
             if (!best) return false;
             found = *best;
+            // A symmetric block sits several ways round, and find_in tries each
+            // distinct drawing once, so the ways that draw alike are read off the
+            // drawings themselves.
+            ways = 0;
+            for (const object_match& hit : matches.hits) {
+                if (hit.exact != best->exact || !ranges::equal(hit.color_map, best->color_map)) continue;
+                const grid landed = posed_cells(cells, hit.pose);
+                for (int pose = 0; pose < POSE_COUNT; ++pose)
+                    if (posed_cells(cells, pose) == landed) ways |= (uint8_t)(1 << pose);
+            }
             return true;
         };
-        auto draw = [&](int from_index, int target_index, const object_match& hit) {
+        auto draw = [&](int from_index, int target_index, const object_match& hit, uint8_t ways) {
             const auto& target = into_info[target_index];
             auto edge = edge_from_match(hit, from_index, from_info[from_index].color,
                 from_info[from_index].summary.y0 == target.summary.y0 &&
                 from_info[from_index].summary.x0 == target.summary.x0);
             edge.to = (int16_t)target_index;
+            edge.ways_round = ways;
             edges.push_back(edge);
         };
 
@@ -318,13 +340,14 @@ struct object_matching {
             const auto& target = into_info[target_index];
             int source = -1;
             object_match hit;
+            uint8_t ways = 0;
             for (int i = 0; i < (int)from_info.size(); ++i)
                 if (from_info[i].summary.y0 == target.summary.y0 && from_info[i].summary.x0 == target.summary.x0 &&
-                    sits_at(i, target, hit)) { source = i; break; }
+                    sits_at(i, target, hit, ways)) { source = i; break; }
             for (int i = 0; source < 0 && i < (int)from_info.size(); ++i)
-                if (sits_at(i, target, hit)) source = i;
+                if (sits_at(i, target, hit, ways)) source = i;
             if (source < 0) continue;
-            draw(source, target_index, hit);
+            draw(source, target_index, hit, ways);
             answered[source] = true;
         }
         // WHERE DID EACH OBJECT GO. Only the ones no landing claimed, so a from side
@@ -332,9 +355,10 @@ struct object_matching {
         for (int i = 0; i < (int)from_info.size(); ++i) {
             if (answered[i]) continue;
             object_match hit;
+            uint8_t ways = 0;
             for (int target_index = 0; target_index < (int)into_info.size(); ++target_index)
-                if (sits_at(i, into_info[target_index], hit)) {
-                    draw(i, target_index, hit);
+                if (sits_at(i, into_info[target_index], hit, ways)) {
+                    draw(i, target_index, hit, ways);
                     answered[i] = true;
                     break;
                 }
@@ -450,6 +474,17 @@ private:
                             if (color_map[object_color] != there_color) { fits = false; break; }
                             if (object_color != there_color) exact = false;
                         }
+                    // A BLOCK IS THE SAME PICTURE only while its colors are renamed
+                    // one for one. Two colors run together is a picture that lost
+                    // something, and would match a grid to any recoloring of it.
+                    if (fits && match_footprint) {
+                        bool named[COLOR_COUNT] = {};
+                        for (int i = 0; i < COLOR_COUNT && fits; ++i) {
+                            if (color_map[i] < 0) continue;
+                            fits = !named[color_map[i]];
+                            named[color_map[i]] = true;
+                        }
+                    }
                     // The weaker question, asked only where the whole object failed:
                     // itself, with the missing cells hidden behind other cells.
                     int hidden = 0;
@@ -465,6 +500,31 @@ private:
                                     fits = false; break;
                                 }
                                 hidden += (object_color != there_color);
+                            }
+                    }
+                    // A BLOCK IS A WHOLE PICTURE, ITS GROUND INCLUDED. Where the
+                    // footprints disagree it may still be the same picture with
+                    // its colors traded, and a negative is exactly that: the
+                    // ground and the figure swapping, which the Color freedom
+                    // already says. One to one, or a block of one color would
+                    // match every block.
+                    if (!fits && match_footprint && is_color(background)) {
+                        int8_t came_from[COLOR_COUNT];
+                        for (int i = 0; i < COLOR_COUNT; ++i) color_map[i] = came_from[i] = -1;
+                        fits = true; exact = true;
+                        for (int row = 0; fits && row < posed.height; ++row)
+                            for (int col = 0; fits && col < posed.width; ++col) {
+                                if (off_grid(row, col)) continue;
+                                const int was = posed.data[row][col] == TRANSPARENT
+                                              ? (int)background : posed.data[row][col];
+                                const int now = where.data[at_row + row][at_col + col];
+                                if (!is_color(was) || !is_color(now)) { fits = false; break; }
+                                if (color_map[was] == -1 && came_from[now] == -1) {
+                                    color_map[was] = (int8_t)now;
+                                    came_from[now] = (int8_t)was;
+                                }
+                                if (color_map[was] != now || came_from[now] != was) { fits = false; break; }
+                                if (was != now) exact = false;
                             }
                     }
                     if (!fits) continue;
