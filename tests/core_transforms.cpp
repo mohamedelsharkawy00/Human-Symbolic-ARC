@@ -9,6 +9,7 @@
 #endif
 #include <cstdlib>
 #include <iostream>
+#include <tuple>
 
 using namespace arc;
 
@@ -41,6 +42,13 @@ static grid with_background(grid cells) {
         for (int c = 0; c < cells.width; ++c)
             if (cells.data[r][c] == TRANSPARENT) cells.data[r][c] = 9;
     return cells;
+}
+
+static grid painted(int size, std::initializer_list<std::tuple<int, int, int>> cells) {
+    grid result(size, size);
+    result.fill(TRANSPARENT);
+    for (const auto& [row, col, color] : cells) result.data[row][col] = color;
+    return result;
 }
 
 #ifdef ARC_TEST_CUDA
@@ -186,11 +194,74 @@ static void check_alignment() {
 #endif
 }
 
+static void check_overlap_corner() {
+    correspondence_election correspondence;
+    correspondence.segmentation = segmentation_methods::all_cells_of_one_color;
+    auto grid_of = [](std::initializer_list<std::tuple<int, int, int>> cells) { return painted(8, cells); };
+    auto claimed = [&](const grid& input, const grid& output) {
+        return overlap_corner_rule::detect({{with_background(input), with_background(output)}},
+                                           correspondence, 9, 9).holds();
+    };
+
+    const grid apart = grid_of({{4, 0, 1}, {4, 1, 1}, {5, 0, 1}, {5, 1, 1},
+                                {0, 5, 2}, {0, 6, 2}, {1, 5, 2}, {1, 6, 2}});
+    const grid chained = grid_of({{0, 0, 1}, {0, 1, 1}, {1, 0, 1},
+                                  {1, 1, 2}, {1, 2, 2}, {2, 1, 2}, {2, 2, 2}});
+    check(claimed(apart, chained), "inference recognizes a corner chain");
+    check(!claimed(chained, chained), "pieces already chained were never laid out");
+#ifdef ARC_TEST_CUDA
+    check_gpu(apart, chained, "InputWithoutBackground Colors SelectAll Trim OverlapCorner Union");
+#endif
+
+    // The L and the cell share a top-left; the GPU used to lay the cell first.
+    const grid tied = grid_of({{0, 2, 1}, {1, 1, 1}, {1, 2, 1}, {0, 1, 2}, {7, 0, 3}});
+    const grid l_first = grid_of({{0, 0, 3}, {0, 1, 1}, {1, 0, 1}, {1, 1, 2}});
+    const grid cell_first = grid_of({{0, 0, 2}, {0, 1, 1}, {1, 0, 1}, {1, 1, 1}});
+    check(!claimed(tied, l_first) && !claimed(tied, cell_first),
+          "pieces sharing a top-left leave the chain order to the list");
+}
+
+static void check_project_on_seeds() {
+    correspondence_election correspondence;
+    correspondence.segmentation = segmentation_methods::connected_monochrome;
+    auto claimed = [&](const grid& input, const grid& output) {
+        return project_on_seeds_rule::detect({{with_background(input), with_background(output)}},
+                                             correspondence, 9).holds();
+    };
+    auto with_block = [](bool full) {
+        grid input = painted(12, {{0, 6, 1}, {1, 6, 1}, {2, 6, 1}, {3, 6, 1}, {3, 5, 1}, {3, 4, 1},
+                                  {3, 3, 1}, {3, 2, 1}, {0, 3, 2}, {0, 4, 2}, {0, 5, 2}, {1, 3, 2},
+                                  {1, 4, 2}, {1, 5, 2}, {2, 3, 2}, {6, 1, 3}});
+        if (full) input.data[2][4] = 2;
+        return input;
+    };
+    auto stamped = [](grid drawn, std::initializer_list<std::pair<int, int>> cells) {
+        for (const auto& [row, col] : cells) drawn.data[row][col] = 3;
+        return drawn;
+    };
+    const grid lone = with_block(false);
+    const grid l_stamped = stamped(lone, {{6, 1}, {7, 1}, {8, 1}, {9, 1}, {9, 0}});
+    check(claimed(lone, l_stamped), "inference recognizes the template stamped along a marker");
+#ifdef ARC_TEST_CUDA
+    const string program = "Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold "
+        "CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union";
+    check_gpu(lone, l_stamped, program);
+#endif
+
+    // Tied for most cells: the GPU stamps the block, inference used to take the L.
+    const grid tied = with_block(true);
+    check(!claimed(tied, stamped(tied, {{6, 1}, {7, 1}, {8, 1}, {9, 1}, {9, 0}})) &&
+          !claimed(tied, stamped(tied, {{6, 0}, {6, 1}, {7, 0}, {7, 1}, {8, 0}})),
+          "a tie for most cells leaves the template to the list");
+}
+
 int main() {
 #ifdef ARC_TEST_CUDA
     check(cuda_init(), "CUDA initialization");
 #endif
     check_alignment();
+    check_overlap_corner();
+    check_project_on_seeds();
     const int hole = TRANSPARENT;
     const grid input = picture({{0, hole, 2, 3, hole}, {hole, 1, hole, hole, 2}});
     const grid right = picture({{hole, 0, hole, 2, 3}, {hole, hole, 1, hole, 2}});

@@ -475,8 +475,7 @@ public:
       if (value < 0 || value >= COLOR_PAIR_COUNT) return true;   // out-of-range guard
       return m_puzzle.inf.color_swaps.variant[value];
     }
-    const bool reads_color = type == node_type::SelectObjectsContainingColor ||
-                             type == node_type::SelectColor;
+    const bool reads_color = type == node_type::SelectColor;
     const bool writes_color = type == node_type::AddColor ||
                               type == node_type::Recolor;
     if (!reads_color && !writes_color) return true;  // InteriorColor (-1 auto) left alone
@@ -498,20 +497,17 @@ public:
     return side[value];
   }
   // RANKING (Background Per-Side Split note, level 1): iterate color-literal
-  // fans through a permutation that tries the elected canvas FIRST — reading
-  // ops (RemoveColor/Contains, "strip/test the canvas") lead with the INPUT
-  // canvas, writing ops (AddColor/Recolor, "paint/turn into") with the OUTPUT
-  // canvas. Ordering only, never exclusion: a wrong or absent election costs
+  // fans through a permutation that tries the elected canvas FIRST — writing
+  // ops (AddColor/Recolor, "paint/turn into") lead with the OUTPUT canvas,
+  // falling back to the input's. Ordering only, never exclusion: a wrong or absent election costs
   // nothing (everything is still enumerated, just later) — the tolerance
   // contract. Implemented as a swap of index 0 with the canvas's index.
   inline int16_t ranked_variant_value(node_type type, int idx) const {
     int16_t v = get_variant_value(type, idx);
-    const bool read_op  = type == node_type::SelectObjectsContainingColor;
-    const bool write_op = type == node_type::AddColor  || type == node_type::Recolor;
-    if (!read_op && !write_op) return v;
+    if (type != node_type::AddColor && type != node_type::Recolor) return v;
     const auto& background = m_puzzle.inf.background;
-    int8_t bg = read_op ? background.input_elected() : background.output_elected();
-    if (write_op && bg < 0) bg = background.input_elected();
+    int8_t bg = background.output_elected();
+    if (bg < 0) bg = background.input_elected();
     if (bg < 0) return v;
     int variants = get_variant_count(type);
     int bg_idx = -1;

@@ -437,6 +437,10 @@ struct cell_box {
     }
 };
 
+inline cell_box box_of(const object_summary& summary) {
+    return { summary.y0, summary.x0, summary.y0 + summary.h - 1, summary.x0 + summary.w - 1 };
+}
+
 inline void color_boxes(const grid& one_grid, cell_box boxes[COLOR_COUNT],
                         int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};

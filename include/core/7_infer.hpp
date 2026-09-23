@@ -516,6 +516,12 @@ struct motif_continuation_rule {
 //
 // AND IT HAS TO CARRY SOMETHING. An output the input already was is the cycle
 // redrawn where it already sat, which says nothing about diagonals either.
+// Seat on the colour cycle; lean 0 walks row + col, lean 1 row - col.
+ARC_HOST_DEVICE inline int diagonal_seat(int row, int col, int lean, int colors) {
+    const int diagonal = lean ? row - col : row + col;
+    return ((diagonal % colors) + colors) % colors;
+}
+
 struct diagonal_continuation_rule {
     bool held = false;
     // DiagTile's own argument: 0 for the diagonals of constant row + column,
@@ -542,10 +548,7 @@ struct diagonal_continuation_rule {
                 int colors = 0;
                 for (int color = 0; color < COLOR_COUNT; ++color) colors += counts[color] > 0;
                 if (colors < 2) return false;
-                auto seat_of = [&](int row, int col) {
-                    const int diagonal = lean ? row - col : row + col;
-                    return ((diagonal % colors) + colors) % colors;
-                };
+                auto seat_of = [&](int row, int col) { return diagonal_seat(row, col, lean, colors); };
                 int8_t cycle[COLOR_COUNT];
                 for (int seat = 0; seat < colors; ++seat) cycle[seat] = -1;
                 bool agrees = true;
@@ -1469,6 +1472,10 @@ struct overlap_corner_rule {
                      ? one->summary.x0 < other->summary.x0
                      : one->summary.y0 < other->summary.y0;
             });
+            // Tied corners leave the order to the op's list, which we can't see.
+            for (size_t i = 1; i < chain.size(); ++i)
+                if (chain[i]->summary.x0 == chain[i - 1]->summary.x0 &&
+                    chain[i]->summary.y0 == chain[i - 1]->summary.y0) return {};
             grid drawn(pair.output.width, pair.output.height);
             drawn.fill(output_background);
             // The head of the chain sits in the corner; each piece after it puts
@@ -1588,9 +1595,7 @@ struct slide_to_touch_rule {
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != slides) continue;
                     anything_slid = true;
-                    const auto& box = pieces[i].summary;
-                    const auto [down, across] = shift_to_touch(
-                        {box.y0, box.x0, box.y0 + box.h - 1, box.x0 + box.w - 1}, target);
+                    const auto [down, across] = shift_to_touch(box_of(pieces[i].summary), target);
                     if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0 + down,
                                      pieces[i].summary.x0 + across)) return false;
                     moved = moved || down != 0 || across != 0;
@@ -1642,6 +1647,29 @@ inline vector<marker_piece> seeds_the_op_will_see(const grid& input, int8_t neve
     return seeds;
 }
 
+// Calls land(row, col) for each stamp of tpl along marker until it leaves the
+// canvas or land returns false.
+template <class Land>
+ARC_HOST_DEVICE inline void project_along(const cell_box& tpl, const cell_box& marker,
+                                          int width, int height, Land land) {
+    const int across = (marker.col0 + marker.col1) / 2 - (tpl.col0 + tpl.col1) / 2;
+    const int down   = (marker.row0 + marker.row1) / 2 - (tpl.row0 + tpl.row1) / 2;
+    int col = tpl.col0, row = tpl.row0;
+    if (across > 0)      col = marker.col0;
+    else if (across < 0) col = marker.col1 - (tpl.width() - 1);
+    if (down > 0)        row = marker.row0;
+    else if (down < 0)   row = marker.row1 - (tpl.height() - 1);
+    const int step_col = col - tpl.col0, step_row = row - tpl.row0;
+    if (step_col == 0 && step_row == 0) return;
+    for (int repeat = 1; repeat <= MAX_GRID_DIM; ++repeat) {
+        const int at_col = tpl.col0 + repeat * step_col;
+        const int at_row = tpl.row0 + repeat * step_row;
+        if (at_col + tpl.width() <= 0 || at_col >= width ||
+            at_row + tpl.height() <= 0 || at_row >= height) return;
+        if (!land(at_row, at_col)) return;
+    }
+}
+
 // THE TEMPLATE STAMPED ALONG EVERY MARKER. Each marker stands away from the
 // template and so says a direction; the template lands flush against that
 // marker, then repeats at the same step, wearing the marker's colour, until it
@@ -1667,9 +1695,9 @@ struct project_on_seeds_rule {
             // The template is whichever piece SortBySize[0] puts first, and that
             // word ranks by cells -- not the box that picked the markers. The op
             // reads the two off different lists, so this has to as well.
+            // Tied for most cells: the op's list order picks, which we can't see.
             const object* tpl = &pieces[0];
-            for (const object& piece : pieces)
-                if (piece.summary.count > tpl->summary.count) tpl = &piece;
+            if (pieces.size() > 1 && pieces[1].summary.count == tpl->summary.count) return {};
 
             const vector<marker_piece> markers = seeds_the_op_will_see(pair.input, input_background);
             if (markers.empty()) return {};
@@ -1680,46 +1708,22 @@ struct project_on_seeds_rule {
             // out one stamp before the list does.
             constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
             int stamped = 0;
-            for (const marker_piece& marker : markers) {
-                // Centres, so a marker beside the template says which way to go
-                // however wide either of them is.
-                const int tpl_x1 = tpl->summary.x0 + tpl->summary.w - 1;
-                const int tpl_y1 = tpl->summary.y0 + tpl->summary.h - 1;
-                const int marker_x1 = marker.summary.x0 + marker.summary.w - 1;
-                const int marker_y1 = marker.summary.y0 + marker.summary.h - 1;
-                const int across = (marker.summary.x0 + marker_x1) / 2 - (tpl->summary.x0 + tpl_x1) / 2;
-                const int down   = (marker.summary.y0 + marker_y1) / 2 - (tpl->summary.y0 + tpl_y1) / 2;
-                // A marker sitting on the template says no direction at all.
-                if (across == 0 && down == 0) continue;
-                // The first stamp lands flush against the marker, on the side
-                // the template is coming from.
-                int landing_x = tpl->summary.x0, landing_y = tpl->summary.y0;
-                if (across > 0)      landing_x = marker.summary.x0;
-                else if (across < 0) landing_x = marker_x1 - (tpl->summary.w - 1);
-                if (down > 0)        landing_y = marker.summary.y0;
-                else if (down < 0)   landing_y = marker_y1 - (tpl->summary.h - 1);
-                const int step_x = landing_x - tpl->summary.x0;
-                const int step_y = landing_y - tpl->summary.y0;
-                if (step_x == 0 && step_y == 0) continue;
-                for (int repeat = 1; repeat <= MAX_GRID_DIM; ++repeat) {
-                    if (stamped >= most_the_op_stamps) break;
-                    const int at_x = tpl->summary.x0 + repeat * step_x;
-                    const int at_y = tpl->summary.y0 + repeat * step_y;
-                    // Walked off the canvas altogether: the rest of this
-                    // direction is nothing the op would draw.
-                    if (at_x + tpl->summary.w <= 0 || at_x >= drawn.width ||
-                        at_y + tpl->summary.h <= 0 || at_y >= drawn.height) break;
+            const cell_box tpl_box = box_of(tpl->summary);
+            for (const marker_piece& marker : markers)
+                project_along(tpl_box, box_of(marker.summary), drawn.width, drawn.height,
+                              [&](int at_row, int at_col) {
+                    if (stamped >= most_the_op_stamps) return false;
                     // A stamp hanging over the edge is drawn as far as it fits.
                     for (int r = 0; r < tpl->summary.h; ++r)
                         for (int c = 0; c < tpl->summary.w; ++c) {
                             if (tpl->cells[r][c] == TRANSPARENT) continue;
-                            const int row = at_y + r, col = at_x + c;
+                            const int row = at_row + r, col = at_col + c;
                             if (!drawn.contains(row, col)) continue;
                             drawn.data[row][col] = marker.color;
                         }
                     ++stamped;
-                }
-            }
+                    return true;
+                });
             // Nothing stamped is the input handed straight back, which every
             // other reading already says without a word this long.
             if (stamped == 0) return {};

@@ -135,7 +135,6 @@ enum class inferred_amount { none, some, all };
   X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
   X(Layout                      , 2                 , 10                       , translate, none, false, false) \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
-  X(SelectObjectsContainingColor, 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
   X(SelectLargestObject         , 0                 , 9                        , select   , none, false, false) \
   X(SelectSmallestObject        , 0                 , 9                        , select   , none, false, false) \
   X(AddColor                    , 0                 , arc::COLOR_COUNT - 1     , generate , none, true , false) \

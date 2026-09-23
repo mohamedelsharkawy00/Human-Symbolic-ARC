@@ -608,6 +608,24 @@ __device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_obj
     return res;
 }
 
+// s clipped to rows [r0, r1) and columns [c0, c1); false when nothing is left.
+__device__ inline bool gpu_clip_to_box(const gpu_fixed_object& s, int r0, int c0, int r1, int c1,
+                                       gpu_fixed_object& obj) {
+    obj.x0 = (int16_t)c0; obj.y0 = (int16_t)r0;
+    obj.x1 = (int16_t)(c1 - 1); obj.y1 = (int16_t)(r1 - 1);
+    obj.width = (int16_t)(c1 - c0); obj.height = (int16_t)(r1 - r0);
+    obj.selected = false;
+    obj.mask.clear();
+    bool any = false;
+    GPU_DEV_FOR_EACH_PIXEL(s, sr, sc, v) {
+        const int gr = s.y0 + sr, gc = s.x0 + sc;
+        if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1) continue;
+        obj.mask[gr - r0][gc - c0] = v;
+        any = true;
+    }
+    return any;
+}
+
 __device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     // Selection marks the PARTITIONER: selected cells are the divider walls;
@@ -650,18 +668,20 @@ __device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_
         div_col[c] = full;
     }
 
-    int16_t row_start[GPU_MAX_GRID], row_end[GPU_MAX_GRID]; int row_span_count = 0;
-    int16_t col_start[GPU_MAX_GRID], col_end[GPU_MAX_GRID]; int col_span_count = 0;
-    for (int r = 0; r < gh;) {
-        if (div_row[r]) { ++r; continue; }
-        int start = r; while (r < gh && !div_row[r]) ++r;
-        if (row_span_count < GPU_MAX_GRID) { row_start[row_span_count] = (int16_t)start; row_end[row_span_count] = (int16_t)r; row_span_count++; }
-    }
-    for (int c = 0; c < gw;) {
-        if (div_col[c]) { ++c; continue; }
-        int start = c; while (c < gw && !div_col[c]) ++c;
-        if (col_span_count < GPU_MAX_GRID) { col_start[col_span_count] = (int16_t)start; col_end[col_span_count] = (int16_t)c; col_span_count++; }
-    }
+    auto open_spans = [](const bool* divider, int n, int16_t* start, int16_t* end) {
+        int count = 0;
+        for (int i = 0; i < n;) {
+            if (divider[i]) { ++i; continue; }
+            start[count] = (int16_t)i;
+            while (i < n && !divider[i]) ++i;
+            end[count++] = (int16_t)i;
+        }
+        return count;
+    };
+    int16_t row_start[GPU_MAX_GRID], row_end[GPU_MAX_GRID];
+    int16_t col_start[GPU_MAX_GRID], col_end[GPU_MAX_GRID];
+    const int row_span_count = open_spans(div_row, gh, row_start, row_end);
+    const int col_span_count = open_spans(div_col, gw, col_start, col_end);
 
     // Cut each SOURCE object (walls excluded) by the tile rectangles: clip its
     // cells to each tile, emit the clipped piece as its own object at the tile's
@@ -670,25 +690,12 @@ __device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_
     for (int ri = 0; ri < row_span_count; ++ri)
         for (int ci = 0; ci < col_span_count; ++ci) {
             int r0 = row_start[ri], r1 = row_end[ri], c0 = col_start[ci], c1 = col_end[ci];
-            int w = c1 - c0, h = r1 - r0;
-            if (w <= 0 || h <= 0) continue;
+            if (c1 <= c0 || r1 <= r0) continue;
             for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
                 const auto& s = src.objects[i];
                 if (s.selected) continue;  // walls are not content
                 gpu_fixed_object obj;
-                obj.x0 = (int16_t)c0; obj.y0 = (int16_t)r0;
-                obj.x1 = (int16_t)(c1 - 1); obj.y1 = (int16_t)(r1 - 1);
-                obj.width = (int16_t)w; obj.height = (int16_t)h;
-                obj.selected = false;
-                obj.mask.clear();
-                bool any = false;
-                GPU_DEV_FOR_EACH_PIXEL(s, sr, sc, v) {
-                    int gr = s.y0 + sr, gc = s.x0 + sc;
-                    if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1) continue;
-                    obj.mask[gr - r0][gc - c0] = v;
-                    any = true;
-                }
-                if (any) res.objects[res.count++] = obj;
+                if (gpu_clip_to_box(s, r0, c0, r1, c1, obj)) res.objects[res.count++] = obj;
             }
         }
     return res;
@@ -709,16 +716,7 @@ __device__ gpu_object_list& gpu_exec_panes(gpu_exec_context& ctx, const gpu_obje
         for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
             const auto& s = src.objects[i];
             gpu_fixed_object obj;
-            obj.x0 = (int16_t)c0; obj.y0 = (int16_t)r0;
-            obj.x1 = (int16_t)(c1 - 1); obj.y1 = (int16_t)(r1 - 1);
-            obj.width = (int16_t)w; obj.height = (int16_t)h;
-            obj.selected = false;
-            obj.mask.clear();
-            GPU_DEV_FOR_EACH_PIXEL(s, sr, sc, v) {
-                const int gr = s.y0 + sr, gc = s.x0 + sc;
-                if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1) continue;
-                obj.mask[gr - r0][gc - c0] = v;
-            }
+            gpu_clip_to_box(s, r0, c0, r1, c1, obj);
             // EVERY PANE COMES BACK, even one the source never reached -- empty,
             // but there. Partition drops such a tile because its tiles are
             // whatever the walls happen to leave; panes are a fixed set that gets
@@ -759,6 +757,43 @@ __device__ gpu_object_list& gpu_exec_intersection(gpu_exec_context& ctx, const g
     return pass;
 }
 
+// Copy one object verbatim, mask and marks included. The one home for "this
+// object rides through untouched", which every act needs for what wasn't picked.
+__device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fixed_object& sobj, int lane) {
+    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
+    int8_t* d = reinterpret_cast<int8_t*>(&dobj);
+    const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
+    for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
+}
+
+// Copy the first `n` objects verbatim and set the output count.
+__device__ inline void gpu_warp_copy_objects(gpu_object_list* res, const gpu_object_list* src, int n, int lane) {
+    for (int i = 0; i < n; ++i) gpu_warp_copy_object(res->objects[i], src->objects[i], lane);
+    if (lane == 0) res->count = n;
+    __syncwarp();
+}
+
+// Calls cell(row, col, v) for each painted, on-canvas cell of the picked objects
+// among src's first n, one object at a time so later objects win shared cells.
+template <class Cell>
+__device__ inline void gpu_each_picked_cell_warp(const gpu_exec_context& ctx, const gpu_object_list& src,
+                                                 int n, int lane, Cell cell) {
+    const int oh = ctx.output.height, ow = ctx.output.width;
+    for (int i = 0; i < n; ++i) {
+        const gpu_fixed_object& obj = src.objects[i];
+        if (!obj.selected) continue;
+        const int pw = obj.width, total = pw * obj.height;
+        for (int p = lane; p < total; p += 32) {
+            const int r = p / pw, c = p - r * pw;
+            const int8_t v = obj.mask[r][c];
+            if (v == GPU_TRANSPARENT) continue;
+            const int gr = obj.y0 + r, gc = obj.x0 + c;
+            if (gr >= 0 && gr < oh && gc >= 0 && gc < ow) cell(gr, gc, v);
+        }
+        __syncwarp();
+    }
+}
+
 // Warp-parallel Intersection: canvas := canvas ∩ src (clear canvas cells not
 // covered by any src object), then pass src through. Was lane-0 serial with a
 // 3.6KB `covered[30][30]` local array. Here `covered` lives in per-job global
@@ -777,26 +812,9 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     for (int p = lane; p < GPU_GRID_CELLS; p += 32) covered[p] = 0;
     __syncwarp();
 
-    // Mark phase: every non-transparent src pixel marks its canvas cell covered.
-    for (int i = 0; i < n; ++i) {
-        const gpu_fixed_object& obj = src->objects[i];
-        // Only what was picked lands. A paint that ignored the mark would undo
-        // the pick the sentence just made -- which is why, until now, the only
-        // way to print one layer alone was to delete every other one first.
-        if (!obj.selected) continue;
-        int pw = obj.width, ph = obj.height;
-        int total = pw * ph;
-        int x0 = obj.x0, y0 = obj.y0;
-        for (int q = lane; q < total; q += 32) {
-            int r = q / pw, c = q - r * pw;
-            if (obj.mask[r][c] != GPU_TRANSPARENT) {
-                int gr = y0 + r, gc = x0 + c;
-                if (gr >= 0 && gr < oh && gc >= 0 && gc < ow)
-                    covered[gr * GPU_MAX_GRID + gc] = 1;
-            }
-        }
-    }
-    __syncwarp();
+    gpu_each_picked_cell_warp(ctx, *src, n, lane, [&](int r, int c, int8_t) {
+        covered[r * GPU_MAX_GRID + c] = 1;
+    });
 
     // Clear phase: drop canvas cells not covered by any src object.
     for (int p = lane; p < oh * ow; p += 32) {
@@ -805,15 +823,7 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     }
     __syncwarp();
 
-    // Pass src through unchanged (fresh pool slot), the lanes striping the
-    // bytes as Union does, rather than each lane copying every whole object.
-    gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
-    int used = n * (int)sizeof(gpu_fixed_object);
-    const int8_t* s = reinterpret_cast<const int8_t*>(src->objects);
-    int8_t* d = reinterpret_cast<int8_t*>(pass->objects);
-    for (int b = lane; b < used; b += 32) d[b] = s[b];
-    if (lane == 0) pass->count = n;
-    __syncwarp();
+    gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
 
 // Warp-parallel union: composite src's pixels onto the canvas, then pass src
@@ -831,40 +841,11 @@ __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
-    int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
-    int oh = ctx.output.height, ow = ctx.output.width;
-
-    for (int i = 0; i < n; ++i) {
-        const gpu_fixed_object& obj = src->objects[i];
-        // Only what was picked lands. A paint that ignored the mark would undo
-        // the pick the sentence just made -- which is why, until now, the only
-        // way to print one layer alone was to delete every other one first.
-        if (!obj.selected) continue;
-        int pw = obj.width, ph = obj.height;
-        int total = pw * ph;
-        int x0 = obj.x0, y0 = obj.y0;
-        for (int p = lane; p < total; p += 32) {
-            int r = p / pw, c = p - r * pw;   // pw > 0 since total > 0
-            int8_t v = obj.mask[r][c];
-            if (v != GPU_TRANSPARENT) {
-                int gr = y0 + r, gc = x0 + c;
-                if (gr >= 0 && gr < oh && gc >= 0 && gc < ow)
-                    gpu_paint_cell(ctx.output.data, gr, gc, v);
-            }
-        }
-        // One object is wholly down before the next starts, so a later object
-        // wins a shared cell whichever lanes the two put it on.
-        __syncwarp();
-    }
-
-    // Pass src through unchanged as the result (fresh pool slot, src copied).
-    gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
-    int used = n * (int)sizeof(gpu_fixed_object);
-    const int8_t* s = reinterpret_cast<const int8_t*>(src->objects);
-    int8_t* d = reinterpret_cast<int8_t*>(pass->objects);
-    for (int b = lane; b < used; b += 32) d[b] = s[b];
-    if (lane == 0) pass->count = n;
-    __syncwarp();
+    const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
+    gpu_each_picked_cell_warp(ctx, *src, n, lane, [&](int r, int c, int8_t v) {
+        gpu_paint_cell(ctx.output.data, r, c, v);
+    });
+    gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
 
 // Withhold: closes the sentence and paints nothing. The hand rides through so
@@ -875,13 +856,7 @@ __device__ void gpu_exec_withhold_warp(gpu_exec_context& ctx, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
-    gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
-    int used = n * (int)sizeof(gpu_fixed_object);
-    const int8_t* source = reinterpret_cast<const int8_t*>(src->objects);
-    int8_t* dest = reinterpret_cast<int8_t*>(pass->objects);
-    for (int b = lane; b < used; b += 32) dest[b] = source[b];
-    if (lane == 0) pass->count = n;
-    __syncwarp();
+    gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
 
 // Underlay: like Union but paints each pixel ONLY into transparent canvas cells
@@ -893,40 +868,11 @@ __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
-    int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
-    int oh = ctx.output.height, ow = ctx.output.width;
-
-    for (int i = 0; i < n; ++i) {
-        const gpu_fixed_object& obj = src->objects[i];
-        // Only what was picked lands. A paint that ignored the mark would undo
-        // the pick the sentence just made -- which is why, until now, the only
-        // way to print one layer alone was to delete every other one first.
-        if (!obj.selected) continue;
-        int pw = obj.width, ph = obj.height;
-        int total = pw * ph;
-        int x0 = obj.x0, y0 = obj.y0;
-        for (int p = lane; p < total; p += 32) {
-            int r = p / pw, c = p - r * pw;
-            int8_t v = obj.mask[r][c];
-            if (v != GPU_TRANSPARENT) {
-                int gr = y0 + r, gc = x0 + c;
-                if (gr >= 0 && gr < oh && gc >= 0 && gc < ow
-                    && ctx.output.data[gr][gc] == GPU_TRANSPARENT)
-                    gpu_paint_cell(ctx.output.data, gr, gc, v);
-            }
-        }
-        // As in Union: the earlier object is wholly down before the next one
-        // asks whether a cell is still empty.
-        __syncwarp();
-    }
-
-    gpu_object_list* pass = &gpu_acquire_and_publish(ctx);
-    int used = n * (int)sizeof(gpu_fixed_object);
-    const int8_t* s = reinterpret_cast<const int8_t*>(src->objects);
-    int8_t* d = reinterpret_cast<int8_t*>(pass->objects);
-    for (int b = lane; b < used; b += 32) d[b] = s[b];
-    if (lane == 0) pass->count = n;
-    __syncwarp();
+    const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
+    gpu_each_picked_cell_warp(ctx, *src, n, lane, [&](int r, int c, int8_t v) {
+        if (ctx.output.data[r][c] == GPU_TRANSPARENT) gpu_paint_cell(ctx.output.data, r, c, v);
+    });
+    gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
 
 __device__ gpu_object_list& gpu_exec_difference(gpu_exec_context& ctx, const gpu_object_list& src) {
@@ -1017,40 +963,39 @@ __device__ void gpu_interior_paint_warp(const gpu_fixed_object& obj_src,
     __syncwarp();
 }
 
-// Copy one object verbatim, mask and marks included. The one home for "this
-// object rides through untouched", which every act needs for what wasn't picked.
-__device__ inline void gpu_warp_copy_object(gpu_fixed_object& dobj, const gpu_fixed_object& sobj, int lane) {
-    constexpr int obj_bytes = (int)sizeof(gpu_fixed_object);
-    int8_t* d = reinterpret_cast<int8_t*>(&dobj);
-    const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
-    for (int b = lane; b < obj_bytes; b += 32) d[b] = s[b];
-}
-
-__device__ void gpu_exec_interior_color_warp(gpu_exec_context& ctx, int8_t color, int lane) {
+// Fills the interior of each picked, non-empty object with fill(obj), asked on
+// lane 0; a negative fill leaves the object as it is. Empty objects drop out.
+template <class Fill>
+__device__ inline void gpu_warp_fill_interiors(gpu_exec_context& ctx, int lane, Fill fill) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
-    int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
+    const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     int outc = 0;
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& obj_src = src->objects[i];
         if (obj_src.width <= 0 || obj_src.height <= 0) continue;
-        // Only what was picked has its interior filled; the rest ride through.
-        if (!obj_src.selected) {
-            gpu_warp_copy_object(res->objects[outc], obj_src, lane);
-            ++outc;
-            continue;
-        }
-        int f = color;
-        if (color < 0) {                                  // first-color fill
-            if (lane == 0) f = gpu_obj_first_color(obj_src);
+        int f = -1;
+        if (obj_src.selected) {
+            if (lane == 0) f = fill(obj_src);
             f = __shfl_sync(0xffffffffu, f, 0);
         }
-        gpu_interior_paint_warp(obj_src, res->objects[outc], (int8_t)f, lane);
+        if (f < 0) {
+            gpu_warp_copy_object(res->objects[outc], obj_src, lane);
+            __syncwarp();
+        } else {
+            gpu_interior_paint_warp(obj_src, res->objects[outc], (int8_t)f, lane);
+        }
         ++outc;
     }
     if (lane == 0) res->count = outc;
     __syncwarp();
+}
+
+__device__ void gpu_exec_interior_color_warp(gpu_exec_context& ctx, int8_t color, int lane) {
+    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
+        return color < 0 ? (int)gpu_obj_first_color(obj) : (int)color;
+    });
 }
 
 __device__ gpu_object_list& gpu_exec_recolor(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color) {
@@ -1078,13 +1023,6 @@ __device__ gpu_object_list& gpu_exec_recolor(gpu_exec_context& ctx, const gpu_ob
 // with a one-line "where does cell (r,c) come from" lambda, then stamp the new
 // dims/anchor on lane 0. Ops that only touch headers or only masks can use
 // gpu_warp_copy_header / gpu_warp_fill_mask alone instead of the full skeleton.
-
-// Copy the first `n` objects verbatim and set the output count.
-__device__ inline void gpu_warp_copy_objects(gpu_object_list* res, const gpu_object_list* src, int n, int lane) {
-    for (int i = 0; i < n; ++i) gpu_warp_copy_object(res->objects[i], src->objects[i], lane);
-    if (lane == 0) res->count = n;
-    __syncwarp();
-}
 
 // Copy one object's header (everything before the packed mask: anchor, dims).
 __device__ inline void gpu_warp_copy_header(const gpu_fixed_object& sobj, gpu_fixed_object& dobj, int lane) {
@@ -1129,6 +1067,34 @@ __device__ inline void gpu_warp_remap_object(const gpu_fixed_object& sobj, gpu_f
     gpu_warp_copy_header(sobj, dobj, lane);
     __syncwarp();
     gpu_warp_fill_mask(dobj, nw, nh, lane, src_pixel);
+}
+
+// Remaps each picked object of src into res; the rest ride through untouched.
+// size(sobj, nw, nh) gives the new dims, pixel(sobj, r, c) each dest cell.
+template <class SizeFn, class PixelFn>
+__device__ inline void gpu_warp_remap_picked(const gpu_object_list* src, gpu_object_list* res, int lane,
+                                             SizeFn size, PixelFn pixel) {
+    const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
+    for (int i = 0; i < n; ++i) {
+        const gpu_fixed_object& sobj = src->objects[i];
+        gpu_fixed_object& obj = res->objects[i];
+        if (!sobj.selected) {
+            gpu_warp_copy_object(obj, sobj, lane);
+            if (lane == 0) res->count = i + 1;
+            __syncwarp();
+            continue;
+        }
+        int nw, nh;
+        size(sobj, nw, nh);
+        gpu_warp_remap_object(sobj, obj, nw, nh, lane,
+                              [&](int dr, int dc) { return pixel(sobj, dr, dc); });
+        if (lane == 0) {
+            obj.width = (int16_t)nw; obj.height = (int16_t)nh;
+            obj.x1 = obj.x0 + (int16_t)nw - 1; obj.y1 = obj.y0 + (int16_t)nh - 1;
+            res->count = i + 1;
+        }
+        __syncwarp();
+    }
 }
 
 // Warp-parallel Recolor: every non-transparent cell -> `color`. The per-cell
@@ -1276,10 +1242,8 @@ __device__ gpu_object_list& gpu_exec_select_objects_with_holes(gpu_exec_context&
     return res;
 }
 
-// SelectColor[c]: mark every object that contains color c; all other objects
-// ride through unmarked. After a carve (Colors/Split) each object is single-
-// color, so this picks exactly the color-c object(s). Sub-object reach is a
-// carve away, never a cell mark.
+// SelectColor[c]: mark every object that contains color c; the rest ride
+// through unmarked.
 __device__ gpu_object_list& gpu_exec_select_color(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color) {
     auto& res = gpu_acquire(ctx);
     res = src;
@@ -1361,42 +1325,13 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 // the hole, e.g. a marker) is a wall to the flood, so it keeps its color -- the
 // trailing Union re-stamping the separate marker object reproduces it either way.
 __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx, int lane) {
-    gpu_object_list* src = gpu_current_objects(ctx);
-    if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
-    gpu_object_list* res = &gpu_acquire_and_publish(ctx);
-    int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
-    int outc = 0;
-    for (int i = 0; i < n; ++i) {
-        const gpu_fixed_object& obj_src = src->objects[i];
-        if (obj_src.width <= 0 || obj_src.height <= 0) continue;
-        // Only what was picked is looked up and filled; the rest ride through.
-        if (!obj_src.selected) {
-            gpu_warp_copy_object(res->objects[outc], obj_src, lane);
-            ++outc;
-            continue;
-        }
-
-        int f = -1;
-        if (lane == 0) {
-            // Fingerprint the object's occupancy (shared recipe in 11_dsl.cuh).
-            uint32_t hsh = gpu_shape_hash_of_paint(obj_src);
-            for (int k = 0; k < ctx.shape_color_count && k < 16; ++k)
-                if (ctx.shape_color_keys[k] == hsh) { f = ctx.shape_color_vals[k]; break; }
-        }
-        f = __shfl_sync(0xffffffffu, f, 0);
-
-        if (f < 0) {  // no mapping for this shape -> copy object through unchanged
-            const int8_t* s = reinterpret_cast<const int8_t*>(&obj_src);
-            int8_t* d = reinterpret_cast<int8_t*>(&res->objects[outc]);
-            for (int b = lane; b < (int)sizeof(gpu_fixed_object); b += 32) d[b] = s[b];
-            __syncwarp();
-        } else {
-            gpu_interior_paint_warp(obj_src, res->objects[outc], (int8_t)f, lane);
-        }
-        ++outc;
-    }
-    if (lane == 0) res->count = outc;
-    __syncwarp();
+    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
+        // Fingerprint the object's occupancy (shared recipe in 11_dsl.cuh).
+        const uint32_t hsh = gpu_shape_hash_of_paint(obj);
+        for (int k = 0; k < ctx.shape_color_count && k < 16; ++k)
+            if (ctx.shape_color_keys[k] == hsh) return (int)ctx.shape_color_vals[k];
+        return -1;
+    });
 }
 
 // OverlapCorner: lay the objects out as a diagonal corner-chain. Objects are
@@ -1756,26 +1691,15 @@ __device__ void gpu_exec_transform_warp(gpu_exec_context& ctx, node_type type, i
     // slot index and write the same pool_head/current_objects_idx values. No sync needed.
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
 
-    int obj_count = src->count;
-    bool is_turn = (type == node_type::TurnRight || type == node_type::TurnLeft);
-
-    for (int i = 0; i < obj_count && i < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        auto& sobj = src->objects[i];
-        int w = sobj.width, h = sobj.height;
-        int nw = is_turn ? min(h, GPU_MAX_GRID) : min(w, GPU_MAX_GRID);
-        int nh = is_turn ? min(w, GPU_MAX_GRID) : min(h, GPU_MAX_GRID);
-
-        auto& obj = res->objects[i];
-        // Only what was picked turns; the rest ride through as they are. Nothing
-        // picked means this op changes nothing — no falling back to "everything".
-        if (!sobj.selected) {
-            gpu_warp_copy_object(obj, sobj, lane);
-            if (lane == 0) res->count = i + 1;
-            __syncwarp();
-            continue;
-        }
+    const bool is_turn = (type == node_type::TurnRight || type == node_type::TurnLeft);
+    gpu_warp_remap_picked(src, res, lane,
+        [&](const gpu_fixed_object& sobj, int& nw, int& nh) {
+            nw = min((int)(is_turn ? sobj.height : sobj.width), GPU_MAX_GRID);
+            nh = min((int)(is_turn ? sobj.width : sobj.height), GPU_MAX_GRID);
+        },
         // Dest cell (dr, dc) pulls from its source cell via the inverse map.
-        gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
+        [&](const gpu_fixed_object& sobj, int dr, int dc) {
+            const int w = sobj.width, h = sobj.height;
             int sr, sc;
             switch (type) {
             case node_type::TurnRight:      sr = h - 1 - dc; sc = dr;         break;
@@ -1785,15 +1709,6 @@ __device__ void gpu_exec_transform_warp(gpu_exec_context& ctx, node_type type, i
             }
             return (int8_t)sobj.mask[sr][sc];
         });
-
-        // Lane 0 updates metadata; merged sync with next iteration's metadata-copy sync
-        if (lane == 0) {
-            obj.width = (int16_t)nw; obj.height = (int16_t)nh;
-            obj.x1 = obj.x0 + (int16_t)nw - 1; obj.y1 = obj.y0 + (int16_t)nh - 1;
-            res->count = i + 1;
-        }
-        __syncwarp();
-    }
 }
 
 __device__ gpu_object_list& gpu_exec_move(gpu_exec_context& ctx, const gpu_object_list& src, int16_t delta, bool horizontal) {
@@ -1855,49 +1770,27 @@ __device__ gpu_object_list& gpu_exec_slam(gpu_exec_context& ctx, const gpu_objec
     return res;
 }
 
-// Warp-parallel scale up: all 32 lanes cooperate on pixel expansion.
-// Pattern mirrors gpu_exec_transform_warp: all-lane acquire, stripe copy with
-// selective mask clear, pixel loop striped by lane, divide-free pixel advance.
+// Warp-parallel scale up.
 __device__ void gpu_exec_scale_up_warp(gpu_exec_context& ctx, int8_t factor, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
-    int obj_count = src->count;
-
-    // factor <= 1: just copy objects unchanged.
     if (factor <= 1) {
-        gpu_warp_copy_objects(res, src, min(obj_count, GPU_KERNEL_MAX_OBJECTS), lane);
+        gpu_warp_copy_objects(res, src, min((int)src->count, GPU_KERNEL_MAX_OBJECTS), lane);
         return;
     }
 
-    for (int i = 0; i < obj_count && i < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        auto& sobj = src->objects[i];
-        int ow = sobj.width, oh = sobj.height;
-        int nw = min(ow * factor, GPU_MAX_GRID);
-        int nh = min(oh * factor, GPU_MAX_GRID);
-
-        auto& obj = res->objects[i];
-        // Only what was picked is resized; the rest ride through untouched.
-        if (!sobj.selected) {
-            gpu_warp_copy_object(obj, sobj, lane);
-            if (lane == 0) res->count = i + 1;
-            __syncwarp();
-            continue;
-        }
-        // Dest cell pulls its source via /factor (nearest-neighbour upscale).
-        gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
-            int sr = dr / factor, sc = dc / factor;
-            return (sr < oh && sc < ow) ? (int8_t)sobj.mask[sr][sc] : (int8_t)GPU_TRANSPARENT;
+    gpu_warp_remap_picked(src, res, lane,
+        [&](const gpu_fixed_object& sobj, int& nw, int& nh) {
+            nw = min(sobj.width * factor, GPU_MAX_GRID);
+            nh = min(sobj.height * factor, GPU_MAX_GRID);
+        },
+        // Nearest-neighbour: each dest cell pulls its source via /factor.
+        [&](const gpu_fixed_object& sobj, int dr, int dc) {
+            const int sr = dr / factor, sc = dc / factor;
+            return (sr < sobj.height && sc < sobj.width) ? (int8_t)sobj.mask[sr][sc] : (int8_t)GPU_TRANSPARENT;
         });
-
-        if (lane == 0) {
-            obj.width = (int16_t)nw; obj.height = (int16_t)nh;
-            obj.x1 = obj.x0 + (int16_t)nw - 1; obj.y1 = obj.y0 + (int16_t)nh - 1;
-            res->count = i + 1;
-        }
-        __syncwarp();
-    }
 }
 
 // Warp-parallel scale down: each lane handles one output pixel's majority vote.
@@ -1906,57 +1799,22 @@ __device__ void gpu_exec_scale_down_warp(gpu_exec_context& ctx, int8_t factor, i
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
-    int obj_count = src->count;
-
     if (factor <= 1) {
-        gpu_warp_copy_objects(res, src, min(obj_count, GPU_KERNEL_MAX_OBJECTS), lane);
+        gpu_warp_copy_objects(res, src, min((int)src->count, GPU_KERNEL_MAX_OBJECTS), lane);
         return;
     }
 
-    for (int i = 0; i < obj_count && i < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        auto& sobj = src->objects[i];
-        int ow = sobj.width, oh = sobj.height;
-        int nw = max((ow + factor - 1) / factor, 1);
-        int nh = max((oh + factor - 1) / factor, 1);
-
-        auto& obj = res->objects[i];
-        // Only what was picked is resized; the rest ride through untouched.
-        if (!sobj.selected) {
-            gpu_warp_copy_object(obj, sobj, lane);
-            if (lane == 0) res->count = i + 1;
-            __syncwarp();
-            continue;
-        }
+    gpu_warp_remap_picked(src, res, lane,
+        [&](const gpu_fixed_object& sobj, int& nw, int& nh) {
+            nw = max((sobj.width + factor - 1) / factor, 1);
+            nh = max((sobj.height + factor - 1) / factor, 1);
+        },
         // Each dest cell is the majority vote of its factor x factor source block.
-        gpu_warp_remap_object(sobj, obj, nw, nh, lane, [&](int dr, int dc) {
-            return gpu_majority_vote(sobj.mask, dr, dc, factor, oh, ow);
+        [&](const gpu_fixed_object& sobj, int dr, int dc) {
+            return gpu_majority_vote(sobj.mask, dr, dc, factor, sobj.height, sobj.width);
         });
-
-        if (lane == 0) {
-            obj.width = (int16_t)nw; obj.height = (int16_t)nh;
-            obj.x1 = obj.x0 + (int16_t)nw - 1; obj.y1 = obj.y0 + (int16_t)nh - 1;
-            res->count = i + 1;
-        }
-        __syncwarp();
-    }
 }
 
-
-// SelectObjectsContainingColor[color]: mark the objects that have at least one
-// pixel of `color`; the rest ride through unmarked. Object-keyed (the `Objects`
-// in the name says so). Lossless — keeping only them is
-// `SelectObjectsContainingColor[c] InvertSelection DeleteSelection`.
-__device__ gpu_object_list& gpu_exec_select_objects_containing_color(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color) {
-    auto& res = gpu_acquire(ctx);
-    res = src;
-    for (int i = 0; i < res.count; ++i) {
-        auto& obj = res.objects[i];
-        for (int r = 0; r < obj.height && !obj.selected; ++r)
-            for (int c = 0; c < obj.width; ++c)
-                if (obj.mask[r][c] == color) { obj.selected = true; break; }
-    }
-    return res;
-}
 
 __device__ gpu_object_list& gpu_exec_add_color(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color) {
     auto& res = gpu_acquire(ctx);
@@ -2342,9 +2200,7 @@ __device__ gpu_object_list& gpu_exec_diag_tile(gpu_exec_context& ctx, const gpu_
             int8_t col = v;
             if (!arc::is_color(col)) continue;
             int wr = obj.y0 + r, wc = obj.x0 + c;
-            int diag = (variant == 0) ? (wr + wc) : (wr - wc);
-            int idx = diag % color_count;
-            if (idx < 0) idx += color_count;
+            const int idx = arc::diagonal_seat(wr, wc, variant, color_count);
             mapping[idx] = col; mapped[idx] = true;
         }
     }
@@ -2363,10 +2219,7 @@ __device__ gpu_object_list& gpu_exec_diag_tile(gpu_exec_context& ctx, const gpu_
     out_obj.mask.clear();
     for (int r = 0; r < h; ++r)
         for (int c = 0; c < w; ++c) {
-            int diag = (variant == 0) ? (r + c) : (r - c);
-            int idx = diag % color_count;
-            if (idx < 0) idx += color_count;
-            if (idx >= 0 && idx < GPU_MAX_COLORS) out_obj.mask[r][c] = mapping[idx];
+            out_obj.mask[r][c] = mapping[arc::diagonal_seat(r, c, variant, color_count)];
         }
     res.count = 1;
     return res;
@@ -2723,54 +2576,44 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
 // untouched. The constructive AND that keeps canvas colors — the algebra
 // table's last empty cell. Replaces the destructive clip-then-Target[10]
 // staging idiom, so solutions can stay additive (Union-only deposits).
-__device__ gpu_object_list& gpu_exec_read_under(gpu_exec_context& ctx, const gpu_object_list& src) {
+// Repaints each painted cell of the picked objects as paint(v, canvas color
+// under it); an object left with no paint drops out, the unpicked ride through.
+template <class Paint>
+__device__ inline gpu_object_list& gpu_repaint_over_canvas(gpu_exec_context& ctx, const gpu_object_list& src,
+                                                           Paint paint) {
     auto& res = gpu_acquire(ctx);
-    int ow = ctx.output.width, oh = ctx.output.height;
+    const int ow = ctx.output.width, oh = ctx.output.height;
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];
-        // Only what was picked is touched; the rest ride through as they are.
-        // Nothing picked means this op does nothing -- acts never fall back to all.
         if (!o.selected) { res.objects[res.count++] = o; continue; }
         gpu_fixed_object out = o;
         bool any = false;
         for (int r = 0; r < o.height; ++r)
             for (int c = 0; c < o.width; ++c) {
-                if (out.mask[r][c] == GPU_TRANSPARENT) continue;
-                int x = o.x0 + c, y = o.y0 + r;
-                bool on = (x >= 0 && x < ow && y >= 0 && y < oh);
-                int8_t cv = on ? ctx.output.data[y][x] : GPU_TRANSPARENT;
-                out.mask[r][c] = cv;
-                if (cv != GPU_TRANSPARENT) any = true;
+                const int8_t v = out.mask[r][c];
+                if (v == GPU_TRANSPARENT) continue;
+                const int x = o.x0 + c, y = o.y0 + r;
+                const int8_t cv = (x >= 0 && x < ow && y >= 0 && y < oh) ? (int8_t)ctx.output.data[y][x]
+                                                                         : (int8_t)GPU_TRANSPARENT;
+                const int8_t nv = paint(v, cv);
+                out.mask[r][c] = nv;
+                any = any || nv != GPU_TRANSPARENT;
             }
         if (any) res.objects[res.count++] = out;
     }
     return res;
 }
 
+__device__ gpu_object_list& gpu_exec_read_under(gpu_exec_context& ctx, const gpu_object_list& src) {
+    return gpu_repaint_over_canvas(ctx, src, [](int8_t, int8_t cv) { return cv; });
+}
+
 __device__ gpu_object_list& gpu_exec_mask(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color, bool keep_match) {
-    auto& res = gpu_acquire(ctx);
-    int ow = ctx.output.width, oh = ctx.output.height;
-    bool any_color = (color == GPU_COLOR_ANY);
-    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        const auto& o = src.objects[i];
-        // Only what was picked is touched; the rest ride through as they are.
-        // Nothing picked means this op does nothing -- acts never fall back to all.
-        if (!o.selected) { res.objects[res.count++] = o; continue; }
-        gpu_fixed_object out = o;
-        bool any = false;
-        for (int r = 0; r < o.height; ++r)
-            for (int c = 0; c < o.width; ++c) {
-                if (out.mask[r][c] == GPU_TRANSPARENT) continue;
-                int x = o.x0 + c, y = o.y0 + r;
-                bool on = (x >= 0 && x < ow && y >= 0 && y < oh);
-                int8_t cv = on ? ctx.output.data[y][x] : GPU_TRANSPARENT;
-                bool match = any_color ? (cv != GPU_TRANSPARENT) : (cv == color);
-                if (match == keep_match) any = true;
-                else out.mask[r][c] = GPU_TRANSPARENT;
-            }
-        if (any) res.objects[res.count++] = out;
-    }
-    return res;
+    const bool any_color = (color == GPU_COLOR_ANY);
+    return gpu_repaint_over_canvas(ctx, src, [&](int8_t v, int8_t cv) {
+        const bool match = any_color ? (cv != GPU_TRANSPARENT) : (cv == color);
+        return match == keep_match ? v : (int8_t)GPU_TRANSPARENT;
+    });
 }
 
 // Target output dims from the size rule. Single source of truth, used both at
@@ -3025,52 +2868,26 @@ __device__ gpu_object_list& gpu_exec_project_on_seeds(gpu_exec_context& ctx, con
         base.mask = ctx.input.data;
     }
 
-    int tcx = (tpl.x0 + tpl.x1) / 2;
-    int tcy = (tpl.y0 + tpl.y1) / 2;
-    int gw = ctx.output.width, gh = ctx.output.height;
-
+    const arc::cell_box tpl_box{tpl.y0, tpl.x0, tpl.y1, tpl.x1};
     for (int s = 0; s < ctx.seed_objs.count; ++s) {
-        if (res.count >= GPU_KERNEL_MAX_OBJECTS) break;
         const auto& seed = ctx.seed_objs.objects[s];
-        int scx = (seed.x0 + seed.x1) / 2;
-        int scy = (seed.y0 + seed.y1) / 2;
-        int dxi = scx - tcx;
-        int dyi = scy - tcy;
-        if (dxi == 0 && dyi == 0) continue;
-
-        int nx0 = tpl.x0, ny0 = tpl.y0;
-        if (dxi > 0)      nx0 = seed.x0;
-        else if (dxi < 0) nx0 = seed.x1 - (tpl.width - 1);
-        if (dyi > 0)      ny0 = seed.y0;
-        else if (dyi < 0) ny0 = seed.y1 - (tpl.height - 1);
-
-        int dx = nx0 - tpl.x0;
-        int dy = ny0 - tpl.y0;
-        if (dx == 0 && dy == 0) continue;
-
-        int8_t scolor = gpu_obj_first_color(seed);
-
-        for (int k = 1; k <= GPU_MAX_GRID; ++k) {
-            if (res.count >= GPU_KERNEL_MAX_OBJECTS) break;
-            int nx = tpl.x0 + k * dx;
-            int ny = tpl.y0 + k * dy;
-            bool on_grid = (nx + tpl.width > 0) && (nx < gw)
-                        && (ny + tpl.height > 0) && (ny < gh);
-            if (!on_grid) break;
-
-            gpu_fixed_object& out = res.objects[res.count];
-            out.x0 = (int16_t)nx; out.y0 = (int16_t)ny;
-            out.x1 = (int16_t)(nx + tpl.width - 1);
-            out.y1 = (int16_t)(ny + tpl.height - 1);
+        const int8_t scolor = gpu_obj_first_color(seed);
+        const int8_t paint = (scolor >= 0) ? scolor : gpu_obj_first_color(tpl);
+        arc::project_along(tpl_box, {seed.y0, seed.x0, seed.y1, seed.x1},
+                           ctx.output.width, ctx.output.height, [&](int row, int col) {
+            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return false;
+            gpu_fixed_object& out = res.objects[res.count++];
+            out.x0 = (int16_t)col; out.y0 = (int16_t)row;
+            out.x1 = (int16_t)(col + tpl.width - 1);
+            out.y1 = (int16_t)(row + tpl.height - 1);
             out.width = tpl.width; out.height = tpl.height;
             out.mask.clear();
-            int8_t paint = (scolor >= 0) ? scolor : gpu_obj_first_color(tpl);
             for (int r = 0; r < tpl.height; ++r)
                 for (int c = 0; c < tpl.width; ++c)
                     if (tpl.mask[r][c] != GPU_TRANSPARENT)
                         out.mask[r][c] = paint;
-            ++res.count;
-        }
+            return true;
+        });
     }
     return res;
 }
@@ -3466,7 +3283,6 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::MoveToEdge:          result = last ? &gpu_exec_move_to_edge(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::VoteDenoise:         result = last ? &gpu_exec_vote_denoise(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Outline:             result = last ? &gpu_exec_outline(ctx, *last) : &gpu_acquire(ctx); break;
-            case node_type::SelectObjectsContainingColor: result = last ? &gpu_exec_select_objects_containing_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectRow:      result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, true) : &gpu_acquire(ctx); break;
             case node_type::SelectColumn:   result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
