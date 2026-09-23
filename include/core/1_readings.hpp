@@ -411,27 +411,37 @@ inline int8_t the_figure_color(const grid& one_grid, int ground) {
     return figure;
 }
 
-// The smallest box each color's cells fit in. A color with no cells keeps the
-// empty box it starts with, and empty() is how you ask.
-struct color_box {
-    int row0, col0, row1, col1;
+// A box in grid coordinates, with inclusive bottom and right edges.
+// An empty box has its last row or column before its first.
+struct cell_box {
+    int row0 = 0, col0 = 0, row1 = -1, col1 = -1;
 
     // Its own size, so no caller has to spell the +1 out and none can spell it
     // differently. A box nobody wrote to has no cells, and says so itself
     // rather than leaving the reader to check the tally beside it.
-    bool empty() const { return row1 < row0 || col1 < col0; }
-    int height() const { return empty() ? 0 : row1 - row0 + 1; }
-    int width()  const { return empty() ? 0 : col1 - col0 + 1; }
-    int area()   const { return width() * height(); }
+    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
+    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
+    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
+    ARC_HOST_DEVICE int area()   const { return width() * height(); }
+
+    ARC_HOST_DEVICE void include_cell(int row, int col) {
+        if (empty()) {
+            row0 = row1 = row;
+            col0 = col1 = col;
+            return;
+        }
+        if (row < row0) row0 = row;
+        if (row > row1) row1 = row;
+        if (col < col0) col0 = col;
+        if (col > col1) col1 = col;
+    }
 };
 
-inline void color_boxes(const grid& one_grid, color_box boxes[COLOR_COUNT],
+inline void color_boxes(const grid& one_grid, cell_box boxes[COLOR_COUNT],
                         int skip = TRANSPARENT) {
-    for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = { MAX_GRID_DIM, MAX_GRID_DIM, -1, -1 };
+    for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
     walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
-        color_box& box = boxes[color];
-        box.row0 = min(box.row0, row); box.row1 = max(box.row1, row);
-        box.col0 = min(box.col0, col); box.col1 = max(box.col1, col);
+        boxes[color].include_cell(row, col);
     });
 }
 

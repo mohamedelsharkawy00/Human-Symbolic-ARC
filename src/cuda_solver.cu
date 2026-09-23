@@ -1462,20 +1462,11 @@ __device__ gpu_object_list& gpu_exec_overlap_corner(gpu_exec_context& ctx, const
 __device__ gpu_object_list& gpu_exec_align_to_canvas(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
 
-    // Compute bbox of non-transparent canvas pixels.
-    int gw = ctx.output.width, gh = ctx.output.height;
-    int tx0 = gw, ty0 = gh, tx1 = -1, ty1 = -1;
-    for (int r = 0; r < gh; ++r) {
-        for (int c = 0; c < gw; ++c) {
-            if (ctx.output.data[r][c] != GPU_TRANSPARENT) {
-                if (c < tx0) tx0 = c;
-                if (r < ty0) ty0 = r;
-                if (c > tx1) tx1 = c;
-                if (r > ty1) ty1 = r;
-            }
-        }
-    }
-    bool empty_canvas = (tx1 < 0);
+    // Read the painted canvas once; moving objects do not enlarge this target.
+    arc::cell_box target;
+    for (int row = 0; row < ctx.output.height; ++row)
+        for (int col = 0; col < ctx.output.width; ++col)
+            if (ctx.output.data[row][col] != GPU_TRANSPARENT) target.include_cell(row, col);
 
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
@@ -1484,22 +1475,8 @@ __device__ gpu_object_list& gpu_exec_align_to_canvas(gpu_exec_context& ctx, cons
         // Nothing picked means this op does nothing -- acts never fall back to all.
         if (!obj.selected) { res.count++; continue; }
 
-        if (!empty_canvas) {
-            // Two snap candidates per axis (touch-but-don't-overlap, gap=0):
-            //   dx0: obj.x1 lands at tx0 - 1  (obj sits left of content)
-            //   dx1: obj.x0 lands at tx1 + 1  (obj sits right of content)
-            int dx0 = tx0 - obj.x1 - 1;
-            int dx1 = tx1 - obj.x0 + 1;
-            int dx  = (abs(dx0) <= abs(dx1)) ? dx0 : dx1;
-            int dy0 = ty0 - obj.y1 - 1;
-            int dy1 = ty1 - obj.y0 + 1;
-            int dy  = (abs(dy0) <= abs(dy1)) ? dy0 : dy1;
-
-            // Move along the axis with the larger gap between bboxes.
-            // Gap is negative when bboxes overlap on that axis.
-            int x_gap = max(tx0 - obj.x1, obj.x0 - tx1);
-            int y_gap = max(ty0 - obj.y1, obj.y0 - ty1);
-            if (x_gap >= y_gap) dy = 0; else dx = 0;
+        if (!target.empty()) {
+            const auto [dy, dx] = arc::shift_to_touch({obj.y0, obj.x0, obj.y1, obj.x1}, target);
 
             obj.x0 = (int16_t)(obj.x0 + dx);
             obj.y0 = (int16_t)(obj.y0 + dy);
@@ -1855,97 +1832,28 @@ __device__ void gpu_exec_move_warp(gpu_exec_context& ctx, int16_t delta, bool ho
     __syncwarp();
 }
 
-__device__ gpu_object_list& gpu_exec_slam_row(gpu_exec_context& ctx, const gpu_object_list& src, int16_t dx) {
+__device__ gpu_object_list& gpu_exec_slam(gpu_exec_context& ctx, const gpu_object_list& src,
+                                        bool rows, int16_t step) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
-        // Only what was picked moves; the rest ride through where they are.
-        // Nothing picked means this op does nothing -- acts never fall back to all.
-        if (!obj.selected) { res.count++; continue; }
-        if (dx == 0) { res.count++; continue; }
-        // Clamp to the mask's actual extent: bbox dims can exceed 30 (Shift/Union can
-        // push an object's bbox past the grid), but the mask is only 30x30 and `nm` is
-        // a 30x30 local array — looping past 30 walks off it => illegal memory access.
-        int w = min((int)obj.width, GPU_MAX_GRID), h = min((int)obj.height, GPU_MAX_GRID);
-        // Global scratch (coalesced), not per-thread local. Packed like the mask
-        // it becomes, so the result moves across as a copy, not a conversion.
-        // Single-threaded here, so sharing a byte between two cells is safe.
-        gpu_packed_mask& nm = *reinterpret_cast<gpu_packed_mask*>(ctx.op_scratch);
-        nm.clear();
-        if (dx > 0) {
-            for (int r = 0; r < h; ++r) {
-                int right_wall = w - 1;
-                for (int c = w - 1; c >= 0; --c) {
-                    if (obj.mask[r][c] == GPU_TRANSPARENT) continue;
-                    int target = c + dx;
-                    if (target > right_wall) target = right_wall;
-                    if (target >= 0 && target < w) nm[r][target] = obj.mask[r][c];
-                    right_wall = target - 1;
-                }
-            }
-        } else {
-            for (int r = 0; r < h; ++r) {
-                int left_wall = 0;
-                for (int c = 0; c < w; ++c) {
-                    if (obj.mask[r][c] == GPU_TRANSPARENT) continue;
-                    int target = c + dx;
-                    if (target < left_wall) target = left_wall;
-                    if (target >= 0 && target < w) nm[r][target] = obj.mask[r][c];
-                    left_wall = target + 1;
-                }
-            }
+        if (obj.selected && step != 0) {
+            // Shift/Union can grow the box beyond the packed mask's actual extent.
+            const int width = min((int)obj.width, GPU_MAX_GRID);
+            const int height = min((int)obj.height, GPU_MAX_GRID);
+            // Single-threaded, so writing cells that share a byte is safe.
+            auto& drawn = *reinterpret_cast<gpu_packed_mask*>(ctx.op_scratch);
+            drawn.clear();
+            arc::slam_cells(width, height, rows, step,
+                [&](int row, int col) { return (int)obj.mask[row][col]; },
+                [&](int row, int col, int color) { drawn[row][col] = (int8_t)color; });
+            obj.mask = drawn;
         }
-        obj.mask = nm;
         res.count++;
     }
     return res;
 }
-
-__device__ gpu_object_list& gpu_exec_slam_column(gpu_exec_context& ctx, const gpu_object_list& src, int16_t dy) {
-    auto& res = gpu_acquire(ctx);
-    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        res.objects[res.count] = src.objects[i];
-        auto& obj = res.objects[res.count];
-        // Only what was picked moves; the rest ride through where they are.
-        // Nothing picked means this op does nothing -- acts never fall back to all.
-        if (!obj.selected) { res.count++; continue; }
-        if (dy == 0) { res.count++; continue; }
-        int w = min((int)obj.width, GPU_MAX_GRID), h = min((int)obj.height, GPU_MAX_GRID);  // clamp: bbox can exceed mask's 30x30 -> nm OOB
-        // Global scratch (coalesced), not per-thread local. Packed like the mask
-        // it becomes, so the result moves across as a copy, not a conversion.
-        // Single-threaded here, so sharing a byte between two cells is safe.
-        gpu_packed_mask& nm = *reinterpret_cast<gpu_packed_mask*>(ctx.op_scratch);
-        nm.clear();
-        if (dy > 0) {
-            for (int c = 0; c < w; ++c) {
-                int bw = h - 1;
-                for (int r = h - 1; r >= 0; --r) {
-                    if (obj.mask[r][c] == GPU_TRANSPARENT) continue;
-                    int target = r + dy;
-                    if (target > bw) target = bw;
-                    if (target >= 0 && target < h) nm[target][c] = obj.mask[r][c];
-                    bw = target - 1;
-                }
-            }
-        } else {
-            for (int c = 0; c < w; ++c) {
-                int tw = 0;
-                for (int r = 0; r < h; ++r) {
-                    if (obj.mask[r][c] == GPU_TRANSPARENT) continue;
-                    int target = r + dy;
-                    if (target < tw) target = tw;
-                    if (target >= 0 && target < h) nm[target][c] = obj.mask[r][c];
-                    tw = target + 1;
-                }
-            }
-        }
-        obj.mask = nm;
-        res.count++;
-    }
-    return res;
-}
-
 
 // Warp-parallel scale up: all 32 lanes cooperate on pixel expansion.
 // Pattern mirrors gpu_exec_transform_warp: all-lane acquire, stripe copy with
@@ -3528,8 +3436,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             // MoveRow/MoveColumn handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::MoveRow:
             case node_type::MoveColumn:     result = &gpu_acquire(ctx); break;
-            case node_type::SlamRow:        result = last ? &gpu_exec_slam_row(ctx, *last, value) : &gpu_acquire(ctx); break;
-            case node_type::SlamColumn:     result = last ? &gpu_exec_slam_column(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SlamRow:        result = last ? &gpu_exec_slam(ctx, *last, true, value) : &gpu_acquire(ctx); break;
+            case node_type::SlamColumn:     result = last ? &gpu_exec_slam(ctx, *last, false, value) : &gpu_acquire(ctx); break;
             case node_type::AddColor:       result = last ? &gpu_exec_add_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Fit:            result = last ? &gpu_exec_fit(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Skew:           result = last ? &gpu_exec_skew(ctx, *last, value) : &gpu_acquire(ctx); break;

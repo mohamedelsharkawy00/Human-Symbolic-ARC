@@ -340,7 +340,7 @@ struct shape_color_map_rule {
 
             // Per-color box over the input (background excluded). An absent color
             // leaves its box empty, so the boxes alone say who is here.
-            color_box box[COLOR_COUNT];
+            cell_box box[COLOR_COUNT];
             color_boxes(in, box, background);
 
             // Key = the color with the smallest box, target = the largest.
@@ -1341,6 +1341,33 @@ inline vector<object> pieces_of(const grid& input, int8_t background,
     return pieces;
 }
 
+// Slide cells within each row or column, preserving their order and colors.
+// Each cell moves by step, stopping early at the edge or the cell ahead.
+// Read from the original cells and write into separate, already-cleared storage.
+// Returns whether any cell moved. Selection and dimension limits belong to callers.
+template <class At, class Put>
+ARC_HOST_DEVICE inline bool slam_cells(int width, int height, bool rows, int step,
+                                       At at, Put put) {
+    const int lines = rows ? height : width;
+    const int length = rows ? width : height;
+    const int direction = step > 0 ? 1 : -1;
+    bool moved = false;
+    for (int line = 0; line < lines; ++line) {
+        int wall = step > 0 ? length - 1 : 0;
+        for (int i = 0; i < length; ++i) {
+            const int source = step > 0 ? length - 1 - i : i;
+            const int color = rows ? at(line, source) : at(source, line);
+            if (color == TRANSPARENT) continue;
+            int target = source + step;
+            if (step > 0 ? target > wall : target < wall) target = wall;
+            put(rows ? line : target, rows ? target : line, color);
+            wall = target - direction;
+            moved = moved || target != source;
+        }
+    }
+    return moved;
+}
+
 // Every piece slammed its own cells against one side of its own box.
 // Only held when sliding every piece that way redraws every output exactly.
 struct piece_slam_rule {
@@ -1366,27 +1393,18 @@ struct piece_slam_rule {
                 drawn.fill(output_background);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
-                    const int lines = rows ? piece.summary.h : piece.summary.w;
-                    const int length = rows ? piece.summary.w : piece.summary.h;
-                    for (int line = 0; line < lines; ++line) {
-                        // Scanning from the side the cells slide toward, each takes the
-                        // next free spot and becomes the wall for the ones behind it.
-                        int wall = step > 0 ? length - 1 : 0;
-                        for (int i = 0; i < length; ++i) {
-                            const int at = step > 0 ? length - 1 - i : i;
-                            const int color = rows ? piece.cells[line][at] : piece.cells[at][line];
-                            if (color == TRANSPARENT) continue;
-                            const int to = step > 0 ? min(at + step, wall) : max(at + step, wall);
-                            wall = to - step;
-                            const int row = piece.summary.y0 + (rows ? line : to);
-                            const int col = piece.summary.x0 + (rows ? to : line);
-                            // Two pieces landing on one cell would leave the paint order to decide.
-                            if (painted[row][col]) return false;
+                    bool collision = false;
+                    moved |= slam_cells(piece.summary.w, piece.summary.h, rows, step,
+                        [&](int row, int col) { return (int)piece.cells[row][col]; },
+                        [&](int row, int col, int color) {
+                            row += piece.summary.y0;
+                            col += piece.summary.x0;
+                            // Two pieces landing on one cell would leave paint order to decide.
+                            collision = collision || painted[row][col];
                             painted[row][col] = true;
                             drawn.data[row][col] = color;
-                            moved = moved || to != at;
-                        }
-                    }
+                        });
+                    if (collision) return false;
                 }
                 if (drawn != pair.output) return false;
             }
@@ -1471,6 +1489,25 @@ struct overlap_corner_rule {
     }
 };
 
+// Shift a non-empty box flush against another, without changing the other axis.
+// The larger gap chooses the axis (ties go across); the nearer side chooses
+// the shift (ties go left or up). Overlapping boxes have negative gaps.
+// The result is {down, across}, in grid coordinates.
+ARC_HOST_DEVICE inline std::pair<int, int> shift_to_touch(const cell_box& moving,
+                                                         const cell_box& target) {
+    const int left = target.col0 - moving.col1 - 1;
+    const int right = target.col1 - moving.col0 + 1;
+    const int above = target.row0 - moving.row1 - 1;
+    const int below = target.row1 - moving.row0 + 1;
+    int across = abs(left) <= abs(right) ? left : right;
+    int down = abs(above) <= abs(below) ? above : below;
+    const int column_gap = max(target.col0 - moving.col1, moving.col0 - target.col1);
+    const int row_gap = max(target.row0 - moving.row1, moving.row0 - target.row1);
+    if (column_gap >= row_gap) down = 0;
+    else across = 0;
+    return {down, across};
+}
+
 // PIECES SLID UP AGAINST THE ONES THAT STAY. One colour is already where it
 // belongs and the other closes the gap until the two touch. That is what
 // AlignToCanvas does, and this reads the same movement off the pairs: the still
@@ -1485,10 +1522,7 @@ struct overlap_corner_rule {
 // names a piece by what it is -- so a grid where three colours share the work
 // is a movement with no sentence, and is not claimed here.
 //
-// THE ARITHMETIC IS THE OP'S, NOT A SECOND OPINION. Which of the two flush
-// landings wins, and which axis the piece travels along, are
-// gpu_exec_align_to_canvas' own rules, restated here so that what the reading
-// checks is what the word will really do. The two have to move together.
+// shift_to_touch is shared with GPU execution, so both choose the same landing.
 struct slide_to_touch_rule {
     int8_t stays  = -1;   // the colour that is already where it belongs
     int8_t slides = -1;   // the colour that closes the gap until they touch
@@ -1539,34 +1573,24 @@ struct slide_to_touch_rule {
                 // already painted, read once, before the first piece slides --
                 // so what slides is measured against the pieces that stay, and
                 // never against another piece that is still on its way.
-                int tx0 = MAX_GRID_DIM, ty0 = MAX_GRID_DIM, tx1 = -1, ty1 = -1;
+                cell_box target;
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != stays) continue;
                     if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0, pieces[i].summary.x0)) return false;
-                    tx0 = min(tx0, (int)pieces[i].summary.x0);
-                    ty0 = min(ty0, (int)pieces[i].summary.y0);
-                    tx1 = max(tx1, pieces[i].summary.x0 + pieces[i].summary.w - 1);
-                    ty1 = max(ty1, pieces[i].summary.y0 + pieces[i].summary.h - 1);
+                    const auto& box = pieces[i].summary;
+                    target.include_cell(box.y0, box.x0);
+                    target.include_cell(box.y0 + box.h - 1, box.x0 + box.w - 1);
                 }
                 // An empty canvas is nothing to touch, and the op answers that
                 // by leaving every piece exactly where it stood.
-                if (tx1 < 0) return false;
+                if (target.empty()) return false;
                 bool anything_slid = false;
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != slides) continue;
                     anything_slid = true;
-                    const int x0 = pieces[i].summary.x0, y0 = pieces[i].summary.y0;
-                    const int x1 = x0 + pieces[i].summary.w - 1;
-                    const int y1 = y0 + pieces[i].summary.h - 1;
-                    // The two ways to land flush on each axis; the nearer wins.
-                    const int to_the_left = tx0 - x1 - 1, to_the_right = tx1 - x0 + 1;
-                    const int above = ty0 - y1 - 1, below = ty1 - y0 + 1;
-                    int across = abs(to_the_left) <= abs(to_the_right) ? to_the_left : to_the_right;
-                    int down   = abs(above) <= abs(below) ? above : below;
-                    // And it travels along the axis it stood further apart on;
-                    // a gap reads negative where the two boxes already overlap.
-                    if (max(tx0 - x1, x0 - tx1) >= max(ty0 - y1, y0 - ty1)) down = 0;
-                    else                                                    across = 0;
+                    const auto& box = pieces[i].summary;
+                    const auto [down, across] = shift_to_touch(
+                        {box.y0, box.x0, box.y0 + box.h - 1, box.x0 + box.w - 1}, target);
                     if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0 + down,
                                      pieces[i].summary.x0 + across)) return false;
                     moved = moved || down != 0 || across != 0;

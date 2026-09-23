@@ -221,7 +221,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     // corner touch is not a border. Not the 8 that grouping uses — see the note
     // beside neighbour_row_4 in 1_readings.hpp before making these agree.
     int touching[COLOR_COUNT] = {};
-    color_box box[COLOR_COUNT];
+    cell_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
     walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
         for (int dir = 0; dir < 4; ++dir) {
