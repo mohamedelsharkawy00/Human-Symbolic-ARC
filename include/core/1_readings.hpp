@@ -446,8 +446,7 @@ inline bool pairs_overlay(const vector<example>& train) {
         // and a channel that divides by the cell count would hand back a
         // nonsense number instead of declining.
         return ex.input.width > 0 && ex.input.height > 0 &&
-               ex.input.width  == ex.output.width &&
-               ex.input.height == ex.output.height;
+               ex.input.same_size(ex.output);
     });
 }
 

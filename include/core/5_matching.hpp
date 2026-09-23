@@ -125,8 +125,7 @@ struct object_matching {
                               const grid& into, int row, int col) {
         if (cells.data[row][col] == TRANSPARENT) return false;
         const int into_row = edge.row + row, into_col = edge.col + col;
-        if (into_row < 0 || into_row >= into.height ||
-            into_col < 0 || into_col >= into.width) return false;
+        if (!into.contains(into_row, into_col)) return false;
         return !edge.hidden || into.data[into_row][into_col] == cells.data[row][col];
     }
 
@@ -443,8 +442,7 @@ private:
                 for (int at_col = first_col; at_col <= last_col; ++at_col) {
                     // Only visible cells provide evidence for a match.
                     auto off_grid = [&](int row, int col) {
-                        return at_row + row < 0 || at_row + row >= where.height ||
-                               at_col + col < 0 || at_col + col >= where.width;
+                        return !where.contains(at_row + row, at_col + col);
                     };
                     int shown = 0;
                     for (int row = 0; row < posed.height; ++row)
@@ -549,8 +547,7 @@ private:
             for (int col = 0; col < posed.width; ++col) {
                 if (posed.data[row][col] == TRANSPARENT) continue;
                 const int into_row = edge.row + row, into_col = edge.col + col;
-                if (into_row < 0 || into_row >= into.height ||
-                    into_col < 0 || into_col >= into.width) continue;
+                if (!into.contains(into_row, into_col)) continue;
                 if (into.data[into_row][into_col] != background) return true;
             }
         return false;
@@ -636,8 +633,7 @@ private:
                         const int object_color = posed.data[row][col];
                         if (object_color == TRANSPARENT) continue;
                         const int into_row = hit.row + row, into_col = hit.col + col;
-                        if (into_row < 0 || into_row >= into.height ||
-                            into_col < 0 || into_col >= into.width) continue;
+                        if (!into.contains(into_row, into_col)) continue;
                         const int into_color = into.data[into_row][into_col];
                         if (hit.hidden && into_color != object_color) continue;
                         odds *= share[hit.color_map[object_color]];
@@ -779,8 +775,7 @@ private:
                     const int into_col = found[found_index].col + col;
                     // Off the edge is not a cell of this grid at all: it is
                     // neither painted nor hidden, it was simply never shown.
-                    if (into_row < 0 || into_row >= into.height ||
-                        into_col < 0 || into_col >= into.width) continue;
+                    if (!into.contains(into_row, into_col)) continue;
                     const int id = into_row * into.width + into_col;
                     // The cells it is hidden at are its own too â€” kept apart,
                     // because they are what puts it BEHIND whoever paints them.

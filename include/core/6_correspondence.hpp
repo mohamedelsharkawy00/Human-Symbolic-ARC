@@ -593,8 +593,7 @@ private:
                     for (int col = 0; col < objects[i].summary.w; ++col) {
                         if (objects[i].cells[row][col] == TRANSPARENT) continue;
                         const int at_row = one.summary.y0 + row, at_col = one.summary.x0 + col;
-                        if (at_row < 0 || at_row >= other.height ||
-                            at_col < 0 || at_col >= other.width) continue;
+                        if (!other.contains(at_row, at_col)) continue;
                         const int16_t which = patch_of[at_row][at_col];
                         if (which < 0) continue;
                         const auto& patch = patches[which];
@@ -726,8 +725,7 @@ private:
                         if (landing_object.cells[row][col] == TRANSPARENT) continue;
                         int in_footprint_row = landing.summary.y0 + row - edge.row;
                         int in_footprint_col = landing.summary.x0 + col - edge.col;
-                        if (in_footprint_row < 0 || in_footprint_row >= footprint.height ||
-                            in_footprint_col < 0 || in_footprint_col >= footprint.width) continue;
+                        if (!footprint.contains(in_footprint_row, in_footprint_col)) continue;
                         if (footprint.data[in_footprint_row][in_footprint_col] != TRANSPARENT) {
                             touches = true; break;
                         }

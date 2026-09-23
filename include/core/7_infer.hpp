@@ -6,8 +6,8 @@
 //   ELECTIONS  ranked interpretations, supplied by upstream detectors.
 //
 // Each answer owns the detector that fills it (color_facts::detect,
-// piece_slam_rule::detect), so file scope holds nothing but the answers
-// themselves and infer(), which asks them all in order.
+// piece_slam_rule::detect). Shared drawing helpers support those detectors;
+// infer() asks them all in order.
 #pragma once
 #include "1_readings.hpp"
 #include "2_size.hpp"
@@ -595,7 +595,7 @@ struct periodic_denoise_rule {
         bool cleaned_something = false;
         for (const auto& pair : train) {
             const grid& input = pair.input;
-            if (input.width != pair.output.width || input.height != pair.output.height) return {};
+            if (!input.same_size(pair.output)) return {};
             grid drawn = input;
             const bool voted = vote_denoise_cells(input.width, input.height, background,
                 [&](int r, int c) -> int8_t {
@@ -1332,6 +1332,15 @@ struct input_blocks_rule {
     }
 };
 
+// Read just the pieces, in the same size-and-position order used by matching.
+inline vector<object> pieces_of(const grid& input, int8_t background,
+                                segmentation_methods segmentation) {
+    vector<object_segmentation::object_info> info;
+    vector<object> pieces;
+    object_segmentation::segment_for_correspondence(input, background, segmentation, info, &pieces);
+    return pieces;
+}
+
 // Every piece slammed its own cells against one side of its own box.
 // Only held when sliding every piece that way redraws every output exactly.
 struct piece_slam_rule {
@@ -1352,10 +1361,7 @@ struct piece_slam_rule {
         // cell moved at all; false at the first cell that comes out wrong.
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
             for (const auto& pair : train) {
-                vector<object_segmentation::object_info> info;
-                vector<object> pieces;
-                object_segmentation::segment_for_correspondence(pair.input, input_background,
-                                                                correspondence.segmentation, info, &pieces);
+                const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
                 grid drawn(pair.output.width, pair.output.height);
                 drawn.fill(output_background);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -1396,6 +1402,19 @@ struct piece_slam_rule {
     }
 };
 
+// Paint at an absolute grid position. Transparent cells leave the canvas alone.
+// False means some paint fell outside; callers must discard that partial drawing.
+inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0) {
+    for (int row = 0; row < piece.summary.h; ++row)
+        for (int col = 0; col < piece.summary.w; ++col) {
+            const int color = piece.cells[row][col];
+            if (color == TRANSPARENT) continue;
+            if (!canvas.contains(row0 + row, col0 + col)) return false;
+            canvas.data[row0 + row][col0 + col] = color;
+        }
+    return true;
+}
+
 // THE PIECES LAID OUT AS ONE DIAGONAL CHAIN, each hung off the bottom-right
 // corner of the one before it, overlapping it by the single cell they share.
 // Only held when replaying that chain redraws every output exactly, which is
@@ -1419,10 +1438,7 @@ struct overlap_corner_rule {
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
         for (const auto& pair : train) {
-            vector<object_segmentation::object_info> info;
-            vector<object> pieces;
-            object_segmentation::segment_for_correspondence(pair.input, input_background,
-                                                            correspondence.segmentation, info, &pieces);
+            const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return {};
             // The chain runs left to right, ties top to bottom -- the order the
@@ -1442,16 +1458,7 @@ struct overlap_corner_rule {
             // which is the paint order the closing Union gives them for free.
             int x = 0, y = 0;
             for (const object* piece : chain) {
-                for (int r = 0; r < piece->summary.h; ++r)
-                    for (int c = 0; c < piece->summary.w; ++c) {
-                        const int color = piece->cells[r][c];
-                        if (color == TRANSPARENT) continue;
-                        const int row = y + r, col = x + c;
-                        // A chain that runs off the canvas did not draw this output.
-                        if (row < 0 || row >= drawn.height ||
-                            col < 0 || col >= drawn.width) return {};
-                        drawn.data[row][col] = color;
-                    }
+                if (!paint_piece(drawn, *piece, y, x)) return {};
                 laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
                     x != piece->summary.x0 || y != piece->summary.y0;
                 x += piece->summary.w - 1;
@@ -1494,7 +1501,7 @@ struct slide_to_touch_rule {
         // are ground, so the two grids have to lie over one another; and the
         // boxes measured here are the boxes Trim hands the op.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
-            !is_color(output_background) || !pairs_overlay(train) || train.empty()) return {};
+            !is_color(output_background) || !pairs_overlay(train)) return {};
 
         // The colours the pieces wear: two of them, the same two in every pair,
         // or there is no pair of picks that can say this.
@@ -1528,20 +1535,6 @@ struct slide_to_touch_rule {
                                                                 correspondence.segmentation, info, &pieces);
                 grid drawn(pair.output.width, pair.output.height);
                 drawn.fill(output_background);
-                auto paint = [&](const object& piece, int down, int across) {
-                    for (int r = 0; r < piece.summary.h; ++r)
-                        for (int c = 0; c < piece.summary.w; ++c) {
-                            const int color = piece.cells[r][c];
-                            if (color == TRANSPARENT) continue;
-                            const int row = piece.summary.y0 + down + r;
-                            const int col = piece.summary.x0 + across + c;
-                            // A piece slid off the canvas did not draw this output.
-                            if (row < 0 || row >= drawn.height ||
-                                col < 0 || col >= drawn.width) return false;
-                            drawn.data[row][col] = color;
-                        }
-                    return true;
-                };
                 // WHAT THE OP SEES OF THE CANVAS is the box around everything
                 // already painted, read once, before the first piece slides --
                 // so what slides is measured against the pieces that stay, and
@@ -1549,7 +1542,7 @@ struct slide_to_touch_rule {
                 int tx0 = MAX_GRID_DIM, ty0 = MAX_GRID_DIM, tx1 = -1, ty1 = -1;
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != stays) continue;
-                    if (!paint(pieces[i], 0, 0)) return false;
+                    if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0, pieces[i].summary.x0)) return false;
                     tx0 = min(tx0, (int)pieces[i].summary.x0);
                     ty0 = min(ty0, (int)pieces[i].summary.y0);
                     tx1 = max(tx1, pieces[i].summary.x0 + pieces[i].summary.w - 1);
@@ -1574,7 +1567,8 @@ struct slide_to_touch_rule {
                     // a gap reads negative where the two boxes already overlap.
                     if (max(tx0 - x1, x0 - tx1) >= max(ty0 - y1, y0 - ty1)) down = 0;
                     else                                                    across = 0;
-                    if (!paint(pieces[i], down, across)) return false;
+                    if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0 + down,
+                                     pieces[i].summary.x0 + across)) return false;
                     moved = moved || down != 0 || across != 0;
                 }
                 if (!anything_slid) return false;
@@ -1643,12 +1637,8 @@ struct project_on_seeds_rule {
         for (const auto& pair : train) {
             // Stamping paints over a copy of the input, so a canvas of another
             // size is a different drawing than the one replayed here.
-            if (pair.input.width != pair.output.width ||
-                pair.input.height != pair.output.height) return {};
-            vector<object_segmentation::object_info> info;
-            vector<object> pieces;
-            object_segmentation::segment_for_correspondence(pair.input, input_background,
-                                                            correspondence.segmentation, info, &pieces);
+            if (!pair.input.same_size(pair.output)) return {};
+            const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
             if (pieces.empty()) return {};
             // The template is whichever piece SortBySize[0] puts first, and that
             // word ranks by cells -- not the box that picked the markers. The op
@@ -1700,8 +1690,7 @@ struct project_on_seeds_rule {
                         for (int c = 0; c < tpl->summary.w; ++c) {
                             if (tpl->cells[r][c] == TRANSPARENT) continue;
                             const int row = at_y + r, col = at_x + c;
-                            if (row < 0 || row >= drawn.height ||
-                                col < 0 || col >= drawn.width) continue;
+                            if (!drawn.contains(row, col)) continue;
                             drawn.data[row][col] = marker.color;
                         }
                     ++stamped;

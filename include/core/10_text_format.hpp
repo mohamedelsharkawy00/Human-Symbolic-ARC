@@ -43,26 +43,24 @@ inline string to_text(ARC_FORMAT_ARG const char *form, ...) {
 // the digits asked for, so a score of 2530 came back as 2.53e+03 -- the same
 // number said worse, and longer. Keep looking for a plain spelling, and settle
 // for an exponent only when no number of digits gives one.
-inline string shortest(float value) {
+template <typename Number, typename Parse>
+inline string shortest_number(Number value, int max_digits, Parse parse) {
   string with_exponent;
-  for (int digits = 1; digits < 10; ++digits) {
+  for (int digits = 1; digits <= max_digits; ++digits) {
     string text = to_text("%.*g", digits, (double)value);
-    if (strtof(text.c_str(), nullptr) != value) continue;
+    if (parse(text.c_str(), nullptr) != value) continue;
     if (text.find('e') == string::npos) return text;
     if (with_exponent.empty()) with_exponent = text;
   }
-  return with_exponent.empty() ? to_text("%.9g", (double)value) : with_exponent;
+  return with_exponent.empty() ? to_text("%.*g", max_digits, (double)value) : with_exponent;
+}
+
+inline string shortest(float value) {
+  return shortest_number(value, 9, strtof);
 }
 
 inline string shortest(double value) {
-  string with_exponent;
-  for (int digits = 1; digits < 18; ++digits) {
-    string text = to_text("%.*g", digits, value);
-    if (strtod(text.c_str(), nullptr) != value) continue;
-    if (text.find('e') == string::npos) return text;
-    if (with_exponent.empty()) with_exponent = text;
-  }
-  return with_exponent.empty() ? to_text("%.17g", value) : with_exponent;
+  return shortest_number(value, 17, strtod);
 }
 
 // printf has every alignment the panel uses except centred, so that one is here.

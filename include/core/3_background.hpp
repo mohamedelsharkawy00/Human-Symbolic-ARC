@@ -227,8 +227,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
         for (int dir = 0; dir < 4; ++dir) {
             int next_row = row + neighbour_row_4(dir);
             int next_col = col + neighbour_col_4(dir);
-            if (next_row < 0 || next_col < 0 ||
-                next_row >= one_grid.height || next_col >= one_grid.width) continue;
+            if (!one_grid.contains(next_row, next_col)) continue;
             if (one_grid.data[next_row][next_col] != color) { touching[color]++; return; }
         }
     });
@@ -329,8 +328,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
             for (int dir = 0; dir < 4; ++dir) {
                 int next_row = row + neighbour_row_4(dir);
                 int next_col = col + neighbour_col_4(dir);
-                if (next_row < 0 || next_row >= one_grid.height ||
-                    next_col < 0 || next_col >= one_grid.width) continue;
+                if (!one_grid.contains(next_row, next_col)) continue;
                 if (!outside[next_row][next_col]) continue;
                 int owner_object = objects.id[next_row][next_col];
                 if (owner_object < 0) continue;
