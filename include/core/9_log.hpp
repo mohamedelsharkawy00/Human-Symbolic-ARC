@@ -280,7 +280,21 @@ inline void report_pane_pick(ostream& report, const pane_pick_rule& pick) {
 inline void report_said_reading(ostream& report, const inference& inf) {
     // Each block as the poses that draw it, '-' for background.
     const auto& blocks = inf.input_blocks;
-    report << "[input_blocks] holds " << blocks.holds() << "\n";
+    report << "[input_blocks] holds " << blocks.holds();
+    // How the copies' colors were read: a table every pair shares, or the
+    // negative, whose ink each pair's own input supplies.
+    if (blocks.negative) report << "  colors negative";
+    else if (blocks.holds()) {
+        report << "  colors";
+        bool changed = false;
+        for (int was = 0; was < COLOR_COUNT; ++was)
+            if (blocks.color_map[was] >= 0 && blocks.color_map[was] != was) {
+                report << " " << was << "->" << (int)blocks.color_map[was];
+                changed = true;
+            }
+        if (!changed) report << " as given";
+    }
+    report << "\n";
     for (size_t which = 0; which < blocks.pairs.size(); ++which) {
         const auto& at = blocks.pairs[which];
         report << "  pair " << which << "  " << (int)at.rows << "x" << (int)at.cols << " ";

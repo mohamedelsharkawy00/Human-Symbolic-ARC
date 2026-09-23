@@ -18,6 +18,9 @@ int main() {
     static_assert(GPU_GRID_CELLS == 900);
     static_assert(operation_named("MoveRow[-3]") == node_type::MoveRow);
     static_assert(operation_named("?") == node_type::type_count);
+    static_assert(takes_value(node_type::ScaleUp, 3) && !takes_value(node_type::ScaleUp, 1),
+                  "an argument is read off the op's own range");
+    static_assert(takes_value(node_type::Skew, -1) && !takes_value(node_type::Skew, 2));
 
     check(mark_after("") == the_mark::none, "empty selection");
     check(mark_after("Input SelectColor[2] Recolor[3]") == the_mark::some,
@@ -49,5 +52,15 @@ int main() {
     check(sentence_with_no_source("Input Union SelectAll Union"), "missing second source");
     check(sentence_with_no_source("? Union"), "unknown word is not a source");
     check(mark_after("SelectAll ?") == the_mark::all, "placeholder preserves selection");
+
+    said_reading said;
+    say_beats(said, "Input", {{"SelectAll", "ScaleUp[3]"}}, "Union");
+    say_beats(said, "InputWithoutBackground", {{"SelectAll", "Fractal"}}, "Difference", true);
+    say_beats(said, "Input", {{"SelectAll", "Trim"}}, "Union");
+    check(said.sentences == std::vector<std::string>{
+              "Input SelectAll ScaleUp[3] Union",
+              "InputWithoutBackground SelectAll Fractal Difference",
+              "CurrentObjects SelectAll Trim Union"},
+          "a line said afresh reads its own source; the rest carry the hand");
     std::cout << "Core vocabulary checks passed\n";
 }

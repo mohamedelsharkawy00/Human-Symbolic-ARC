@@ -1210,6 +1210,11 @@ struct input_blocks_rule {
     bool held = false;
     // One cell-level map shared by every copy; -1 means the color keeps itself.
     int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    // OR EVERY COPY IS ITS INPUT'S NEGATIVE: figure and ground trade places.
+    // The figure's color comes off each pair's own input and is kept nowhere,
+    // so this is a derivation and not a table -- 0692e18c paints its copies 6,
+    // 7 and 4, then asks about 3, which no table read off those pairs holds.
+    bool negative = false;
     // The poses whose own figure is where the copies are: the filled blocks are
     // exactly the figure cells of the input posed that way, in every pair.
     uint8_t figure_poses = 0;
@@ -1252,11 +1257,13 @@ struct input_blocks_rule {
             return true;
         };
 
-        auto read_with = [&](const int8_t* map) {
+        // `map_of` names the map each pair's copies are read through.
+        auto read_with = [&](auto map_of) {
             input_blocks_rule candidate;
-            copy_n(map, COLOR_COUNT, candidate.color_map);
             candidate.figure_poses = ground < 0 ? 0 : 0xFF;
-            for (const auto& pair : train) {
+            for (size_t which = 0; which < train.size(); ++which) {
+                const auto& pair = train[which];
+                const int8_t* map = map_of(which);
                 const int width = pair.input.width, height = pair.input.height;
                 layout at;
                 at.rows = (int8_t)(pair.output.height / height);
@@ -1309,11 +1316,30 @@ struct input_blocks_rule {
             int changes = 0;
             for (int was = 0; was < COLOR_COUNT; ++was) changes += map[was] >= 0 && map[was] != was;
             if (changes >= fewest_changes) continue;
-            if (input_blocks_rule candidate = read_with(map); candidate.holds()) {
+            if (input_blocks_rule candidate = read_with([&](size_t) { return map; });
+                candidate.holds()) {
                 best = move(candidate);
+                copy_n(map, COLOR_COUNT, best.color_map);
                 fewest_changes = changes;
             }
         }
+        if (best.holds() || ground < 0) return best;
+
+        // NO ONE TABLE HOLDS, so the colors are asked by what they are rather
+        // than which they are. A table the pairs agree on is what they literally
+        // show; colors that change from pair to pair are the evidence that the
+        // copy takes its ink from its own input. A figure of several colors has
+        // no one negative, and nothing is claimed for it.
+        vector<array<int8_t, COLOR_COUNT>> negatives(train.size());
+        for (size_t which = 0; which < train.size(); ++which) {
+            const int8_t figure = the_figure_color(train[which].input, ground);
+            if (!is_color(figure)) return best;
+            negatives[which].fill(-1);
+            negatives[which][ground] = figure;
+            negatives[which][figure] = (int8_t)ground;
+        }
+        best = read_with([&](size_t which) { return negatives[which].data(); });
+        best.negative = best.holds();
         return best;
     }
 };

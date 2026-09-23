@@ -395,6 +395,22 @@ inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT],
     walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
 }
 
+// The one color every cell off the ground wears, or TRANSPARENT when there is no
+// figure or it wears several. What a person means by "the shape's color": read
+// off the grid in hand, so a rule that asks for it names a color no example
+// showed as readily as one they all did.
+inline int8_t the_figure_color(const grid& one_grid, int ground) {
+    int counts[COLOR_COUNT];
+    count_colors(one_grid, counts, ground);
+    int8_t figure = TRANSPARENT;
+    for (int color = 0; color < COLOR_COUNT; ++color) {
+        if (!counts[color]) continue;
+        if (figure != TRANSPARENT) return TRANSPARENT;
+        figure = (int8_t)color;
+    }
+    return figure;
+}
+
 // The smallest box each color's cells fit in. A color with no cells keeps the
 // empty box it starts with, and empty() is how you ask.
 struct color_box {

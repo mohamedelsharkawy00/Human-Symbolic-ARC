@@ -127,11 +127,12 @@ inline string closed_on_the_pick(const string& words, const string& combine) {
 }
 
 // ONE SENTENCE. Nothing is implicit: the first names its source, the rest carry
-// on from the objects already in hand.
+// on from the objects already in hand -- unless it opens a line `afresh`, which
+// reads its source again instead of what the sentences before it left in hand.
 inline void say_sentence(said_reading& said, const string& source, const string& pick,
-                         const string& act, const string& combine) {
+                         const string& act, const string& combine, bool afresh = false) {
     said.sentences.push_back(closed_with(
-        (said.sentences.empty() ? source : string("CurrentObjects")) + " " + pick + " " + act,
+        (said.sentences.empty() || afresh ? source : string("CurrentObjects")) + " " + pick + " " + act,
         combine));
 }
 
@@ -140,12 +141,12 @@ struct beat { string pick, act; };
 
 // A LINE OF BEATS, SAID AS SENTENCES. Only the last paints: a cell drawn before
 // its piece has turned or slid is never taken back, so every beat before it
-// withholds.
+// withholds. A line said `afresh` opens with its own source, then carries on.
 inline void say_beats(said_reading& said, const string& source,
-                      const vector<beat>& beats, const string& combine) {
+                      const vector<beat>& beats, const string& combine, bool afresh = false) {
     for (size_t i = 0; i < beats.size(); ++i)
         say_sentence(said, source, beats[i].pick, beats[i].act,
-                     i + 1 < beats.size() ? "Withhold" : combine);
+                     i + 1 < beats.size() ? "Withhold" : combine, afresh && i == 0);
 }
 
 // WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
@@ -244,6 +245,39 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
                 if (!at.poses[r][c]) return true;
         return false;
     });
+
+    // THE NEGATIVE HAS NO WORD OF ITS OWN, but where the copies sit on the
+    // input's own figure it has a spelling: grow every cell into a block of its
+    // own color, then carve the copies back out. A figure cell's block is left
+    // wearing the figure's color exactly where the input was ground, and a
+    // ground cell's block was ground already. The carve reads the input again,
+    // since what it cuts is the copies and not what the growing left in hand.
+    if (blocks.negative) {
+        const int pose = !some_are_ground ? -1
+            : cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
+        if (some_are_ground && pose < 0) {
+            said.no_word_for.push_back("which blocks hold a copy of the input");
+            return false;
+        }
+        // Grown, the input covers the output only when every pair grew by one
+        // whole factor both ways, and that factor is how many blocks a side holds.
+        const int grown = blocks.pairs.front().rows;
+        if (pose < 0 || !takes_value(node_type::ScaleUp, grown) ||
+            ranges::any_of(blocks.pairs, [&](const auto& at) {
+                return at.rows != grown || at.cols != grown; })) {
+            said.no_word_for.push_back("a copy with its figure and ground traded");
+            return false;
+        }
+        vector<beat> grow, carve;
+        say_pose(grow, "SelectAll", pose);
+        say_pose(carve, "SelectAll", pose);
+        grow.push_back({"SelectAll", "ScaleUp[" + to_string(grown) + "]"});
+        carve.push_back({"SelectAll", "Fractal"});
+        say_beats(said, "Input", grow, "Union");
+        say_beats(said, "InputWithoutBackground", carve, "Difference", /*afresh=*/true);
+        return true;
+    }
+
     string source = "Input";
     vector<beat> beats;
     if (some_are_ground) {

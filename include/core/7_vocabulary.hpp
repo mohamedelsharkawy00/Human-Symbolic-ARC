@@ -162,6 +162,18 @@ inline constexpr bool is_act_op(node_type t) {
     return !is_get_op(t) && !is_select_op(t) && !is_combine_op(t);
 }
 
+// Whether an op's argument can be this value, off the op's own row above. A
+// sentence that reads a number off the puzzle asks here before writing it, so
+// it never spells an argument the op has no variant for.
+inline constexpr bool takes_value(node_type t, int value) {
+    switch (t) {
+#define X(id, n, low, high, role) case node_type::id: return (low) <= value && value <= (high);
+    NODE_PRIMITIVES
+#undef X
+    default: return false;
+    }
+}
+
 // How much of what an op does comes from a fact inference elected. ALL means the
 // op is nothing without that fact, which is exactly when a dead-op guard is an
 // honest verdict -- so the ALL ops are the ops that carry one, and that is the
