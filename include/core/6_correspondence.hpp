@@ -45,7 +45,7 @@ struct correspondence_election {
         vector<object_info> output_info;
         // Matches in both directions, with duplicate object pairs merged.
         vector<edge> edges;
-        // Matches that were found and then thrown away, with why â€” otherwise
+        // Matches that were found and then thrown away, with why — otherwise
         // "never matched" and "matched and lost" look the same in the log.
         vector<rejection> discarded;
         // 0 = fitted, 1 = greedy fallback, 2 = search budget exhausted.
@@ -70,8 +70,32 @@ struct correspondence_election {
         int partly_hidden = 0, turned = 0, dropped = 0;
         // Non-background output cells covered by color-preserving matches.
         int exact_covered_cells = 0;
-        // Non-background into cells no exact edge covers â€” made, not carried
+        // Non-background into cells no exact edge covers — made, not carried
         int created_cells = 0;
+
+        // One side's objects: the input's, or the output's.
+        const vector<object_info>& objects_on(bool input) const {
+            return input ? input_info : output_info;
+        }
+        // The object an edge leaves from, or null when its index names none.
+        const object_info* source_of(const edge& link) const {
+            const auto& objects = objects_on(link.from_input);
+            return link.from >= 0 && (size_t)link.from < objects.size() ? &objects[link.from] : nullptr;
+        }
+        // The object an edge lands on, or null when it landed on a place instead.
+        const object_info* target_of(const edge& link) const {
+            const auto& objects = objects_on(!link.from_input);
+            return link.to >= 0 && (size_t)link.to < objects.size() ? &objects[link.to] : nullptr;
+        }
+        // Left-over cells whose object has no partner: made on the output side,
+        // gone from the input side.
+        int made() const { return partnerless_cells(false); }
+        int gone() const { return partnerless_cells(true); }
+        int partnerless_cells(bool on_input) const {
+            return (int)ranges::count_if(left_over, [&](const left_over_cell& cell) {
+                return cell.made_or_gone && cell.from_input == on_input;
+            });
+        }
     };
     // Total non-background cells in all training grids, used to normalize leftover counts.
     int cells = 0;
@@ -85,7 +109,7 @@ struct correspondence_election {
         // Which segmentation, and what a match was allowed to change
         segmentation_methods segmentation = segmentation_methods::unset;
         degrees_of_freedom allowed;
-        // How many objects the segmentation FOUND, and how many it USED â€” the log prints
+        // How many objects the segmentation FOUND, and how many it USED — the log prints
         // them as "segmented into X, used Y"
         int objects_found = 0, objects_used = 0;
         int left_over = 0, box_cells = 0;
@@ -104,10 +128,10 @@ struct correspondence_election {
     // Each segmentation's best reading, as its index in readings, so a rule
     // about one way of cutting can read that cut's own evidence, elected or not.
     vector<int16_t> best_of;
-    const reading* best_reading_of(segmentation_methods segmentation) const {
-        const size_t method = (size_t)segmentation;
-        if (method >= best_of.size() || best_of[method] < 0) return nullptr;
-        return &readings[best_of[method]];
+    const reading* best_reading_of(segmentation_methods method) const {
+        const size_t index = (size_t)method;
+        if (index >= best_of.size() || best_of[index] < 0) return nullptr;
+        return &readings[best_of[index]];
     }
     // Indices of other segmentations whose best readings tie with the winner.
     vector<int8_t> tied_with_chosen;
@@ -156,27 +180,6 @@ struct correspondence_election {
                 reading& scored = facts.readings[cell];
                 scored = detect_correspondence(train, background, prepared,
                                                 degrees_of_freedom::from_index(packed));
-                double shares = 0.0;
-                for (const auto& pair : scored.pairs) {
-                    scored.left_over += (int)pair.left_over.size();
-                    scored.made += (int)ranges::count_if(pair.left_over,
-                        [](const auto& cell) { return cell.made_or_gone && !cell.from_input; });
-                    scored.gone += (int)ranges::count_if(pair.left_over,
-                        [](const auto& cell) { return cell.made_or_gone && cell.from_input; });
-                    scored.objects_used += pair.objects_used;
-                    shares += pair.describe_cost;
-                    scored.objects_found +=
-                        (int)(pair.input_info.size() + pair.output_info.size());
-                    scored.exact += pair.found_exact;
-                    scored.recolored += pair.found_recolored;
-                    scored.sits_on += pair.sits_on;
-                    for (const auto& one_object : pair.input_info)
-                        scored.box_cells += one_object.summary.w * one_object.summary.h;
-                    for (const auto& landing : pair.output_info)
-                        scored.box_cells += landing.summary.w * landing.summary.h;
-                }
-                if (!scored.pairs.empty())
-                    scored.describe_cost = shares / scored.pairs.size();
                 if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
             best_of_method.push_back(best);
@@ -195,32 +198,27 @@ struct correspondence_election {
                                 + (one.made + one.gone) * half_said;
             return one.describe_cost + unsaid * spelling_out;
         };
+        // Which of two readings the election prefers: negative for the first,
+        // positive for the second, 0 for a tie. Using objects at all comes first,
+        // then the lower price, and only prices within same_price of each other
+        // are settled by using fewer objects.
+        auto order = [&](const reading& one, const reading& other) {
+            if ((one.objects_used > 0) != (other.objects_used > 0)) return one.objects_used > 0 ? -1 : 1;
+            if (abs(price_of(one) - price_of(other)) > same_price)
+                return price_of(one) < price_of(other) ? -1 : 1;
+            if (one.objects_used != other.objects_used) return one.objects_used < other.objects_used ? -1 : 1;
+            return 0;
+        };
         size_t elected = 0;
-        for (size_t i = 1; i < best_of_method.size(); ++i) {
-            const auto& best = facts.readings[best_of_method[elected]];
-            const auto& here = facts.readings[best_of_method[i]];
-            if ((here.objects_used > 0) != (best.objects_used > 0)) {
-                if (here.objects_used > 0) elected = i;
-            } else if (abs(price_of(here) - price_of(best)) > same_price) {
-                if (price_of(here) < price_of(best)) elected = i;
-            } else if (here.objects_used < best.objects_used) {
+        for (size_t i = 1; i < best_of_method.size(); ++i)
+            if (order(facts.readings[best_of_method[i]], facts.readings[best_of_method[elected]]) < 0)
                 elected = i;
-            }
-        }
 
         facts.chosen = (int8_t)best_of_method[elected];
         facts.segmentation = facts.readings[facts.chosen].segmentation;
-        {
-            const auto& winner = facts.readings[best_of_method[elected]];
-            for (size_t i = 0; i < best_of_method.size(); ++i) {
-                if (i == elected) continue;
-                const auto& here = facts.readings[best_of_method[i]];
-                if ((here.objects_used > 0) != (winner.objects_used > 0)) continue;
-                if (abs(price_of(here) - price_of(winner)) > same_price) continue;
-                if (here.objects_used != winner.objects_used) continue;
+        for (size_t i = 0; i < best_of_method.size(); ++i)
+            if (i != elected && order(facts.readings[best_of_method[i]], facts.readings[facts.chosen]) == 0)
                 facts.tied_with_chosen.push_back((int8_t)best_of_method[i]);
-            }
-        }
         return facts;
     }
 
@@ -253,8 +251,7 @@ private:
             auto& saved = prepared.pairs[pair_index];
             const grid& input = train[pair_index].input;
             const grid& output = train[pair_index].output;
-            saved.read = input.width > 0 && input.height > 0 &&
-                         output.width > 0 && output.height > 0;
+            saved.read = !input.empty() && !output.empty();
             if (!saved.read) continue;
             auto& pair = saved.info;
             // Use the same block size for both grids.
@@ -309,7 +306,29 @@ private:
         reconcile_examples(train, background, prepared, allowed, facts);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read) summarize_pair(train, background, prepared, facts, i);
+        add_up_the_pairs(facts);
         return facts;
+    }
+
+    // The reading's totals, summed over its pairs, for the election to compare.
+    static void add_up_the_pairs(reading& facts) {
+        double shares = 0.0;
+        for (const auto& pair : facts.pairs) {
+            facts.left_over += (int)pair.left_over.size();
+            facts.made += pair.made();
+            facts.gone += pair.gone();
+            facts.objects_used += pair.objects_used;
+            shares += pair.describe_cost;
+            facts.exact += pair.found_exact;
+            facts.recolored += pair.found_recolored;
+            facts.sits_on += pair.sits_on;
+            for (const bool input : { true, false })
+                for (const auto& one_object : pair.objects_on(input)) {
+                    facts.objects_found++;
+                    facts.box_cells += one_object.summary.w * one_object.summary.h;
+                }
+        }
+        if (!facts.pairs.empty()) facts.describe_cost = shares / facts.pairs.size();
     }
 
     // Match both directions, merge duplicate links, and record shared movements.
@@ -332,8 +351,8 @@ private:
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
         auto read_one_way = [&](bool from_input) {
-            const auto& from_info = from_input ? pair.input_info : pair.output_info;
-            const auto& into_info = from_input ? pair.output_info : pair.input_info;
+            const auto& from_info = pair.objects_on(from_input);
+            const auto& into_info = pair.objects_on(!from_input);
             const auto& from_objects = from_input ? input_objects : output_objects;
             const auto& into_objects = from_input ? output_objects : input_objects;
             const grid& into = from_input ? output : input;
@@ -395,17 +414,13 @@ private:
         pair.edges.swap(kept);
 
         // Sort by source grid, source position, then target position for display.
-        stable_sort(pair.edges.begin(), pair.edges.end(),
-                    [&](const edge& left,
-                        const edge& right) {
+        stable_sort(pair.edges.begin(), pair.edges.end(), [&](const edge& left, const edge& right) {
             if (left.from_input != right.from_input) return left.from_input;
-            const auto& objects = left.from_input ? pair.input_info
-                                                  : pair.output_info;
-            const auto& here = objects[left.from];
-            const auto& there = objects[right.from];
-            if (here.summary.y0 != there.summary.y0)   return here.summary.y0 < there.summary.y0;
-            if (here.summary.x0 != there.summary.x0) return here.summary.x0 < there.summary.x0;
-            if (left.row != right.row)   return left.row < right.row;
+            const auto& here = pair.source_of(left)->summary;
+            const auto& there = pair.source_of(right)->summary;
+            if (here.y0 != there.y0) return here.y0 < there.y0;
+            if (here.x0 != there.x0) return here.x0 < there.x0;
+            if (left.row != right.row) return left.row < right.row;
             return left.col < right.col;
         });
 
@@ -433,11 +448,9 @@ private:
         vector<pair_info::moved_together> moves;
         vector<vector<int>> who_moved;
         for (const auto& edge : pair.edges) {
-            if (!edge.same_shape) continue;
-            const auto& objects = edge.from_input ? pair.input_info : pair.output_info;
-            if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
-            const auto& one_object = objects[edge.from];
-            const auto went = object_matching::move_of(edge, one_object);
+            const object_info* one_object = pair.source_of(edge);
+            if (!edge.same_shape || !one_object) continue;
+            const auto went = object_matching::move_of(edge, *one_object);
             const int8_t down = (int8_t)went.first, across = (int8_t)went.second;
             const int speaker = input_object_of(edge);
             if (speaker < 0 || (size_t)speaker >= pair.input_info.size()) continue;
@@ -501,15 +514,10 @@ private:
                 if (!prepared.pairs[which].read) continue;
                 // Rematch only if an existing match disagrees.
                 const auto& pair = facts.pairs[which];
-                bool any_disagrees = false;
-                for (const auto& edge : pair.edges) {
-                    const auto& objects = edge.from_input ? pair.input_info
-                                                          : pair.output_info;
-                    if (edge.from < 0 || (size_t)edge.from >= objects.size()) continue;
-                    if (!object_matching::the_pairs_disagree(agreed[which], edge, objects[edge.from])) continue;
-                    any_disagrees = true;
-                    break;
-                }
+                const bool any_disagrees = ranges::any_of(pair.edges, [&](const edge& link) {
+                    const object_info* source = pair.source_of(link);
+                    return source && object_matching::the_pairs_disagree(agreed[which], link, *source);
+                });
                 if (any_disagrees) match_one_pair(train, background, prepared, allowed, facts, which, &agreed[which]);
             }
 
@@ -563,10 +571,8 @@ private:
 
         // Keep rejection records only for objects that still have no partner.
         erase_if(pair.discarded, [&](const rejection& rejected) {
-            const auto& match = rejected.match;
-            const auto& objects = match.from_input ? pair.input_info : pair.output_info;
-            return match.from >= 0 && (size_t)match.from < objects.size() &&
-                   objects[match.from].has_partner;
+            const object_info* source = pair.source_of(rejected.match);
+            return source && source->has_partner;
         });
 
         // Record the background region touched by each unmatched object on the other grid.
@@ -580,39 +586,28 @@ private:
             for (size_t i = 0; i < info.size() && i < objects.size(); ++i) {
                 auto& one = info[i];
                 if (one.has_partner || one.instance_of >= 0) continue;
-                for (int row = 0; row < objects[i].summary.h; ++row)
-                    for (int col = 0; col < objects[i].summary.w; ++col) {
-                        if (objects[i].cells[row][col] == TRANSPARENT) continue;
-                        const int at_row = one.summary.y0 + row, at_col = one.summary.x0 + col;
-                        if (!other.contains(at_row, at_col)) continue;
-                        const int16_t which = patch_of[at_row][at_col];
-                        if (which < 0) continue;
-                        const auto& patch = patches[which];
-                        one.blank_left = patch.left;   one.blank_top = patch.top;
-                        one.blank_width = patch.width; one.blank_height = patch.height;
-                        one.blank_cells = patch.cells;
-                        one.blank_enclosed = patch.enclosed;
-                        row = objects[i].summary.h; break;
-                    }
+                // The patch under the first of its cells, in reading order, that has one.
+                objects[i].each_cell([&](int row, int col, int8_t) {
+                    if (one.blank.found() || !other.contains(row, col) || patch_of[row][col] < 0) return;
+                    one.blank = patches[patch_of[row][col]];
+                });
             }
         };
         note_blanks(pair.output_info, output_objects, input);
         note_blanks(pair.input_info, input_objects, output);
 
-        for (const auto& one_object : pair.input_info) {
-            if (one_object.instance_of >= 0) continue;
-            if (one_object.edges_touching == 0)      pair.deleted++;
-            else if (one_object.edges_touching == 1) pair.persisted++;
-            else                                pair.copied++;
-            pair.most_landings = max(pair.most_landings, one_object.edges_touching);
-        }
-        for (const auto& landing : pair.output_info) {
-            if (landing.instance_of >= 0) continue;
-            if (landing.edges_touching == 0)      pair.invented++;
-            else if (landing.edges_touching == 1) pair.from_one++;
-            else                                  pair.from_many++;
-            pair.most_sources = max(pair.most_sources, landing.edges_touching);
-        }
+        // The same three questions from each end: nowhere or nothing, one, several.
+        auto count_ends = [](const vector<object_info>& info, int& none, int& one, int& many, int& most) {
+            for (const auto& piece : info) {
+                if (piece.instance_of >= 0) continue;
+                if (piece.edges_touching == 0)      none++;
+                else if (piece.edges_touching == 1) one++;
+                else                                many++;
+                most = max(most, piece.edges_touching);
+            }
+        };
+        count_ends(pair.input_info, pair.deleted, pair.persisted, pair.copied, pair.most_landings);
+        count_ends(pair.output_info, pair.invented, pair.from_one, pair.from_many, pair.most_sources);
         for (const auto& edge : pair.edges) {
             if (!edge.same_shape)  pair.sits_on++;
             else if (edge.exact)   pair.found_exact++;
@@ -634,7 +629,7 @@ private:
             bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             mark_painted(landing_here, their_objects, our_objects, one_grid,
                          carried, false, true);
-            // DOES ANYTHING OVER THERE CLAIM TO BE THIS OBJECT â€” it went
+            // DOES ANYTHING OVER THERE CLAIM TO BE THIS OBJECT — it went
             // somewhere, or something arrived that named it by name.
             vector<bool> has_a_partner(ours.size(), false);
             for (const auto& edge : leaving_here)
@@ -647,21 +642,14 @@ private:
             for (const auto& edge : leaving_here) {
                 if (!edge.same_shape || edge.outside != 0) continue;
                 if (edge.from < 0 || (size_t)edge.from >= ours.size()) continue;
-                const auto& one_object = ours[edge.from];
-                for (int row = 0; row < one_object.summary.h; ++row)
-                    for (int col = 0; col < one_object.summary.w; ++col)
-                        if (our_objects[edge.from].cells[row][col] != TRANSPARENT)
-                            carried[one_object.summary.y0 + row][one_object.summary.x0 + col] = true;
+                our_objects[edge.from].each_cell([&](int row, int col, int8_t) { carried[row][col] = true; });
             }
             // Which object each cell belongs to, so a cell can be asked about
             // the object it is part of.
             int16_t object_at[MAX_GRID_DIM][MAX_GRID_DIM];
             for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
             for (size_t i = 0; i < ours.size() && i < our_objects.size(); ++i)
-                for (int row = 0; row < ours[i].summary.h; ++row)
-                    for (int col = 0; col < ours[i].summary.w; ++col)
-                        if (our_objects[i].cells[row][col] != TRANSPARENT)
-                            object_at[ours[i].summary.y0 + row][ours[i].summary.x0 + col] = (int16_t)i;
+                our_objects[i].each_cell([&](int row, int col, int8_t) { object_at[row][col] = (int16_t)i; });
             walk_colored_cells(one_grid, background, [&](int row, int col, int) {
                 if (carried[row][col]) return;
                 if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
@@ -707,20 +695,13 @@ private:
         for (const auto& edge : edges) {
             const grid footprint = object_matching::edge_footprint(edge, from_objects, into_objects);
             for (size_t into_index = 0; into_index < into_info.size(); ++into_index) {
-                const auto& landing = into_info[into_index];
-                const object& landing_object = into_objects[into_index];
                 // Does the landing touch this object at all?
                 bool touches = false;
-                for (int row = 0; row < landing_object.summary.h && !touches; ++row)
-                    for (int col = 0; col < landing_object.summary.w; ++col) {
-                        if (landing_object.cells[row][col] == TRANSPARENT) continue;
-                        int in_footprint_row = landing.summary.y0 + row - edge.row;
-                        int in_footprint_col = landing.summary.x0 + col - edge.col;
-                        if (!footprint.contains(in_footprint_row, in_footprint_col)) continue;
-                        if (footprint.data[in_footprint_row][in_footprint_col] != TRANSPARENT) {
-                            touches = true; break;
-                        }
-                    }
+                into_objects[into_index].each_cell([&](int row, int col, int8_t) {
+                    const int in_row = row - edge.row, in_col = col - edge.col;
+                    touches = touches || (footprint.contains(in_row, in_col) &&
+                                          footprint.data[in_row][in_col] != TRANSPARENT);
+                });
                 if (touches) {
                     into_info[into_index].edges_touching++;
                     // A shape match or an explicit target link identifies this object as a partner.
@@ -749,20 +730,13 @@ private:
         }
     }
 
-    // An empty region that an object may have filled or left behind.
-    struct blank_patch {
-        int8_t left = 0, top = 0, width = 0, height = 0;
-        int16_t cells = 0;
-        bool enclosed = false;
-    };
-
     // Finds empty regions to help describe where objects appeared or disappeared.
     static void find_blanks(const grid& one_grid, int8_t background,
                             vector<blank_patch>& patches,
                             int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
         for (int row = 0; row < MAX_GRID_DIM; ++row)
             for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
-        int16_t queue_row[MAX_GRID_DIM * MAX_GRID_DIM], queue_col[MAX_GRID_DIM * MAX_GRID_DIM];
+        int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
         for (int row = 0; row < one_grid.height; ++row)
             for (int col = 0; col < one_grid.width; ++col) {
                 if (one_grid.data[row][col] != background) continue;
@@ -781,16 +755,9 @@ private:
                     },
                     [&](int at_row, int at_col) {
                         box.include_cell(at_row, at_col);
-                        open = open || at_row == 0 || at_col == 0 ||
-                               at_row == one_grid.height - 1 || at_col == one_grid.width - 1;
+                        open = open || on_border(at_row, at_col, one_grid.height, one_grid.width);
                     });
-                blank_patch patch;
-                patch.left = (int8_t)box.col0;  patch.top = (int8_t)box.row0;
-                patch.width = (int8_t)box.width();
-                patch.height = (int8_t)box.height();
-                patch.cells = (int16_t)cells;
-                patch.enclosed = !open;
-                patches.push_back(patch);
+                patches.push_back({ summary_of(box, cells), !open });
             }
     }
 

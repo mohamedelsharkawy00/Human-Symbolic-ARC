@@ -16,6 +16,7 @@
 #include "7_vocabulary.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -57,7 +58,7 @@ struct color_facts {
     bool in_every_grid[COLOR_COUNT] = {};
     // In at least one train grid
     bool in_any_grid[COLOR_COUNT]   = {};
-    
+
     // in_any_input and in_any_output are safe for LITERAL pinning only, and one
     // set per side — never a global whitelist (lethal, measured).
 
@@ -153,22 +154,19 @@ private:
     void detect_output_colors(const vector<example>& train) {
         bool seen[COLOR_COUNT] = {};
         output_colors_count = 0;
-        for (const auto& ex : train) {
-            const grid& out = ex.output;
-            if (out.width <= 0 || out.height <= 0) continue;
-            walk_colored_cells(out, TRANSPARENT, [&](int, int, int color) {
+        for (const auto& ex : train)
+            walk_colored_cells(ex.output, TRANSPARENT, [&](int, int, int color) {
                 if (seen[color]) return;
                 seen[color] = true;
                 output_colors[output_colors_count++] = (int8_t)color;
             });
-        }
     }
 };
 
 // Which cells kept their color from input to output, one map per example.
 struct unchanged_cells_facts {
     // One map per train pair: true = the cell kept its color
-    vector<array<bool, MAX_GRID_DIM * MAX_GRID_DIM>> kept;
+    vector<array<bool, MAX_GRID_CELLS>> kept;
     // Per pair: share of cells kept
     vector<float> kept_fraction;
     // The worst pair — the safe number to gate on
@@ -194,7 +192,7 @@ struct unchanged_cells_facts {
             for (int row = 0; row < in.height && row < MAX_GRID_DIM; ++row)
                 for (int col = 0; col < in.width && col < MAX_GRID_DIM; ++col)
                     if (in.data[row][col] == out.data[row][col]) {
-                        kept[row * MAX_GRID_DIM + col] = true;
+                        kept[cell_index(row, col)] = true;
                         ++same;
                     }
             facts.kept_fraction[i] = (float)same / (float)(in.width * in.height);
@@ -259,7 +257,6 @@ struct color_swap_candidates {
     // half of the pair that never shows up in a piece is true by saying nothing.
     bool over_the_pieces[COLOR_PAIR_COUNT] = {};
     int  count = 0;
-    bool has_candidates() const { return count > 0; }
 
     // Keeps pairs whose changed cells are consistent with a swap in every example.
     static color_swap_candidates detect(const vector<example>& train,
@@ -379,7 +376,7 @@ struct shape_color_map_rule {
         if (!pairs_overlay(train)) return {};
 
         object_walk_scratch scratch;
-        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM] = {};
+        bool occupied[MAX_GRID_CELLS] = {};
         bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
         for (const auto& ex : train) {
             const grid& in = ex.input;
@@ -391,8 +388,7 @@ struct shape_color_map_rule {
                 const int left = box.x0, top = box.y0, width = box.w, height = box.h;
                 fill_n(occupied, width * height, false);
                 for (int i = 0; i < count; ++i)
-                    occupied[(cells[i] / MAX_GRID_DIM - top) * width +
-                             cells[i] % MAX_GRID_DIM - left] = true;
+                    occupied[(cell_row(cells[i]) - top) * width + cell_col(cells[i]) - left] = true;
                 mark_outside(height, width,
                     [&](int row, int col) { return occupied[row * width + col]; }, outside);
 
@@ -418,7 +414,8 @@ struct shape_color_map_rule {
                 }
                 if (!any_painted) return;
 
-                uint32_t object_shape = shape_occupancy_hash(width, height, occupied);
+                uint32_t object_shape =
+                    shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
                 consistent = rule.learn(object_shape, (int8_t)fill);
             });
             if (!consistent) return {};
@@ -443,7 +440,7 @@ private:
 // A repeating pattern carried across the whole output, with its colors remapped.
 struct motif_continuation_rule {
     bool held = false;
-    int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    recoloring color_map;
     bool holds() const { return held; }
 
     // Checks that the input is one tiling pattern and reads the recolor off the output.
@@ -473,8 +470,7 @@ struct motif_continuation_rule {
                 !instances_only(pair.output_info, edge.to)) return {};
             const auto& input = train[i].input;
             const auto& output = train[i].output;
-            int width, height;
-            repeat_periods(input, -2, width, height, /*must_fit_twice=*/false);
+            const auto [width, height] = object_segmentation::pattern_block_of(input);
             // Pattern is input-only. A block discovered only on the output cannot
             // justify spelling Pattern with a different unit on the input.
             if (width != from.w || height != from.h) return {};
@@ -495,6 +491,12 @@ struct motif_continuation_rule {
     }
 };
 
+// Seat on the colour cycle; lean 0 walks row + col, lean 1 row - col.
+ARC_HOST_DEVICE inline int diagonal_seat(int row, int col, int lean, int colors) {
+    const int diagonal = lean ? row - col : row + col;
+    return ((diagonal % colors) + colors) % colors;
+}
+
 // THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
 // are crossed, the input paints part of that cycle, and the output is the cycle
 // carried over every cell -- the motif above with diagonals in place of a box.
@@ -510,12 +512,6 @@ struct motif_continuation_rule {
 //
 // AND IT HAS TO CARRY SOMETHING. An output the input already was is the cycle
 // redrawn where it already sat, which says nothing about diagonals either.
-// Seat on the colour cycle; lean 0 walks row + col, lean 1 row - col.
-ARC_HOST_DEVICE inline int diagonal_seat(int row, int col, int lean, int colors) {
-    const int diagonal = lean ? row - col : row + col;
-    return ((diagonal % colors) + colors) % colors;
-}
-
 struct diagonal_continuation_rule {
     bool held = false;
     // DiagTile's own argument: 0 for the diagonals of constant row + column,
@@ -572,6 +568,18 @@ struct diagonal_continuation_rule {
     }
 };
 
+// HOW A RULE HERE IS CHECKED RATHER THAN GUESSED: replayed. `draw` draws one
+// pair's output from its input, or says false when it cannot, and the claim
+// holds only when every drawing comes out exactly.
+template <class Draw>
+bool redraws_every_output(const vector<example>& train, Draw draw) {
+    for (const example& pair : train) {
+        grid drawn;
+        if (!draw(pair, drawn) || drawn != pair.output) return false;
+    }
+    return true;
+}
+
 // A REPEATING PICTURE WITH NOISE ON IT, AND THE OUTPUT IS THE PICTURE CLEAN.
 // The input is a lattice of copies that noise has scribbled over, so no cut of
 // it finds the copies -- 0607ce86 cuts into rubble every way it is read. What
@@ -590,20 +598,20 @@ struct periodic_denoise_rule {
     static periodic_denoise_rule detect(const vector<example>& train, int8_t background) {
         if (train.empty() || !is_color(background)) return {};
         bool cleaned_something = false;
-        for (const auto& pair : train) {
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             const grid& input = pair.input;
-            if (!input.same_size(pair.output)) return {};
-            grid drawn = input;
+            if (!input.same_size(pair.output)) return false;
+            drawn = input;
             const bool voted = vote_denoise_cells(input.width, input.height, background,
                 [&](int r, int c) -> int8_t {
                     const int8_t v = (int8_t)input.data[r][c];
                     return v == TRANSPARENT ? background : v;
                 },
                 [&](int r, int c, int8_t v) { drawn.data[r][c] = v; });
-            if (!voted || drawn != pair.output) return {};
             cleaned_something = cleaned_something || drawn != input;
-        }
-        return { cleaned_something };
+            return voted;
+        });
+        return { redraws && cleaned_something };
     }
 };
 
@@ -633,26 +641,12 @@ struct split_freedom {
         return freedom == 0 ? wall : freedom == 1 ? blank : freedom == 2 ? bare
              : freedom == 3 ? lattice : uneven;
     }
-    string label() const {
-        string words;
-        for (int freedom = 0; freedom < FREEDOMS; ++freedom) {
-            if (!may(freedom)) continue;
-            if (!words.empty()) words += ", ";
-            words += freedom_names[freedom];
-        }
-        return words.empty() ? "Not Cut At All" : words;
-    }
+    string label() const { return freedoms_said(*this, "Not Cut At All"); }
 };
 
-// The input is not one grid but several laid side by side -- panes -- with a
-// wall, a blank line, or nothing between them. input_blocks_rule below cuts the
-// OUTPUT into input-sized blocks; this cuts the INPUT into panes.
-//
-// Nothing here is scored. A reading holds only when the SAME one holds on every
-// training pair and no rival survives beside it: a split the pairs agree on
-// without argument is a fact, and anything less is not a split at all. Ties
-// break wall > blank > bare, fewest assumptions first.
-struct pane_split_facts {
+// HOW A GRID WAS CUT INTO PANES, named by five numbers, so two pairs of
+// different sizes can still be asked whether they were cut the same way.
+struct pane_cut {
     // What the cut followed. The order is the precedence: plainest first.
     enum : int8_t { Wall, Blank, Bare };
     // Which way it ran. BothWays leaves a lattice rather than a row of panes.
@@ -665,6 +659,18 @@ struct pane_split_facts {
     // How many panes the cut leaves. One of these is 1 unless it went both ways.
     int8_t down = 1, across = 1;
 
+    bool operator==(const pane_cut& other) const = default;
+};
+
+// The input is not one grid but several laid side by side -- panes -- with a
+// wall, a blank line, or nothing between them. input_blocks_rule below cuts the
+// OUTPUT into input-sized blocks; this cuts the INPUT into panes.
+//
+// Nothing here is scored. A cut holds only when the SAME one holds on every
+// training pair and no rival survives beside it: a split the pairs agree on
+// without argument is a fact, and anything less is not a split at all. Ties
+// break wall > blank > bare, fewest assumptions first.
+struct pane_split_facts : pane_cut {
     // Where the panes sit in one training input, in reading order.
     struct pane {
         int8_t top = 0, left = 0, width = 0, height = 0;
@@ -673,6 +679,17 @@ struct pane_split_facts {
         int color_at(const grid& source, int row, int col, int pose = 0) const {
             const auto [source_row, source_col] = pose_source(pose, width, height, row, col);
             return source.data[top + source_row][left + source_col];
+        }
+        // Whether the pane reads through this pose at its own size.
+        bool keeps_size(int pose) const {
+            return posed_size(pose, width, height) == pair<int, int>{ width, height };
+        }
+        // The pane cut out of its grid, as a grid of its own.
+        grid drawn(const grid& source) const {
+            grid out(width, height);
+            for (int row = 0; row < height; ++row)
+                for (int col = 0; col < width; ++col) out.data[row][col] = color_at(source, row, col);
+            return out;
         }
     };
     vector<vector<pane>> pairs;
@@ -683,13 +700,6 @@ struct pane_split_facts {
     // A pane this small is a cell, not a grid: without the floor any 3x3 can
     // claim to be nine panes. It is what keeps the lattice honest.
     static constexpr int SMALLEST_PANE = 2;
-
-    // A reading names itself with these five numbers, so two pairs of different
-    // sizes can still be asked whether they were cut the same way.
-    struct reading {
-        int8_t cut = Wall, axis = Across, color = -1, down = 1, across = 1;
-        bool operator==(const reading& other) const = default;
-    };
 
     // Rows and columns painted one color from end to end.
     static void full_lines(const grid& one, int color,
@@ -750,7 +760,7 @@ struct pane_split_facts {
 
     // Every way this one grid could be cut, under these permissions.
     static void readings_of(const grid& one, int8_t background, split_freedom allowed,
-                            vector<pair<reading, vector<pane>>>& found) {
+                            vector<pair<pane_cut, vector<pane>>>& found) {
         found.clear();
         vector<int> row_lines, col_lines;
         vector<pane> panes;
@@ -818,8 +828,8 @@ struct pane_split_facts {
     static pane_split_facts detect(const vector<example>& train, int8_t background,
                                    split_freedom allowed = {}) {
         if (train.empty()) return {};
-        vector<pair<reading, vector<pane>>> found;
-        vector<reading> agreed;
+        vector<pair<pane_cut, vector<pane>>> found;
+        vector<pane_cut> agreed;
         for (size_t i = 0; i < train.size(); ++i) {
             readings_of(train[i].input, background, allowed, found);
             // A wall is a wall whether or not the answer is a pane wide: the
@@ -827,7 +837,7 @@ struct pane_split_facts {
             // that follows no line shows nothing, and fits almost any grid, so it
             // is admitted only when the output is the size of one pane. The
             // asymmetry is the point -- it is the line between a fact and a guess.
-            vector<reading> here;
+            vector<pane_cut> here;
             for (const auto& [named, panes] : found) {
                 if (named.cut != Bare) { here.push_back(named); continue; }
                 for (const auto& one_pane : panes)
@@ -838,24 +848,19 @@ struct pane_split_facts {
                     }
             }
             if (i == 0) { agreed = here; continue; }
-            erase_if(agreed, [&](const reading& named) {
+            erase_if(agreed, [&](const pane_cut& named) {
                 return ranges::find(here, named) == here.end(); });
             if (agreed.empty()) return {};
         }
         if (agreed.empty()) return {};
         // Fewest assumptions first: a wall outranks a blank line, which outranks
         // no line at all. Whatever is still tied after that is an argument, not a fact.
-        const int8_t plainest = ranges::min(agreed, {}, &reading::cut).cut;
-        erase_if(agreed, [&](const reading& named) { return named.cut != plainest; });
+        const int8_t plainest = ranges::min(agreed, {}, &pane_cut::cut).cut;
+        erase_if(agreed, [&](const pane_cut& named) { return named.cut != plainest; });
         if (agreed.size() != 1) return {};
 
-        pane_split_facts facts;
-        const reading won = agreed.front();
-        facts.cut = won.cut;
-        facts.axis = won.axis;
-        facts.color = won.color;
-        facts.down = won.down;
-        facts.across = won.across;
+        const pane_cut won = agreed.front();
+        pane_split_facts facts{ won };
         for (const auto& train_pair : train) {
             readings_of(train_pair.input, background, allowed, found);
             for (const auto& [named, panes] : found)
@@ -902,6 +907,21 @@ struct pane_mask_rule {
     bool held = false;
     bool holds() const { return held; }
 
+    // What pane p shows at (r, c). The first pane is read as it lies; the rest
+    // are turned into its frame, which is what makes them comparable.
+    static int shown(const vector<pane_split_facts::pane>& boxes, int p, const grid& input,
+                     int r, int c, int pose) {
+        return boxes[p].color_at(input, r, c, p ? pose : 0);
+    }
+    // Which panes have something at (r, c), one bit each.
+    static int mask_at(const vector<pane_split_facts::pane>& boxes, const grid& input,
+                       int r, int c, int pose, int8_t background) {
+        int mask = 0;
+        for (int p = 0; p < (int)boxes.size(); ++p)
+            if (shown(boxes, p, input, r, c, pose) != background) mask |= 1 << p;
+        return mask;
+    }
+
     // Reads every training pair under one pose and says what each mask means,
     // or says nothing when two cells with the same mask disagree beyond repair.
     static pane_mask_rule read_with(const vector<example>& train,
@@ -923,23 +943,15 @@ struct pane_mask_rule {
             const grid& input = train[which].input;
             const grid& output = train[which].output;
             if ((int)boxes.size() != panes) return {};
-            for (const auto& box : boxes) {
-                if (box.width != output.width || box.height != output.height) return {};
-                if (posed_size(pose, box.width, box.height) !=
-                    make_pair((int)box.width, (int)box.height)) return {};
-            }
+            for (const auto& box : boxes)
+                if (box.width != output.width || box.height != output.height || !box.keeps_size(pose))
+                    return {};
             for (int r = 0; r < output.height; ++r)
                 for (int c = 0; c < output.width; ++c) {
-                    int mask = 0;
-                    for (int p = 0; p < panes; ++p) {
-                        // The first pane is read as it lies; the rest are turned
-                        // into its frame, which is what makes them comparable.
-                        const int was = boxes[p].color_at(input, r, c, p ? pose : 0);
-                        if (was != background) mask |= 1 << p;
-                    }
+                    const int mask = mask_at(boxes, input, r, c, pose, background);
                     const int now = output.data[r][c];
                     for (int p = 0; p < panes; ++p)
-                        if (boxes[p].color_at(input, r, c, p ? pose : 0) != now)
+                        if (shown(boxes, p, input, r, c, pose) != now)
                             may_copy[mask] &= (uint8_t)~(1u << p);
                     if (!painted[mask]) {
                         painted[mask] = 1;
@@ -972,25 +984,16 @@ struct pane_mask_rule {
         if (!holds() || !split.panes_of(input, boxes)) return false;
         if ((int)boxes.size() != panes) return false;
         const auto& first = boxes.front();
-        for (const auto& box : boxes) {
-            if (box.width != first.width || box.height != first.height) return false;
-            if (posed_size(posed, box.width, box.height) !=
-                make_pair((int)box.width, (int)box.height)) return false;
-        }
-        drawn = grid{};
-        drawn.width = first.width;
-        drawn.height = first.height;
+        for (const auto& box : boxes)
+            if (box.width != first.width || box.height != first.height || !box.keeps_size(posed))
+                return false;
+        drawn = grid(first.width, first.height);
         for (int r = 0; r < drawn.height; ++r)
             for (int c = 0; c < drawn.width; ++c) {
-                int mask = 0;
-                for (int p = 0; p < panes; ++p)
-                    if (boxes[p].color_at(input, r, c, p ? posed : 0) != background)
-                        mask |= 1 << p;
-                const answer& says = by_mask[mask];
+                const answer& says = by_mask[mask_at(boxes, input, r, c, posed, background)];
                 if (!says.said()) return false;
-                drawn.data[r][c] = says.paint >= 0
-                    ? says.paint
-                    : boxes[says.copy_pane].color_at(input, r, c, says.copy_pane ? posed : 0);
+                drawn.data[r][c] = says.paint >= 0 ? says.paint
+                                                   : shown(boxes, says.copy_pane, input, r, c, posed);
             }
         return true;
     }
@@ -1001,15 +1004,10 @@ struct pane_mask_rule {
                                  const pane_split_facts& split, int8_t background) {
         if (!split.holds() || !is_color(background)) return {};
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
-            pane_mask_rule rule = read_with(train, split, background, pose);
-            if (!rule.holds()) continue;
-            bool every = true;
-            for (const auto& train_pair : train) {
-                grid drawn;
-                if (!rule.draw(train_pair.input, split, background, drawn) ||
-                    drawn != train_pair.output) { every = false; break; }
-            }
-            if (every) return rule;
+            const pane_mask_rule rule = read_with(train, split, background, pose);
+            if (rule.holds() && redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                    return rule.draw(pair.input, split, background, drawn);
+                })) return rule;
         }
         return {};
     }
@@ -1051,19 +1049,13 @@ struct pane_pick_rule {
 
     static bool same_drawing(const grid& one, const pane_split_facts::pane& left,
                              const pane_split_facts::pane& right) {
-        if (left.width != right.width || left.height != right.height) return false;
-        for (int r = 0; r < left.height; ++r)
-            for (int c = 0; c < left.width; ++c)
-                if (left.color_at(one, r, c) != right.color_at(one, r, c)) return false;
-        return true;
+        return left.drawn(one) == right.drawn(one);
     }
     static bool folds_onto_itself(const grid& one, const pane_split_facts::pane& box, int pose) {
-        if (posed_size(pose, box.width, box.height) != make_pair((int)box.width, (int)box.height))
-            return false;
+        if (!box.keeps_size(pose)) return false;
         for (int r = 0; r < box.height; ++r)
-            for (int c = 0; c < box.width; ++c) {
+            for (int c = 0; c < box.width; ++c)
                 if (box.color_at(one, r, c) != box.color_at(one, r, c, pose)) return false;
-            }
         return true;
     }
     static uint16_t palette_of(const grid& one, const pane_split_facts::pane& box) {
@@ -1136,11 +1128,7 @@ struct pane_pick_rule {
         }
         case MostColored: case LeastColored: {
             vector<int> many;
-            for (const auto& box : boxes) {
-                int how = 0;
-                for (uint16_t seen = palette_of(one, box); seen; seen >>= 1) how += seen & 1;
-                many.push_back(how);
-            }
+            for (const auto& box : boxes) many.push_back(popcount(palette_of(one, box)));
             return only_extreme(many, way == MostColored);
         }
         default: return -1;
@@ -1154,13 +1142,7 @@ struct pane_pick_rule {
         if (!holds() || !split.panes_of(input, boxes)) return false;
         const int found = pick(input, boxes, background, way, which);
         if (found < 0) return false;
-        const auto& box = boxes[(size_t)found];
-        drawn = grid{};
-        drawn.width = box.width;
-        drawn.height = box.height;
-        for (int r = 0; r < box.height; ++r)
-            for (int c = 0; c < box.width; ++c)
-                drawn.data[r][c] = box.color_at(input, r, c);
+        drawn = boxes[(size_t)found].drawn(input);
         return true;
     }
 
@@ -1170,16 +1152,10 @@ struct pane_pick_rule {
                                  const pane_split_facts& split, int8_t background) {
         if (!split.holds() || train.empty()) return {};
         auto names_it = [&](int8_t way, int8_t which) {
-            for (const auto& train_pair : train) {
-                pane_pick_rule trying;
-                trying.way = way;
-                trying.which = which;
-                trying.held = true;
-                grid drawn;
-                if (!trying.draw(train_pair.input, split, background, drawn)) return false;
-                if (drawn != train_pair.output) return false;
-            }
-            return true;
+            const pane_pick_rule trying{ way, which, true };
+            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                return trying.draw(pair.input, split, background, drawn);
+            });
         };
         for (int8_t way = 0; way < WAYS; ++way) {
             if (way == NotSymmetric || way == OnlySymmetric) {
@@ -1202,7 +1178,7 @@ struct pane_pick_rule {
 struct input_blocks_rule {
     bool held = false;
     // One cell-level map shared by every copy; -1 means the color keeps itself.
-    int8_t color_map[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    recoloring color_map;
     // OR EVERY COPY IS ITS INPUT'S NEGATIVE: figure and ground trade places.
     // The figure's color comes off each pair's own input and is kept nowhere,
     // so this is a derivation and not a table -- 0692e18c paints its copies 6,
@@ -1228,7 +1204,7 @@ struct input_blocks_rule {
                                     int input_background, int output_background) {
         if (train.empty()) return {};
         for (const auto& pair : train)
-            if (pair.input.width <= 0 || pair.input.height <= 0 ||
+            if (pair.input.empty() ||
                 pair.output.width % pair.input.width || pair.output.height % pair.input.height) return {};
         const auto* blocks = correspondence.best_reading_of(segmentation_methods::smallest_of_two_grids);
         if (!blocks || blocks->pairs.size() != train.size()) return {};
@@ -1240,7 +1216,7 @@ struct input_blocks_rule {
         rule.figure_poses = ground < 0 ? 0 : 0xFF;
         // What each pair's copies wear, color by color of its input; -1 for a
         // color the input does not have, and everywhere in a pair with no copy.
-        vector<array<int8_t, COLOR_COUNT>> worn(train.size());
+        vector<recoloring> worn(train.size());
         bool copied_any = false;
         for (size_t which = 0; which < train.size(); ++which) {
             const example& pair = train[which];
@@ -1251,17 +1227,15 @@ struct input_blocks_rule {
             layout at;
             at.rows = (int8_t)(pair.output.height / height);
             at.cols = (int8_t)(pair.output.width / width);
-            worn[which].fill(-1);
             vector<bool> copied(read.output_info.size(), false);
             bool has_copy = false;
             for (const auto& edge : read.edges) {
                 if (!edge.from_input || edge.to < 0 || edge.to >= (int)read.output_info.size()) continue;
                 const auto& landing = read.output_info[edge.to].summary;
                 at.poses[landing.y0 / height][landing.x0 / width] |= edge.ways_round;
-                array<int8_t, COLOR_COUNT> wears;
-                wears.fill(-1);
+                recoloring wears;
                 walk_colored_cells(pair.input, TRANSPARENT, [&](int, int, int was) {
-                    wears[was] = edge.color_map[was] >= 0 ? edge.color_map[was] : (int8_t)was;
+                    wears[was] = edge.color_map.apply(was);
                 });
                 // Copies of one rule wear one set of colors, within a pair at least.
                 if (has_copy && wears != worn[which]) return {};
@@ -1296,9 +1270,9 @@ struct input_blocks_rule {
         // pair are the evidence that each copy takes its ink from its own input,
         // and the one such reading claimed is the negative: figure and ground
         // trading places. A figure of several colors has no one negative.
-        int8_t table[COLOR_COUNT] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+        recoloring table;
         bool one_table = true;
-        for (const auto& wears : worn)
+        for (const recoloring& wears : worn)
             for (int was = 0; was < COLOR_COUNT; ++was) {
                 if (wears[was] < 0) continue;
                 one_table = one_table && (table[was] < 0 || table[was] == wears[was]);
@@ -1306,12 +1280,12 @@ struct input_blocks_rule {
             }
         if (one_table) {
             for (int was = 0; was < COLOR_COUNT; ++was)
-                rule.color_map[was] = table[was] != was ? table[was] : (int8_t)-1;
+                rule.color_map[was] = table.changes(was) ? table[was] : (int8_t)-1;
         } else {
             if (ground < 0) return {};
             for (size_t which = 0; which < train.size(); ++which) {
-                const auto& wears = worn[which];
-                if (ranges::all_of(wears, [](int8_t one) { return one < 0; })) continue;
+                const recoloring& wears = worn[which];
+                if (wears == recoloring{}) continue;
                 const int8_t figure = the_figure_color(train[which].input, ground);
                 if (!is_color(figure) ||
                     (wears[ground] >= 0 && wears[ground] != figure) ||
@@ -1377,11 +1351,11 @@ struct piece_slam_rule {
         if (!boxed_by_its_cells(correspondence.segmentation) ||
             !is_color(output_background) || !pairs_overlay(train)) return {};
         // Draws each output from its input's pieces slid that way, noting whether any
-        // cell moved at all; false at the first cell that comes out wrong.
+        // cell moved at all.
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
-            for (const auto& pair : train) {
+            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
                 const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
-                grid drawn(pair.output.width, pair.output.height);
+                drawn = grid(pair.output.width, pair.output.height);
                 drawn.fill(output_background);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
@@ -1398,9 +1372,8 @@ struct piece_slam_rule {
                         });
                     if (collision) return false;
                 }
-                if (drawn != pair.output) return false;
-            }
-            return true;
+                return true;
+            });
         };
         for (const bool rows : {true, false})
             for (const int step : {1, -1}) {
@@ -1431,8 +1404,8 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0) {
 // what makes the claim checkable rather than a guess at what the layout means:
 // a chain that does not come out cell for cell is not what happened.
 struct overlap_corner_rule {
-    bool chained = false;
-    bool holds() const { return chained; }
+    bool held = false;
+    bool holds() const { return held; }
 
     // Lays every input's pieces into the chain and keeps the claim only if that
     // drew each output on the nose.
@@ -1447,10 +1420,10 @@ struct overlap_corner_rule {
         // detector verified past that point is one the op would not draw.
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
-        for (const auto& pair : train) {
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
             // One piece put in the corner says nothing about chaining.
-            if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return {};
+            if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
             // The chain runs left to right, ties top to bottom -- the order the
             // op itself walks the objects in, so the reading and the word agree
             // about which piece is first.
@@ -1463,25 +1436,24 @@ struct overlap_corner_rule {
             });
             // Tied corners leave the order to the op's list, which we can't see.
             for (size_t i = 1; i < chain.size(); ++i)
-                if (chain[i]->summary.x0 == chain[i - 1]->summary.x0 &&
-                    chain[i]->summary.y0 == chain[i - 1]->summary.y0) return {};
-            grid drawn(pair.output.width, pair.output.height);
+                if (same_corner(chain[i]->summary, chain[i - 1]->summary)) return false;
+            drawn = grid(pair.output.width, pair.output.height);
             drawn.fill(output_background);
             // The head of the chain sits in the corner; each piece after it puts
             // its top-left on the last one's bottom-right and paints over it,
             // which is the paint order the closing Union gives them for free.
             int x = 0, y = 0;
             for (const object* piece : chain) {
-                if (!paint_piece(drawn, *piece, y, x)) return {};
+                if (!paint_piece(drawn, *piece, y, x)) return false;
                 laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
                     x != piece->summary.x0 || y != piece->summary.y0;
                 x += piece->summary.w - 1;
                 y += piece->summary.h - 1;
             }
-            if (drawn != pair.output) return {};
-        }
+            return true;
+        });
         // Pieces already sitting in the chain were never laid into one.
-        return { laid_any_piece_somewhere_new };
+        return { redraws && laid_any_piece_somewhere_new };
     }
 };
 
@@ -1556,14 +1528,14 @@ struct slide_to_touch_rule {
 
         // Draws each output from its input's pieces, one colour standing still
         // and the other sliding up against it, noting whether anything moved at
-        // all; false at the first cell that comes out wrong.
+        // all.
         auto draws_every_output = [&](int8_t stays, int8_t slides, bool& moved) {
-            for (const auto& pair : train) {
+            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
                 vector<object_segmentation::object_info> info;
                 vector<object> pieces;
                 object_segmentation::segment_for_correspondence(pair.input, input_background,
                                                                 correspondence.segmentation, info, &pieces);
-                grid drawn(pair.output.width, pair.output.height);
+                drawn = grid(pair.output.width, pair.output.height);
                 drawn.fill(output_background);
                 // WHAT THE OP SEES OF THE CANVAS is the box around everything
                 // already painted, read once, before the first piece slides --
@@ -1589,10 +1561,8 @@ struct slide_to_touch_rule {
                                      pieces[i].summary.x0 + across)) return false;
                     moved = moved || down != 0 || across != 0;
                 }
-                if (!anything_slid) return false;
-                if (drawn != pair.output) return false;
-            }
-            return true;
+                return anything_slid;
+            });
         };
 
         // Which colour stays is the reading's to find, not to assume.
@@ -1624,8 +1594,7 @@ inline vector<marker_piece> seeds_the_op_will_see(const grid& input, int8_t neve
     each_object(input, -1, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int found) {
         if (found <= 0) return;
-        const int row = cells[0] / MAX_GRID_DIM, col = cells[0] % MAX_GRID_DIM;
-        const int8_t color = (int8_t)input.data[row][col];
+        const int8_t color = (int8_t)input.data[cell_row(cells[0])][cell_col(cells[0])];
         if (color == never_changes) return;
         pieces.push_back({ box, color });
     });
@@ -1666,8 +1635,8 @@ ARC_HOST_DEVICE inline void project_along(const cell_box& tpl, const cell_box& m
 // replaying that redraws every output exactly, which is what makes the claim
 // checkable rather than a guess at what the markers meant.
 struct project_on_seeds_rule {
-    bool projected = false;
-    bool holds() const { return projected; }
+    bool held = false;
+    bool holds() const { return held; }
 
     static project_on_seeds_rule detect(const vector<example>& train,
                                         const correspondence_election& correspondence,
@@ -1675,27 +1644,27 @@ struct project_on_seeds_rule {
         // The template is handed over in the frame its cells make, which is
         // what the Trim in front of the word gives it.
         if (!boxed_by_its_cells(correspondence.segmentation) || train.empty()) return {};
-        for (const auto& pair : train) {
+        // ProjectOnSeeds hands back the copy of the input it draws on plus one
+        // object per stamp, and they share one list, so the drawing runs out one
+        // stamp before the list does.
+        constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             // Stamping paints over a copy of the input, so a canvas of another
             // size is a different drawing than the one replayed here.
-            if (!pair.input.same_size(pair.output)) return {};
+            if (!pair.input.same_size(pair.output)) return false;
             const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
-            if (pieces.empty()) return {};
+            if (pieces.empty()) return false;
             // The template is whichever piece SortBySize[0] puts first, and that
             // word ranks by cells -- not the box that picked the markers. The op
             // reads the two off different lists, so this has to as well.
             // Tied for most cells: the op's list order picks, which we can't see.
             const object* tpl = &pieces[0];
-            if (pieces.size() > 1 && pieces[1].summary.count == tpl->summary.count) return {};
+            if (pieces.size() > 1 && pieces[1].summary.count == tpl->summary.count) return false;
 
             const vector<marker_piece> markers = seeds_the_op_will_see(pair.input, input_background);
-            if (markers.empty()) return {};
+            if (markers.empty()) return false;
 
-            grid drawn = pair.input;
-            // ProjectOnSeeds hands back the copy of the input it draws on plus
-            // one object per stamp, and they share one list, so the drawing runs
-            // out one stamp before the list does.
-            constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
+            drawn = pair.input;
             int stamped = 0;
             const cell_box tpl_box = box_of(tpl->summary);
             for (const marker_piece& marker : markers)
@@ -1715,10 +1684,9 @@ struct project_on_seeds_rule {
                 });
             // Nothing stamped is the input handed straight back, which every
             // other reading already says without a word this long.
-            if (stamped == 0) return {};
-            if (drawn != pair.output) return {};
-        }
-        return { true };
+            return stamped > 0;
+        });
+        return { redraws };
     }
 };
 
@@ -1752,49 +1720,42 @@ inline inference infer(const vector<example>& train) {
     inf.colors = color_facts::detect(train);  // rule-independent
     // Background: input-side and output-side elected independently by role,
     // ranked lists kept alive (see step 2 note on background_election).
-    // input_elected() is the INPUT side's verdict — what segmentation excludes.
+    // The input side's verdict is what segmentation excludes.
     inf.background = elect_background(train);
+    const int8_t ground_in = inf.background.input_elected();
+    const int8_t ground_out = inf.background.output_elected();
     // by_size excludes the background, so it can only rank after the election.
-    inf.colors.detect_output_colors_by_size(train, inf.background.input_elected());
+    inf.colors.detect_output_colors_by_size(train, ground_in);
     // The frame before the figures: whether this input is really several grids
     // side by side. It needs the elected background to tell a wall from a blank
     // line, so it cannot run ahead of the election -- only ahead of everything
     // that would want to read the panes.
-    inf.pane_split = pane_split_facts::detect(train, inf.background.input_elected());
+    inf.pane_split = pane_split_facts::detect(train, ground_in);
     // What the panes come to, once there are panes. It reads the masks, not the
     // colors, so a combination the pairs never showed is still one it can answer.
-    inf.pane_mask = pane_mask_rule::detect(train, inf.pane_split,
-                                           inf.background.input_elected());
+    inf.pane_mask = pane_mask_rule::detect(train, inf.pane_split, ground_in);
     // And when the answer is a pane rather than something made from the panes,
     // the only question left is which one. Asked after the mask, because making
     // a drawing is the stronger claim and should get first refusal.
-    inf.pane_pick = pane_pick_rule::detect(train, inf.pane_split,
-                                           inf.background.input_elected());
+    inf.pane_pick = pane_pick_rule::detect(train, inf.pane_split, ground_in);
     // Edge level of correspondence, under the elected background, with the way
     // of cutting the grid up chosen by what it manages to explain.
-    inf.correspondence = select_segmentation(train, inf.background.input_elected());
+    inf.correspondence = select_segmentation(train, ground_in);
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
     // because a repeating box is the plainer claim and should get first refusal.
-    inf.diagonal_continuation = diagonal_continuation_rule::detect(train,
-        inf.correspondence, inf.background.input_elected());
+    inf.diagonal_continuation = diagonal_continuation_rule::detect(train, inf.correspondence, ground_in);
     // A noisy lattice cleaned by the vote. It reads the whole input, not the
     // pieces, so it needs nothing the election chose -- only the ground.
-    inf.periodic_denoise = periodic_denoise_rule::detect(train,
-        inf.background.input_elected());
-    inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence,
-        inf.background.input_elected(), inf.background.output_elected());
-    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence,
-        inf.background.input_elected(), inf.background.output_elected());
+    inf.periodic_denoise = periodic_denoise_rule::detect(train, ground_in);
+    inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence, ground_in, ground_out);
     // Pieces that slid up against the ones that stayed. Asked after the chain
     // because a layout that puts every piece somewhere new is the larger claim
     // and should get first refusal; this one leaves most of the grid alone.
-    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence,
-        inf.background.input_elected(), inf.background.output_elected());
-    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence,
-        inf.background.input_elected());
-    inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence,
-        inf.background.input_elected(), inf.background.output_elected());
+    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in);
+    inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).
@@ -1805,18 +1766,15 @@ inline inference infer(const vector<example>& train) {
     if (inf.size.Chosen == output_dimension_rule::Identity) {
         inf.unchanged   = unchanged_cells_facts::detect(train);
         inf.color_diff  = color_diff_facts::detect(train);
-        inf.color_swaps = color_swap_candidates::detect(train, inf.color_diff,
-                                                      inf.background.input_elected());
-        inf.shape_color_map = shape_color_map_rule::detect_body_recolor(
-            train, inf.background.input_elected());
+        inf.color_swaps = color_swap_candidates::detect(train, inf.color_diff, ground_in);
+        inf.shape_color_map = shape_color_map_rule::detect_body_recolor(train, ground_in);
         // Fallback: same shape->color table, but keyed on each object's own
         // shape and applied as an interior fill (ShapeToInteriorColorMap)
         // instead of a body recolor. Only run when the body-recolor
         // hypothesis didn't validate; the winner is recorded in claimed_by,
         // which is what tells the two ops apart downstream.
         if (!inf.shape_color_map.holds())
-            inf.shape_color_map = shape_color_map_rule::detect_interior_fill(
-                train, inf.background.input_elected());
+            inf.shape_color_map = shape_color_map_rule::detect_interior_fill(train, ground_in);
     }
     // Scale / Fixed / BoundingBox: no rule-specific detectors yet.
     // Scale could later reuse unchanged_cells through the ratio (cell<->block).

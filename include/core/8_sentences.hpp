@@ -19,6 +19,7 @@
 #pragma once
 #include "7_infer.hpp"
 #include "7_vocabulary.hpp"
+#include <bit>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,6 +30,17 @@ using namespace std;
 // A beat nothing has a word for yet. Said out loud rather than left out, so the
 // search knows exactly which one slot it has to fill.
 inline constexpr const char* a_blank = "?";
+
+// An op's word with its argument, as a program spells it: Recolor[3].
+inline string spell(const string& op, int value) {
+    return op + "[" + to_string(value) + "]";
+}
+
+// The pick for one color's pieces alone. Picks add to what is already marked,
+// so it starts from none picked.
+inline string pick_only_color(int color) {
+    return "SelectAll InvertSelection " + spell("SelectColor", color);
+}
 
 struct said_reading {
     vector<string> sentences;
@@ -69,10 +81,10 @@ inline vector<string> words_for_pose(int pose) {
 
 // A CELL-LEVEL COLOR MAP AS WORDS: nothing when no color changes, one
 // BidiColorMap when two colors trade places, nullopt when it is anything else.
-inline optional<string> word_for_color_map(const int8_t* map) {
+inline optional<string> word_for_color_map(const recoloring& map) {
     int first = -1, second = -1;
     for (int c = 0; c < COLOR_COUNT; ++c)
-        if (map[c] >= 0 && map[c] != c) { first = c; second = map[c]; break; }
+        if (map.changes(c)) { first = c; second = map[c]; break; }
     if (first < 0) return string();
     for (int c = 0; c < COLOR_COUNT; ++c) {
         const int mapped = c == first ? second : c == second ? first : c;
@@ -80,7 +92,7 @@ inline optional<string> word_for_color_map(const int8_t* map) {
     }
     const int variant = color_pair{first, second}.index();
     if (variant < 0) return nullopt;
-    return "BidiColorMap[" + to_string(variant) + "]";
+    return spell("BidiColorMap", variant);
 }
 
 // How much of the object list is selected after these words.
@@ -124,6 +136,11 @@ inline string closed_with(const string& words, const string& combine) {
 // means rather than the closer guessing.
 inline string closed_on_the_pick(const string& words, const string& combine) {
     return words + " " + combine;
+}
+
+// ONE SENTENCE THAT OPENS WITH A SOURCE OF ITS OWN, as written, closed.
+inline void say_closed(said_reading& said, const string& words, const string& combine) {
+    said.sentences.push_back(closed_with(words, combine));
 }
 
 // ONE SENTENCE. Nothing is implicit: the first names its source, the rest carry
@@ -271,7 +288,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         vector<beat> grow, carve;
         say_pose(grow, "SelectAll", pose);
         say_pose(carve, "SelectAll", pose);
-        grow.push_back({"SelectAll", "ScaleUp[" + to_string(grown) + "]"});
+        grow.push_back({"SelectAll", spell("ScaleUp", grown)});
         carve.push_back({"SelectAll", "Fractal"});
         say_beats(said, "Input", grow, "Union");
         say_beats(said, "InputWithoutBackground", carve, "Difference", /*afresh=*/true);
@@ -284,8 +301,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         // The ground is punched out before stamping, so no map may repaint it.
         const int ground = inf.background.input_elected();
         const int pose = cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
-        if (pose < 0 || !is_color(ground) ||
-            (blocks.color_map[ground] >= 0 && blocks.color_map[ground] != ground)) {
+        if (pose < 0 || !is_color(ground) || blocks.color_map.changes(ground)) {
             said.no_word_for.push_back("which blocks hold a copy of the input");
             return false;
         }
@@ -312,7 +328,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
             for (int pose = 1; pose < POSE_COUNT; ++pose) {
                 string bands;
                 for (size_t band = 0; band < poses.size(); ++band)
-                    if (poses[band] == pose) bands += " " + select + "[" + to_string(band) + "]";
+                    if (poses[band] == pose) bands += " " + spell(select, (int)band);
                 if (!bands.empty()) say_pose(into, "SelectAll InvertSelection" + bands, pose);
             }
         };
@@ -414,12 +430,11 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     int8_t alone[8];
     bool one_color_each = true;
     for (int p = 0; p < panes; ++p) {
-        const auto& only = says[1 << p];
+        const auto& only = says[(size_t)1 << p];
         alone[p] = only.said() ? only.paint : (int8_t)-1;
         if (alone[p] < 0) one_color_each = false;
     }
 
-    auto bits = [](int m) { int n = 0; while (m) { n += m & 1; m >>= 1; } return n; };
     const string head = "InputWithoutBackground Panes" + (turn.empty() ? " SelectAll" : turn) + " Origin";
     for (int g = 0; g < ground_count; ++g) {
         const int8_t ground = grounds[g];
@@ -441,25 +456,25 @@ inline bool say_panes(const inference& inf, said_reading& said) {
             }
             return true;
         };
-        const string paint = to_string((int)lit_color);
+        const string recolor = " " + spell("Recolor", lit_color);
         if (shape_holds([&](int m) { return m == patterns - 1; })) {
-            said.sentences.push_back(closed_with(head + " IntersectionList Recolor[" + paint + "]", "Union"));
+            say_closed(said, head + " IntersectionList" + recolor, "Union");
             return true;
         }
         if (shape_holds([&](int m) { return m != 0; })) {
-            said.sentences.push_back(closed_with(head + " UnionList Recolor[" + paint + "]", "Union"));
+            say_closed(said, head + " UnionList" + recolor, "Union");
             return true;
         }
-        if (shape_holds([&](int m) { return bits(m) == 1; })) {
+        if (shape_holds([&](int m) { return popcount((unsigned)m) == 1; })) {
             // Everything the panes cover, less what they all agree on.
-            said.sentences.push_back(closed_with(head + " UnionList Recolor[" + paint + "]", "Union"));
-            said.sentences.push_back(closed_with(head + " IntersectionList", "Difference"));
+            say_closed(said, head + " UnionList" + recolor, "Union");
+            say_closed(said, head + " IntersectionList", "Difference");
             return true;
         }
         if (shape_holds([&](int m) { return m == 0; })) {
             // What the panes do NOT cover: fill the box, then keep only the fill.
-            said.sentences.push_back(closed_with(head + " UnionList AddColor[" + paint + "] Colors SelectColor["
-                                                 + paint + "] InvertSelection DeleteSelection", "Union"));
+            say_closed(said, head + " UnionList " + spell("AddColor", lit_color) + " Colors " +
+                             spell("SelectColor", lit_color) + " InvertSelection DeleteSelection", "Union");
             return true;
         }
     }
@@ -468,6 +483,9 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     // off the table: whoever takes the pattern where every pane is still in wins
     // first, then the same question again without it.
     const int8_t ground = says[0].paint;
+    // The ground is laid last, under everything already painted, since the
+    // canvas starts empty when the outputs elect no ground.
+    const string lay_ground = "Input Panes SelectAll Origin " + spell("Recolor", ground);
     // THE PANES LAID DOWN AS THEY COME, when what wins is simply the first pane
     // that has anything. Nothing has to be named, so this says the panes whose
     // colors are not one apiece too -- including the ones that never overlap,
@@ -482,9 +500,8 @@ inline bool say_panes(const inference& inf, said_reading& said) {
                          (says[m].paint >= 0 && alone[first] == says[m].paint);
         }
         if (list_order) {
-            said.sentences.push_back(closed_with(head, "Underlay"));
-            said.sentences.push_back(closed_with("Input Panes SelectAll Origin Recolor[" +
-                                                 to_string((int)ground) + "]", "Underlay"));
+            say_closed(said, head, "Underlay");
+            say_closed(said, lay_ground, "Underlay");
             return true;
         }
     }
@@ -512,14 +529,10 @@ inline bool say_panes(const inference& inf, said_reading& said) {
             }
             if (every) {
                 for (int i = 0; i < panes; ++i)
-                    said.sentences.push_back(closed_with(
-                        "Input Colors SelectColor[" + to_string((int)alone[order[i]]) +
-                        "] InvertSelection DeleteSelection Panes SelectAll Origin",
-                        i == 0 ? "Union" : "Underlay"));
-                // The canvas starts empty when the outputs elect no ground, so
-                // the ground is laid last, under everything already painted.
-                said.sentences.push_back(closed_with("Input Panes SelectAll Origin Recolor[" +
-                                                     to_string((int)ground) + "]", "Underlay"));
+                    say_closed(said, "Input Colors " + spell("SelectColor", alone[order[i]]) +
+                                     " InvertSelection DeleteSelection Panes SelectAll Origin",
+                               i == 0 ? "Union" : "Underlay");
+                say_closed(said, lay_ground, "Underlay");
                 return true;
             }
         }
@@ -555,14 +568,13 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         said.no_word_for.push_back("a place in a lattice of panes");
         return false;
     }
-    const string band = one_across ? "SelectColumn[" : "SelectRow[";
+    const char* band = one_across ? "SelectColumn" : "SelectRow";
     // The hand is taken up again after the delete, and not only for the paint:
     // the delete hands back the panes that were NOT picked and leaves nothing
     // marked, and Origin is an act, so with nothing picked it would leave the
     // pane sitting where it was cut instead of stacking it at the corner.
-    said.sentences.push_back(closed_with("Input Panes " + band + to_string((int)pick.which) +
-                                         "] InvertSelection DeleteSelection SelectAll Origin",
-                                         "Union"));
+    say_closed(said, "Input Panes " + spell(band, pick.which) +
+                     " InvertSelection DeleteSelection SelectAll Origin", "Union");
     return true;
 }
 
@@ -656,15 +668,14 @@ inline said_reading say_the_reading(const inference& inf) {
     // the input's own cells where they sat, and any opening that hands those over
     // is as good as the one the election happened to pick.
     if (inf.diagonal_continuation.holds()) {
-        say("DiagTile[" + to_string((int)inf.diagonal_continuation.lean) + "]");
+        say(spell("DiagTile", inf.diagonal_continuation.lean));
         return spoken();
     }
 
     // PIECES THAT PILED UP INSIDE THEIR OWN BOXES. The slide drew every output
     // by itself, so it is the whole of what happened.
     if (inf.piece_slam.holds()) {
-        say(string(inf.piece_slam.rows ? "SlamRow[" : "SlamColumn[") +
-            to_string((int)inf.piece_slam.step) + "]");
+        say(spell(inf.piece_slam.rows ? "SlamRow" : "SlamColumn", inf.piece_slam.step));
         return spoken();
     }
 
@@ -684,17 +695,14 @@ inline said_reading say_the_reading(const inference& inf) {
     // sentence. Before a paint read the mark, saying this meant deleting every
     // other layer first and carving the input again for the next one.
     if (inf.slide_to_touch.holds()) {
-        // Picks add to what is already marked, and the Trim above picked every
-        // piece, so each line starts from none picked.
-        auto only = [](int8_t color) {
-            return "SelectAll InvertSelection SelectColor[" + to_string((int)color) + "]";
-        };
+        // The Trim above picked every piece, so each line picks its colour
+        // from none picked.
         say_beats(said, "Input", beats, "Withhold");
         said.sentences.push_back(closed_on_the_pick(
             (said.sentences.empty() ? string("Input") : string("CurrentObjects")) +
-            " " + only(inf.slide_to_touch.stays), "Union"));
+            " " + pick_only_color(inf.slide_to_touch.stays), "Union"));
         said.sentences.push_back(closed_on_the_pick(
-            "CurrentObjects " + only(inf.slide_to_touch.slides) + " AlignToCanvas", "Union"));
+            "CurrentObjects " + pick_only_color(inf.slide_to_touch.slides) + " AlignToCanvas", "Union"));
         return said;
     }
 
@@ -745,9 +753,9 @@ inline said_reading say_the_reading(const inference& inf) {
             here.push_back({color, what, value});
         };
         for (const auto& edge : pair.edges) {
-            if (!edge.from_input || !edge.same_shape) continue;
-            if (edge.from < 0 || edge.from >= (int16_t)pair.input_info.size()) continue;
-            const auto& piece = pair.input_info[edge.from];
+            const auto* source = pair.source_of(edge);
+            if (!edge.from_input || !edge.same_shape || !source) continue;
+            const auto& piece = *source;
             note(piece.color, act_turn,   edge.pose);
             // A copy's landing is not a movement of the single original.
             if (piece.edges_touching == 1) {
@@ -759,8 +767,7 @@ inline said_reading say_the_reading(const inference& inf) {
             }
             if (!edge.exact)
                 for (int8_t was = 0; was < COLOR_COUNT; ++was)
-                    if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
-                        note(was, act_recolor, edge.color_map[was]);
+                    if (edge.color_map.changes(was)) note(was, act_recolor, edge.color_map[was]);
         }
         if (which == 0) { acts_in_every_pair = here; continue; }
         vector<seen_act> still;
@@ -774,16 +781,15 @@ inline said_reading say_the_reading(const inference& inf) {
     for (const auto& act : acts_in_every_pair) {
         if (act.what == act_recolor) a_recolor_was_said = true;
         if (act.what == act_down || act.what == act_across) a_move_was_said = true;
-        // Picks add to what is already marked, and the Trim picked every piece, so
-        // a line about one color starts from none picked.
-        const string pick = act.color < 0 ? string("SelectAll")
-            : "SelectAll InvertSelection SelectColor[" + to_string((int)act.color) + "]";
+        // The Trim picked every piece, so a line about one color picks it from
+        // none picked.
+        const string pick = act.color < 0 ? string("SelectAll") : pick_only_color(act.color);
         vector<string> words;
         switch (act.what) {
             case act_turn:    words = words_for_pose(act.value); break;
-            case act_down:    words = {"MoveColumn[" + to_string((int)act.value) + "]"}; break;
-            case act_across:  words = {"MoveRow[" + to_string((int)act.value) + "]"}; break;
-            case act_recolor: words = {"Recolor[" + to_string((int)act.value) + "]"}; break;
+            case act_down:    words = {spell("MoveColumn", act.value)}; break;
+            case act_across:  words = {spell("MoveRow", act.value)}; break;
+            case act_recolor: words = {spell("Recolor", act.value)}; break;
             default: break;
         }
         for (const string& word : words) beats.push_back({pick, word});
@@ -816,7 +822,7 @@ inline said_reading say_the_reading(const inference& inf) {
     if (allowed.recolor)
         for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
             if (inf.color_swaps.over_the_pieces[variant])
-                say("BidiColorMap[" + to_string(variant) + "]");
+                say(spell("BidiColorMap", variant));
 
     if (allowed.recolor)
         for (const auto& pair : facts.chosen_pairs())

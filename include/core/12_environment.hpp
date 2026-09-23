@@ -88,21 +88,9 @@ namespace arc {
 
 	// --- Shared node-type metadata helpers (used by serializer, GUI, solver) ---
 
-	inline constexpr int type_var_low[] = {
-	#define X(id, low, high, role, inferred, pick, clears) low,
-		NODE_PRIMITIVES
-	#undef X
-	};
-
-	inline constexpr int type_var_high[] = {
-	#define X(id, low, high, role, inferred, pick, clears) high,
-		NODE_PRIMITIVES
-	#undef X
-	};
-
 	// An op takes an argument only when its range holds more than one value.
 	inline bool is_annotated(node_type type) {
-		return type_var_low[to_underlying(type)] != type_var_high[to_underlying(type)];
+		return row_of(type).low != row_of(type).high;
 	}
 
 	// The printed annotation IS the value, so reading one back is reading a
@@ -120,11 +108,11 @@ namespace arc {
 	}
 
 	inline int get_variant_count(node_type type) {
-		return type_var_high[to_underlying(type)] - type_var_low[to_underlying(type)] + 1;
+		return row_of(type).high - row_of(type).low + 1;
 	}
 
 	inline int16_t get_variant_value(node_type t, int idx) {
-		return (int16_t)(type_var_low[to_underlying(t)] + idx);
+		return (int16_t)(row_of(t).low + idx);
 	}
 
 	// Not thread-safe: all node alloc/free must happen on the thread driving the
@@ -724,7 +712,7 @@ namespace arc {
 			// it had already learned behind it, and `valid` is the whole of what
 			// says whether they were ever meant to be used.
 			const auto& learned = p.inf.shape_color_map;
-			for (int i = 0; i < 16; ++i) {
+			for (int i = 0; i < GPU_MAX_SHAPE_KEYS; ++i) {
 				ex.shape_color_keys[i] = learned.holds() ? learned.keys[i] : 0;
 				ex.shape_color_vals[i] = learned.holds() ? (int8_t)learned.colors[i] : (int8_t)0;
 			}

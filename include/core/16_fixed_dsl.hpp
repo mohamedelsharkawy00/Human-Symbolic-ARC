@@ -18,6 +18,23 @@ namespace arc {
 // The same struct the kernel holds a grid in, under the name the host code has
 // always used. One type, one layout: a grid crosses to the device as a copy.
 using fixed_grid = gpu_fixed_grid;
+using fixed_object = gpu_fixed_object;
+
+// Room for one object per cell, so a host list never drops one.
+static constexpr int GPU_MAX_OBJECTS = MAX_GRID_CELLS;
+
+struct fixed_object_list {
+    fixed_object objects[GPU_MAX_OBJECTS];
+    int count = 0;
+
+    void clear() { count = 0; }
+
+    bool push(const fixed_object& obj) {
+        if (count >= GPU_MAX_OBJECTS) return false;
+        objects[count++] = obj;
+        return true;
+    }
+};
 
 // --- Convert from environment grid (int pixels) to the packed fixed_grid ---
 static inline void grid_to_fixed(const int src[][30], int w, int h, fixed_grid& dst) {
@@ -52,7 +69,7 @@ static inline void fixed_segment_objects(const fixed_grid& g, fixed_object_list&
             obj.x1 = (int16_t)(obj.x0 + obj.width - 1);
             obj.y1 = (int16_t)(obj.y0 + obj.height - 1);
             for (int i = 0; i < n; ++i) {
-                const int row = cells[i] / MAX_GRID_DIM, col = cells[i] % MAX_GRID_DIM;
+                const int row = cell_row(cells[i]), col = cell_col(cells[i]);
                 obj.mask[row - obj.y0][col - obj.x0] = g.data[row][col];
             }
         });

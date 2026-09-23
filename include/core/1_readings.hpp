@@ -21,6 +21,13 @@ struct object_summary {
     int16_t count = 0;       // number of cells in the object
 };
 
+// A cell's place in the largest grid as one number, counted row by row. Lists
+// of cells hold these, so a cell costs two bytes rather than a pair, and the
+// packed store below finds its cells the same way.
+ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
+ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
+ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+
 // A cell is 4 bits, so two of them share a byte,
 // in fixed size storage held by both CPU and GPU.
 // This optimization is needed to lower the consumption
@@ -43,18 +50,14 @@ struct alignas(4) object_cells {
         const uint8_t* byte;
         int shift;
 
-        ARC_HOST_DEVICE operator int8_t() const {
-            return (int8_t)((*byte >> shift) & 0xF) - 1;
-        }
+        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
     };
 
     struct cell_ref {
         uint8_t* byte;
         int shift;
 
-        ARC_HOST_DEVICE operator int8_t() const {
-            return (int8_t)((*byte >> shift) & 0xF) - 1;
-        }
+        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
 
         ARC_HOST_DEVICE void operator=(int8_t value) {
             const uint8_t encoded = object_cells::enc(value);
@@ -69,36 +72,33 @@ struct alignas(4) object_cells {
     };
 
     // Row proxies allow cells[row][col]; invalid flat indices fall back to cell 0.
-    struct row_ref {
-        uint8_t* base;
-        int row_index;
+    // One template makes the writable row and the read-only one, so the two
+    // cannot find a cell differently.
+    template <class Byte, class Cell>
+    struct row_of_cells {
+        Byte* base;
+        int row;
 
-        ARC_HOST_DEVICE cell_ref operator[](int col) const {
-            int index = row_index * MAX_GRID_DIM + col;
+        ARC_HOST_DEVICE Cell operator[](int col) const {
+            int index = cell_index(row, col);
             if (index < 0 || index >= CELLS) index = 0;
             return { base + (index >> 1), (index & 1) * 4 };
         }
     };
 
-    struct const_row_ref {
-        const uint8_t* base;
-        int row_index;
-
-        ARC_HOST_DEVICE const_cell_ref operator[](int col) const {
-            int index = row_index * MAX_GRID_DIM + col;
-            if (index < 0 || index >= CELLS) index = 0;
-            return { base + (index >> 1), (index & 1) * 4 };
-        }
-    };
-
-    ARC_HOST_DEVICE row_ref operator[](int row) { return { bytes, row }; }
-    ARC_HOST_DEVICE const_row_ref operator[](int row) const { return { bytes, row }; }
+    ARC_HOST_DEVICE row_of_cells<uint8_t, cell_ref> operator[](int row) { return { bytes, row }; }
+    ARC_HOST_DEVICE row_of_cells<const uint8_t, const_cell_ref> operator[](int row) const {
+        return { bytes, row };
+    }
 
     // Four bits are unsigned, so TRANSPARENT (-1) has nowhere to stay. What goes
     // in the byte is therefore the real value plus one: TRANSPARENT becomes 0,
-    // black becomes 1, and so on.
+    // black becomes 1, and so on. dec reads the half at `shift` back.
     ARC_HOST_DEVICE static constexpr uint8_t enc(int8_t value) {
         return (uint8_t)(((int)value + 1) & 0xF);
+    }
+    ARC_HOST_DEVICE static constexpr int8_t dec(uint8_t byte, int shift) {
+        return (int8_t)(((byte >> shift) & 0xF) - 1);
     }
 
     // A byte of two TRANSPARENT cells. Named because clearing by whole bytes is
@@ -134,7 +134,7 @@ struct object {
         made.summary = box;
         made.cells.clear();
         for (int i = 0; i < count; ++i) {
-            const int row = indices[i] / MAX_GRID_DIM, col = indices[i] % MAX_GRID_DIM;
+            const int row = cell_row(indices[i]), col = cell_col(indices[i]);
             made.cells[row - box.y0][col - box.x0] = (int8_t)source.data[row][col];
         }
         return made;
@@ -152,6 +152,17 @@ struct object {
 
     ARC_HOST_DEVICE bool holds(int row, int col) const {
         return color_at(row, col) != (int8_t)TRANSPARENT;
+    }
+
+    // Every cell the object fills, in reading order: see(row, col, color), in
+    // grid coordinates.
+    template <class See>
+    void each_cell(See see) const {
+        for (int row = 0; row < summary.h; ++row)
+            for (int col = 0; col < summary.w; ++col) {
+                const int8_t color = cells[row][col];
+                if (color != TRANSPARENT) see(summary.y0 + row, summary.x0 + col, color);
+            }
     }
 
     // The object on its own, as a grid just big enough to hold it: its own
@@ -247,6 +258,11 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
     return tail;
 }
 
+// Whether a cell sits in the outermost ring of a height x width grid.
+ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width) {
+    return row == 0 || col == 0 || row == height - 1 || col == width - 1;
+}
+
 // Mark cells reachable from the border without crossing a blocked cell.
 // Space uses four-way connectivity, so it cannot leak through touching corners.
 template <class Blocked>
@@ -263,7 +279,7 @@ inline void mark_outside(int height, int width, Blocked blocked,
     int seeded = 0;
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
-            if (row != 0 && row != height - 1 && col != 0 && col != width - 1) continue;
+            if (!on_border(row, col, height, width)) continue;
             if (!claim(row, col)) continue;
             queue_row[seeded] = (int16_t)row;
             queue_col[seeded++] = (int16_t)col;
@@ -297,8 +313,13 @@ struct cell_box {
     }
 };
 
+// An object's box as cell_box has it, and back again with its cell count.
 inline cell_box box_of(const object_summary& summary) {
     return { summary.y0, summary.x0, summary.y0 + summary.h - 1, summary.x0 + summary.w - 1 };
+}
+ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count) {
+    return { (int8_t)box.col0, (int8_t)box.row0, (int8_t)box.width(), (int8_t)box.height(),
+             (int16_t)count };
 }
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
@@ -335,7 +356,6 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
 
             taken[row][col] = true;
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
-            object_summary found;
             int seen = 0;
             int seeded = 1;
             cell_box box;
@@ -353,7 +373,7 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
                     }
             // One flood fill for the whole project, so no two readings can
             // disagree about which cells belong to one group.
-            found.count = (int16_t)walk_out(one_grid.height, one_grid.width,
+            const int count = walk_out(one_grid.height, one_grid.width,
                 queue_row, queue_col, seeded,
                 [&](int next_row, int next_col) {
                     if (whole_color || taken[next_row][next_col]) return false;
@@ -364,32 +384,17 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
                     return true;
                 },
                 [&](int seen_row, int seen_col) {
-                    found_cells[seen++] = (int16_t)(seen_row * MAX_GRID_DIM + seen_col);
+                    found_cells[seen++] = (int16_t)cell_index(seen_row, seen_col);
                     box.include_cell(seen_row, seen_col);
                 });
-            found.x0 = (int8_t)box.col0;
-            found.y0 = (int8_t)box.row0;
-            found.w  = (int8_t)box.width();
-            found.h  = (int8_t)box.height();
-            take(found, found_cells, seen);
+            take(summary_of(box, count), found_cells, seen);
         }
 }
 
-// The groups themselves, cells and all, in the order the grid gives them up.
-// The vector owns the objects; each object holds its packed cells inline.
-inline vector<object> find_objects(const grid& one_grid, int background) {
-    vector<object> found;
-    object_walk_scratch scratch;
-    each_object(one_grid, background, grouping::touching_same_color, scratch, [&](const object_summary& one,
-                                       const int16_t* cells, int n) {
-        found.push_back(object::from_cells(one_grid, one, cells, n));
-    });
-    return found;
-}
-
-// The same walk, forgetting the cells on the way out. Writes at most max_out
-// and returns how many; a grid with more groups than that silently loses the
-// rest, so callers size the array for the worst case they care about.
+// The same-color groups of a grid as their summaries alone, in the order the
+// walk finds them. Writes at most max_out and returns how many; a grid with more
+// groups than that silently loses the rest, so callers size the array for the
+// worst case they care about.
 inline int find_objects_by_color(const grid& one_grid, int background,
                                  object_summary* out, int max_out) {
     int found = 0;
@@ -465,8 +470,7 @@ inline bool pairs_overlay(const vector<example>& train) {
         // Non-empty as well as equal: an empty pair overlays itself vacuously,
         // and a channel that divides by the cell count would hand back a
         // nonsense number instead of declining.
-        return ex.input.width > 0 && ex.input.height > 0 &&
-               ex.input.same_size(ex.output);
+        return !ex.input.empty() && ex.input.same_size(ex.output);
     });
 }
 
@@ -488,31 +492,6 @@ ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int 
     const int down   = (pose & 2) ? height - 1 - row : row;
     const int across = (pose & 4) ? width  - 1 - col : col;
     return (pose & 1) ? std::pair<int, int>{ across, down } : std::pair<int, int>{ down, across };
-}
-
-// Turn a shape into one number, so "is this the same shape?" becomes "are these
-// two numbers equal?". Shape here means which cells of the box around it are
-// filled, plus w and h. Not the color, not where it sits on the grid.
-// The CPU stores these numbers and the GPU looks them up, so if the two ever
-// hashed differently every lookup would miss. Hence one function, called by both.
-//
-// occ(i) says whether cell i is filled, counting across each row in turn. Every
-// caller must count the same way or the two sides hash the same shape apart.
-// The second template parameter demands a function: without it a plain bool
-// array lands here instead of the array-taking one just below.
-template <typename OccupancyAt,
-          typename = decltype(std::declval<OccupancyAt&>()(0))>
-ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
-    uint32_t hsh = 2166136261u;
-    auto mix = [&](uint8_t b) { hsh = (hsh ^ b) * 16777619u; };
-    mix((uint8_t)w); mix((uint8_t)h);
-    for (int i = 0; i < w * h; ++i) mix(occ(i) ? (uint8_t)1 : (uint8_t)0);
-    return hsh;
-}
-
-// Adapts a packed bool occupancy array to the recipe above.
-inline uint32_t shape_occupancy_hash(int width, int height, const bool* occupied) {
-    return arc::shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
 }
 
 // How big a grid reads once posed. Only the trade changes the size.
@@ -545,12 +524,28 @@ inline int compose_poses(int first, int then) {
     return 0;
 }
 
+// Turn a shape into one number, so "is this the same shape?" becomes "are these
+// two numbers equal?". Shape here means which cells of the box around it are
+// filled, plus w and h. Not the color, not where it sits on the grid.
+// The CPU stores these numbers and the GPU looks them up, so if the two ever
+// hashed differently every lookup would miss. Hence one function, called by both.
+//
+// occ(i) says whether cell i is filled, counting across each row in turn. Every
+// caller must count the same way or the two sides hash the same shape apart.
+template <typename OccupancyAt>
+ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
+    uint32_t hsh = 2166136261u;
+    auto mix = [&](uint8_t b) { hsh = (hsh ^ b) * 16777619u; };
+    mix((uint8_t)w); mix((uint8_t)h);
+    for (int i = 0; i < w * h; ++i) mix(occ(i) ? (uint8_t)1 : (uint8_t)0);
+    return hsh;
+}
+
 // Canonical (orientationless, positionless) shape identity: the smallest
 // shape_occupancy_hash over the eight ways round, done by index arithmetic —
 // no pose grids are built. Equal shapes have equal hashes; collisions are possible.
 // occupied(row, col) reads the original shape without copying its storage.
-template <typename OccupancyAt,
-          typename = decltype(std::declval<OccupancyAt&>()(0, 0))>
+template <typename OccupancyAt>
 inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied) {
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
@@ -563,12 +558,6 @@ inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied
         best = min(best, hash);
     }
     return best;
-}
-
-inline uint32_t canonical_shape_hash(int width, int height, const bool* occupied) {
-    return canonical_shape_hash(width, height, [&](int row, int col) {
-        return occupied[row * width + col];
-    });
 }
 
 }  // namespace arc

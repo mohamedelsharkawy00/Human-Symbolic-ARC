@@ -14,16 +14,15 @@
 // output_dimension_rule, whose cases the kernel switches on.
 #include "7_infer.hpp"
 #include "7_vocabulary.hpp"
-
-#include <vector>
-#include <cstdint>
-#include <string>
 #include "10_text_format.hpp"  // to_text, for gpu_score_terms::say
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>   // fprintf / stderr in pinned_vector::resize failure path
 #include <cstdlib>  // std::abort
 #include <cstring>  // memset
+#include <string>
 #include <utility>
+#include <vector>
 
 // Thin wrappers over cudaMallocHost / cudaFreeHost. Defined in cuda_solver.cu so
 // this header stays CUDA-free for non-CUDA translation units.
@@ -109,11 +108,12 @@ static constexpr int GPU_GRID_CELLS = arc::MAX_GRID_CELLS;
 // one slot per producing op. A written program is what spends this; the search
 // stops at MAX_SEARCH_DEPTH, far below.
 static constexpr int GPU_MAX_OPS = 127;
-static constexpr int GPU_MAX_OBJECTS = arc::MAX_GRID_CELLS;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 // A grid cut both ways leaves at most this many panes worth carrying.
 static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
+// How many shapes the learned shape->color table holds (ShapeColorMap).
+static constexpr int GPU_MAX_SHAPE_KEYS = arc::shape_color_map_rule::MAX_KEYS;
 
 // The packed cell store lives upstream in 1_readings.hpp, where both sides can
 // reach it: it holds no addresses, so the same bytes mean the same thing on the
@@ -121,7 +121,6 @@ static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
 // one — CPU and GPU objects hold their cells in exactly these bytes, so handing
 // an object to the device is a copy, never a conversion.
 using gpu_packed_mask = arc::object_cells;
-#define GPU_MASK_HD ARC_HOST_DEVICE
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
 // debug/analysis breakdown in 12_environment.hpp.
@@ -130,12 +129,11 @@ static constexpr float GPU_SCORE_W_HISTOGRAM = 1.0f;
 static constexpr float GPU_SCORE_W_DISTANCE_MAP = 0.1f;
 static constexpr float GPU_SCORE_W_RARITY_MATCH = 0.5f;
 static constexpr float GPU_SCORE_W_NODE_PENALTY = 1.0f;
-// CC-match rewards: shape-only and shape+color, scored independently so a
-// wrong-color-right-shape program gets partial credit without ever tying
-// the true solution. Calibrated so 1 matched CC clears the trivial-baseline
-// trap (~-61) that the per-pixel terms create on gridline-heavy puzzles.
+// CC-match reward per component whose box and cell count match one of the
+// target's, whatever its color. Calibrated so 1 matched CC clears the
+// trivial-baseline trap (~-61) that the per-pixel terms create on
+// gridline-heavy puzzles.
 static constexpr float GPU_SCORE_W_SHAPE_MATCH = 60.0f;
-static constexpr float GPU_SCORE_W_COLOR_MATCH = 50.0f;
 // Continuous position reward per shape-matched CC: scales from full (centers
 // coincide) down to 0 (centers max_dim apart). Smooth gradient toward the
 // correct cell, no threshold cliff.
@@ -164,21 +162,6 @@ struct gpu_fixed_object {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-
-using fixed_object = gpu_fixed_object;
-
-struct fixed_object_list {
-    fixed_object objects[GPU_MAX_OBJECTS];
-    int count = 0;
-
-    void clear() { count = 0; }
-
-    bool push(const fixed_object& obj) {
-        if (count >= GPU_MAX_OBJECTS) return false;
-        objects[count++] = obj;
-        return true;
-    }
-};
 
 struct gpu_flat_op {
     node_type type;
@@ -321,8 +304,8 @@ struct gpu_exec_context {
     // canvas in this color, so no program has to paint it back. -1 = none elected
     int8_t output_background_color = -1;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level broadcast).
-    uint32_t shape_color_keys[16];
-    int8_t   shape_color_vals[16];
+    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
+    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
     int8_t   shape_color_count;
     int8_t distance_maps[GPU_MAX_COLORS][GPU_MAX_GRID][GPU_MAX_GRID];
 
@@ -358,8 +341,9 @@ static constexpr int MAX_UPLOAD_EXAMPLES = 16;
 // Max distinct target CC summaries we carry per example (matches host MAX_TARGET_OBJECTS).
 static constexpr int GPU_MAX_TARGET_OBJECTS = 16;
 
-// Compact CC summary: bbox dims and pixel count. Matches host
-// object_summary layout but kept in this header so device code can include it.
+// Compact CC summary: bbox and pixel count, the fields of object_summary. Its
+// own type because the kernel keeps these in __shared__ memory, which cannot
+// run object_summary's default values.
 struct gpu_object_summary {
     int8_t w;
     int8_t h;
@@ -381,8 +365,8 @@ struct cuda_dsl_example_data {
     int8_t output_colors_by_size[GPU_MAX_COLORS] = {};
     int8_t output_colors_by_size_count = 0;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level).
-    uint32_t shape_color_keys[16] = {};
-    int8_t   shape_color_vals[16] = {};
+    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS] = {};
+    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS] = {};
     int8_t   shape_color_count = 0;
     // puzzle-level: dominant across-inputs color (inference background_color); -1 = unknown
     int8_t background_color = -1;
@@ -395,9 +379,6 @@ struct cuda_dsl_example_data {
     int8_t target_obj_counts[MAX_UPLOAD_EXAMPLES] = {};
 };
 
-// Host-side batch for combined exec+score.
-// One job = one (program, example) pair.
-// Only contains per-batch data (programs + results). No per-example data.
 // What the score was made of, straight from the kernel that made it. A host
 // mirror of the formula drifted the moment a term was added on one side only,
 // and it did: focus, vandal and lookahead were GPU-only, so every [SCORE] line
@@ -429,6 +410,9 @@ struct gpu_score_terms {
     }
 };
 
+// Host-side batch for combined exec+score.
+// One job = one (program, example) pair.
+// Only contains per-batch data (programs + results). No per-example data.
 struct cuda_dsl_exec_batch {
     int job_count = 0;
     int active_examples = 0;
@@ -498,9 +482,6 @@ void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns);
 
 // Call when puzzle changes to force re-upload of per-example data.
 void cuda_dsl_invalidate_examples();
-
-// Layered solving: the one unfinished color the scorer should favor (-1 = none).
-// Colors locked as complete (bitmask); wrong paint on them scores as vandalism.
 
 // Returns true if per-example data is already cached on device.
 bool cuda_dsl_examples_uploaded();

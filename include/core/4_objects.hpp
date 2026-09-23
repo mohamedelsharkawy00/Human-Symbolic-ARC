@@ -184,10 +184,19 @@ ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At groun
     return true;
 }
 
+// A patch of background: its box and cell count, and whether the ground closes
+// it in (a hole) rather than running off the edge of the grid.
+struct blank_patch {
+    object_summary box;
+    bool enclosed = false;
+    // A patch with no box was never found.
+    bool found() const { return box.w > 0; }
+};
+
 // The object records and the operations that build and group them.
 struct object_segmentation {
     struct object_info {
-        // Component color; -1 = the whole-grid object
+        // The one color every cell wears; -1 when it wears several, as a block does.
         int8_t color = -1;
         // Bounding box and cell count, defined in 1_readings.hpp.
         object_summary summary;
@@ -204,10 +213,7 @@ struct object_segmentation {
         // True for the group member with the fewest cell differences from the others.
         bool medoid = false;
         // Background region on the other grid touched by an unmatched object.
-        // Width 0 means no region was found; enclosed means a hole.
-        int8_t blank_left = 0, blank_top = 0, blank_width = 0, blank_height = 0;
-        int16_t blank_cells = 0;
-        bool blank_enclosed = false;
+        blank_patch blank;
     };
     // Operations used by the later chapters.
     // THE SMALLER OF ONE PAIR'S TWO GRIDS, as the block the larger one is cut
@@ -221,7 +227,7 @@ struct object_segmentation {
                                   pair.output.height >= pair.input.height;
         const grid& block = output_grows ? pair.input : pair.output;
         const grid& tiled = output_grows ? pair.output : pair.input;
-        if (block.width <= 0 || block.height <= 0) return { 0, 0 };
+        if (block.empty()) return { 0, 0 };
         if (tiled.width % block.width || tiled.height % block.height) return { 0, 0 };
         return { block.width, block.height };
     }
@@ -269,7 +275,7 @@ struct object_segmentation {
         // Charge an empty segmentation the full grid cost plus a position cost.
         if (objects.empty()) return (plain + place_bits) / plain;
         // A position per object, plus the cells of each shape the first time it is
-        // met. Same shape turned round is the same shape â€” the hash is canonical.
+        // met. Same shape turned round is the same shape — the hash is canonical.
         double cost = objects.size() * place_bits;
         for (size_t i = 0; i < objects.size(); ++i) {
             bool said_before = false;
@@ -286,10 +292,8 @@ struct object_segmentation {
                                    segmentation_methods segmentation, int sizes_width, int sizes_height) {
         if (segmentation != segmentation_methods::minimal_repeating_set)
             return { sizes_width, sizes_height };
-        const auto from_input =
-            block_measured_on(input);
-        const auto from_output =
-            block_measured_on(output);
+        const auto from_input = pattern_block_of(input);
+        const auto from_output = pattern_block_of(output);
         // Cut each grid on its own candidate and ask what that costs to say; the
         // cheaper block is the one that found real repetition rather than noise.
         auto cost_of = [&](const grid& one_grid, pair<int, int> block) {
@@ -300,6 +304,14 @@ struct object_segmentation {
         };
         return cost_of(output, from_output) < cost_of(input, from_input) ? from_output
                                                                         : from_input;
+    }
+
+    // The block Pattern cuts a grid into. Background cells are evidence too, and
+    // a complete copy plus a matching fragment can establish a period.
+    static pair<int, int> pattern_block_of(const grid& one_grid) {
+        int width, height;
+        repeat_periods(one_grid, -2, width, height, /*must_fit_twice=*/false);
+        return { width, height };
     }
 
     // Groups copies of an object and chooses the most typical copy in each group (the medoid).
@@ -338,7 +350,12 @@ private:
                                     vector<object>* objects,
                                     int step_width = 0, int step_height = 0) {
         // Allow up to one object per grid cell.
-        static constexpr int MAX_OBJECTS = MAX_GRID_DIM * MAX_GRID_DIM;
+        static constexpr int MAX_OBJECTS = MAX_GRID_CELLS;
+        // One object found: its record always, its cells when the caller keeps them.
+        auto keep = [&](const object& found, int8_t color) {
+            info.push_back({ .color = color, .summary = found.summary, .shape = shape_of(found) });
+            if (objects) objects->push_back(found);
+        };
 
         // Cut on a fixed step: equal blocks, one object each, cells of any color kept
         // together. Blocks with no colored cells at all are not objects.
@@ -363,17 +380,9 @@ private:
                         lit += is_colored;
                     }
                 if (!lit) continue;
-                object_info one_object;
-                one_object.color = -1;
-                one_object.summary.x0 = (int8_t)block_left; one_object.summary.y0 = (int8_t)block_top;
-                one_object.summary.w = (int8_t)block_width; one_object.summary.h = (int8_t)block_height;
-                one_object.summary.count = (int16_t)lit;
-                one_object.shape = canonical_shape_hash(block_width, block_height, [&](int row, int col) {
-                    const int color = one_grid.data[block_top + row][block_left + col];
-                    return color >= 0 && color != background;
-                });
-                info.push_back(one_object);
-                if (objects) { piece.summary = one_object.summary; objects->push_back(piece); }
+                piece.summary = { (int8_t)block_left, (int8_t)block_top,
+                                  (int8_t)block_width, (int8_t)block_height, (int16_t)lit };
+                keep(piece, -1);
             }
             // Repeating-block segmentation needs at least two nonempty blocks.
             if (segmentation != segmentation_methods::smallest_of_two_grids && info.size() < 2) {
@@ -388,38 +397,23 @@ private:
             segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
             segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
                                                                            grouping::touching_same_color;
-        bool occupied[MAX_GRID_DIM * MAX_GRID_DIM];
         object_walk_scratch scratch;
         each_object(one_grid, background, how, scratch,
                     [&](const object_summary& found, const int16_t* found_cells, int how_many) {
             if ((int)info.size() >= MAX_OBJECTS) return;
-            auto row_of = [](int16_t at) { return at / MAX_GRID_DIM; };
-            auto col_of = [](int16_t at) { return at % MAX_GRID_DIM; };
-            const int color = one_grid.data[row_of(found_cells[0])][col_of(found_cells[0])];
             // An object wears one color only if every cell of it does; -1 says several.
-            bool one_color = true;
-            for (int i = 1; i < how_many && one_color; ++i)
-                one_color = (one_grid.data[row_of(found_cells[i])][col_of(found_cells[i])] == color);
-            object_info one_object;
-            one_object.color = one_color ? (int8_t)color : (int8_t)-1;
-            one_object.summary = found;
-            for (int i = 0; i < found.w * found.h; ++i) occupied[i] = false;
-            for (int i = 0; i < how_many; ++i)
-                occupied[(row_of(found_cells[i]) - found.y0) * found.w +
-                         (col_of(found_cells[i]) - found.x0)] = true;
-            one_object.shape = canonical_shape_hash(found.w, found.h, occupied);
-            info.push_back(one_object);
-            if (objects)
-                objects->push_back(object::from_cells(one_grid, found, found_cells, how_many));
+            int8_t color = (int8_t)one_grid.data[cell_row(found_cells[0])][cell_col(found_cells[0])];
+            for (int i = 1; i < how_many && color >= 0; ++i)
+                if (one_grid.data[cell_row(found_cells[i])][cell_col(found_cells[i])] != color) color = -1;
+            keep(object::from_cells(one_grid, found, found_cells, how_many), color);
         });
     }
 
-    // Match Pattern on Input: background cells are evidence too, and a complete
-    // copy plus a matching fragment can establish a period.
-    static pair<int, int> block_measured_on(const grid& one_grid) {
-        int width, height;
-        repeat_periods(one_grid, -2, width, height, /*must_fit_twice=*/false);
-        return { width, height };
+    // Canonical shape of an object: which cells of its box it fills, the same
+    // number whichever way round it sits.
+    static uint32_t shape_of(const object& one) {
+        return canonical_shape_hash(one.summary.w, one.summary.h,
+                                    [&](int row, int col) { return one.cells[row][col] != TRANSPARENT; });
     }
 
     // Counts differing cells when two objects are aligned at their top-left corners.
@@ -460,17 +454,17 @@ struct seeded_pieces {
 inline seeded_pieces read_seeds(const vector<object_summary>& boxes) {
     seeded_pieces reading;
     if (boxes.empty()) return reading;
-    auto box_of = [&](int which) { return (int)boxes[which].w * (int)boxes[which].h; };
+    auto area_of = [&](int which) { return (int)boxes[which].w * (int)boxes[which].h; };
     // Ties go to the first found, which is the way both sides broke them before
     // they shared this.
     int largest = 0;
     for (int which = 1; which < (int)boxes.size(); ++which)
-        if (box_of(which) > box_of(largest)) largest = which;
+        if (area_of(which) > area_of(largest)) largest = which;
     reading.repeated = largest;
     for (int which = 0; which < (int)boxes.size(); ++which)
         if (which != largest) reading.seeds.push_back(which);
     stable_sort(reading.seeds.begin(), reading.seeds.end(),
-                [&](int one, int other) { return box_of(one) < box_of(other); });
+                [&](int one, int other) { return area_of(one) < area_of(other); });
     return reading;
 }
 

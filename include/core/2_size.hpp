@@ -50,7 +50,7 @@ struct output_dimension_rule {
             const int shared = std::gcd(numerator, denominator);
             return { numerator / shared, denominator / shared };
         };
-        
+
         // Separate ratios: a transposed 12x16 -> 16x12 has equal area, so one
         // combined number would wrongly call it "same size"
         auto [width_numerator, width_denominator] = reduce(train[0].output.width,  train[0].input.width);
@@ -60,7 +60,7 @@ struct output_dimension_rule {
                                ranges::all_of(train, [&](const example& ex) {
             // Cross-multiplied: division would truncate and false-confirm the
             // ratio on non-ratio puzzles (e.g. 7->3 then 10->4 "passes" 3/7)
-            return ex.input.width > 0 && ex.input.height > 0 &&
+            return !ex.input.empty() &&
                    ex.output.width  * width_denominator == ex.input.width  * width_numerator &&
                    ex.output.height * height_denominator == ex.input.height * height_numerator;
         });
@@ -80,7 +80,7 @@ struct output_dimension_rule {
         if (ranges::all_of(train, [&](const example& ex) {
                 return ex.output.width == width && ex.output.height == height; }))
             return { .Chosen = Fixed, .width = width, .height = height };
-            
+
         // Nothing held, so the size comes from what the program draws
         return { .Chosen = BoundingBox };
     }

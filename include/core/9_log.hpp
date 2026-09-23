@@ -36,6 +36,38 @@ inline const char* edge_kind(const correspondence_election::edge& edge) {
     return !edge.same_shape ? "  sits on" : edge.exact ? "  exact" : "  recolored";
 }
 
+// A reading as the readout names it: how it cut, and what a match may change.
+inline string reading_title(const correspondence_election::reading& reading) {
+    return string(segmentation_names[(int)reading.segmentation]) + "  [" + reading.allowed.label() + "]";
+}
+
+// A box as the readout says it: width x height at column,row.
+inline string box_said(int width, int height, int col, int row) {
+    return to_string(width) + "x" + to_string(height) + " at " + to_string(col) + "," + to_string(row);
+}
+
+// One piece on one line. `with_shape` adds its shape hash.
+inline void report_piece(ostream& report, const correspondence_election::object_info& piece,
+                         bool with_shape) {
+    report << "color " << (int)piece.color
+      << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
+      << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
+      << " px " << piece.summary.count;
+    if (with_shape) report << " shape " << piece.shape;
+    report << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << "\n";
+}
+
+// The colors a map changes, each as " was->now". False when it changes none.
+inline bool report_recoloring(ostream& report, const recoloring& map) {
+    bool changed = false;
+    for (int was = 0; was < COLOR_COUNT; ++was)
+        if (map.changes(was)) {
+            report << " " << was << "->" << (int)map[was];
+            changed = true;
+        }
+    return changed;
+}
+
 // Idx/count/flags mirror the UI header: 1-based zero-padded index over the
 // loaded count, and the dataset chips (TRN/EVL/TST from the DS_* flags).
 inline void report_header(ostream& report, const string& id,
@@ -172,8 +204,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
           << (reading.left_over - reading.made - reading.gone) << " unexplained, " << reading.left_over
           << " left over, boxes cover " << reading.box_cells << " cells";
         if (!reading.objects_can_fit) report << "  (no object fits the other grid)";
-        report << "   " << segmentation_names[(int)reading.segmentation]
-          << "  [" << reading.allowed.label() << "]";
+        report << "   " << reading_title(reading);
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
 }
@@ -231,8 +262,7 @@ inline void report_pane_split(ostream& report, const pane_split_facts& split) {
     for (size_t which = 0; which < split.pairs.size(); ++which) {
         report << "  pair " << which << " ";
         for (const auto& one_pane : split.pairs[which])
-            report << "  " << (int)one_pane.width << "x" << (int)one_pane.height
-                   << " at " << (int)one_pane.left << "," << (int)one_pane.top;
+            report << "  " << box_said(one_pane.width, one_pane.height, one_pane.left, one_pane.top);
         report << "\n";
     }
     report << "\n";
@@ -271,28 +301,19 @@ inline void report_pane_pick(ostream& report, const pane_pick_rule& pick) {
             pick.way == pane_pick_rule::OnlySymmetric) report << "  fold " << (int)pick.which;
         if (pick.way == pane_pick_rule::AtIndex) report << "  place " << (int)pick.which;
     }
-    report << "\n" << "\n";
+    report << "\n\n";
 }
 
-// WHAT THE READING COMES TO, in the solver's own words. The second list is the
-// one to read: it names the word the language is missing, at the moment the
-// looking wanted it.
-inline void report_said_reading(ostream& report, const inference& inf) {
-    // Each block as the poses that draw it, '-' for background.
-    const auto& blocks = inf.input_blocks;
+// The output as copies of the input: each block as the poses that draw it, '-'
+// for background.
+inline void report_input_blocks(ostream& report, const input_blocks_rule& blocks) {
     report << "[input_blocks] holds " << blocks.holds();
     // How the copies' colors were read: a table every pair shares, or the
     // negative, whose ink each pair's own input supplies.
     if (blocks.negative) report << "  colors negative";
     else if (blocks.holds()) {
         report << "  colors";
-        bool changed = false;
-        for (int was = 0; was < COLOR_COUNT; ++was)
-            if (blocks.color_map[was] >= 0 && blocks.color_map[was] != was) {
-                report << " " << was << "->" << (int)blocks.color_map[was];
-                changed = true;
-            }
-        if (!changed) report << " as given";
+        if (!report_recoloring(report, blocks.color_map)) report << " as given";
     }
     report << "\n";
     for (size_t which = 0; which < blocks.pairs.size(); ++which) {
@@ -310,6 +331,12 @@ inline void report_said_reading(ostream& report, const inference& inf) {
         report << "\n";
     }
     report << "\n";
+}
+
+// WHAT THE READING COMES TO, in the solver's own words. The second list is the
+// one to read: it names the word the language is missing, at the moment the
+// looking wanted it.
+inline void report_said_reading(ostream& report, const inference& inf) {
     const said_reading said = say_the_reading(inf);
     const vector<string> programs = programs_from(said);
     report << "[sentences] " << programs.size() << " program"
@@ -332,8 +359,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_election& 
         if (ranges::all_of(pairs, [](const auto& pair) {
                 return pair.agreed_moves.empty(); })) continue;
         report << "  reading " << i << " moved together   "
-          << segmentation_names[(int)correspondence.readings[i].segmentation]
-          << "  [" << correspondence.readings[i].allowed.label() << "]\n";
+          << reading_title(correspondence.readings[i]) << "\n";
         for (size_t which = 0; which < pairs.size(); ++which) {
             report << "    pair " << which << " input-to-output";
             for (const auto& agreed : pairs[which].agreed_moves) {
@@ -353,41 +379,25 @@ inline void report_agreed_moves(ostream& report, const correspondence_election& 
 // to the edges it did draw. Read straight off the readings -- it used to be
 // handed a screen-shaped copy of them, and could only say what that copy kept.
 inline void report_pieces_seen(ostream& report, const correspondence_election& correspondence) {
-    const char* newline = "\n";
     for (size_t i = 0; i < correspondence.readings.size(); ++i) {
-        report << "  reading " << i << " pieces   "
-          << segmentation_names[(int)correspondence.readings[i].segmentation]
-          << "  [" << correspondence.readings[i].allowed.label() << "]" << newline;
+        report << "  reading " << i << " pieces   " << reading_title(correspondence.readings[i]) << "\n";
         const auto& pairs = correspondence.readings[i].pairs;
         for (size_t which = 0; which < pairs.size(); ++which)
-            for (int side = 0; side < 2; ++side) {
-                const auto& list = side ? pairs[which].output_info
-                                        : pairs[which].input_info;
-                for (const auto& piece : list)
-                    report << "    pair " << which << (side ? " out" : " in ")
-                      << "  color " << (int)piece.color
-                      << " at " << (int)piece.summary.x0 << "," << (int)piece.summary.y0
-                      << " " << (int)piece.summary.w << "x" << (int)piece.summary.h
-                      << " px " << piece.summary.count
-                      << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << newline;
-            }
+            for (const bool input : { true, false })
+                for (const auto& piece : pairs[which].objects_on(input)) {
+                    report << "    pair " << which << (input ? " in " : " out") << "  ";
+                    report_piece(report, piece, false);
+                }
         for (size_t which = 0; which < pairs.size(); ++which)
             for (const auto& edge : pairs[which].edges) {
-                const auto& mine = edge.from_input ? pairs[which].input_info
-                                                   : pairs[which].output_info;
-                const auto& theirs = edge.from_input ? pairs[which].output_info
-                                                     : pairs[which].input_info;
-                const auto& piece = mine[edge.from];
-                const int landed_w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
-                const int landed_h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
-                report << "    pair " << which
-                  << "  " << (int)piece.summary.w << "x" << (int)piece.summary.h
-                  << " at " << (int)piece.summary.x0 << "," << (int)piece.summary.y0
-                  << " -> " << landed_w << "x" << landed_h
-                  << " at " << (int)edge.col << "," << (int)edge.row;
+                const auto& piece = pairs[which].source_of(edge)->summary;
+                const auto* target = pairs[which].target_of(edge);
+                const auto& landed = target ? target->summary : piece;
+                report << "    pair " << which << "  " << box_said(piece.w, piece.h, piece.x0, piece.y0)
+                  << " -> " << box_said(landed.w, landed.h, edge.col, edge.row);
                 if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
                 if (edge.outside) report << ", " << (int)edge.outside << " off grid";
-                report << newline;
+                report << "\n";
             }
     }
 }
@@ -408,26 +418,16 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << "  exact " << pair.found_exact << " recolored " << pair.found_recolored
       << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
       << " turned " << pair.turned << " dropped " << pair.dropped
-      << "  made " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone && !c.from_input; })
-      << "  gone " << ranges::count_if(pair.left_over, [](const auto& c) { return c.made_or_gone && c.from_input; })
-      << "  unexplained " << ranges::count_if(pair.left_over, [](const auto& c) { return !c.made_or_gone; })
+      << "  made " << pair.made() << "  gone " << pair.gone()
+      << "  unexplained " << (int)pair.left_over.size() - pair.made() - pair.gone()
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
-    for (size_t i = 0; i < pair.input_info.size(); ++i) {
-        const auto& piece = pair.input_info[i];
-        report << "  in[" << i << "] color " << (int)piece.color
-          << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
-          << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
-          << " px " << piece.summary.count << " shape " << piece.shape
-          << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << "\n";
-    }
-    for (size_t i = 0; i < pair.output_info.size(); ++i) {
-        const auto& landing = pair.output_info[i];
-        report << "  out[" << i << "] color " << (int)landing.color
-          << " at " << (int)landing.summary.x0 << ',' << (int)landing.summary.y0
-          << " " << (int)landing.summary.w << 'x' << (int)landing.summary.h
-          << " px " << landing.summary.count << " shape " << landing.shape
-          << " instance_of " << landing.instance_of << " edges " << landing.edges_touching << "\n";
+    for (const bool input : { true, false }) {
+        const auto& pieces = pair.objects_on(input);
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            report << (input ? "  in[" : "  out[") << i << "] ";
+            report_piece(report, pieces[i], true);
+        }
     }
     static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };
     report << "  edges " << pair.edges.size() << ", "
@@ -440,10 +440,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
         if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
         if (edge.recolored_to >= 0) report << " -> " << (int)edge.recolored_to;
         // A piece of several colors has no one color it went to, so its map is said whole.
-        else if (!edge.exact)
-            for (int was = 0; was < COLOR_COUNT; ++was)
-                if (edge.color_map[was] >= 0 && edge.color_map[was] != was)
-                    report << " " << was << "->" << (int)edge.color_map[was];
+        else if (!edge.exact) report_recoloring(report, edge.color_map);
         // Which way round it was sitting: turned, and/or mirrored
         if (edge.pose) {
             report << "  ";
@@ -487,6 +484,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_overlap_corner(report, inf.overlap_corner);
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
+    report_input_blocks(report, inf.input_blocks);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);

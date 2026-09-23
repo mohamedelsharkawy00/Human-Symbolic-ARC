@@ -24,16 +24,16 @@ using namespace std;
 // Measure first, then write, so no value is ever too big for the buffer.
 inline string to_text(ARC_FORMAT_ARG const char *form, ...) ARC_FORMAT_CHECK;
 inline string to_text(ARC_FORMAT_ARG const char *form, ...) {
-  va_list args;
-  va_start(args, form);
-  va_list measure;
-  va_copy(measure, args);
-  int length = vsnprintf(nullptr, 0, form, measure);
-  va_end(measure);
-  string text(length > 0 ? length : 0, '\0');
-  if (length > 0) vsnprintf(text.data(), (size_t)length + 1, form, args);
-  va_end(args);
-  return text;
+    va_list args;
+    va_start(args, form);
+    va_list measure;
+    va_copy(measure, args);
+    int length = vsnprintf(nullptr, 0, form, measure);
+    va_end(measure);
+    string text(length > 0 ? length : 0, '\0');
+    if (length > 0) vsnprintf(text.data(), (size_t)length + 1, form, args);
+    va_end(args);
+    return text;
 }
 
 // The shortest text that still reads back as the same number. printf has no
@@ -45,31 +45,31 @@ inline string to_text(ARC_FORMAT_ARG const char *form, ...) {
 // for an exponent only when no number of digits gives one.
 template <typename Number, typename Parse>
 inline string shortest_number(Number value, int max_digits, Parse parse) {
-  string with_exponent;
-  for (int digits = 1; digits <= max_digits; ++digits) {
-    string text = to_text("%.*g", digits, (double)value);
-    if (parse(text.c_str(), nullptr) != value) continue;
-    if (text.find('e') == string::npos) return text;
-    if (with_exponent.empty()) with_exponent = text;
-  }
-  return with_exponent.empty() ? to_text("%.*g", max_digits, (double)value) : with_exponent;
+    string with_exponent;
+    for (int digits = 1; digits <= max_digits; ++digits) {
+        string text = to_text("%.*g", digits, (double)value);
+        if (parse(text.c_str(), nullptr) != value) continue;
+        if (text.find('e') == string::npos) return text;
+        if (with_exponent.empty()) with_exponent = text;
+    }
+    return with_exponent.empty() ? to_text("%.*g", max_digits, (double)value) : with_exponent;
 }
 
 inline string shortest(float value) {
-  return shortest_number(value, 9, strtof);
+    return shortest_number(value, 9, strtof);
 }
 
 inline string shortest(double value) {
-  return shortest_number(value, 17, strtod);
+    return shortest_number(value, 17, strtod);
 }
 
 // printf has every alignment the panel uses except centred, so that one is here.
 // Odd leftovers go to the right, so a centred column never drifts left.
 inline string align_centre(const string &text, int width) {
-  int missing = width - (int)text.size();
-  if (missing <= 0) return text;
-  int before = missing / 2;
-  return string(before, ' ') + text + string(missing - before, ' ');
+    int missing = width - (int)text.size();
+    if (missing <= 0) return text;
+    int before = missing / 2;
+    return string(before, ' ') + text + string(missing - before, ' ');
 }
 
 }  // namespace arc

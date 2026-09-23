@@ -203,7 +203,7 @@ struct gpu_take_object {
         obj.width = g->width; obj.height = g->height;
         obj.mask.clear();
         for (int i = 0; i < n; ++i) {
-            const int r = cells[i] / arc::MAX_GRID_DIM, c = cells[i] % arc::MAX_GRID_DIM;
+            const int r = arc::cell_row(cells[i]), c = arc::cell_col(cells[i]);
             obj.mask[r][c] = g->data[r][c];
         }
     }
@@ -1303,7 +1303,7 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 
     // Look up the color; miss -> no-op.
     int8_t color = -1;
-    for (int i = 0; i < ctx.shape_color_count && i < 16; ++i)
+    for (int i = 0; i < ctx.shape_color_count && i < GPU_MAX_SHAPE_KEYS; ++i)
         if (ctx.shape_color_keys[i] == hsh) { color = ctx.shape_color_vals[i]; break; }
     if (color < 0) return res;
 
@@ -1328,7 +1328,7 @@ __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx,
     gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
         // Fingerprint the object's occupancy (shared recipe in 11_dsl.cuh).
         const uint32_t hsh = gpu_shape_hash_of_paint(obj);
-        for (int k = 0; k < ctx.shape_color_count && k < 16; ++k)
+        for (int k = 0; k < ctx.shape_color_count && k < GPU_MAX_SHAPE_KEYS; ++k)
             if (ctx.shape_color_keys[k] == hsh) return (int)ctx.shape_color_vals[k];
         return -1;
     });
@@ -3351,8 +3351,8 @@ struct gpu_example_template {
     int8_t pane_count;
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
-    uint32_t shape_color_keys[16];
-    int8_t   shape_color_vals[16];
+    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
+    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
     int8_t   shape_color_count;
     int8_t background_color;
     int8_t output_background_color;
@@ -3643,7 +3643,7 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
                 ctx.output_colors_by_size[i] = tmpl.output_colors_by_size[i];
             ctx.output_colors_by_size_count = tmpl.output_colors_by_size_count;
             // Learned shape->color lookup for ShapeColorMap (puzzle-level).
-            for (int i = 0; i < 16; ++i) {
+            for (int i = 0; i < GPU_MAX_SHAPE_KEYS; ++i) {
                 ctx.shape_color_keys[i] = tmpl.shape_color_keys[i];
                 ctx.shape_color_vals[i] = tmpl.shape_color_vals[i];
             }

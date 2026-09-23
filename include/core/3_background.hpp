@@ -82,7 +82,7 @@ struct background_election {
         // takes the top score if it clears BG_FLOOR, else abstains.
         int score = 0;
     };
-    
+
     // Background is an elected verdict for each direction:
     // the same election over different grid sets gives legitimately different
     // backgrounds, and the disagreement IS information. Best background first
@@ -271,12 +271,12 @@ inline object_map label_objects(const grid& one_grid) {
     object_walk_scratch scratch;
     each_object(one_grid, TRANSPARENT, grouping::touching_same_color, scratch,
         [&](const object_summary& summary, const int16_t* cells, int count) {
-            const int color = one_grid.data[cells[0] / MAX_GRID_DIM][cells[0] % MAX_GRID_DIM];
+            const int color = one_grid.data[cell_row(cells[0])][cell_col(cells[0])];
             if (!is_color(color)) return;
             const int16_t id = (int16_t)objects.count();
             objects.first_cell.push_back((int)objects.cells.size());
             for (int i = 0; i < count; ++i) {
-                const int row = cells[i] / MAX_GRID_DIM, col = cells[i] % MAX_GRID_DIM;
+                const int row = cell_row(cells[i]), col = cell_col(cells[i]);
                 objects.id[row][col] = id;
                 objects.cells.push_back({ (int8_t)row, (int8_t)col });
             }
@@ -452,7 +452,7 @@ inline vector<background_election::hypothesis> elect_side_background(
     background_evidence evidence;
     for (const grid* grid_ptr : grids) {
         const grid& one_grid = *grid_ptr;
-        if (one_grid.width <= 0 || one_grid.height <= 0) continue;
+        if (one_grid.empty()) continue;
         int cells_of_color[COLOR_COUNT];
         count_colors(one_grid, cells_of_color);
         measure_area_and_reach(one_grid, cells_of_color, evidence);
@@ -460,19 +460,67 @@ inline vector<background_election::hypothesis> elect_side_background(
     }
     close_underneath(evidence);
 
-    ranked.push_back({ (int8_t)-1, 0, 0, false, 0, 0, false, 0 });  // "none" always a candidate
+    ranked.push_back({ .color = -1, .appears_in_any_output = false });  // "none" always a candidate
     for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
         if (!in_every[candidate]) continue;
-        bool survives = persists ? persists[candidate] : true;
-        ranked.push_back({ (int8_t)candidate, evidence.embeds[candidate],
-                           evidence.dominance[candidate], survives,
-                           evidence.span[candidate], evidence.gaps[candidate],
-                           evidence.only_windows[candidate], 0 });
+        ranked.push_back({ .color = (int8_t)candidate,
+                           .embeds = evidence.embeds[candidate],
+                           .dominance = evidence.dominance[candidate],
+                           .appears_in_any_output = persists ? persists[candidate] : true,
+                           .span = evidence.span[candidate],
+                           .gaps = evidence.gaps[candidate],
+                           .underneath = evidence.only_windows[candidate] });
     }
 
     score_candidates(ranked, evidence, in_every);
     rank_candidates(ranked);
     return ranked;
+}
+
+// A per-pair background must be CONFIDENT: on a single grid the standout share
+// saturates, so area is the only honest signal here. Confident = dominates
+// absolutely, OR beats the runner-up DECISIVELY, OR holds the figures while
+// having a BODY rather than being a separator skeleton. This is what keeps a
+// BACKGROUNDLESS puzzle from reading as per-pair. -1 when none is confident.
+inline int8_t confident_background(const vector<background_election::hypothesis>& local) {
+    int best_dominance = 0, second_dominance = 0;
+    for (const auto& candidate : local) {
+        if (candidate.color < 0) continue;
+        if (candidate.dominance > best_dominance) {
+            second_dominance = best_dominance;
+            best_dominance = candidate.dominance;
+        } else if (candidate.dominance > second_dominance) {
+            second_dominance = candidate.dominance;
+        }
+    }
+    for (const auto& candidate : local) {
+        if (candidate.color < 0 || candidate.dominance != best_dominance) continue;
+        const bool dominates = best_dominance >= BG_HALF;
+        const bool beats_runner_up = best_dominance >= BG_DECISIVE * second_dominance;
+        const bool has_body = candidate.gaps * BG_NEAR_TIE_DEN < 1000 * BG_NEAR_TIE_NUM;
+        const bool holds_figures = candidate.embeds >= BG_HALF && has_body;
+        if (dominates || beats_runner_up || holds_figures) return candidate.color;
+    }
+    return -1;
+}
+
+// THE VETO (see input_vetoed): the global input winner is DECISIVELY beaten in
+// one pair when that pair's own ground has at least twice its area there --
+// then the global winner is a figure there, not background. Unless it still
+// HOLDS THE FIGURES there.
+inline bool vetoes(const vector<background_election::hypothesis>& local,
+                   int8_t global_background, int8_t pair_background) {
+    if (global_background < 0 || pair_background < 0 || pair_background == global_background)
+        return false;
+    int global_dominance = 0, global_embeds = 0, local_dominance = 0;
+    for (const auto& candidate : local) {
+        if (candidate.color == global_background) {
+            global_dominance = candidate.dominance;
+            global_embeds = candidate.embeds;
+        }
+        if (candidate.color == pair_background) local_dominance = candidate.dominance;
+    }
+    return local_dominance >= BG_DECISIVE * global_dominance && global_embeds < BG_HALF;
 }
 
 // Elect the background in every DIRECTION: across inputs, across outputs, across
@@ -505,57 +553,11 @@ inline background_election elect_background(const vector<example>& train) {
     // pair, so the input is the honest source.
     out.across_input_output.clear();
     for (const auto& ex : train) {
-        const vector<const grid*> just_this_input = { &ex.input };
-        const vector<background_election::hypothesis> local =
-            elect_side_background(just_this_input);
-        // A per-pair background must be CONFIDENT: on a single grid the standout
-        // share saturates, so area is the only honest signal here. Confident =
-        // dominates absolutely, OR beats the runner-up DECISIVELY, OR holds the
-        // figures while having a BODY rather than being a separator skeleton.
-        // This is what keeps a BACKGROUNDLESS puzzle from reading as per-pair.
-        int best_dominance = 0, second_dominance = 0;
-        for (const auto& candidate : local) {
-            if (candidate.color < 0) continue;
-            if (candidate.dominance > best_dominance) {
-                second_dominance = best_dominance;
-                best_dominance = candidate.dominance;
-            } else if (candidate.dominance > second_dominance) {
-                second_dominance = candidate.dominance;
-            }
-        }
-        int8_t pair_background = -1;
-        for (const auto& candidate : local) {
-            if (candidate.color < 0 || candidate.dominance != best_dominance) continue;
-            const bool dominates = best_dominance >= BG_HALF;
-            const bool beats_runner_up = best_dominance >= BG_DECISIVE * second_dominance;
-            const bool has_body =
-                candidate.gaps * BG_NEAR_TIE_DEN < 1000 * BG_NEAR_TIE_NUM;
-            const bool holds_figures = candidate.embeds >= BG_HALF && has_body;
-            if (dominates || beats_runner_up || holds_figures) {
-                pair_background = candidate.color;
-                break;
-            }
-        }
+        const vector<background_election::hypothesis> local = elect_side_background({ &ex.input });
+        const int8_t pair_background = confident_background(local);
         out.across_input_output.push_back(pair_background);
-        // Veto check (see input_vetoed): the global input winner is DECISIVELY
-        // beaten in this pair when the local ground has at least twice its local
-        // area — then the global winner is a figure here, not background. Unless it
-        // still HOLDS THE FIGURES locally.
-        const int8_t global_background = background_election::top(out.across_inputs);
-        if (global_background >= 0 && pair_background >= 0 &&
-            pair_background != global_background) {
-            int global_dominance = 0, global_embeds = 0, local_dominance = 0;
-            for (const auto& candidate : local) {
-                if (candidate.color == global_background) {
-                    global_dominance = candidate.dominance;
-                    global_embeds = candidate.embeds;
-                }
-                if (candidate.color == pair_background) local_dominance = candidate.dominance;
-            }
-            if (local_dominance >= BG_DECISIVE * global_dominance &&
-                global_embeds < BG_HALF)
-                out.input_vetoed = true;
-        }
+        if (vetoes(local, background_election::top(out.across_inputs), pair_background))
+            out.input_vetoed = true;
     }
 
     // A single pair's area flip cannot stand against CROSS-SIDE agreement: when

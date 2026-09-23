@@ -819,8 +819,7 @@ struct row_place {
 // same way an edge carries the side it was read from.
 inline const correspondence_election::object_info& piece_in(
     const vector<correspondence_election::pair_info>& pairs, const piece_place& at) {
-  const auto& pair = pairs[at.pair];
-  return (at.from_input ? pair.input_info : pair.output_info)[at.which];
+  return pairs[at.pair].objects_on(at.from_input)[at.which];
 }
 
 // WHERE ONE EDGE RUNS, in cells: the box the piece sits in, and the box it
@@ -834,13 +833,10 @@ struct line_ends {
 };
 inline line_ends ends_of(const correspondence_election::pair_info& pair,
                          const correspondence_election::edge& edge) {
-  const auto& mine = edge.from_input ? pair.input_info : pair.output_info;
-  const auto& theirs = edge.from_input ? pair.output_info : pair.input_info;
-  const auto& piece = mine[edge.from];
-  const int8_t w = edge.to >= 0 ? theirs[edge.to].summary.w : piece.summary.w;
-  const int8_t h = edge.to >= 0 ? theirs[edge.to].summary.h : piece.summary.h;
-  return { piece.summary.x0, piece.summary.y0, piece.summary.w, piece.summary.h,
-           edge.col, edge.row, w, h };
+  const auto& piece = pair.source_of(edge)->summary;
+  const auto* target = pair.target_of(edge);
+  const auto& landed = target ? target->summary : piece;
+  return { piece.x0, piece.y0, piece.w, piece.h, edge.col, edge.row, landed.w, landed.h };
 }
 
 // What the edge CLAIMS, which the drawing cannot say: found as itself, found
@@ -859,7 +855,7 @@ inline vector<piece_place> pieces_of(const vector<correspondence_election::pair_
   vector<piece_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair)
     for (int side = 0; side < 2; ++side) {
-      const auto& list = side ? pairs[pair].output_info : pairs[pair].input_info;
+      const auto& list = pairs[pair].objects_on(side == 0);
       for (size_t i = 0; i < list.size(); ++i)
         all.push_back({ (int8_t)pair, side == 0, (int16_t)i });
     }
@@ -921,10 +917,10 @@ inline vector<row_place> refusals_of(const vector<correspondence_election::pair_
   stable_sort(all.begin(), all.end(), [&](const row_place& a, const row_place& b) {
     const auto& one = pairs[a.pair].discarded[a.which].match;
     const auto& two = pairs[b.pair].discarded[b.which].match;
-    const auto& mine = one.from_input ? pairs[a.pair].input_info : pairs[a.pair].output_info;
-    const auto& theirs = two.from_input ? pairs[b.pair].input_info : pairs[b.pair].output_info;
-    return tuple{ a.pair, !one.from_input, mine[one.from].summary.y0, mine[one.from].summary.x0 } <
-           tuple{ b.pair, !two.from_input, theirs[two.from].summary.y0, theirs[two.from].summary.x0 };
+    const auto& first = pairs[a.pair].source_of(one)->summary;
+    const auto& second = pairs[b.pair].source_of(two)->summary;
+    return tuple{ a.pair, !one.from_input, first.y0, first.x0 } <
+           tuple{ b.pair, !two.from_input, second.y0, second.x0 };
   });
   return all;
 }
@@ -1373,9 +1369,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           const row_place& at = lines[step];
           const auto& edge = pairs[at.pair].edges[at.which];
           const line_ends ends = ends_of(pairs[at.pair], edge);
-          const auto& mine = edge.from_input ? pairs[at.pair].input_info
-                                             : pairs[at.pair].output_info;
-          const int8_t color = mine[edge.from].color;
+          const int8_t color = pairs[at.pair].source_of(edge)->color;
           said = to_text("PAIR %d  COLOR %s  %dX%d AT %d,%d -> %d,%d  %s",
                          (int)at.pair, (color < 0 ? string("MIXED") : to_string(color)).c_str(),
                          (int)ends.from_w, (int)ends.from_h, (int)ends.from_x, (int)ends.from_y,
@@ -1462,12 +1456,12 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                                (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
                                (int)pc.summary.w, (int)pc.summary.h, (int)pc.summary.x0, (int)pc.summary.y0,
                                (int)pc.summary.count);
-          if (pc.blank_width > 0)
+          if (pc.blank.found())
             blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
-                                 pc.blank_enclosed ? "FILLS A HOLE"
+                                 pc.blank.enclosed ? "FILLS A HOLE"
                                                    : "OVER OPEN SPACE",
-                                 (int)pc.blank_width, (int)pc.blank_height, (int)pc.blank_left,
-                                 (int)pc.blank_top, (int)pc.blank_cells);
+                                 (int)pc.blank.box.w, (int)pc.blank.box.h, (int)pc.blank.box.x0,
+                                 (int)pc.blank.box.y0, (int)pc.blank.box.count);
         }
         detail(piece_said);
         detail(blank_said);
@@ -1939,7 +1933,8 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display
     vector<string> labels;
     for (int i : ids) {
       string s = type_name[i];
-      if (is_annotated((node_type)i)) s += to_text("[%d-%d]", type_var_low[i], type_var_high[i]);
+      if (is_annotated((node_type)i))
+        s += to_text("[%d-%d]", row_of((node_type)i).low, row_of((node_type)i).high);
       labels.push_back(s);
     }
     if (out_ids) *out_ids = ids;
@@ -2421,8 +2416,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         const piece_place &at = alone[i];
         const auto &pc = piece_in(pairs, at);
         draw_selection(context, task, lay, at.pair, at.from_input,
-                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, pc.blank_width > 0,
-                       pc.blank_left, pc.blank_top, pc.blank_width, pc.blank_height,
+                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, pc.blank.found(),
+                       pc.blank.box.x0, pc.blank.box.y0, pc.blank.box.w, pc.blank.box.h,
                        (int)arc_color::gray, rings);
       }
       // THE CELLS NOTHING ACCOUNTED FOR, one cell each, so there is never room
