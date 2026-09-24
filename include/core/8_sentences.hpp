@@ -110,6 +110,11 @@ inline the_mark mark_after(const string& words) {
             if (mark != the_mark::all) mark = the_mark::some;
         }
         else if (clears_the_marks(op)) mark = the_mark::none;
+        // Bridge hands its bars back unmarked beside the pieces it was given,
+        // so after it the hand is only partly picked, and a paint that means the
+        // whole of it has to say so. Said here for the one op, where CLEARS
+        // would say it for all of them if the table had a column for it.
+        else if (op == node_type::Bridge && mark == the_mark::all) mark = the_mark::some;
     });
     return mark;
 }
@@ -592,6 +597,16 @@ inline said_reading say_the_reading(const inference& inf) {
         say_sentence(said, "Input", "SelectAll", "VoteDenoise", "Union");
         return said;
     }
+    // THE GAPS BETWEEN PIECES OF ONE COLOUR, FILLED. Said under the cut its
+    // replay held under, which need not be the elected one, and laid under what
+    // is there, so a bar that crosses a wall goes behind it. The paint needs the
+    // whole hand said out loud, since the bars come back unmarked (mark_after).
+    if (inf.bridge.holds())
+        if (const char* cut = word_for_segmentation(inf.bridge.segmentation)) {
+            say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
+                                       {"SelectAll", "Bridge"} }, "Underlay");
+            return said;
+        }
     if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until
@@ -743,6 +758,9 @@ inline said_reading say_the_reading(const inference& inf) {
     // Whether any piece landed anywhere but where it started, whether or not
     // the act that did it survived being asked of every pair.
     bool a_piece_moved = false;
+    // And whether one was drawn again somewhere new while it stayed where it
+    // was, which no act below says.
+    bool a_piece_was_copied = false;
     for (size_t which = 0; which < facts.chosen_pairs().size(); ++which) {
         const auto& pair = facts.chosen_pairs()[which];
         vector<seen_act> here;
@@ -757,8 +775,14 @@ inline said_reading say_the_reading(const inference& inf) {
             if (!edge.from_input || !edge.same_shape || !source) continue;
             const auto& piece = *source;
             note(piece.color, act_turn,   edge.pose);
-            // A copy's landing is not a movement of the single original.
-            if (piece.edges_touching == 1) {
+            // A copy's landing is not a movement of the single original. Asked
+            // as places and not edges: a piece found from both grids has two
+            // edges for its one landing (places_went), and read as a copy, so
+            // not one move was ever said.
+            if (pair.places_went(edge.from) != 1) {
+                a_piece_was_copied = a_piece_was_copied ||
+                    edge.row != piece.summary.y0 || edge.col != piece.summary.x0;
+            } else {
                 const int8_t down   = (int8_t)(edge.row - piece.summary.y0);
                 const int8_t across = (int8_t)(edge.col - piece.summary.x0);
                 a_piece_moved = a_piece_moved || down != 0 || across != 0;
@@ -804,6 +828,11 @@ inline said_reading say_the_reading(const inference& inf) {
     // not the pieces standing still, and this is the moment to say so.
     if (allowed.translate && a_piece_moved && !a_move_was_said)
         said.no_word_for.push_back("where each piece went");
+    // A PIECE DRAWN AGAIN AND NOTHING HERE SAYS WHERE. Left unsaid, the line
+    // paints the input straight back and the copies were never there -- 06df4c85
+    // said exactly that, with nothing in this list to show a word was missing.
+    if (allowed.translate && a_piece_was_copied)
+        said.no_word_for.push_back("where each copy was drawn");
 
     // A swap is said over the pieces, so it only has to hold where a piece is.
     // Candidates that fail even that remain available to search.

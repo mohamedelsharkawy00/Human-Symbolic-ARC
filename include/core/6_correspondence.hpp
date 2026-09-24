@@ -96,6 +96,37 @@ struct correspondence_election {
                 return cell.made_or_gone && cell.from_input == on_input;
             });
         }
+        // HOW MANY PLACES AN INPUT PIECE WENT, each counted once. A piece matched
+        // from both grids has two edges for one landing -- the one it left on,
+        // and the one that found it from the output -- because a landing found by
+        // placement names no object and the two never merge. So its edges are no
+        // count of where it went: edges_touching reads 2 for a piece that only
+        // slid, and 2 for one that never moved at all.
+        int places_went(int input_index) const {
+            if (input_index < 0 || (size_t)input_index >= input_info.size()) return 0;
+            const auto& piece = input_info[input_index].summary;
+            vector<pair<int, int>> places;
+            auto went = [&](int row, int col) {
+                if (ranges::find(places, pair<int, int>{ row, col }) == places.end())
+                    places.push_back({ row, col });
+            };
+            for (const auto& link : edges) {
+                if (!link.same_shape) continue;
+                if (link.from_input) {
+                    if (link.from == input_index) went(link.row, link.col);
+                    continue;
+                }
+                // Found from the output side: it names this piece when it lands on it.
+                const object_info* from = source_of(link);
+                if (!from) continue;
+                const auto [width, height] = posed_size(link.pose, from->summary.w, from->summary.h);
+                const bool on_this_piece = link.to == input_index ||
+                    (link.to < 0 && link.row == piece.y0 && link.col == piece.x0 &&
+                     width == piece.w && height == piece.h);
+                if (on_this_piece) went(from->summary.y0, from->summary.x0);
+            }
+            return (int)places.size();
+        }
     };
     // Total non-background cells in all training grids, used to normalize leftover counts.
     int cells = 0;

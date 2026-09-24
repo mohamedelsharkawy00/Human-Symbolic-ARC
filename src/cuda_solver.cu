@@ -539,72 +539,34 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
+// The pieces handed back as they came, then one bar per gap. Which pieces pair
+// up and where each bar lies is 7_infer.hpp's bridge_bars, which the reading
+// replays too; this only lays the bars into the list. They are born unmarked.
 __device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
         res.objects[res.count++] = src.objects[i];
-
-    constexpr int MAX_PAIRS = 64;
-    int16_t pair_lo[MAX_PAIRS], pair_hi[MAX_PAIRS];
-    int pair_count = 0;
-
-    for (int i = 0; i < src.count; ++i) {
-        int8_t ci = gpu_obj_first_color(src.objects[i]);
-        if (ci < 0) continue;
-        int icx = (src.objects[i].x0 + src.objects[i].x1) / 2;
-        int icy = (src.objects[i].y0 + src.objects[i].y1) / 2;
-        int best_j = -1, best_dist = 0x7FFF;
-        for (int j = 0; j < src.count; ++j) {
-            if (j == i) continue;
-            int8_t cj = gpu_obj_first_color(src.objects[j]);
-            if (cj != ci) continue;
-            int jcx = (src.objects[j].x0 + src.objects[j].x1) / 2;
-            int jcy = (src.objects[j].y0 + src.objects[j].y1) / 2;
-            if (icx != jcx && icy != jcy) continue;
-            int dist = abs(jcx - icx) + abs(jcy - icy);
-            if (dist < best_dist) { best_dist = dist; best_j = j; }
-        }
-        if (best_j < 0) continue;
-        int lo = min(i, best_j), hi = max(i, best_j);
-        bool dup = false;
-        for (int p = 0; p < pair_count; ++p)
-            if (pair_lo[p] == lo && pair_hi[p] == hi) { dup = true; break; }
-        if (dup || pair_count >= MAX_PAIRS) continue;
-        pair_lo[pair_count] = (int16_t)lo; pair_hi[pair_count] = (int16_t)hi; pair_count++;
-    }
-
-    for (int p = 0; p < pair_count && res.count < GPU_KERNEL_MAX_OBJECTS; ++p) {
-        int i = pair_lo[p], j = pair_hi[p];
-        int8_t ci = gpu_obj_first_color(src.objects[i]);
-        if (ci < 0) ci = 0;
-        const auto& a = src.objects[i]; const auto& b = src.objects[j];
-        int acx = (a.x0 + a.x1) / 2, bcx = (b.x0 + b.x1) / 2;
-        int dx = abs(bcx - acx), dy = abs((a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
-        if (dx == 0 && dy == 0) continue;
-        gpu_fixed_object br;
-        if (dx >= dy) {
-            int x_min = min((int)a.x1, (int)b.x1) + 1, x_max = max((int)a.x0, (int)b.x0) - 1;
-            if (x_min > x_max) continue;
-            int y_top = min((int)a.y0, (int)b.y0), y_bot = max((int)a.y1, (int)b.y1);
-            br.x0 = (int16_t)x_min; br.y0 = (int16_t)y_top;
-            br.x1 = (int16_t)x_max; br.y1 = (int16_t)y_bot;
-            br.width = (int16_t)min(x_max - x_min + 1, GPU_MAX_GRID);
-            br.height = (int16_t)min(y_bot - y_top + 1, GPU_MAX_GRID);
-        } else {
-            int y_min = min((int)a.y1, (int)b.y1) + 1, y_max = max((int)a.y0, (int)b.y0) - 1;
-            if (y_min > y_max) continue;
-            int x_left = min((int)a.x0, (int)b.x0), x_right = max((int)a.x1, (int)b.x1);
-            br.x0 = (int16_t)x_left; br.y0 = (int16_t)y_min;
-            br.x1 = (int16_t)x_right; br.y1 = (int16_t)y_max;
-            br.width = (int16_t)min(x_right - x_left + 1, GPU_MAX_GRID);
-            br.height = (int16_t)min(y_max - y_min + 1, GPU_MAX_GRID);
-        }
-        br.mask.clear();
-        for (int r = 0; r < br.height; ++r)
-            for (int c = 0; c < br.width; ++c)
-                br.mask[r][c] = ci;
-        res.objects[res.count++] = br;
-    }
+    arc::bridge_bars(src.count,
+        [&](int which) {
+            const auto& piece = src.objects[which];
+            return arc::cell_box{ piece.y0, piece.x0, piece.y1, piece.x1 };
+        },
+        [&](int which) { return gpu_obj_first_color(src.objects[which]); },
+        [&](const arc::cell_box& bar, int8_t color) {
+            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return false;
+            // A pooled slot keeps whatever it last held, so every field is said.
+            gpu_fixed_object& made = res.objects[res.count++];
+            made.x0 = (int16_t)bar.col0; made.y0 = (int16_t)bar.row0;
+            made.x1 = (int16_t)bar.col1; made.y1 = (int16_t)bar.row1;
+            made.width = (int16_t)min(bar.width(), GPU_MAX_GRID);
+            made.height = (int16_t)min(bar.height(), GPU_MAX_GRID);
+            made.selected = false;
+            made.mask.clear();
+            for (int r = 0; r < made.height; ++r)
+                for (int c = 0; c < made.width; ++c)
+                    made.mask[r][c] = color;
+            return true;
+        });
     return res;
 }
 

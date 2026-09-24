@@ -765,25 +765,46 @@ private:
         vector<vector<int>> options;
         // Cells an EXACT object could account for — only these drive the search
         vector<bool> required;
+        // How far each match's piece travelled to land, by match index: travel_of.
+        vector<int> travel;
 
         // Whether candidate `left` goes before `right`: says_more, below.
         bool comes_first(int left, int right, const vector<edge>& found) const {
-            return says_more(found[objects[left].match_index], objects[left].cells.size(),
-                             found[objects[right].match_index], objects[right].cells.size());
+            const size_t mine = objects[left].match_index, theirs = objects[right].match_index;
+            return says_more(found[mine], objects[left].cells.size(),
+                             found[theirs], objects[right].cells.size(),
+                             travel[mine], travel[theirs]);
         }
     };
     // Lower scores prefer matches that did not move, change color, turn or flip,
-    // or extend outside the grid, in that order of importance.
+    // or show only part of themselves, in that order of importance. Hanging off
+    // the grid and hiding behind another object are the one freedom: some of the
+    // piece is not shown. Free to hide, a piece half behind a frame cost no more
+    // than the same piece in plain sight beside it.
     static int freedom_spent(const edge& edge) {
         return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
-               (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 ? 0 : 1);
+               (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 && edge.hidden == 0 ? 0 : 1);
     }
 
-    // Prefer more cells; break ties with the lower freedom_spent score.
+    // HOW FAR A PIECE TRAVELLED to land here: a slide along one line before one
+    // that needs both, then the shorter. Asked only once cells and freedoms tie,
+    // which is where the order the pieces were listed in used to decide which
+    // copy a landing names -- 06df4c85 credited a block between two reds to a
+    // red in another row entirely, for being listed first.
+    static int travel_of(const edge& edge, const object_summary& source) {
+        const int down = edge.row - source.y0, across = edge.col - source.x0;
+        return (down != 0 && across != 0 ? MAX_GRID_DIM * 2 : 0) + abs(down) + abs(across);
+    }
+
+    // Prefer more cells; break ties with the lower freedom_spent score, then
+    // with the shorter travel.
     static bool says_more(const edge& left, size_t left_cells,
-                          const edge& right, size_t right_cells) {
+                          const edge& right, size_t right_cells,
+                          int left_travel, int right_travel) {
         if (left_cells != right_cells) return left_cells > right_cells;
-        return freedom_spent(left) < freedom_spent(right);
+        if (freedom_spent(left) != freedom_spent(right))
+            return freedom_spent(left) < freedom_spent(right);
+        return left_travel < right_travel;
     }
 
     // For each target cell, list the matches that can cover it.
@@ -795,6 +816,10 @@ private:
         // Index all target cells, including background where new objects may appear.
         // Only cells reached by exact matches become required.
         laid_out.cell_count = (size_t)into.width * into.height;
+        laid_out.travel.resize(found.size());
+        for (size_t found_index = 0; found_index < found.size(); ++found_index)
+            laid_out.travel[found_index] =
+                travel_of(found[found_index], from_objects[found[found_index].from].summary);
 
         // Include recolored matches as candidates: their shapes still need to fit.
         for (size_t found_index = 0; found_index < found.size(); ++found_index) {
@@ -871,8 +896,26 @@ private:
             return true;
         };
 
+        // WHETHER AN OBJECT IS STILL FREE, asked once a step. It covers many
+        // cells, and asked again at every one of them a step cost the square of
+        // the biggest object: a frame of 273 cells asked 273 times is 74,529
+        // checks before anything is chosen. 06df4c85 spent its whole budget on
+        // that first look in 206 of its 240 fittings, one of them with a single
+        // object to choose, and the greedy pass decided those readings instead.
+        // Stamped with the step that asked, so starting a step clears nothing.
+        vector<int> asked_at(laid_out.objects.size(), 0);
+        vector<bool> free_now(laid_out.objects.size(), false);
+        int steps = 0;
         auto fits_together = [&](auto&& self) -> bool {
             if (work > work_budget) { out_of_budget = true; return false; }
+            const int this_step = ++steps;
+            auto is_free = [&](int object_index) {
+                if (asked_at[object_index] != this_step) {
+                    asked_at[object_index] = this_step;
+                    free_now[object_index] = cells_are_free(object_index);
+                }
+                return (bool)free_now[object_index];
+            };
             // The cell with the fewest objects still able to paint it decides next;
             // zero options means this line of choices is dead. Only required cells
             // drive the search — a made cell is answered by being left alone.
@@ -880,10 +923,15 @@ private:
             for (size_t id = 0; id < laid_out.cell_count; ++id) {
                 if (painted_by[id] >= 0 || !laid_out.required[id]) continue;
                 int options = 0;
-                for (int object_index : laid_out.options[id])
-                    options += cells_are_free(object_index);
+                for (int object_index : laid_out.options[id]) {
+                    ++work;
+                    options += is_free(object_index);
+                }
                 if (options == 0) return false;
                 if (target < 0 || options < fewest) { target = (int)id; fewest = options; }
+                // One object left to paint it is no choice at all: take it now.
+                // A cell further on with none left is still found, one step later.
+                if (fewest == 1) break;
                 if (work > work_budget) { out_of_budget = true; return false; }
             }
             if (target < 0) return true;   // every carried-over cell accounted for
@@ -952,13 +1000,28 @@ private:
         auto footprint_of = [&](const edge& edge) {
             return edge_footprint(edge, from_objects, into_objects);
         };
-        // Use the same match preference as the fitting search.
+        // Use the same match preference as the fitting search, and the same
+        // measure of it: the cells a match SHOWS, not every cell of its footprint.
+        // Counted whole, a piece half behind a frame tied with the one in plain
+        // sight beside it, and whichever the scan met first was kept.
+        auto shown_cells = [&](const edge& edge) {
+            const grid cells = footprint_of(edge);
+            size_t shown = 0;
+            for (int row = 0; row < cells.height; ++row)
+                for (int col = 0; col < cells.width; ++col)
+                    shown += landing_shows(edge, cells, into, row, col);
+            return shown;
+        };
+        auto travel = [&](const edge& edge) {
+            return travel_of(edge, from_objects[edge.from].summary);
+        };
         vector<size_t> strongest_first(found.size());
         iota(strongest_first.begin(), strongest_first.end(), (size_t)0);
         stable_sort(strongest_first.begin(), strongest_first.end(),
                     [&](size_t left, size_t right) {
-            return says_more(found[left], (size_t)lit_cells(footprint_of(found[left])),
-                             found[right], (size_t)lit_cells(footprint_of(found[right])));
+            return says_more(found[left], shown_cells(found[left]),
+                             found[right], shown_cells(found[right]),
+                             travel(found[left]), travel(found[right]));
         });
 
         bool taken[MAX_GRID_DIM][MAX_GRID_DIM] = {};

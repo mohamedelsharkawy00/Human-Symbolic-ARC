@@ -246,6 +246,13 @@ inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule
     report << "[project_on_seeds] holds " << projection.holds() << "\n\n";
 }
 
+// Whether the gaps between pieces of one colour were filled, and under which cut.
+inline void report_bridge(ostream& report, const bridge_rule& bridge) {
+    report << "[bridge] holds " << bridge.holds();
+    if (bridge.holds()) report << "  " << segmentation_names[(int)bridge.segmentation];
+    report << "\n\n";
+}
+
 // The frame the figures sit in: whether the input is really several grids side
 // by side. One line, because the fact is one claim; the panes follow so a wrong
 // cut is visible at a glance rather than inferred from what fails downstream.
@@ -484,6 +491,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_overlap_corner(report, inf.overlap_corner);
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
+    report_bridge(report, inf.bridge);
     report_input_blocks(report, inf.input_blocks);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);

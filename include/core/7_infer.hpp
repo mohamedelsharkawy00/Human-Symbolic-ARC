@@ -1690,6 +1690,145 @@ struct project_on_seeds_rule {
     }
 };
 
+// WHAT BRIDGE DRAWS, said once for the op and for the reading that replays it.
+// Each piece reaches for the nearest piece of its own colour whose centre shares
+// its row or its column, and the box between the two is filled in that colour.
+// `count` pieces in the op's own order: box_of_piece(i) is piece i's cell_box,
+// color_of(i) the colour the op reads off its first cell (-1 for none).
+// land(bar, colour) sees each bar in the order the op appends them, and says
+// false once the list has no room for another. gpu_exec_bridge calls it, so a
+// reading and the op cannot draw different bars.
+template <class BoxOf, class ColorOf, class Land>
+ARC_HOST_DEVICE inline void bridge_bars(int count, BoxOf box_of_piece, ColorOf color_of, Land land) {
+    constexpr int most_pairs = 64;
+    int16_t lows[most_pairs], highs[most_pairs];
+    int pairs = 0;
+    auto across = [&](int i) { const cell_box box = box_of_piece(i); return (box.col0 + box.col1) / 2; };
+    auto down = [&](int i) { const cell_box box = box_of_piece(i); return (box.row0 + box.row1) / 2; };
+    for (int i = 0; i < count; ++i) {
+        const int8_t color = color_of(i);
+        if (color < 0) continue;
+        const int my_across = across(i), my_down = down(i);
+        // Ties keep the first found, as the op's list has them.
+        int partner = -1, nearest = 0x7FFF;
+        for (int j = 0; j < count; ++j) {
+            if (j == i || color_of(j) != color) continue;
+            const int their_across = across(j), their_down = down(j);
+            if (their_across != my_across && their_down != my_down) continue;
+            const int distance = abs(their_across - my_across) + abs(their_down - my_down);
+            if (distance < nearest) { nearest = distance; partner = j; }
+        }
+        if (partner < 0) continue;
+        const int low = min(i, partner), high = max(i, partner);
+        bool said = false;
+        for (int p = 0; p < pairs && !said; ++p) said = lows[p] == low && highs[p] == high;
+        if (said || pairs >= most_pairs) continue;
+        lows[pairs] = (int16_t)low;
+        highs[pairs] = (int16_t)high;
+        ++pairs;
+    }
+    for (int p = 0; p < pairs; ++p) {
+        const cell_box one = box_of_piece(lows[p]), other = box_of_piece(highs[p]);
+        const int apart_across = abs(across(highs[p]) - across(lows[p]));
+        const int apart_down = abs(down(highs[p]) - down(lows[p]));
+        if (apart_across == 0 && apart_down == 0) continue;
+        // The gap along the way they lie apart, as deep as the two together.
+        cell_box bar;
+        if (apart_across >= apart_down) {
+            bar.col0 = min(one.col1, other.col1) + 1; bar.col1 = max(one.col0, other.col0) - 1;
+            bar.row0 = min(one.row0, other.row0);     bar.row1 = max(one.row1, other.row1);
+        } else {
+            bar.row0 = min(one.row1, other.row1) + 1; bar.row1 = max(one.row0, other.row0) - 1;
+            bar.col0 = min(one.col0, other.col0);     bar.col1 = max(one.col1, other.col1);
+        }
+        // Pieces that touch or overlap along that way leave no gap to fill.
+        if (bar.empty()) continue;
+        const int8_t color = color_of(lows[p]);
+        if (!land(bar, color < 0 ? (int8_t)0 : color)) return;
+    }
+}
+
+// THE GAP BETWEEN TWO PIECES OF ONE COLOUR, FILLED, and laid under what is
+// already there, so a bar that crosses a wall goes behind it. That is what
+// Bridge does, and this reads it off the pairs by doing it: the input's pieces,
+// cut the way Split cuts them and in the order Split hands them over, each
+// reaching for its nearest partner along a row or a column. Only held when
+// replaying that redraws every output exactly.
+//
+// THE CUT IS THE ELECTED ONE WHEN IT CAN SAY THIS, and otherwise the first
+// connected cut that can -- a rule about one way of cutting is read off that
+// cut, elected or not. Colors is never asked: it hands one piece per colour,
+// and a colour has no partner of its own to reach for. 070dd51e elects Colors
+// and 22eb0ac0 the whole grid, and both are bridges under Split[1].
+struct bridge_rule {
+    bool held = false;
+    segmentation_methods segmentation = segmentation_methods::unset;
+    bool holds() const { return held; }
+
+    static bridge_rule detect(const vector<example>& train,
+                              const correspondence_election& correspondence,
+                              int8_t input_background, int output_background) {
+        // The bars fill cells that were ground, and the rest of the grid stays
+        // where it was, so the two grids lie over one another.
+        if (!is_color(output_background) || !pairs_overlay(train)) return {};
+        vector<segmentation_methods> cuts{ correspondence.segmentation };
+        for (const auto cut : { segmentation_methods::connected_monochrome,
+                                segmentation_methods::connected_multicolor })
+            if (cut != correspondence.segmentation) cuts.push_back(cut);
+        for (const auto cut : cuts) {
+            if (cut != segmentation_methods::connected_monochrome &&
+                cut != segmentation_methods::connected_multicolor) continue;
+            bool bridged = false;
+            const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                // The pieces as Split hands them over: the one walk, in its order.
+                vector<object> pieces;
+                vector<int8_t> colors;
+                object_walk_scratch scratch;
+                each_object(pair.input, input_background,
+                            cut == segmentation_methods::connected_multicolor
+                                ? grouping::touching_any_color : grouping::touching_same_color,
+                            scratch, [&](const object_summary& box, const int16_t* cells, int found) {
+                    pieces.push_back(object::from_cells(pair.input, box, cells, found));
+                    // The op reads a piece's colour off its first cell, which
+                    // is the one the walk started from.
+                    colors.push_back((int8_t)pair.input.data[cell_row(cells[0])][cell_col(cells[0])]);
+                });
+                // One list is all the op is handed.
+                if (pieces.empty() || pieces.size() > MAX_OBJECTS_IN_A_LIST) return false;
+                drawn = grid(pair.output.width, pair.output.height);
+                drawn.fill(output_background);
+                bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+                for (const object& piece : pieces)
+                    piece.each_cell([&](int row, int col, int8_t color) {
+                        drawn.data[row][col] = color;
+                        painted[row][col] = true;
+                    });
+                // The bars share the pieces' list, so they run out where it does,
+                // and each is laid under whatever is already drawn.
+                int room = MAX_OBJECTS_IN_A_LIST - (int)pieces.size();
+                bridge_bars((int)pieces.size(),
+                            [&](int which) { return box_of(pieces[which].summary); },
+                            [&](int which) { return colors[which]; },
+                            [&](const cell_box& bar, int8_t color) {
+                    if (room-- <= 0) return false;
+                    for (int row = bar.row0; row <= bar.row1; ++row)
+                        for (int col = bar.col0; col <= bar.col1; ++col) {
+                            if (!drawn.contains(row, col) || painted[row][col]) continue;
+                            drawn.data[row][col] = color;
+                            painted[row][col] = true;
+                            bridged = true;
+                        }
+                    return true;
+                });
+                return true;
+            });
+            // No bar laid anywhere is the input handed straight back.
+            if (redraws && bridged) return { true, cut };
+        }
+        return {};
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -1705,6 +1844,7 @@ struct inference {
     overlap_corner_rule overlap_corner;
     slide_to_touch_rule slide_to_touch;
     project_on_seeds_rule project_on_seeds;
+    bridge_rule bridge;
     input_blocks_rule input_blocks;
     pane_split_facts pane_split;
     pane_mask_rule pane_mask;
@@ -1755,6 +1895,9 @@ inline inference infer(const vector<example>& train) {
     // and should get first refusal; this one leaves most of the grid alone.
     inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in);
+    // Gaps between pieces of one colour, filled. It reads its own cut when the
+    // elected one cannot say it, so it does not wait on the election's verdict.
+    inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
 
     // Dims is detector #0: its rule decides which questions even apply
