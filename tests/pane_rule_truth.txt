@@ -13,16 +13,18 @@
 #   pose = the pose every pane after the first is read through, 0 = as is.
 #          Panes facing each other across a wall are mirrored, not shifted.
 #
-# pane_pick_rule makes NO drawing: the answer IS one of the panes, and the whole
-# rule is the reason for choosing it. The ways are tried plainest first, a
-# property the pane HAS before a place it SITS.
+# pane_pick_rule chooses one pane directly, or fits it behind the wall color.
+# The ways are tried plainest first, a property before a place. Fitted picks
+# prefer occupancy before palette: a sparse blueprint can also have an odd palette.
 #
 # VERIFIED END TO END: each rule is read off the TRAIN pairs only, then asked
-# for the held-out TEST answer. All 37 right, 0 wrong, 0 declined.
+# for the held-out TEST answer. The original 37 were right, with no declines.
+# 09629e4f also fits all four training pairs and the held-out test after fitting.
 #
-# Expect 33 mask rows and 4 pick rows.
+# Listed: 33 mask rows and 5 pick rows.
 
 0520fde7  mask  panes 2  pose 0
+09629e4f  pick  the emptiest  fitted behind the walls
 0b148d64  pick  the odd palette
 0c9aba6e  mask  panes 2  pose 0
 195ba7dc  mask  panes 2  pose 0

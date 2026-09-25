@@ -547,15 +547,31 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     return false;
 }
 
-// WHICH PANE THE ANSWER IS, when the answer is a pane and not something drawn
-// from them. Only one of the reasons has words: a place in a row of panes, said
-// as the band the pane sits in. The others name a property the language has no
-// selector for, so they are said as the missing word and nothing is spelled --
-// which is the point of saying them at all.
+// THE CHOSEN PANE, directly or fitted behind the walls. Occupancy has words
+// after removing the background; a place has words in a row or column. Other
+// choices still report the selector they are missing.
 inline bool say_pane_pick(const inference& inf, said_reading& said) {
     const auto& split = inf.pane_split;
     const auto& pick = inf.pane_pick;
     if (!split.holds() || !pick.holds()) return false;
+    if (pick.fitted && (pick.way == pane_pick_rule::Emptiest || pick.way == pane_pick_rule::Fullest)) {
+        const int ground = inf.background.input_elected();
+        if (!is_color(ground)) return false;
+        // Size counts opaque cells, so remove the ground before cutting panes.
+        // Restore it after painting; the selected pane keeps its full frame.
+        const string selector = pick.way == pane_pick_rule::Emptiest
+                              ? "SelectSmallestObject[0]" : "SelectLargestObject[0]";
+        say_closed(said, "InputWithoutBackground Panes " + selector +
+            " InvertSelection DeleteSelection SelectAll Fit", "Union");
+        say_closed(said, "Input Colors " + spell("SelectColor", split.color) +
+            " InvertSelection DeleteSelection", "Union");
+        say_closed(said, "Input SelectAll " + spell("Recolor", ground), "Underlay");
+        return true;
+    }
+    if (pick.fitted) {
+        said.no_word_for.push_back("the chosen pane enlarged behind the walls");
+        return false;
+    }
     if (pick.way != pane_pick_rule::AtIndex) {
         said.no_word_for.push_back(
             pick.way == pane_pick_rule::OddColor   ? "the pane whose palette is unlike the others" :
@@ -858,6 +874,16 @@ inline said_reading say_the_reading(const inference& inf) {
             if (pair.found_recolored > 0) {
                 if (const char* word = word_for_learned_recolor(inf.shape_color_map))
                     say(word);
+                else if (!a_recolor_was_said && inf.colors.output_colors_by_size_count > 0) {
+                    // The palette's existing detector recognized this ordering.
+                    // A color layer can hold several disconnected pieces; the
+                    // rank belongs to each piece, not their combined color.
+                    if (facts.segmentation == segmentation_methods::all_cells_of_one_color)
+                        say("Split[0]");
+                    // SizeRankColorMap reads list order, so say the sort too.
+                    say("SortBySize[0]");
+                    say("SizeRankColorMap");
+                }
                 else if (!a_recolor_was_said)
                     said.no_word_for.push_back("a recolor");
                 break;

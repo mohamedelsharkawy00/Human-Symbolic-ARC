@@ -304,6 +304,7 @@ inline void report_pane_pick(ostream& report, const pane_pick_rule& pick) {
     report << "[pane_pick] holds " << pick.holds();
     if (pick.holds()) {
         report << "  " << way_names[pick.way];
+        if (pick.fitted) report << "  fitted behind the walls";
         if (pick.way == pane_pick_rule::NotSymmetric ||
             pick.way == pane_pick_rule::OnlySymmetric) report << "  fold " << (int)pick.which;
         if (pick.way == pane_pick_rule::AtIndex) report << "  place " << (int)pick.which;

@@ -1013,11 +1013,11 @@ struct pane_mask_rule {
     }
 };
 
-// WHICH PANE THE ANSWER IS, when the answer is one of the panes untouched.
+// WHICH PANE THE ANSWER USES, directly or enlarged behind the divider walls.
 //
 // pane_mask_rule reads the panes against each other and makes a new drawing.
-// This one makes no drawing at all: it hands back a pane, and the only question
-// is which. So the whole rule is the reason for choosing, and the ways to choose
+// This one chooses a pane, either as the answer or as its miniature blueprint.
+// The rule keeps the reason for choosing, and the ways to choose
 // are ordered plainest first -- a property the pane HAS beats a place it SITS,
 // because a place is a magic number and a property is a reason. The first way
 // that names the right pane in every training pair wins; nothing is scored.
@@ -1041,6 +1041,7 @@ struct pane_pick_rule {
     // The pose a symmetry folds along, or the place AtIndex means.
     int8_t which = 0;
     bool held = false;
+    bool fitted = false;
     bool holds() const { return held; }
 
     // The four folds a square drawing can sit on, as poses: along the diagonal,
@@ -1135,14 +1136,29 @@ struct pane_pick_rule {
         }
     }
 
-    // Hands back the pane this rule names, as a grid of its own.
+    // Hands back the named pane, or fits it behind the original wall color.
     bool draw(const grid& input, const pane_split_facts& split, int8_t background,
               grid& drawn) const {
         vector<pane_split_facts::pane> boxes;
         if (!holds() || !split.panes_of(input, boxes)) return false;
         const int found = pick(input, boxes, background, way, which);
         if (found < 0) return false;
-        drawn = boxes[(size_t)found].drawn(input);
+        const auto& source = boxes[(size_t)found];
+        if (!fitted) {
+            drawn = source.drawn(input);
+            return true;
+        }
+        // A cell of the chosen pane describes a pane of the full lattice.
+        // Replay Fit's integer sampling, then restore the divider color, just
+        // as the emitted sentences do. The existing pick owns ties and counts.
+        if (split.cut != pane_split_facts::Wall ||
+            source.width != split.across || source.height != split.down) return false;
+        drawn = grid(input.width, input.height);
+        for (int r = 0; r < input.height; ++r)
+            for (int c = 0; c < input.width; ++c)
+                drawn.data[r][c] = input.data[r][c] == split.color ? split.color :
+                    source.color_at(input, r * source.height / input.height,
+                                           c * source.width / input.width);
         return true;
     }
 
@@ -1151,21 +1167,31 @@ struct pane_pick_rule {
     static pane_pick_rule detect(const vector<example>& train,
                                  const pane_split_facts& split, int8_t background) {
         if (!split.holds() || train.empty()) return {};
-        auto names_it = [&](int8_t way, int8_t which) {
-            const pane_pick_rule trying{ way, which, true };
-            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                return trying.draw(pair.input, split, background, drawn);
-            });
-        };
-        for (int8_t way = 0; way < WAYS; ++way) {
-            if (way == NotSymmetric || way == OnlySymmetric) {
-                for (int8_t fold : FOLDS)
-                    if (names_it(way, fold)) return { way, fold, true };
-            } else if (way == AtIndex) {
-                for (int8_t place = 0; place < (int8_t)split.pairs.front().size(); ++place)
-                    if (names_it(way, place)) return { way, place, true };
-            } else if (names_it(way, 0)) {
-                return { way, 0, true };
+        // Preserve direct picks before considering the enlarged reading.
+        for (bool fitted : { false, true }) {
+            auto names_it = [&](int8_t way, int8_t which) {
+                const pane_pick_rule trying{ way, which, true, fitted };
+                return redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                    return trying.draw(pair.input, split, background, drawn);
+                });
+            };
+            // For a miniature blueprint, occupancy is the simplest reason:
+            // its palette can also look odd merely because it has less ink.
+            static constexpr int8_t fitted_ways[] = {
+                Emptiest, Fullest, OddOneOut, OddColor, TheyRepeat,
+                NotSymmetric, OnlySymmetric, MostColored, LeastColored, AtIndex
+            };
+            for (int8_t index = 0; index < WAYS; ++index) {
+                const int8_t way = fitted ? fitted_ways[index] : index;
+                if (way == NotSymmetric || way == OnlySymmetric) {
+                    for (int8_t fold : FOLDS)
+                        if (names_it(way, fold)) return { way, fold, true, fitted };
+                } else if (way == AtIndex) {
+                    for (int8_t place = 0; place < (int8_t)split.pairs.front().size(); ++place)
+                        if (names_it(way, place)) return { way, place, true, fitted };
+                } else if (names_it(way, 0)) {
+                    return { way, 0, true, fitted };
+                }
             }
         }
         return {};

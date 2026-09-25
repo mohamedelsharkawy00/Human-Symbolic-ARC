@@ -45,6 +45,10 @@
 
 0520fde7  AND
   InputWithoutBackground Panes SelectAll Origin IntersectionList Recolor[2] Union
+09629e4f  FIT THE EMPTIEST PANE
+  InputWithoutBackground Panes SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Fit Union
+  Input Colors SelectColor[5] InvertSelection DeleteSelection SelectAll Union
+  Input SelectAll Recolor[0] Underlay
 0c9aba6e  NOR
   InputWithoutBackground Panes SelectAll Origin UnionList AddColor[8] Colors SelectColor[8] InvertSelection DeleteSelection SelectAll Union
 195ba7dc  OR
