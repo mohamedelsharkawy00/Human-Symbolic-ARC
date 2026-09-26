@@ -341,6 +341,21 @@ inline void report_input_blocks(ostream& report, const input_blocks_rule& blocks
     report << "\n";
 }
 
+inline void report_ray_extension(ostream& report, const ray_extension_rule& rule) {
+    report << "[ray_extension] holds " << rule.holds() << "\n";
+    for (const auto& branch : rule.branches) {
+        if (!rule.holds()) break;
+        report << "  " << (branch.rank == ray_extension_rule::Largest ? "largest" : "smallest")
+               << " color  "
+               << (branch.direction == ray_extension_rule::Orthogonal ? "orthogonal" : "diagonal")
+               << " rays " << (int)branch.radius;
+        if (branch.fill_interior) report << "  fill interior";
+        if (branch.stamp_body) report << "  stamp body";
+        report << "\n";
+    }
+    report << "\n";
+}
+
 // WHAT THE READING COMES TO, in the solver's own words. The second list is the
 // one to read: it names the word the language is missing, at the moment the
 // looking wanted it.
@@ -494,6 +509,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_project_on_seeds(report, inf.project_on_seeds);
     report_bridge(report, inf.bridge);
     report_input_blocks(report, inf.input_blocks);
+    report_ray_extension(report, inf.ray_extension);
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);

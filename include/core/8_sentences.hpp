@@ -599,6 +599,31 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     return true;
 }
 
+// The size-ranked color layers are independent sources: each gets its own
+// extension, and the seed body is a separate paint when the rule calls for it.
+inline bool say_ray_extension(const inference& inf, said_reading& said) {
+    const auto& rule = inf.ray_extension;
+    if (!rule.holds()) return false;
+
+    for (const auto& branch : rule.branches) {
+        const string rank = branch.rank == ray_extension_rule::Largest
+                          ? "SelectLargestObject[0]" : "SelectSmallestObject[0]";
+        string layer = "Input Colors SelectAll SortBySize[1] SelectAll InvertSelection " + rank +
+                       " InvertSelection DeleteSelection SelectAll Trim";
+        if (branch.fill_interior) layer += " InteriorColor[-1]";
+        layer += " Split[1] SelectAll Trim";
+        const string extend = spell(branch.direction == ray_extension_rule::Orthogonal
+                                    ? "ExtendOrthogonal" : "ExtendDiagonal", branch.radius);
+        if (branch.stamp_body) {
+            say_closed(said, layer, "Union");
+            say_closed(said, "CurrentObjects SelectAll " + extend, "Union");
+        } else {
+            say_closed(said, layer + " " + extend, "Union");
+        }
+    }
+    return true;
+}
+
 inline said_reading say_the_reading(const inference& inf) {
     const correspondence_election& facts = inf.correspondence;
     said_reading said;
@@ -606,6 +631,7 @@ inline said_reading say_the_reading(const inference& inf) {
     // panes are what the pairs are about. Nothing below knows they are there.
     if (say_panes(inf, said)) return said;
     if (say_pane_pick(inf, said)) return said;
+    if (say_ray_extension(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
     // A noisy lattice, voted clean. The whole input is the one piece the vote
     // reads, so there is nothing to cut first and nothing left to explain.
