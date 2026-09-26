@@ -220,22 +220,7 @@ __device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& ou
 }
 
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {
-    int counts[GPU_MAX_COLORS];
-    memset(counts, 0, sizeof(counts));
-    int non_trans = 0;
-    for (int dr = 0; dr < factor; ++dr)
-        for (int dc = 0; dc < factor; ++dc) {
-            int sr = r * factor + dr, sc = c * factor + dc;
-            if (sr >= oh || sc >= ow) continue;
-            int8_t clr = mask[sr][sc];
-            if (clr == GPU_TRANSPARENT) continue;
-            counts[clr % GPU_MAX_COLORS]++; non_trans++;
-        }
-    if (non_trans == 0) return GPU_TRANSPARENT;
-    int winner = -1, best = -1;
-    for (int i = 0; i < GPU_MAX_COLORS; ++i)
-        if (counts[i] > best) { best = counts[i]; winner = i; }
-    return (int8_t)winner;
+    return arc::majority_vote(mask, r, c, factor, oh, ow);
 }
 
 // =====================================================================
@@ -1493,30 +1478,13 @@ __device__ gpu_object_list& gpu_exec_union_list(gpu_exec_context& ctx, const gpu
 // genuinely different rows must not weld them into one (staggered grids chain
 // transitively otherwise). band_of[i] = the object's band rank.
 __device__ static int gpu_layout_bands(const gpu_object_list& src, int n, bool rows, int8_t* band_of) {
+    int16_t lows[GPU_KERNEL_MAX_OBJECTS], highs[GPU_KERNEL_MAX_OBJECTS];
     int order[GPU_KERNEL_MAX_OBJECTS];
-    for (int i = 0; i < n; ++i) order[i] = i;
-    for (int i = 1; i < n; ++i) {
-        int j = i;
-        while (j > 0) {
-            int a = order[j], b = order[j - 1];
-            int la = rows ? src.objects[a].y0 : src.objects[a].x0;
-            int lb = rows ? src.objects[b].y0 : src.objects[b].x0;
-            if (la >= lb) break;
-            order[j] = b; order[j - 1] = a; j--;
-        }
+    for (int i = 0; i < n; ++i) {
+        lows[i] = rows ? src.objects[i].y0 : src.objects[i].x0;
+        highs[i] = rows ? src.objects[i].y1 : src.objects[i].x1;
     }
-    int bands = 0, band_hi = -1;
-    for (int m = 0; m < n; ++m) {
-        int i = order[m];
-        int lo = rows ? src.objects[i].y0 : src.objects[i].x0;
-        int hi = rows ? src.objects[i].y1 : src.objects[i].x1;
-        // Overlap with the current band must cover half the span's own length.
-        int need = (hi - lo + 2) / 2;
-        if (bands == 0 || band_hi - lo + 1 < need) { bands++; band_hi = hi; }
-        else if (hi > band_hi) band_hi = hi;
-        band_of[i] = (int8_t)(bands - 1);
-    }
-    return bands;
+    return arc::overlapping_bands(n, lows, highs, band_of, order);
 }
 
 // Layout[k]: arrange the objects on k-sized graph paper. Overlapping vertical

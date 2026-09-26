@@ -2067,6 +2067,131 @@ struct interior_spread_rule {
     }
 };
 
+// A grid of trimmed connected pieces, selected by removing its most common colors.
+// Only held when the shared Layout and ScaleDown geometry redraws every output.
+struct ranked_layout_rule {
+    bool held = false;
+    int8_t discarded_colors = 0;
+    int8_t split_mode = 0;
+    int8_t cell_size = 0;
+    bool holds() const { return held; }
+
+    bool draw(const example& pair, int input_background, int output_background, grid& drawn) const {
+        if (!holds() || pair.input.empty() || discarded_colors < 0 || discarded_colors > COLOR_COUNT ||
+            cell_size < 2 || cell_size > 10 || (split_mode != 0 && split_mode != 1)) return false;
+
+        int frequencies[COLOR_COUNT] = {};
+        for (int row = 0; row < pair.input.height; ++row)
+            for (int col = 0; col < pair.input.width; ++col) {
+                const int color = pair.input.data[row][col];
+                if (is_color(color) && color != input_background) ++frequencies[color];
+            }
+        bool removed[COLOR_COUNT] = {};
+        for (int rank = 0; rank < discarded_colors; ++rank) {
+            int common = -1;
+            for (int color = 0; color < COLOR_COUNT; ++color) {
+                if (color == input_background || removed[color] || frequencies[color] == 0) continue;
+                if (common < 0 || frequencies[color] > frequencies[common]) common = color;
+            }
+            if (common >= 0) removed[common] = true;
+        }
+
+        grid remaining(pair.input.width, pair.input.height);
+        remaining.fill(TRANSPARENT);
+        for (int row = 0; row < pair.input.height; ++row)
+            for (int col = 0; col < pair.input.width; ++col) {
+                const int color = pair.input.data[row][col];
+                if (is_color(color) && color != input_background && !removed[color])
+                    remaining.data[row][col] = color;
+            }
+
+        vector<object> pieces;
+        object_walk_scratch scratch;
+        const grouping groups = split_mode == 0 ? grouping::touching_any_color
+                                                 : grouping::touching_same_color;
+        each_object(remaining, TRANSPARENT, groups, scratch,
+            [&](const object_summary& box, const int16_t* cells, int count) {
+                if ((int)pieces.size() < MAX_OBJECTS_IN_A_LIST)
+                    pieces.push_back(object::from_cells(remaining, box, cells, count));
+            });
+        if (pieces.empty()) return false;
+
+        int16_t row_lows[MAX_OBJECTS_IN_A_LIST], row_highs[MAX_OBJECTS_IN_A_LIST];
+        int16_t col_lows[MAX_OBJECTS_IN_A_LIST], col_highs[MAX_OBJECTS_IN_A_LIST];
+        int row_order[MAX_OBJECTS_IN_A_LIST], col_order[MAX_OBJECTS_IN_A_LIST];
+        int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
+        for (int i = 0; i < (int)pieces.size(); ++i) {
+            const object_summary& box = pieces[i].summary;
+            row_lows[i] = box.y0;
+            row_highs[i] = (int16_t)(box.y0 + box.h - 1);
+            col_lows[i] = box.x0;
+            col_highs[i] = (int16_t)(box.x0 + box.w - 1);
+        }
+        const int rows = overlapping_bands((int)pieces.size(), row_lows, row_highs, row_of, row_order);
+        const int cols = overlapping_bands((int)pieces.size(), col_lows, col_highs, col_of, col_order);
+        const int width = min(cols * (int)cell_size, MAX_GRID_DIM);
+        const int height = min(rows * (int)cell_size, MAX_GRID_DIM);
+        if (width <= 0 || height <= 0) return false;
+
+        object arranged;
+        arranged.summary = {0, 0, (int8_t)width, (int8_t)height, 0};
+        arranged.cells.clear();
+        for (int i = 0; i < (int)pieces.size(); ++i) {
+            const object& piece = pieces[i];
+            const int top = row_of[i] * cell_size;
+            const int left = col_of[i] * cell_size;
+            for (int row = 0; row < piece.summary.h && row < cell_size; ++row)
+                for (int col = 0; col < piece.summary.w && col < cell_size; ++col) {
+                    const int destination_row = top + row, destination_col = left + col;
+                    if (destination_row < height && destination_col < width &&
+                        piece.cells[row][col] != TRANSPARENT)
+                        arranged.cells[destination_row][destination_col] = piece.cells[row][col];
+                }
+        }
+
+        const int reduced_width = max((width + cell_size - 1) / cell_size, 1);
+        const int reduced_height = max((height + cell_size - 1) / cell_size, 1);
+        grid painted(MAX_GRID_DIM, MAX_GRID_DIM);
+        painted.fill(TRANSPARENT);
+        for (int row = 0; row < reduced_height; ++row)
+            for (int col = 0; col < reduced_width; ++col)
+                painted.data[row][col] = majority_vote(arranged.cells, row, col, cell_size, height, width);
+
+        cell_box bounds;
+        for (int row = 0; row < reduced_height; ++row)
+            for (int col = 0; col < reduced_width; ++col)
+                if (painted.data[row][col] != TRANSPARENT) bounds.include_cell(row, col);
+        if (bounds.empty()) return false;
+
+        drawn = grid(bounds.width(), bounds.height());
+        for (int row = 0; row < drawn.height; ++row)
+            for (int col = 0; col < drawn.width; ++col) {
+                const int color = painted.data[bounds.row0 + row][bounds.col0 + col];
+                drawn.data[row][col] = color == TRANSPARENT ? output_background : color;
+            }
+        return true;
+    }
+
+    static ranked_layout_rule detect(const vector<example>& train, int input_background,
+                                     int output_background, const output_dimension_rule& size) {
+        if (train.empty() || size.Chosen != output_dimension_rule::BoundingBox) return {};
+        for (int discarded = 0; discarded <= COLOR_COUNT; ++discarded)
+            for (int mode = 0; mode <= 1; ++mode)
+                for (int factor = 2; factor <= 10; ++factor) {
+                    ranked_layout_rule candidate;
+                    candidate.held = true;
+                    candidate.discarded_colors = (int8_t)discarded;
+                    candidate.split_mode = (int8_t)mode;
+                    candidate.cell_size = (int8_t)factor;
+                    const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                        return candidate.draw(pair, input_background, output_background, drawn);
+                    });
+                    if (redraws) return candidate;
+                }
+        return {};
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -2085,6 +2210,7 @@ struct inference {
     bridge_rule bridge;
     interior_spread_rule interior_spread;
     input_blocks_rule input_blocks;
+    ranked_layout_rule ranked_layout;
     ray_extension_rule ray_extension;
     pane_split_facts pane_split;
     pane_mask_rule pane_mask;
@@ -2140,6 +2266,7 @@ inline inference infer(const vector<example>& train) {
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.interior_spread = interior_spread_rule::detect(train, ground_in);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.ranked_layout = ranked_layout_rule::detect(train, ground_in, ground_out, inf.size);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).

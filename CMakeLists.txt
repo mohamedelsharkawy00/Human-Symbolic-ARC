@@ -116,7 +116,7 @@ target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 # WHAT THE READING SOLVES WITHOUT SEARCHING, counted over a whole dataset. The
 # guard on say_the_reading: a sentence it spells that draws the wrong thing is
-# reported here and nowhere else.
+# reported here and nowhere else. Pass a task ID to check one puzzle only.
 add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)

@@ -114,6 +114,28 @@ struct alignas(4) object_cells {
     }
 };
 
+template <class Mask>
+ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
+                                             int factor, int height, int width) {
+    int counts[COLOR_COUNT] = {};
+    int non_transparent = 0;
+    for (int dr = 0; dr < factor; ++dr)
+        for (int dc = 0; dc < factor; ++dc) {
+            const int source_row = row * factor + dr;
+            const int source_col = col * factor + dc;
+            if (source_row >= height || source_col >= width) continue;
+            const int8_t color = mask[source_row][source_col];
+            if (color == TRANSPARENT) continue;
+            ++counts[color % COLOR_COUNT];
+            ++non_transparent;
+        }
+    if (non_transparent == 0) return TRANSPARENT;
+    int winner = -1, best = -1;
+    for (int color = 0; color < COLOR_COUNT; ++color)
+        if (counts[color] > best) { best = counts[color]; winner = color; }
+    return (int8_t)winner;
+}
+
 // MSVC C4324: the device only grabs memory 4 bytes at a time, so object_cells
 // has to start where the 4s start. Lining it up leaves 2 bytes empty. The
 // compiler says "you left 2 empty". We say "yes, on purpose".
@@ -347,6 +369,36 @@ inline cell_box box_of(const object_summary& summary) {
 ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count) {
     return { (int8_t)box.col0, (int8_t)box.row0, (int8_t)box.width(), (int8_t)box.height(),
              (int16_t)count };
+}
+
+// Share the executor's span grouping between inference and Layout/SelectRow/SelectColumn.
+ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
+                                               const int16_t* highs, int8_t* band_of,
+                                               int* order) {
+    for (int i = 0; i < count; ++i) order[i] = i;
+    for (int i = 1; i < count; ++i) {
+        int j = i;
+        while (j > 0) {
+            const int a = order[j], b = order[j - 1];
+            if (lows[a] >= lows[b]) break;
+            order[j] = b;
+            order[j - 1] = a;
+            --j;
+        }
+    }
+    int bands = 0, band_hi = -1;
+    for (int m = 0; m < count; ++m) {
+        const int i = order[m];
+        const int need = (highs[i] - lows[i] + 2) / 2;
+        if (bands == 0 || band_hi - lows[i] + 1 < need) {
+            ++bands;
+            band_hi = highs[i];
+        } else if (highs[i] > band_hi) {
+            band_hi = highs[i];
+        }
+        band_of[i] = (int8_t)(bands - 1);
+    }
+    return bands;
 }
 
 // Find every touching group and hand it to `take`: summary, cells as pointer

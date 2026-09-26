@@ -622,6 +622,20 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
     return true;
 }
 
+inline bool say_ranked_layout(const inference& inf, said_reading& said) {
+    const auto& rule = inf.ranked_layout;
+    if (!rule.holds()) return false;
+
+    string words = "Input Colors";
+    for (int rank = 0; rank < rule.discarded_colors; ++rank)
+        words += " SelectMostCommonColor DeleteSelection";
+    words += " " + spell("Split", rule.split_mode) + " SelectAll Trim " +
+             spell("Layout", rule.cell_size) + " SelectAll " +
+             spell("ScaleDown", rule.cell_size);
+    say_closed(said, words, "Union");
+    return true;
+}
+
 inline said_reading say_the_reading(const inference& inf) {
     const correspondence_election& facts = inf.correspondence;
     said_reading said;
@@ -656,6 +670,7 @@ inline said_reading say_the_reading(const inference& inf) {
         say_closed(said, pieces + " Outline", "Union");
         return said;
     }
+    if (say_ranked_layout(inf, said)) return said;
     if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until

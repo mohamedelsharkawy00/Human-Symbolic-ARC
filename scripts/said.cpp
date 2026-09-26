@@ -12,7 +12,7 @@
 // what it says. The panes are still tallied apart, so the pane truth file stays
 // comparable to the run that wrote it.
 //
-//   arc_said            one line a puzzle it solved, then a tally on stderr
+//   arc_said [task-id] one puzzle or every puzzle, then a tally on stderr
 #include "15_solver_beam.hpp"
 #include "13_puzzle_loader.hpp"
 #include "19_cuda_solver.cuh"
@@ -22,12 +22,17 @@
 using namespace arc;
 using namespace std;
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 2) { fprintf(stderr, "arc_said [task-id]\n"); return 2; }
+    const string requested_id = argc == 2 ? argv[1] : "";
     if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
     task_set set = load_task_set(DS_TRAIN);
     int spoke = 0, fitted = 0, right = 0, wrong = 0;
     int pane_spoke = 0, pane_fitted = 0, pane_right = 0, pane_wrong = 0;
+    bool found_requested = requested_id.empty();
     for (const auto& entry : set.tasks) {
+        if (!requested_id.empty() && entry.id != requested_id) continue;
+        found_requested = true;
         puzzle task;
         if (!load_task_from_content(entry.content, entry.id, task,
                                     set.solutions_for(entry.id))) continue;
@@ -69,5 +74,9 @@ int main() {
             spoke, fitted, right, wrong);
     fprintf(stderr, "  of those, the ones with panes: %d | fits train: %d | test right: %d | test wrong: %d\n",
             pane_spoke, pane_fitted, pane_right, pane_wrong);
+    if (!found_requested) {
+        fprintf(stderr, "no such training task: %s\n", requested_id.c_str());
+        return 2;
+    }
     return 0;
 }
