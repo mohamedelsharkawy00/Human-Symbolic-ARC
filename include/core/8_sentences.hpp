@@ -647,6 +647,15 @@ inline said_reading say_the_reading(const inference& inf) {
                                        {"SelectAll", "Bridge"} }, "Underlay");
             return said;
         }
+    if (inf.interior_spread.holds()) {
+        // Paint the cores, then restore the original boundaries. Reread the
+        // input for Outline: the recolored hand has lost its boundary colors.
+        say_closed(said, "Input", "Union");
+        const string pieces = "InputWithoutBackground SelectAll Split[0] SelectAll";
+        say_closed(said, pieces + " Recolor[10]", "Union");
+        say_closed(said, pieces + " Outline", "Union");
+        return said;
+    }
     if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until

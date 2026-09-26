@@ -263,6 +263,33 @@ ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width
     return row == 0 || col == 0 || row == height - 1 || col == width - 1;
 }
 
+// The boundary used by Outline: any missing eight-way neighbour makes an edge.
+// The caller supplies occupancy, including false outside its own frame.
+template <class Occupied>
+ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) {
+    for (int dir = 0; dir < 8; ++dir)
+        if (!occupied(row + neighbour_row_8(dir), col + neighbour_col_8(dir))) return true;
+    return false;
+}
+
+// Recolor's relative color sources, shared by the reading and execution.
+// Ties choose the lowest color, and an empty object stays transparent.
+template <class ColorAt>
+ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t value, ColorAt color_at) {
+    if (value < COLOR_COUNT) return value;
+    int counts[COLOR_COUNT] = {};
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const int color = color_at(row, col);
+            if (color >= 0 && color < COLOR_COUNT) ++counts[color];
+        }
+    int best = TRANSPARENT;
+    for (int color = 0; color < COLOR_COUNT; ++color)
+        if (counts[color] && (best < 0 || (value == COLOR_COUNT
+            ? counts[color] < counts[best] : counts[color] > counts[best]))) best = color;
+    return (int8_t)best;
+}
+
 // Mark cells reachable from the border without crossing a blocked cell.
 // Space uses four-way connectivity, so it cannot leak through touching corners.
 template <class Blocked>

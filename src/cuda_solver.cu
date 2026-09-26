@@ -256,22 +256,8 @@ __device__ inline int8_t gpu_obj_first_color(const gpu_fixed_object& o) {
 // 11 = its most common. Frequency ties break toward the lower color number.
 // Returns GPU_TRANSPARENT if the mask is empty.
 __device__ inline int8_t gpu_obj_resolve_color(const gpu_fixed_object& o, int8_t value) {
-    if (value < GPU_MAX_COLORS) return value;
-    int counts[GPU_MAX_COLORS] = {};
-    for (int r = 0; r < o.height; ++r)
-        for (int c = 0; c < o.width; ++c) {
-            int8_t v = o.mask[r][c];
-            if (v >= 0 && v < GPU_MAX_COLORS) counts[v]++;
-        }
-    bool rarest = (value == GPU_MAX_COLORS);
-    int best = GPU_TRANSPARENT, best_n = 0;
-    for (int col = 0; col < GPU_MAX_COLORS; ++col) {
-        if (counts[col] == 0) continue;
-        if (best < 0 || (rarest ? counts[col] < best_n : counts[col] > best_n)) {
-            best = col; best_n = counts[col];
-        }
-    }
-    return (int8_t)best;
+    return arc::object_paint_color(o.height, o.width, value,
+        [&](int row, int col) { return (int8_t)o.mask[row][col]; });
 }
 
 // One folding step of FNV-1a, so the canvas and the hand are stirred into the
@@ -1809,14 +1795,10 @@ __device__ gpu_object_list& gpu_exec_outline(gpu_exec_context& ctx, const gpu_ob
         for (int r = 0; r < obj_src.height; ++r)
             for (int c = 0; c < obj_src.width; ++c) {
                 if (obj_src.mask[r][c] == GPU_TRANSPARENT) continue;
-                bool edge = false;
-                for (int dr = -1; dr <= 1 && !edge; ++dr)
-                    for (int dc = -1; dc <= 1 && !edge; ++dc) {
-                        if (dr == 0 && dc == 0) continue;
-                        int nr = r + dr, nc = c + dc;
-                        if (nr < 0 || nc < 0 || nr >= obj_src.height || nc >= obj_src.width ||
-                            obj_src.mask[nr][nc] == GPU_TRANSPARENT) edge = true;
-                    }
+                const bool edge = arc::on_object_edge(r, c, [&](int row, int col) {
+                    return row >= 0 && col >= 0 && row < obj_src.height && col < obj_src.width &&
+                           obj_src.mask[row][col] != GPU_TRANSPARENT;
+                });
                 if (!edge) obj.mask[r][c] = GPU_TRANSPARENT;
             }
         res.count++;

@@ -506,6 +506,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
     report_bridge(report, inf.bridge);
+    report << "[interior_spread] holds " << inf.interior_spread.holds() << "\n\n";
     report_input_blocks(report, inf.input_blocks);
     report_ray_extension(report, inf.ray_extension);
     report_said_reading(report, inf);

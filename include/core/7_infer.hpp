@@ -2036,6 +2036,37 @@ struct bridge_rule {
     }
 };
 
+// A shape keeps its boundary and spreads its own rarest color over its core.
+// Read each marker from the input, so neither colors nor shapes are memorized.
+struct interior_spread_rule {
+    bool held = false;
+    bool holds() const { return held; }
+
+    static interior_spread_rule detect(const vector<example>& train, int8_t background) {
+        if (train.empty() || !pairs_overlay(train)) return {};
+        bool changed = false;
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            drawn = pair.input;
+            object_walk_scratch scratch;
+            int pieces = 0;
+            each_object(pair.input, background, grouping::touching_any_color, scratch,
+                [&](const object_summary& box, const int16_t* cells, int count) {
+                    ++pieces;
+                    const object piece = object::from_cells(pair.input, box, cells, count);
+                    const int8_t color = object_paint_color(box.h, box.w, COLOR_COUNT,
+                        [&](int row, int col) { return (int8_t)piece.cells[row][col]; });
+                    piece.each_cell([&](int row, int col, int8_t was) {
+                        if (on_object_edge(row, col, [&](int r, int c) { return piece.holds(r, c); })) return;
+                        drawn.data[row][col] = color;
+                        changed = changed || color != was;
+                    });
+                });
+            return pieces > 0 && pieces <= MAX_OBJECTS_IN_A_LIST;
+        });
+        return {redraws && changed};
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -2052,6 +2083,7 @@ struct inference {
     slide_to_touch_rule slide_to_touch;
     project_on_seeds_rule project_on_seeds;
     bridge_rule bridge;
+    interior_spread_rule interior_spread;
     input_blocks_rule input_blocks;
     ray_extension_rule ray_extension;
     pane_split_facts pane_split;
@@ -2106,6 +2138,7 @@ inline inference infer(const vector<example>& train) {
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.interior_spread = interior_spread_rule::detect(train, ground_in);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
 
     // Dims is detector #0: its rule decides which questions even apply
