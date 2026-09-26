@@ -606,9 +606,7 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
     if (!rule.holds()) return false;
 
     for (const auto& branch : rule.branches) {
-        const string rank = branch.rank == ray_extension_rule::Largest
-                          ? "SelectLargestObject[0]" : "SelectSmallestObject[0]";
-        string layer = "Input Colors SelectAll SortBySize[1] SelectAll InvertSelection " + rank +
+        string layer = "Input Colors " + spell("SelectSmallestObject", branch.rank) +
                        " InvertSelection DeleteSelection SelectAll Trim";
         if (branch.fill_interior) layer += " InteriorColor[-1]";
         layer += " Split[1] SelectAll Trim";

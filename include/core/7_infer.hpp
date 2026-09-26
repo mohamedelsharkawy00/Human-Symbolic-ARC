@@ -615,32 +615,25 @@ struct periodic_denoise_rule {
     }
 };
 
-// Two ranked color layers can each grow rays from the center of every piece.
-// The rule is replayed against the full output; rank and ray parameters must
-// hold across all examples, even when the colors themselves change.
+// Every foreground color layer grows rays from its connected pieces. Colors
+// are selected by cell-count rank, so the same reading survives recoloring.
+// Branch order is inferred by peeling matching layers off the output.
 struct ray_extension_rule {
-    enum : int8_t { Smallest, Largest };
     enum : int8_t { Orthogonal, Diagonal };
-
     struct branch {
-        int8_t rank = Largest;
+        int8_t rank = 0; // ascending cell count
         int8_t direction = Orthogonal;
         int8_t radius = 2;
         bool fill_interior = false;
         bool stamp_body = false;
     };
-    struct ranked_colors {
-        int8_t smallest = -1;
-        int8_t largest = -1;
-    };
+    using ranked_colors = vector<int8_t>;
     struct candidate {
         branch how;
         vector<grid> ink;
     };
-
-    branch branches[2]{};
-    bool held = false;
-    bool holds() const { return held; }
+    vector<branch> branches;
+    bool holds() const { return !branches.empty(); }
 
     static bool rank_colors(const grid& input, int8_t background, ranked_colors& ranked) {
         int counts[COLOR_COUNT] = {};
@@ -649,30 +642,16 @@ struct ray_extension_rule {
                 const int color = input.data[row][col];
                 if (is_color(color) && color != background) ++counts[color];
             }
-
-        int8_t present[2] = { -1, -1 };
-        int found = 0;
+        ranked.clear();
         for (int color = 0; color < COLOR_COUNT; ++color)
-            if (counts[color] > 0) {
-                if (found == 2) return false;
-                present[found++] = (int8_t)color;
-            }
-        if (found != 2) return false;
-        const int first = present[0], second = present[1];
-        if (!is_color(first) || !is_color(second) || counts[first] == counts[second]) return false;
-        ranked = counts[first] < counts[second]
-               ? ranked_colors{ (int8_t)first, (int8_t)second }
-               : ranked_colors{ (int8_t)second, (int8_t)first };
-        return true;
+            if (counts[color]) ranked.push_back((int8_t)color);
+        sort(ranked.begin(), ranked.end(), [&](int8_t x, int8_t y) { return counts[x] < counts[y]; });
+        // Equal sizes do not establish a color-independent rank.
+        for (size_t i = 1; i < ranked.size(); ++i)
+            if (counts[ranked[i - 1]] == counts[ranked[i]]) return false;
+        return !ranked.empty();
     }
 
-    static int8_t color_at_rank(const ranked_colors& colors, int8_t rank) {
-        return rank == Largest ? colors.largest : colors.smallest;
-    }
-
-    // Matches Colors -> Trim -> optional InteriorColor -> Split[1] -> Trim,
-    // then the selected Extend ray op. Extend paints rays, not their seed body;
-    // stamp_body records the separate Union used when a branch keeps its seeds.
     static bool draw_layer(const grid& input, int8_t color, const branch& how, grid& ink) {
         grid layer(input.width, input.height);
         ink = grid(input.width, input.height);
@@ -689,175 +668,131 @@ struct ray_extension_rule {
         if (bounds.empty()) return false;
 
         if (how.fill_interior) {
-            bool wall[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             bool outside[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-            for (int row = 0; row < bounds.height(); ++row)
-                for (int col = 0; col < bounds.width(); ++col)
-                    wall[row][col] = layer.data[bounds.row0 + row][bounds.col0 + col] == color;
             mark_outside(bounds.height(), bounds.width(),
-                         [&](int row, int col) { return wall[row][col]; }, outside);
+                         [&](int row, int col) {
+                             return layer.data[bounds.row0 + row][bounds.col0 + col] == color;
+                         }, outside);
             for (int row = 0; row < bounds.height(); ++row)
                 for (int col = 0; col < bounds.width(); ++col)
-                    if (!wall[row][col] && !outside[row][col])
+                    if (!outside[row][col])
                         layer.data[bounds.row0 + row][bounds.col0 + col] = color;
         }
 
-        static constexpr int8_t orthogonal[4][2] = {
-            { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 }
-        };
-        static constexpr int8_t diagonal[4][2] = {
-            { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 }
-        };
         object_walk_scratch scratch{};
         bool drew = false;
         each_object(layer, TRANSPARENT, grouping::touching_same_color, scratch,
-                    [&](const object_summary& box, const int16_t*, int) {
-            const int center_row = (box.h - 1) / 2;
-            const int center_col = (box.w - 1) / 2;
-            int seed_row = -1, seed_col = -1;
-            int best_distance = numeric_limits<int>::max();
-            for (int row = 0; row < box.h; ++row)
-                for (int col = 0; col < box.w; ++col) {
-                    if (layer.data[box.y0 + row][box.x0 + col] != color) continue;
-                    const int distance = abs(row - center_row) + abs(col - center_col);
-                    if (distance < best_distance) {
-                        best_distance = distance;
-                        seed_row = row;
-                        seed_col = col;
-                    }
-                }
-            if (seed_row < 0) return;
-
-            if (how.stamp_body)
-                for (int row = 0; row < box.h; ++row)
-                    for (int col = 0; col < box.w; ++col)
-                        if (layer.data[box.y0 + row][box.x0 + col] == color) {
-                            ink.data[box.y0 + row][box.x0 + col] = color;
-                            drew = true;
-                        }
-
-            const int8_t (*directions)[2] = how.direction == Orthogonal ? orthogonal : diagonal;
-            for (int direction = 0; direction < 4; ++direction)
-                for (int step = 1; step <= how.radius; ++step) {
-                    const int row = box.y0 + seed_row + directions[direction][1] * step;
-                    const int col = box.x0 + seed_col + directions[direction][0] * step;
-                    if (row < 0 || row >= input.height || col < 0 || col >= input.width) continue;
-                    ink.data[row][col] = color;
-                    drew = true;
-                }
+                    [&](const object_summary& box, const int16_t* cells, int count) {
+            grid object(box.w, box.h);
+            object.fill(TRANSPARENT);
+            for (int i = 0; i < count; ++i) {
+                const int row = cell_row(cells[i]), col = cell_col(cells[i]);
+                object.data[row - box.y0][col - box.x0] = color;
+                if (how.stamp_body) { ink.data[row][col] = color; drew = true; }
+            }
+            const auto seed = nearest_ray_seed(box.h, box.w, (box.h - 1) / 2, (box.w - 1) / 2,
+                [&](int row, int col) { return object.data[row][col]; });
+            each_extended_ray(seed, how.radius, how.direction == Diagonal,
+                [&](int row, int col) {
+                    row += box.y0 - how.radius;
+                    col += box.x0 - how.radius;
+                    if (ink.contains(row, col)) { ink.data[row][col] = color; drew = true; }
+                });
         });
         return drew;
     }
 
     static vector<candidate> options_for(const vector<example>& train,
-                                         const vector<ranked_colors>& ranked,
-                                         int8_t rank) {
+                                         const vector<ranked_colors>& ranked, int8_t rank) {
         vector<candidate> options;
-        for (int radius = 2; radius <= 10; ++radius)
-            for (int direction = Orthogonal; direction <= Diagonal; ++direction)
+        const auto orthogonal = row_of(node_type::ExtendOrthogonal);
+        const auto diagonal = row_of(node_type::ExtendDiagonal);
+        for (int radius = min(orthogonal.low, diagonal.low);
+             radius <= max(orthogonal.high, diagonal.high); ++radius) {
+            for (int direction = Orthogonal; direction <= Diagonal; ++direction) {
+                if (!takes_value(direction == Orthogonal ? node_type::ExtendOrthogonal
+                                                        : node_type::ExtendDiagonal, radius)) continue;
                 for (int fill = 0; fill <= 1; ++fill)
                     for (int stamp = 0; stamp <= 1; ++stamp) {
-                        candidate trying;
-                        trying.how = { rank, (int8_t)direction, (int8_t)radius,
-                                       fill != 0, stamp != 0 };
-                        bool works = true;
+                        candidate trying{ { rank, (int8_t)direction, (int8_t)radius,
+                                            fill != 0, stamp != 0 }, {} };
                         for (size_t i = 0; i < train.size(); ++i) {
                             grid ink;
-                            if (!draw_layer(train[i].input, color_at_rank(ranked[i], rank),
-                                            trying.how, ink)) {
-                                works = false;
-                                break;
-                            }
+                            if (!draw_layer(train[i].input, ranked[i][rank], trying.how, ink)) break;
                             trying.ink.push_back(std::move(ink));
                         }
-                        if (works) options.push_back(std::move(trying));
+                        if (trying.ink.size() == train.size() &&
+                            none_of(options.begin(), options.end(), [&](const candidate& other) {
+                                return other.ink == trying.ink;
+                            })) options.push_back(std::move(trying));
                     }
+            }
+        }
         return options;
     }
 
-    static bool can_be_first(const candidate& first, int8_t first_rank, int8_t last_rank,
-                             const vector<example>& train, const vector<ranked_colors>& ranked) {
+    // A remaining color's topmost layer must explain every visible cell of
+    // that color, and may paint elsewhere only beneath an already peeled layer.
+    // This one check handles every position in the compositing order.
+    static bool peel(const candidate& layer, const vector<example>& train,
+                     const vector<ranked_colors>& ranked, int8_t canvas, const vector<grid>& covered,
+                     vector<grid>& next) {
+        next = covered;
         for (size_t i = 0; i < train.size(); ++i) {
-            const int first_color = color_at_rank(ranked[i], first_rank);
-            const int last_color = color_at_rank(ranked[i], last_rank);
+            const int color = ranked[i][layer.how.rank];
             for (int row = 0; row < train[i].output.height; ++row)
                 for (int col = 0; col < train[i].output.width; ++col) {
-                    const bool painted = first.ink[i].data[row][col] != TRANSPARENT;
+                    if (covered[i].data[row][col]) continue;
+                    const bool painted = layer.ink[i].data[row][col] != TRANSPARENT;
                     const int output = train[i].output.data[row][col];
-                    if (first_color != 0 && output == first_color && !painted) return false;
-                    if (painted && output != first_color && output != last_color) return false;
+                    if (painted && output != color) return false;
+                    // Unpainted cells take the elected output background.
+                    if (color != canvas && output == color && !painted) return false;
+                    if (painted) next[i].data[row][col] = 1;
                 }
         }
         return true;
     }
 
-    static bool exactly_last(const candidate& last, int8_t rank,
-                             const vector<example>& train, const vector<ranked_colors>& ranked) {
-        for (size_t i = 0; i < train.size(); ++i) {
-            const int color = color_at_rank(ranked[i], rank);
-            if (color == 0) continue; // Empty-canvas cells and color zero look alike.
-            for (int row = 0; row < train[i].output.height; ++row)
-                for (int col = 0; col < train[i].output.width; ++col)
-                    if ((last.ink[i].data[row][col] != TRANSPARENT) !=
-                        (train[i].output.data[row][col] == color)) return false;
-        }
-        return true;
-    }
-
-    static bool layers_draw(const candidate& first, const candidate& last,
-                            const vector<example>& train) {
-        for (size_t i = 0; i < train.size(); ++i)
-            for (int row = 0; row < train[i].output.height; ++row)
-                for (int col = 0; col < train[i].output.width; ++col) {
-                    int drawn = 0;
-                    if (first.ink[i].data[row][col] != TRANSPARENT)
-                        drawn = first.ink[i].data[row][col];
-                    if (last.ink[i].data[row][col] != TRANSPARENT)
-                        drawn = last.ink[i].data[row][col];
-                    if (drawn != train[i].output.data[row][col]) return false;
-                }
-        return true;
-    }
-
-    static ray_extension_rule detect(const vector<example>& train, int8_t background) {
+    static ray_extension_rule detect(const vector<example>& train, int8_t background, int8_t canvas) {
         if (train.empty() || !is_color(background) || !pairs_overlay(train)) return {};
-        vector<ranked_colors> ranked;
-        ranked.reserve(train.size());
-        for (const example& pair : train) {
-            ranked_colors colors;
-            if (!rank_colors(pair.input, background, colors)) return {};
+        vector<ranked_colors> ranked(train.size());
+        vector<grid> covered;
+        for (size_t i = 0; i < train.size(); ++i) {
+            const auto& pair = train[i];
+            if (!rank_colors(pair.input, background, ranked[i]) ||
+                ranked[i].size() != ranked[0].size()) return {};
             for (int row = 0; row < pair.output.height; ++row)
                 for (int col = 0; col < pair.output.width; ++col) {
                     const int color = pair.output.data[row][col];
-                    if (color != 0 && color != colors.smallest && color != colors.largest)
+                    if (color != canvas && find(ranked[i].begin(), ranked[i].end(), color) == ranked[i].end())
                         return {};
                 }
-            ranked.push_back(colors);
+            covered.emplace_back(pair.output.width, pair.output.height);
         }
-
-        const vector<candidate> largest = options_for(train, ranked, Largest);
-        const vector<candidate> smallest = options_for(train, ranked, Smallest);
-        if (largest.empty() || smallest.empty()) return {};
-
+        vector<vector<candidate>> options;
+        for (int rank = 0; rank < (int)ranked[0].size(); ++rank) {
+            options.push_back(options_for(train, ranked, (int8_t)rank));
+            if (options.back().empty()) return {};
+        }
         ray_extension_rule found;
-        auto try_order = [&](const vector<candidate>& first_options, int8_t first_rank,
-                             const vector<candidate>& last_options, int8_t last_rank) {
-            for (const candidate& first : first_options) {
-                if (!can_be_first(first, first_rank, last_rank, train, ranked)) continue;
-                for (const candidate& last : last_options) {
-                    if (!exactly_last(last, last_rank, train, ranked) ||
-                        !layers_draw(first, last, train)) continue;
-                    found.branches[0] = first.how;
-                    found.branches[1] = last.how;
-                    found.held = true;
-                    return true;
+        auto choose = [&](auto&& self, unsigned used, const vector<grid>& mask) -> bool {
+            if (found.branches.size() == options.size()) return true;
+            for (size_t rank = 0; rank < options.size(); ++rank) {
+                if (used & (1u << rank)) continue;
+                for (const auto& option : options[rank]) {
+                    vector<grid> next;
+                    if (!peel(option, train, ranked, canvas, mask, next)) continue;
+                    found.branches.push_back(option.how);
+                    if (self(self, used | (1u << rank), next)) return true;
+                    found.branches.pop_back();
                 }
             }
             return false;
         };
-        if (try_order(largest, Largest, smallest, Smallest) ||
-            try_order(smallest, Smallest, largest, Largest)) return found;
-        return {};
+        if (!choose(choose, 0, covered)) return {};
+        reverse(found.branches.begin(), found.branches.end());
+        return found;
     }
 };
 
@@ -2180,7 +2115,7 @@ inline inference infer(const vector<example>& train) {
     // same question itself (pairs_overlay), so this gate states the intent
     // and none of them depends on being called from here.
     if (inf.size.Chosen == output_dimension_rule::Identity) {
-        inf.ray_extension = ray_extension_rule::detect(train, ground_in);
+        inf.ray_extension = ray_extension_rule::detect(train, ground_in, ground_out);
         inf.unchanged   = unchanged_cells_facts::detect(train);
         inf.color_diff  = color_diff_facts::detect(train);
         inf.color_swaps = color_swap_candidates::detect(train, inf.color_diff, ground_in);

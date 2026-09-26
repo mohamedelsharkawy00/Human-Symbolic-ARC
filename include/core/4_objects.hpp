@@ -90,6 +90,44 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
     height = smallest_period(g.height, false);
 }
 
+// Extend's seed and rays are shared by inference and execution. Ties go to
+// the first cell in row-major order; the seed itself is not part of the rays.
+struct ray_seed { int row = -1, col = -1; };
+
+template <class Cell>
+ARC_HOST_DEVICE inline ray_seed nearest_ray_seed(int height, int width,
+                                                 int center_row, int center_col, Cell cell) {
+    ray_seed seed;
+    int best = MAX_GRID_CELLS;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (cell(row, col) == TRANSPARENT) continue;
+            const int dr = row - center_row, dc = col - center_col;
+            const int distance = (dr < 0 ? -dr : dr) + (dc < 0 ? -dc : dc);
+            if (distance < best) { best = distance; seed = { row, col }; }
+        }
+    return seed;
+}
+
+template <class Paint>
+ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
+                                               Paint paint) {
+    if (seed.row < 0) return;
+    for (int direction = 0; direction < 4; ++direction) {
+        const int dx = diagonal ? (direction < 2 ? -1 : 1)
+                                : (direction < 2 ? (direction == 0 ? -1 : 1) : 0);
+        const int dy = diagonal ? (direction % 2 == 0 ? -1 : 1)
+                                : (direction >= 2 ? (direction == 2 ? -1 : 1) : 0);
+        for (int step = 1; step <= radius; ++step) {
+            const int row = seed.row + radius + dy * step;
+            const int col = seed.col + radius + dx * step;
+            // Extend's expanded object mask has the same limit as a grid.
+            if (row >= 0 && row < MAX_GRID_DIM && col >= 0 && col < MAX_GRID_DIM)
+                paint(row, col);
+        }
+    }
+}
+
 // VoteDenoise's arithmetic, in one place for the kernel and for inference.
 // Period per axis: a spacing qualifies when the structure it aligns agrees
 // >=70% (pairs with both cells non-background), and the winner is the

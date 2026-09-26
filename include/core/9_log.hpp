@@ -344,9 +344,7 @@ inline void report_input_blocks(ostream& report, const input_blocks_rule& blocks
 inline void report_ray_extension(ostream& report, const ray_extension_rule& rule) {
     report << "[ray_extension] holds " << rule.holds() << "\n";
     for (const auto& branch : rule.branches) {
-        if (!rule.holds()) break;
-        report << "  " << (branch.rank == ray_extension_rule::Largest ? "largest" : "smallest")
-               << " color  "
+        report << "  color rank " << (int)branch.rank << "  "
                << (branch.direction == ray_extension_rule::Orthogonal ? "orthogonal" : "diagonal")
                << " rays " << (int)branch.radius;
         if (branch.fill_interior) report << "  fill interior";

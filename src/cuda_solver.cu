@@ -2340,18 +2340,11 @@ __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gp
         // Only what was picked grows rays; the rest ride through as they are.
         if (!obj.selected) { res.objects[res.count++] = obj; continue; }
 
-        // Find center cell: non-transparent pixel closest to bbox center.
-        int bcx = (obj.x0 + obj.x1) / 2 - obj.x0;
-        int bcy = (obj.y0 + obj.y1) / 2 - obj.y0;
-        int best_r = -1, best_c = -1, best_dist = 0x7FFF;
-        int8_t center_color = 0;
-        for (int r = 0; r < obj.height; ++r)
-            for (int c = 0; c < obj.width; ++c) {
-                if (obj.mask[r][c] == GPU_TRANSPARENT) continue;
-                int d = abs(r - bcy) + abs(c - bcx);
-                if (d < best_dist) { best_dist = d; best_r = r; best_c = c; center_color = obj.mask[r][c]; }
-            }
-        if (best_r < 0) continue;
+        const auto seed = arc::nearest_ray_seed(obj.height, obj.width,
+            (obj.y0 + obj.y1) / 2 - obj.y0, (obj.x0 + obj.x1) / 2 - obj.x0,
+            [&](int row, int col) { return obj.mask[row][col]; });
+        if (seed.row < 0) continue;
+        const int8_t center_color = obj.mask[seed.row][seed.col];
 
         // Expand the original object's bbox by radius on all sides.
         int x0 = obj.x0 - radius;
@@ -2374,16 +2367,8 @@ __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gp
         // Union). A single-pixel seed thus contributes no cell of its own, only
         // its 4 arms. (radius 0 => empty output.)
 
-        // Draw 4 rays from center cell outward.
-        int cr = best_r + radius, cc = best_c + radius;
-        for (int d = dir_first; d < dir_first + 4; ++d) {
-            int dx = GPU_DIR8[d][0], dy = GPU_DIR8[d][1];
-            for (int k = 1; k <= radius; ++k) {
-                int r = cr + dy * k, c = cc + dx * k;
-                if (r >= 0 && r < GPU_MAX_GRID && c >= 0 && c < GPU_MAX_GRID)
-                    out.mask[r][c] = center_color;
-            }
-        }
+        arc::each_extended_ray(seed, radius, dir_first == 4,
+            [&](int row, int col) { out.mask[row][col] = center_color; });
     }
     return res;
 }

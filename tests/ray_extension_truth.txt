@@ -1,5 +1,0 @@
-# Ray-extension programs emitted from the training pairs and run on the held-out test.
-# Format:  <id>  <result>  <program>
-# These are ranked color layers, not pane-combination readings.
-
-0962bcdd  SOLVED  Input Colors SelectAll SortBySize[1] SelectAll InvertSelection SelectLargestObject[0] InvertSelection DeleteSelection SelectAll Trim InteriorColor[-1] Split[1] SelectAll Trim ExtendOrthogonal[2] Union Input Colors SelectAll SortBySize[1] SelectAll InvertSelection SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal[2] Union
