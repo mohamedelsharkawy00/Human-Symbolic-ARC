@@ -2118,6 +2118,65 @@ struct interior_spread_rule {
     }
 };
 
+// Every enclosed space takes one color, independently of the boundary's shape.
+// Read that color from the interiors, then check the whole drawing, including
+// unchanged bodies and the elected outside color. No exact-shape keys are needed.
+struct interior_fill_rule {
+    int8_t color = -1;
+    bool holds() const { return is_color(color); }
+
+    static interior_fill_rule detect(const vector<example>& train,
+                                     int8_t input_background, int8_t output_background) {
+        if (train.empty() || !pairs_overlay(train) ||
+            !is_color(input_background) || !is_color(output_background)) return {};
+        interior_fill_rule rule;
+        bool changed = false;
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            drawn = grid(pair.input.width, pair.input.height);
+            drawn.fill(output_background);
+            object_walk_scratch scratch;
+            bool consistent = true;
+            int pieces = 0;
+            each_object(pair.input, input_background, grouping::touching_any_color, scratch,
+                [&](const object_summary& box, const int16_t* cells, int count) {
+                    if (!consistent) return;
+                    ++pieces;
+                    const object piece = object::from_cells(pair.input, box, cells, count);
+                    bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
+                    mark_outside(box.h, box.w,
+                        [&](int r, int c) { return is_color(piece.cells[r][c]); }, outside);
+                    // Separate marker objects inside a hole keep their own
+                    // colors. They are not evidence for the interior's fill.
+                    for (int r = 0; r < box.h; ++r)
+                        for (int c = 0; c < box.w; ++c) {
+                            const int y = box.y0 + r, x = box.x0 + c;
+                            if (is_color(piece.cells[r][c]) || outside[r][c] ||
+                                pair.input.data[y][x] != input_background) continue;
+                            const int fill = pair.output.data[y][x];
+                            if (!is_color(fill) || (rule.holds() && rule.color != fill)) {
+                                consistent = false;
+                                return;
+                            }
+                            rule.color = (int8_t)fill;
+                            changed = changed || fill != pair.input.data[y][x];
+                        }
+                    // Replay in object order, as Union does: a later marker
+                    // can restore its body over an earlier object's fill.
+                    for (int r = 0; r < box.h; ++r)
+                        for (int c = 0; c < box.w; ++c) {
+                            const int y = box.y0 + r, x = box.x0 + c;
+                            if (is_color(piece.cells[r][c]))
+                                drawn.data[y][x] = piece.cells[r][c];
+                            else if (!outside[r][c] && rule.holds())
+                                drawn.data[y][x] = rule.color;
+                        }
+                });
+            return consistent && pieces > 0 && pieces <= MAX_OBJECTS_IN_A_LIST;
+        });
+        return redraws && changed ? rule : interior_fill_rule{};
+    }
+};
+
 // A grid of trimmed connected pieces, selected by removing its most common colors.
 // Only held when the shared Layout and ScaleDown geometry redraws every output.
 struct ranked_layout_rule {
@@ -2261,6 +2320,7 @@ struct inference {
     project_on_seeds_rule project_on_seeds;
     bridge_rule bridge;
     interior_spread_rule interior_spread;
+    interior_fill_rule interior_fill;
     input_blocks_rule input_blocks;
     ranked_layout_rule ranked_layout;
     ray_extension_rule ray_extension;
@@ -2316,6 +2376,7 @@ inline inference infer(const vector<example>& train) {
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.interior_fill = interior_fill_rule::detect(train, ground_in, ground_out);
     inf.interior_spread = interior_spread_rule::detect(train, ground_in);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.ranked_layout = ranked_layout_rule::detect(train, ground_in, ground_out, inf.size);

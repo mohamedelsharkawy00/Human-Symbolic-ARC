@@ -661,6 +661,11 @@ inline said_reading say_the_reading(const inference& inf) {
                                        {"SelectAll", "Bridge"} }, "Underlay");
             return said;
         }
+    if (inf.interior_fill.holds()) {
+        say_closed(said, "InputWithoutBackground SelectAll Split[0] SelectAll Trim " +
+                   spell("InteriorColor", inf.interior_fill.color), "Union");
+        return said;
+    }
     if (inf.interior_spread.holds()) {
         // Paint the cores, then restore the original boundaries. Reread the
         // input for Outline: the recolored hand has lost its boundary colors.
