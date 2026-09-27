@@ -8,3 +8,4 @@ kaggle/working/
 notes/
 __pycache__/
 *.pyc
+.vs/

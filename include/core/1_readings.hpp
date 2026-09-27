@@ -336,6 +336,57 @@ inline void mark_outside(int height, int width, Blocked blocked,
     walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
 }
 
+// Count four-connected enclosed spaces in an occupancy mask. Shared by
+// inference and SelectObjectsWithHoles so learned keys mean the same at runtime.
+template <class Occupied>
+ARC_HOST_DEVICE inline int object_hole_count(int mh, int mw, Occupied occupied) {
+    if (mw <= 0 || mh <= 0) return 0;
+    // mark: 1 = wall (painted cell), 2 = outside (reached from bbox edge), 3 = counted hole.
+    uint8_t mark[MAX_GRID_DIM][MAX_GRID_DIM];
+    for (int r = 0; r < mh; ++r)
+        for (int c = 0; c < mw; ++c)
+            mark[r][c] = occupied(r, c) ? 1 : 0;
+
+    // Outside = monotonic sweeps from the bbox edge through transparent cells.
+    for (bool changed = true; changed; ) {
+        changed = false;
+        for (int r = 0; r < mh; ++r)
+            for (int c = 0; c < mw; ++c) {
+                if (mark[r][c]) continue;
+                bool edge = (r == 0 || r == mh - 1 || c == 0 || c == mw - 1);
+                bool nb = (r > 0      && mark[r - 1][c] == 2) ||
+                          (r < mh - 1 && mark[r + 1][c] == 2) ||
+                          (c > 0      && mark[r][c - 1] == 2) ||
+                          (c < mw - 1 && mark[r][c + 1] == 2);
+                if (edge || nb) { mark[r][c] = 2; changed = true; }
+            }
+    }
+
+    // Holes = remaining unmarked components; flood each with an explicit stack.
+    int holes = 0;
+    int16_t stack[MAX_GRID_DIM * MAX_GRID_DIM];
+    for (int r = 0; r < mh; ++r)
+        for (int c = 0; c < mw; ++c) {
+            if (mark[r][c]) continue;
+            ++holes;
+            mark[r][c] = 3;
+            int top = 0;
+            stack[top++] = (int16_t)(r * MAX_GRID_DIM + c);
+            while (top > 0) {
+                int p = stack[--top];
+                int pr = p / MAX_GRID_DIM, pc = p % MAX_GRID_DIM;
+                const int dr[4] = { -1, 1, 0, 0 }, dc[4] = { 0, 0, -1, 1 };
+                for (int d = 0; d < 4; ++d) {
+                    int nr = pr + dr[d], nc = pc + dc[d];
+                    if (nr < 0 || nr >= mh || nc < 0 || nc >= mw || mark[nr][nc]) continue;
+                    mark[nr][nc] = 3;
+                    stack[top++] = (int16_t)(nr * MAX_GRID_DIM + nc);
+                }
+            }
+        }
+    return holes;
+}
+
 // A box in grid coordinates, with inclusive bottom and right edges.
 // An empty box has its last row or column before its first.
 struct cell_box {

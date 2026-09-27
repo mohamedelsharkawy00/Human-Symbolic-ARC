@@ -1102,61 +1102,10 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
     return res;
 }
 
-// How many enclosed holes does this object have? A hole is a 4-connected
-// component of transparent cells inside the object's bbox not reachable from the
-// bbox edge (the outside-flood recipe of gpu_interior_paint_warp, run serially).
-// One home for the recipe: SelectObjectsWithHoles asks here, and any future hole-keyed
-// detector must ask here too, or the two answers can silently disagree.
 __device__ int gpu_object_hole_count(const gpu_fixed_object& obj) {
-    {
-        int mw = min((int)obj.width, GPU_MAX_GRID), mh = min((int)obj.height, GPU_MAX_GRID);
-        if (mw <= 0 || mh <= 0) return 0;
-
-        // mark: 1 = wall (painted cell), 2 = outside (reached from bbox edge), 3 = counted hole.
-        uint8_t mark[GPU_MAX_GRID][GPU_MAX_GRID];
-        for (int r = 0; r < mh; ++r)
-            for (int c = 0; c < mw; ++c)
-                mark[r][c] = (obj.mask[r][c] != GPU_TRANSPARENT) ? 1 : 0;
-
-        // Outside = monotonic sweeps from the bbox edge through transparent cells.
-        for (bool changed = true; changed; ) {
-            changed = false;
-            for (int r = 0; r < mh; ++r)
-                for (int c = 0; c < mw; ++c) {
-                    if (mark[r][c]) continue;
-                    bool edge = (r == 0 || r == mh - 1 || c == 0 || c == mw - 1);
-                    bool nb = (r > 0      && mark[r - 1][c] == 2) ||
-                              (r < mh - 1 && mark[r + 1][c] == 2) ||
-                              (c > 0      && mark[r][c - 1] == 2) ||
-                              (c < mw - 1 && mark[r][c + 1] == 2);
-                    if (edge || nb) { mark[r][c] = 2; changed = true; }
-                }
-        }
-
-        // Holes = remaining unmarked components; flood each with an explicit stack.
-        int holes = 0;
-        int16_t stack[GPU_MAX_GRID * GPU_MAX_GRID];
-        for (int r = 0; r < mh; ++r)
-            for (int c = 0; c < mw; ++c) {
-                if (mark[r][c]) continue;
-                ++holes;
-                mark[r][c] = 3;
-                int top = 0;
-                stack[top++] = (int16_t)(r * GPU_MAX_GRID + c);
-                while (top > 0) {
-                    int p = stack[--top];
-                    int pr = p / GPU_MAX_GRID, pc = p % GPU_MAX_GRID;
-                    const int dr[4] = { -1, 1, 0, 0 }, dc[4] = { 0, 0, -1, 1 };
-                    for (int d = 0; d < 4; ++d) {
-                        int nr = pr + dr[d], nc = pc + dc[d];
-                        if (nr < 0 || nr >= mh || nc < 0 || nc >= mw || mark[nr][nc]) continue;
-                        mark[nr][nc] = 3;
-                        stack[top++] = (int16_t)(nr * GPU_MAX_GRID + nc);
-                    }
-                }
-            }
-        return holes;
-    }
+    return arc::object_hole_count(min((int)obj.height, GPU_MAX_GRID),
+                             min((int)obj.width, GPU_MAX_GRID),
+        [&](int row, int col) { return obj.mask[row][col] != GPU_TRANSPARENT; });
 }
 
 // SelectObjectsWithHoles[h]: mark the objects with exactly h enclosed holes;

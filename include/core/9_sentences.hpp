@@ -670,6 +670,15 @@ inline said_reading say_the_reading(const inference& inf) {
         say_closed(said, pieces + " Outline", "Union");
         return said;
     }
+    if (inf.hole_colors.holds()) {
+        vector<beat> recolors = { {"SelectAll", "Split[1]"} };
+        for (int holes = 0; holes < hole_color_rule::key_count; ++holes)
+            if (is_color(inf.hole_colors.colors[holes]))
+                recolors.push_back({"SelectAll InvertSelection " + spell("SelectObjectsWithHoles", holes),
+                                    spell("Recolor", inf.hole_colors.colors[holes])});
+        say_beats(said, "InputWithoutBackground", recolors, "Union");
+        return said;
+    }
     if (say_ranked_layout(inf, said)) return said;
     if (facts.chosen_pairs().empty()) return said;
 

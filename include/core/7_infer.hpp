@@ -305,6 +305,57 @@ struct color_swap_candidates {
     }
 };
 
+// A stationary object's number of enclosed spaces determines its body color.
+// Include unchanged objects and ground in the checks: a changed subset alone
+// could endorse a key that also selects objects which must keep another color.
+struct hole_color_rule {
+    static constexpr int key_count = 5; // SelectObjectsWithHoles[0..4]
+    array<int8_t, key_count> colors = { -1, -1, -1, -1, -1 };
+    bool held = false;
+    bool holds() const { return held; }
+
+    static hole_color_rule detect(const vector<example>& train, int8_t background) {
+        hole_color_rule rule;
+        if (!pairs_overlay(train) || !is_color(background)) return {};
+        object_walk_scratch scratch;
+        bool changed = false;
+        for (const auto& ex : train) {
+            bool consistent = true;
+            for (int r = 0; r < ex.input.height; ++r)
+                for (int c = 0; c < ex.input.width; ++c)
+                    if (ex.input.data[r][c] == background && ex.output.data[r][c] != background)
+                        return {};
+            each_object(ex.input, background, grouping::touching_same_color, scratch,
+                [&](const object_summary& box, const int16_t* cells, int count) {
+                    if (!consistent) return;
+                    bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+                    int color = -1;
+                    for (int i = 0; i < count; ++i) {
+                        const int r = cell_row(cells[i]), c = cell_col(cells[i]);
+                        occupied[r - box.y0][c - box.x0] = true;
+                        const int target = ex.output.data[r][c];
+                        if (!is_color(target) || (color >= 0 && color != target)) {
+                            consistent = false;
+                            return;
+                        }
+                        color = target;
+                        changed = changed || target != ex.input.data[r][c];
+                    }
+                    const int key = object_hole_count(box.h, box.w,
+                        [&](int r, int c) { return occupied[r][c]; });
+                    if (key >= key_count || (rule.colors[key] >= 0 && rule.colors[key] != color)) {
+                        consistent = false;
+                        return;
+                    }
+                    rule.colors[key] = (int8_t)color;
+                });
+            if (!consistent) return {};
+        }
+        rule.held = changed;
+        return rule;
+    }
+};
+
 // Maps shapes to colors (rejected if any shape needs two different colors).
 struct shape_color_map_rule {
     static constexpr int MAX_KEYS = 16;
@@ -2197,6 +2248,7 @@ struct inference {
     output_dimension_rule size;
     color_facts colors;
     shape_color_map_rule shape_color_map;
+    hole_color_rule hole_colors;
     unchanged_cells_facts unchanged;
     color_diff_facts color_diff;
     color_swap_candidates color_swaps;
@@ -2275,6 +2327,7 @@ inline inference infer(const vector<example>& train) {
     // same question itself (pairs_overlay), so this gate states the intent
     // and none of them depends on being called from here.
     if (inf.size.Chosen == output_dimension_rule::Identity) {
+        inf.hole_colors = hole_color_rule::detect(train, ground_in);
         inf.ray_extension = ray_extension_rule::detect(train, ground_in, ground_out);
         inf.unchanged   = unchanged_cells_facts::detect(train);
         inf.color_diff  = color_diff_facts::detect(train);
