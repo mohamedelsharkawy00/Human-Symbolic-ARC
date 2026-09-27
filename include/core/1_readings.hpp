@@ -176,6 +176,16 @@ struct object {
         return color_at(row, col) != (int8_t)TRANSPARENT;
     }
 
+    // The color of its first cell in reading order, which is the cell the walk
+    // started from and the one an op reads a piece's color off. TRANSPARENT
+    // when it has no cells.
+    ARC_HOST_DEVICE int8_t first_color() const {
+        for (int row = 0; row < summary.h; ++row)
+            for (int col = 0; col < summary.w; ++col)
+                if (cells[row][col] != (int8_t)TRANSPARENT) return cells[row][col];
+        return (int8_t)TRANSPARENT;
+    }
+
     // Every cell the object fills, in reading order: see(row, col, color), in
     // grid coordinates.
     template <class See>
@@ -653,6 +663,12 @@ inline int compose_poses(int first, int then) {
     }
     return 0;
 }
+
+// A GRID LYING ON ITS SIDE is wider than it is tall. NormalizeOrientation[0]
+// reads one transposed, so its long way runs down, and a square one as it
+// stands. Asked here by the op and by any reading that replays it, so the two
+// cannot turn different grids.
+ARC_HOST_DEVICE constexpr bool lies_on_its_side(int width, int height) { return width > height; }
 
 // Turn a shape into one number, so "is this the same shape?" becomes "are these
 // two numbers equal?". Shape here means which cells of the box around it are

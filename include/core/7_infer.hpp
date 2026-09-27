@@ -1565,6 +1565,27 @@ inline vector<object> pieces_of(const grid& input, int8_t background,
     return pieces;
 }
 
+// THE PIECES AS A CUT'S WORD HANDS THEM OVER, each in the box its own cells
+// make, which is what they are once Trim has had them. pieces_of reads the
+// same cut in matching's order; an op that works down its list in turn needs
+// the word's own order, or a reading lays a later piece under an earlier one.
+// Split hands them over in the order the walk meets them. Colors walks the
+// palette rather than the grid, so its layers come in colour order.
+inline vector<object> pieces_as_said(const grid& input, int8_t background,
+                                     segmentation_methods segmentation) {
+    vector<object> pieces;
+    if (!boxed_by_its_cells(segmentation)) return pieces;
+    object_walk_scratch scratch;
+    each_object(input, background, grouping_of(segmentation), scratch,
+                [&](const object_summary& box, const int16_t* cells, int count) {
+        pieces.push_back(object::from_cells(input, box, cells, count));
+    });
+    if (segmentation == segmentation_methods::all_cells_of_one_color)
+        stable_sort(pieces.begin(), pieces.end(), [](const object& one, const object& other) {
+            return one.first_color() < other.first_color(); });
+    return pieces;
+}
+
 // Slide cells within each row or column, preserving their order and colors.
 // Each cell moves by step, stopping early at the edge or the cell ahead.
 // Read from the original cells and write into separate, already-cleared storage.
@@ -2039,20 +2060,11 @@ struct bridge_rule {
             bool bridged = false;
             const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
                 // The pieces as Split hands them over: the one walk, in its order.
-                vector<object> pieces;
-                vector<int8_t> colors;
-                object_walk_scratch scratch;
-                each_object(pair.input, input_background,
-                            cut == segmentation_methods::connected_multicolor
-                                ? grouping::touching_any_color : grouping::touching_same_color,
-                            scratch, [&](const object_summary& box, const int16_t* cells, int found) {
-                    pieces.push_back(object::from_cells(pair.input, box, cells, found));
-                    // The op reads a piece's colour off its first cell, which
-                    // is the one the walk started from.
-                    colors.push_back((int8_t)pair.input.data[cell_row(cells[0])][cell_col(cells[0])]);
-                });
+                const vector<object> pieces = pieces_as_said(pair.input, input_background, cut);
                 // One list is all the op is handed.
                 if (pieces.empty() || pieces.size() > MAX_OBJECTS_IN_A_LIST) return false;
+                vector<int8_t> colors;
+                for (const object& piece : pieces) colors.push_back(piece.first_color());
                 drawn = grid(pair.output.width, pair.output.height);
                 drawn.fill(output_background);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -2082,6 +2094,127 @@ struct bridge_rule {
             });
             // No bar laid anywhere is the input handed straight back.
             if (redraws && bridged) return { true, cut };
+        }
+        return {};
+    }
+};
+
+// TILE[3]'S LATTICE, READ OFF THE MARKS THEMSELVES. They stand one smallest
+// gap apart and take turns, so each comes round again after as many gaps as
+// there are marks, starting on its own row and never above it. Said once for
+// the op and for the reading that replays it, so the two cannot read a
+// different lattice off the same marks.
+//
+// The period over `count` marks whose top rows row_of(i) gives, or 0 when
+// there is no lattice to read -- fewer than two marks, or all of them on one
+// row -- and the op then hands its marks back as they were. No two rows of one
+// grid stand the largest grid apart, so that gap doubles as none found.
+template <class RowOf>
+ARC_HOST_DEVICE inline int mark_lattice_period(int count, RowOf row_of) {
+    int gap = MAX_GRID_DIM;
+    for (int i = 0; i < count; ++i)
+        for (int j = i + 1; j < count; ++j) {
+            const int apart = row_of(i) > row_of(j) ? row_of(i) - row_of(j) : row_of(j) - row_of(i);
+            if (apart > 0 && apart < gap) gap = apart;
+        }
+    return gap < MAX_GRID_DIM ? count * gap : 0;
+}
+
+// Calls lay(row, source) for every row of a `rows`-tall canvas that a mark
+// `height` rows tall, standing at `top`, comes round on, with which of its own
+// rows lands there.
+template <class Lay>
+ARC_HOST_DEVICE inline void each_lattice_row(int top, int height, int period, int rows, Lay lay) {
+    if (period <= 0) return;
+    for (int row = top > 0 ? top : 0; row < rows; ++row) {
+        const int source = (row - top) % period;
+        if (source < height) lay(row, source);
+    }
+}
+
+// THE MARKS AS LINES THAT TAKE TURNS DOWN THE GRID. Every mark becomes a line
+// across the grid, and the lines come round again in the order the marks
+// stand, to the far edge. That is TileX[1], which spreads a mark's first
+// column into its line, then Tile[3], which lays the lattice; with
+// NormalizeOrientation[0] in front, a pair lying on its side is read turned,
+// so its lines cross the short way. Only held when replaying those words
+// redraws every output exactly, which is what makes the lattice a rule read
+// off each input rather than rows remembered from the pairs.
+//
+// THE CUT IS THE ELECTED ONE WHEN IT CAN SAY THIS, and otherwise the first
+// that can, as for the bridge: a mark is whatever the word hands over, and it
+// is replayed in the order the word hands it, since a later line paints over
+// an earlier one where two come round on the same row.
+//
+// A TURN IS WORN ONLY WHEN IT DOES WORK. The grid as given is asked first, so
+// pairs that all stand upright never say it, and a pair lying on its side only
+// says it when its lines cross the short way.
+//
+// AND IT HAS TO LAY SOMETHING. An output the input already was is marks
+// sitting where their own lattice would put them, which says nothing about one.
+struct mark_lattice_rule {
+    bool held = false;
+    segmentation_methods segmentation = segmentation_methods::unset;
+    // Whether a grid lying on its side is read turned: NormalizeOrientation[0].
+    bool portrait = false;
+    bool holds() const { return held; }
+
+    // What the words draw on one input: the cut's marks, trimmed and read the
+    // way the pair is turned, each laid as its line wherever the lattice puts
+    // it, then the ground wherever no line went.
+    static bool draw(const grid& input, int8_t input_background, int8_t output_background,
+                     segmentation_methods cut, bool portrait, grid& drawn) {
+        const vector<object> marks = pieces_as_said(input, input_background, cut);
+        // One list is all the op is handed.
+        if (marks.size() > MAX_OBJECTS_IN_A_LIST) return false;
+        // Read turned, the marks' rows are their columns, and the other way round.
+        const bool turned = portrait && lies_on_its_side(input.width, input.height);
+        auto top = [&](const object& mark) { return turned ? mark.summary.x0 : mark.summary.y0; };
+        const int period = mark_lattice_period((int)marks.size(),
+                                               [&](int i) { return (int)top(marks[i]); });
+        if (period <= 0) return false;
+        drawn = grid(input.width, input.height);
+        drawn.fill(output_background);
+        const int rows = turned ? input.width : input.height;
+        const int across = turned ? input.height : input.width;
+        auto at = [&](int row, int col) -> int& {
+            return turned ? drawn.data[col][row] : drawn.data[row][col];
+        };
+        for (const object& mark : marks)
+            each_lattice_row(top(mark), turned ? mark.summary.w : mark.summary.h, period, rows,
+                             [&](int row, int source) {
+                // The line wears the mark's first column, as TileX[1] spreads it.
+                const int8_t color = turned ? mark.cells[0][source] : mark.cells[source][0];
+                if (color == TRANSPARENT) return;
+                for (int col = 0; col < across; ++col) at(row, col) = color;
+            });
+        return true;
+    }
+
+    static mark_lattice_rule detect(const vector<example>& train,
+                                    const correspondence_election& correspondence,
+                                    int8_t input_background, int8_t output_background) {
+        // Lines go down on an empty canvas the size of the input, and whatever
+        // they miss is the ground the outputs elected.
+        if (!is_color(input_background) || !is_color(output_background) ||
+            !pairs_overlay(train)) return {};
+        vector<segmentation_methods> cuts{ correspondence.segmentation };
+        for (const auto cut : { segmentation_methods::connected_monochrome,
+                                segmentation_methods::connected_multicolor,
+                                segmentation_methods::all_cells_of_one_color })
+            if (cut != correspondence.segmentation) cuts.push_back(cut);
+        for (const auto cut : cuts) {
+            if (!boxed_by_its_cells(cut)) continue;
+            for (const bool portrait : { false, true }) {
+                bool laid = false;
+                const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                    if (!draw(pair.input, input_background, output_background, cut, portrait, drawn))
+                        return false;
+                    laid = laid || drawn != pair.input;
+                    return true;
+                });
+                if (redraws && laid) return { true, cut, portrait };
+            }
         }
         return {};
     }
@@ -2319,6 +2452,7 @@ struct inference {
     slide_to_touch_rule slide_to_touch;
     project_on_seeds_rule project_on_seeds;
     bridge_rule bridge;
+    mark_lattice_rule mark_lattice;
     interior_spread_rule interior_spread;
     interior_fill_rule interior_fill;
     input_blocks_rule input_blocks;
@@ -2376,6 +2510,9 @@ inline inference infer(const vector<example>& train) {
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    // Marks laid as lines that take turns down the grid. Like the bridge, it
+    // falls back on a cut of its own when the elected one cannot say it.
+    inf.mark_lattice = mark_lattice_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.interior_fill = interior_fill_rule::detect(train, ground_in, ground_out);
     inf.interior_spread = interior_spread_rule::detect(train, ground_in);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);

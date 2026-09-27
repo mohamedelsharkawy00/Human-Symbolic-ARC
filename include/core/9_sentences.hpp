@@ -622,6 +622,22 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
     return true;
 }
 
+// THE MARKS AS LINES THAT TAKE TURNS, cut the way the reading replayed them.
+// A pair lying on its side is turned to lay its lines and turned back before
+// they paint, and only when the reading needed the turn.
+inline bool say_mark_lattice(const inference& inf, said_reading& said) {
+    const auto& rule = inf.mark_lattice;
+    if (!rule.holds()) return false;
+    const char* cut = word_for_segmentation(rule.segmentation);
+    if (!cut) return false;
+    string words = string("Input ") + cut + " SelectAll Trim";
+    if (rule.portrait) words += " NormalizeOrientation[0]";
+    words += " TileX[1] Tile[3]";
+    if (rule.portrait) words += " RestoreOrientation";
+    say_closed(said, words, "Union");
+    return true;
+}
+
 inline bool say_ranked_layout(const inference& inf, said_reading& said) {
     const auto& rule = inf.ranked_layout;
     if (!rule.holds()) return false;
@@ -644,6 +660,7 @@ inline said_reading say_the_reading(const inference& inf) {
     if (say_panes(inf, said)) return said;
     if (say_pane_pick(inf, said)) return said;
     if (say_ray_extension(inf, said)) return said;
+    if (say_mark_lattice(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
     // A noisy lattice, voted clean. The whole input is the one piece the vote
     // reads, so there is nothing to cut first and nothing left to explain.

@@ -253,6 +253,17 @@ inline void report_bridge(ostream& report, const bridge_rule& bridge) {
     report << "\n\n";
 }
 
+// Whether the marks were laid as lines that take turns, under which cut, and
+// whether a pair lying on its side had to be read turned.
+inline void report_mark_lattice(ostream& report, const mark_lattice_rule& lattice) {
+    report << "[mark_lattice] holds " << lattice.holds();
+    if (lattice.holds()) {
+        report << "  " << segmentation_names[(int)lattice.segmentation];
+        if (lattice.portrait) report << "  read turned when lying on its side";
+    }
+    report << "\n\n";
+}
+
 // The frame the figures sit in: whether the input is really several grids side
 // by side. One line, because the fact is one claim; the panes follow so a wrong
 // cut is visible at a glance rather than inferred from what fails downstream.
@@ -506,6 +517,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
     report_bridge(report, inf.bridge);
+    report_mark_lattice(report, inf.mark_lattice);
     report << "[interior_spread] holds " << inf.interior_spread.holds() << "\n\n";
     report_input_blocks(report, inf.input_blocks);
     report_ray_extension(report, inf.ray_extension);

@@ -2141,32 +2141,18 @@ __device__ gpu_object_list& gpu_exec_tile(gpu_exec_context& ctx, const gpu_objec
     if (w <= 0 || h <= 0) return res;
 
     if (variant == 3) {
-        // Need two marks to define a period; otherwise pass through unchanged.
-        if (src.count < 2) {
-            for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
-                res.objects[res.count++] = src.objects[i];
-            return res;
-        }
-        // Read the lattice from the marks themselves: spacing = smallest gap between
-        // them, color cycle length = number of marks. A given mark recurs every
-        // (count * spacing); stamping each mark at that period reconstructs the full
-        // cycle, since extra / same-color marks just land on the in-between lattice
-        // points. 2 marks -> 2*gap (the alternating pair); N marks -> N*gap.
-        int min_gap = GPU_MAX_GRID;
-        for (int i = 0; i < src.count; ++i)
-            for (int j = i + 1; j < src.count; ++j) {
-                int g = src.objects[i].y0 - src.objects[j].y0;
-                if (g < 0) g = -g;
-                if (g > 0 && g < min_gap) min_gap = g;
-            }
-        int period = (min_gap < GPU_MAX_GRID) ? src.count * min_gap : 0;
+        // The lattice is read off the marks themselves (arc::mark_lattice_period):
+        // with fewer than two marks, or all on one row, there is none, and the
+        // marks pass through unchanged.
+        const int period = arc::mark_lattice_period(src.count,
+            [&](int i) { return (int)src.objects[i].y0; });
         if (period <= 0) {
             for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
                 res.objects[res.count++] = src.objects[i];
             return res;
         }
         // One full-canvas output object per mark, stamped every `period` rows from
-        // its own y0 (rel<0 keeps the leading rows blank).
+        // its own y0, and never above it.
         for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
             const auto& s = src.objects[i];
             if (s.width <= 0 || s.height <= 0) continue;
@@ -2176,16 +2162,12 @@ __device__ gpu_object_list& gpu_exec_tile(gpu_exec_context& ctx, const gpu_objec
             out.width = (int16_t)w; out.height = (int16_t)h;
             out.mask.clear();
             bool any = false;
-            for (int r = 0; r < h; ++r) {
-                int rel = r - s.y0;
-                if (rel < 0) continue;
-                int sr = rel % period;
-                if (sr >= s.height) continue;
+            arc::each_lattice_row(s.y0, s.height, period, h, [&](int r, int sr) {
                 for (int c = 0; c < w && c < s.width; ++c) {
                     int8_t v = s.mask[sr][c];
                     if (v != GPU_TRANSPARENT) { out.mask[r][c] = v; any = true; }
                 }
-            }
+            });
             if (any) ++res.count;
         }
         return res;
@@ -2628,9 +2610,9 @@ __device__ void gpu_exec_rotate_warp(gpu_exec_context& ctx, bool normalize, int 
 
     bool transpose_objs, transpose_canvas;
     if (normalize) {
-        bool flip = (ctx.input.width > ctx.input.height);
+        bool flip = arc::lies_on_its_side(ctx.input.width, ctx.input.height);
         transpose_objs   = flip;
-        transpose_canvas = (ctx.output.width > ctx.output.height);  // ensure portrait
+        transpose_canvas = arc::lies_on_its_side(ctx.output.width, ctx.output.height);  // ensure portrait
         ctx.orientation_flipped = flip ? 1 : 0;  // all lanes write same value
     } else {
         // Undo exactly what NormalizeOrientation did this program (flag-keyed;

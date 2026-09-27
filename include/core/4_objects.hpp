@@ -59,6 +59,15 @@ inline constexpr bool boxed_by_its_cells(segmentation_methods segmentation) {
 static_assert(!boxed_by_its_cells(segmentation_methods::unset),
               "unset must not look like a real segmentation");
 
+// What counts as joined under a segmentation that follows the cells. Whether
+// an object has to be one color is a question of its OWN, asked apart from
+// what counts as joined: the one walk in 1_readings.hpp answers both.
+inline constexpr grouping grouping_of(segmentation_methods segmentation) {
+    return segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
+           segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
+                                                                          grouping::touching_same_color;
+}
+
 // Find the smallest repeating width and height; use the grid size if none repeats.
 // Ignore background cells when matching; pass -2 to compare every cell.
 // `must_fit_twice` requires two full copies along each repeating direction.
@@ -429,14 +438,8 @@ private:
             }
             return;
         }
-        // Whether an object has to be one color is a question of its OWN, asked apart
-        // from what counts as joined: the one walk in 1_readings.hpp answers both.
-        const grouping how =
-            segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
-            segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
-                                                                           grouping::touching_same_color;
         object_walk_scratch scratch;
-        each_object(one_grid, background, how, scratch,
+        each_object(one_grid, background, grouping_of(segmentation), scratch,
                     [&](const object_summary& found, const int16_t* found_cells, int how_many) {
             if ((int)info.size() >= MAX_OBJECTS) return;
             // An object wears one color only if every cell of it does; -1 says several.
