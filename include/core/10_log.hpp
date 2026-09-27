@@ -243,7 +243,10 @@ inline void report_slide_to_touch(ostream& report, const slide_to_touch_rule& sl
 
 // Whether the template was stamped along every marker that pointed a way.
 inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule& projection) {
-    report << "[project_on_seeds] holds " << projection.holds() << "\n\n";
+    report << "[project_on_seeds] holds " << projection.holds();
+    if (projection.holds() && is_color(projection.worn))
+        report << "  every stamp wears " << (int)projection.worn << ", the input over them";
+    report << "\n\n";
 }
 
 // Whether the gaps between pieces of one colour were filled, and under which cut.

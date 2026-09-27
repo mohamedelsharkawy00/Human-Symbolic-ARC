@@ -1966,59 +1966,98 @@ ARC_HOST_DEVICE inline void project_along(const cell_box& tpl, const cell_box& m
 // has left the grid. The input stays underneath it all. Only held when
 // replaying that redraws every output exactly, which is what makes the claim
 // checkable rather than a guess at what the markers meant.
+//
+// OR EVERY STAMP WEARS ONE COLOUR, AND THE INPUT IS LAID BACK OVER THEM, so a
+// stamp shows only where the input had ground. That is a run carried on to the
+// edge in a colour of its own: 0b17323b's dots step on at their own spacing
+// until they leave the grid, and the new ones come out red. The colour is read
+// off the first stamp that shows and held to every other, as the interior fill
+// reads its own. The markers' colours are asked first, being the plainer claim.
 struct project_on_seeds_rule {
     bool held = false;
+    // The one colour every stamp wears when the input is laid back over them;
+    // not a colour when each stamp wears its marker's, with the input beneath.
+    int8_t worn = TRANSPARENT;
     bool holds() const { return held; }
 
-    static project_on_seeds_rule detect(const vector<example>& train,
-                                        const correspondence_election& correspondence,
-                                        int8_t input_background) {
-        // The template is handed over in the frame its cells make, which is
-        // what the Trim in front of the word gives it.
-        if (!boxed_by_its_cells(correspondence.segmentation) || train.empty()) return {};
+    // Calls land(row, col, marker colour) for each cell of each stamp the words
+    // lay on this pair's canvas, and says how many stamps they laid -- none when
+    // there is no template or no marker to lay one along.
+    template <class Land>
+    static int stamp(const example& pair, segmentation_methods cut, int8_t input_background,
+                     Land land) {
+        const auto pieces = pieces_of(pair.input, input_background, cut);
+        if (pieces.empty()) return 0;
+        // The template is whichever piece SortBySize[0] puts first, and that
+        // word ranks by cells -- not the box that picked the markers. The op
+        // reads the two off different lists, so this has to as well.
+        // Tied for most cells: the op's list order picks, which we can't see.
+        const object& tpl = pieces[0];
+        if (pieces.size() > 1 && pieces[1].summary.count == tpl.summary.count) return 0;
         // ProjectOnSeeds hands back the copy of the input it draws on plus one
         // object per stamp, and they share one list, so the drawing runs out one
         // stamp before the list does.
         constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            // Stamping paints over a copy of the input, so a canvas of another
-            // size is a different drawing than the one replayed here.
-            if (!pair.input.same_size(pair.output)) return false;
-            const auto pieces = pieces_of(pair.input, input_background, correspondence.segmentation);
-            if (pieces.empty()) return false;
-            // The template is whichever piece SortBySize[0] puts first, and that
-            // word ranks by cells -- not the box that picked the markers. The op
-            // reads the two off different lists, so this has to as well.
-            // Tied for most cells: the op's list order picks, which we can't see.
-            const object* tpl = &pieces[0];
-            if (pieces.size() > 1 && pieces[1].summary.count == tpl->summary.count) return false;
+        int stamped = 0;
+        for (const marker_piece& marker : seeds_the_op_will_see(pair.input, input_background))
+            project_along(box_of(tpl.summary), box_of(marker.summary),
+                          pair.input.width, pair.input.height, [&](int at_row, int at_col) {
+                if (stamped >= most_the_op_stamps) return false;
+                // A stamp hanging over the edge is drawn as far as it fits.
+                for (int r = 0; r < tpl.summary.h; ++r)
+                    for (int c = 0; c < tpl.summary.w; ++c) {
+                        const int row = at_row + r, col = at_col + c;
+                        if (tpl.cells[r][c] != TRANSPARENT && pair.input.contains(row, col))
+                            land(row, col, marker.color);
+                    }
+                ++stamped;
+                return true;
+            });
+        return stamped;
+    }
 
-            const vector<marker_piece> markers = seeds_the_op_will_see(pair.input, input_background);
-            if (markers.empty()) return false;
-
+    static project_on_seeds_rule detect(const vector<example>& train,
+                                        const correspondence_election& correspondence,
+                                        int8_t input_background, int8_t output_background) {
+        // The template is handed over in the frame its cells make, which is
+        // what the Trim in front of the word gives it. Stamping paints over a
+        // copy of the input, so a canvas of another size is a different drawing
+        // than the one replayed here.
+        const segmentation_methods cut = correspondence.segmentation;
+        if (!boxed_by_its_cells(cut) || !pairs_overlay(train)) return {};
+        // Nothing stamped is the input handed straight back, which every other
+        // reading already says without a word this long.
+        const bool in_the_markers_colors = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             drawn = pair.input;
-            int stamped = 0;
-            const cell_box tpl_box = box_of(tpl->summary);
-            for (const marker_piece& marker : markers)
-                project_along(tpl_box, box_of(marker.summary), drawn.width, drawn.height,
-                              [&](int at_row, int at_col) {
-                    if (stamped >= most_the_op_stamps) return false;
-                    // A stamp hanging over the edge is drawn as far as it fits.
-                    for (int r = 0; r < tpl->summary.h; ++r)
-                        for (int c = 0; c < tpl->summary.w; ++c) {
-                            if (tpl->cells[r][c] == TRANSPARENT) continue;
-                            const int row = at_row + r, col = at_col + c;
-                            if (!drawn.contains(row, col)) continue;
-                            drawn.data[row][col] = marker.color;
-                        }
-                    ++stamped;
-                    return true;
-                });
-            // Nothing stamped is the input handed straight back, which every
-            // other reading already says without a word this long.
-            return stamped > 0;
+            return stamp(pair, cut, input_background, [&](int row, int col, int8_t color) {
+                drawn.data[row][col] = color;
+            }) > 0;
         });
-        return { redraws };
+        if (in_the_markers_colors) return { true, TRANSPARENT };
+
+        // With the input laid back over the stamps, its ground shows wherever no
+        // stamp went, and the outputs' elected ground is what fills it.
+        if (!is_color(input_background) || !is_color(output_background)) return {};
+        int8_t worn = TRANSPARENT;
+        bool one_color = true;
+        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            drawn = grid(pair.input.width, pair.input.height);
+            drawn.fill(output_background);
+            walk_colored_cells(pair.input, input_background, [&](int row, int col, int color) {
+                drawn.data[row][col] = (int8_t)color;
+            });
+            const int stamped = stamp(pair, cut, input_background, [&](int row, int col, int8_t) {
+                if (pair.input.data[row][col] != input_background) return;
+                const int8_t shown = (int8_t)pair.output.data[row][col];
+                if (!is_color(worn)) worn = shown;
+                one_color = one_color && shown == worn;
+                drawn.data[row][col] = worn;
+            });
+            return stamped > 0 && one_color;
+        });
+        // A stamp in the ground's own colour draws nothing at all.
+        if (!redraws || !is_color(worn) || worn == output_background) return {};
+        return { true, worn };
     }
 };
 
@@ -2608,7 +2647,7 @@ inline inference infer(const vector<example>& train) {
     // because a layout that puts every piece somewhere new is the larger claim
     // and should get first refusal; this one leaves most of the grid alone.
     inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, ground_in, ground_out);
-    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in);
+    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in, ground_out);
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);

@@ -848,7 +848,19 @@ inline said_reading say_the_reading(const inference& inf) {
         combine = "Union";
         say("SortBySize[0]");
         say("ProjectOnSeeds");
-        return spoken();
+        const int8_t worn = inf.project_on_seeds.worn;
+        if (!is_color(worn)) return spoken();
+        // THE STAMPS IN ONE COLOUR, THE INPUT LAID BACK OVER THEM. The copy of
+        // the input the word hands back holds every cell, ground and all, so it
+        // is the largest thing in hand, and it goes before the recolour, which
+        // would otherwise paint the whole canvas. The pick starts from none,
+        // since the stamps come back marked. Then the input's own cells go on
+        // top, so a stamp shows only where the input had ground.
+        beats.push_back({"SelectAll InvertSelection SelectLargestObject[0]", "DeleteSelection"});
+        say(spell("Recolor", worn));
+        spoken();
+        say_closed(said, "InputWithoutBackground", "Union");
+        return said;
     }
 
     // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND move
