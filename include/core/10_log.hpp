@@ -521,6 +521,7 @@ inline void log_inference(const string& id, const inference& inf,
     report << "[interior_spread] holds " << inf.interior_spread.holds() << "\n\n";
     report_input_blocks(report, inf.input_blocks);
     report_ray_extension(report, inf.ray_extension);
+    report << "[rarest_color] holds " << inf.rarest_color.holds() << "\n\n";
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);

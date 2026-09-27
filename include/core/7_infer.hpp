@@ -2435,6 +2435,54 @@ struct ranked_layout_rule {
     }
 };
 
+// The output is the least common color, where it lies. Nothing crops it but the
+// size rule: under BoundingBox the canvas closes on what was painted. Read per
+// grid, so the color may change from pair to pair; a tie for least common, or a
+// grid with one color and nothing to rank it against, is no reading at all.
+struct rarest_color_rule {
+    bool held = false;
+    bool holds() const { return held; }
+
+    static bool draw(const grid& input, int input_background, int output_background, grid& drawn) {
+        int counts[COLOR_COUNT] = {};
+        for (int row = 0; row < input.height; ++row)
+            for (int col = 0; col < input.width; ++col) {
+                const int color = input.data[row][col];
+                if (is_color(color) && color != input_background) ++counts[color];
+            }
+        int rarest = -1, colors = 0;
+        bool tied = false;
+        for (int color = 0; color < COLOR_COUNT; ++color) {
+            if (!counts[color]) continue;
+            ++colors;
+            if (rarest >= 0 && counts[color] == counts[rarest]) tied = true;
+            else if (rarest < 0 || counts[color] < counts[rarest]) { rarest = color; tied = false; }
+        }
+        if (colors < 2 || tied) return false;
+        cell_box bounds;
+        for (int row = 0; row < input.height; ++row)
+            for (int col = 0; col < input.width; ++col)
+                if (input.data[row][col] == rarest) bounds.include_cell(row, col);
+        drawn = grid(bounds.width(), bounds.height());
+        for (int row = 0; row < drawn.height; ++row)
+            for (int col = 0; col < drawn.width; ++col)
+                drawn.data[row][col] = input.data[bounds.row0 + row][bounds.col0 + col] == rarest
+                                     ? (int8_t)rarest : (int8_t)output_background;
+        return true;
+    }
+
+    static rarest_color_rule detect(const vector<example>& train, int input_background,
+                                    int output_background, const output_dimension_rule& size) {
+        if (train.empty() || size.Chosen != output_dimension_rule::BoundingBox ||
+            !is_color(output_background)) return {};
+        rarest_color_rule rule;
+        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            return draw(pair.input, input_background, output_background, drawn);
+        });
+        return rule;
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -2457,6 +2505,7 @@ struct inference {
     interior_fill_rule interior_fill;
     input_blocks_rule input_blocks;
     ranked_layout_rule ranked_layout;
+    rarest_color_rule rarest_color;
     ray_extension_rule ray_extension;
     pane_split_facts pane_split;
     pane_mask_rule pane_mask;
@@ -2517,6 +2566,7 @@ inline inference infer(const vector<example>& train) {
     inf.interior_spread = interior_spread_rule::detect(train, ground_in);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.ranked_layout = ranked_layout_rule::detect(train, ground_in, ground_out, inf.size);
+    inf.rarest_color = rarest_color_rule::detect(train, ground_in, ground_out, inf.size);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).

@@ -702,6 +702,12 @@ inline said_reading say_the_reading(const inference& inf) {
         return said;
     }
     if (say_ranked_layout(inf, said)) return said;
+    // The least common color alone. The size rule's box is the crop, so the
+    // sentence only picks that color and paints it where it lies.
+    if (inf.rarest_color.holds()) {
+        said.sentences.push_back(closed_on_the_pick("Input Colors SelectSmallestObject[0]", "Union"));
+        return said;
+    }
     if (facts.chosen_pairs().empty()) return said;
 
     // A whole-input block is not a repeating unit extracted by Pattern. Until
