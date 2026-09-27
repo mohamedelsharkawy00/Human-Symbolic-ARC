@@ -475,7 +475,7 @@ private:
 // repeated, and everything else is a seed -- and a reading that says what that
 // op will draw has to settle it the same way, or it describes a drawing that
 // never happens. So the rule is written here once and both sides read it: the
-// DSL when it fills its seed list (16_fixed_dsl.hpp), inference when it replays
+// DSL when it fills its seed list (17_fixed_dsl.hpp), inference when it replays
 // an op to check a claim (7_infer.hpp).
 //
 // THE TWO MEASURES ARE NOT THE SAME ONE. A piece is dropped from the seeds by

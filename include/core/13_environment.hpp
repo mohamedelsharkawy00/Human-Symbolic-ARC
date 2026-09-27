@@ -13,7 +13,7 @@
 #include <vector>
 
 // Single home of the DSL op list (NODE_PRIMITIVES) and the node_type enum.
-#include "11_dsl.cuh"
+#include "12_dsl.cuh"
 // The one door to everything below the engine: infer(), and through it the
 // core types (arc_color, grid, example, output_dimension_rule) and the limits.
 #include "7_infer.hpp"
@@ -64,14 +64,14 @@ namespace arc {
 
 	// --- Program Tree Constraints ---
 
-	// Scoring weights live in 11_dsl.cuh (GPU_SCORE_W_*, single home).
+	// Scoring weights live in 12_dsl.cuh (GPU_SCORE_W_*, single home).
 	// All scoring runs in the GPU kernel (dsl_exec_and_score_kernel_v2);
 	// the CPU uses the weights only for the debug/analysis breakdown.
 
 	// Max distinct (color,w,h,count) tuples we track per target example.
 	constexpr int MAX_TARGET_OBJECTS = 16;
 
-	// node_type and the NODE_PRIMITIVES op list live in 7_vocabulary.hpp (single home).
+	// node_type and the NODE_PRIMITIVES op list live in 8_vocabulary.hpp (single home).
 
 	inline constexpr const char* type_name[] = {
 	#define X(id, low, high, role, inferred, pick, clears) #id,
@@ -859,4 +859,4 @@ namespace arc {
 
 }
 
-// 17_dsl_executor.hpp is now included from 15_solver_beam.hpp after 16_fixed_dsl.hpp
+// 18_dsl_executor.hpp is now included from 16_solver_beam.hpp after 17_fixed_dsl.hpp

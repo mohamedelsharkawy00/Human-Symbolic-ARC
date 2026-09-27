@@ -18,7 +18,7 @@
 
 #pragma once
 #include "7_infer.hpp"
-#include "7_vocabulary.hpp"
+#include "8_vocabulary.hpp"
 #include <bit>
 #include <optional>
 #include <string>

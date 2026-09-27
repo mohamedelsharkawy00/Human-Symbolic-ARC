@@ -7,14 +7,14 @@
 // solver_observer. Nothing in this folder may include anything from gui/.
 
 #include <atomic>
-#include "12_environment.hpp"
-#include "11_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS, the cuda_dsl_* calls
-#include "13_puzzle_loader.hpp"
-#include "14_solver_log.hpp"
+#include "13_environment.hpp"
+#include "12_dsl.cuh"   // GPU_KERNEL_MAX_OBJECTS, the cuda_dsl_* calls
+#include "14_puzzle_loader.hpp"
+#include "15_solver_log.hpp"
 
 #include <algorithm>
 #include <cstring>
-#include "10_text_format.hpp"
+#include "11_text_format.hpp"
 #include <map>
 #include <mutex>
 // placement new (reset_search reinstantiates search_state in place)
@@ -755,6 +755,6 @@ private:
 
 }
 
-#include "16_fixed_dsl.hpp"
-#include "17_dsl_executor.hpp"
-#include "18_solver_executor.hpp"
+#include "17_fixed_dsl.hpp"
+#include "18_dsl_executor.hpp"
+#include "19_solver_executor.hpp"

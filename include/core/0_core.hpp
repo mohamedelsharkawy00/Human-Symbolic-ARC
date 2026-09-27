@@ -72,7 +72,7 @@ struct example {
 // HOW MANY OBJECTS ONE LIST HOLDS while a program runs. The kernel's list is
 // this long, so an op handed more than this hands back this many -- and a
 // reading that says what an op will draw has to stop counting at the same
-// place, or it claims a drawing the op would not make. 11_dsl.cuh names it
+// place, or it claims a drawing the op would not make. 12_dsl.cuh names it
 // GPU_KERNEL_MAX_OBJECTS on its own side of the fence.
 constexpr int MAX_OBJECTS_IN_A_LIST = 32;
 

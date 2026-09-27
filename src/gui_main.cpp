@@ -1,5 +1,5 @@
 // THE GUI: a window onto the solver. The solver never runs in this process:
-// each search is an arc_headless child (see 29_solver_session.hpp), and this
+// each search is an arc_headless child (see 30_solver_session.hpp), and this
 // process creates no CUDA context at all -- it is linked without the GPU code,
 // so it cannot. The Kaggle run (kaggle_main.cpp) is that same child, alone.
 #include <chrono>
@@ -12,19 +12,19 @@
 #include <thread>
 #include <vector>
 // In number order, so the files are read in the order they are numbered.
-// 9_log is here for that alone: main calls nothing in it, but without it 8 and
-// 9 would be read late, when 13_puzzle_loader first includes them.
-#include "9_log.hpp"
-#include "10_text_format.hpp"
-#include "13_puzzle_loader.hpp"
-#include "23_global_app_state.hpp"
-#include "25_vulkan_context.hpp"
-#include "27_gui.hpp"
-#include "28_os_utilities.hpp"
-#include "29_solver_session.hpp"
-#include "30_benchmark.hpp"
-#include "31_command_server.hpp"
-#include "32_window_manager.hpp"
+// 10_log is here for that alone: main calls nothing in it, but without it
+// 9_sentences and 10_log would be read late, when 14_puzzle_loader includes them.
+#include "10_log.hpp"
+#include "11_text_format.hpp"
+#include "14_puzzle_loader.hpp"
+#include "24_global_app_state.hpp"
+#include "26_vulkan_context.hpp"
+#include "28_gui.hpp"
+#include "29_os_utilities.hpp"
+#include "30_solver_session.hpp"
+#include "31_benchmark.hpp"
+#include "32_command_server.hpp"
+#include "33_window_manager.hpp"
 
 using namespace std;
 using namespace arc;

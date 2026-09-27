@@ -33,7 +33,7 @@
 //
 //   arc_headless --task ID --datasets MASK --serve [--timeout S --out FILE]
 //       One puzzle, watched: the search streams on stdout and takes commands
-//       on stdin (21_search_stream.hpp). Every search the GUI shows is one of
+//       on stdin (22_search_stream.hpp). Every search the GUI shows is one of
 //       these. Without --timeout it waits paused for "run" and goes until
 //       told to quit or stdin closes; with it (a benchmark) it runs at once
 //       and stops like the one above.
@@ -54,14 +54,14 @@
 #include <thread>
 #include <vector>
 // In number order, so the files are read in the order they are numbered.
-// 9_log is here for that alone: main calls nothing in it, but without it 8 and
-// 9 would be read late, when 13_puzzle_loader first includes them.
-#include "9_log.hpp"
-#include "10_text_format.hpp"
-#include "15_solver_beam.hpp"
-#include "19_cuda_solver.cuh"
-#include "20_submission.hpp"
-#include "21_search_stream.hpp"
+// 10_log is here for that alone: main calls nothing in it, but without it
+// 9_sentences and 10_log would be read late, when 14_puzzle_loader includes them.
+#include "10_log.hpp"
+#include "11_text_format.hpp"
+#include "16_solver_beam.hpp"
+#include "20_cuda_solver.cuh"
+#include "21_submission.hpp"
+#include "22_search_stream.hpp"
 
 using namespace std;
 using namespace arc;

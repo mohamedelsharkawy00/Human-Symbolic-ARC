@@ -7,14 +7,14 @@
 // Its operators can find objects, move them, change their colors,
 // and draw the result.
 //
-// 7_vocabulary.hpp defines the operators; here we define the data sent to the GPU,
+// 8_vocabulary.hpp defines the operators; here we define the data sent to the GPU,
 // and the results returned so the solver can judge each candidate program.
 #pragma once
 // Single home of the grid/color limits the GPU_* names below alias, and of
 // output_dimension_rule, whose cases the kernel switches on.
 #include "7_infer.hpp"
-#include "7_vocabulary.hpp"
-#include "10_text_format.hpp"  // to_text, for gpu_score_terms::say
+#include "8_vocabulary.hpp"
+#include "11_text_format.hpp"  // to_text, for gpu_score_terms::say
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>   // fprintf / stderr in pinned_vector::resize failure path
@@ -98,7 +98,7 @@ public:
     const T& operator[](size_t i) const { return m_data[i]; }
 };
 
-// --- Domain constants: single home; 12_environment.hpp derives its names from these ---
+// --- Domain constants: single home; 13_environment.hpp derives its names from these ---
 static constexpr int GPU_MAX_GRID = arc::MAX_GRID_DIM;
 static constexpr int GPU_GRID_CELLS = arc::MAX_GRID_CELLS;
 // How long one program may be. The batch stores a program's length and its node
@@ -123,7 +123,7 @@ static constexpr int GPU_MAX_SHAPE_KEYS = arc::shape_color_map_rule::MAX_KEYS;
 using gpu_packed_mask = arc::object_cells;
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
-// debug/analysis breakdown in 12_environment.hpp.
+// debug/analysis breakdown in 13_environment.hpp.
 static constexpr float GPU_SCORE_W_EXACT_MATCH = 1.0f;
 static constexpr float GPU_SCORE_W_HISTOGRAM = 1.0f;
 static constexpr float GPU_SCORE_W_DISTANCE_MAP = 0.1f;
@@ -184,7 +184,7 @@ struct gpu_flat_op {
 // wrapping: past POOL_SIZE producing ops every op wrote the slot it was reading
 // and the scores came back quietly wrong. 64 is kept, far past the two, so an op
 // that ever held a third list is still safe; this header is GPU-only and must
-// not pull in 12_environment.hpp, so the value stays a literal.
+// not pull in 13_environment.hpp, so the value stays a literal.
 static constexpr int GPU_KERNEL_MAX_OBJECTS = arc::MAX_OBJECTS_IN_A_LIST;
 static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
 

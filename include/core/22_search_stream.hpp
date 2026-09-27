@@ -21,7 +21,7 @@
 //
 // What it is told, on stdin (search_commands):
 //   run | pause | infer | verbose 0|1 | import <program> | preview <hash> <program> | quit
-#include "15_solver_beam.hpp"
+#include "16_solver_beam.hpp"
 #include <chrono>
 #include <cstdio>
 #include <map>

@@ -13,9 +13,9 @@
 // comparable to the run that wrote it.
 //
 //   arc_said [task-id] one puzzle or every puzzle, then a tally on stderr
-#include "15_solver_beam.hpp"
-#include "13_puzzle_loader.hpp"
-#include "19_cuda_solver.cuh"
+#include "16_solver_beam.hpp"
+#include "14_puzzle_loader.hpp"
+#include "20_cuda_solver.cuh"
 #include <cstdio>
 #include <string>
 

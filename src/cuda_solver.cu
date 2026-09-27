@@ -1,5 +1,5 @@
-#include "11_dsl.cuh"
-#include "19_cuda_solver.cuh"
+#include "12_dsl.cuh"
+#include "20_cuda_solver.cuh"
 #include <chrono>
 #include <atomic>
 #include <cstring>
@@ -67,7 +67,7 @@ bool cuda_init() {
 // GPU DSL Execution + Scoring Kernel
 // =====================================================================
 
-// Scoring weights live in 11_dsl.cuh (GPU_SCORE_W_*, single home).
+// Scoring weights live in 12_dsl.cuh (GPU_SCORE_W_*, single home).
 
 // --- Device helpers ---
 
@@ -1213,7 +1213,7 @@ __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, con
 // Removes nothing: key = smallest-bbox object, target = largest-bbox object; the
 // target is recolored to table[hash(key)], everything else passes through. If the
 // table is empty (rejected by the consistency gate) or the glyph's shape isn't in
-// it, the op is a no-op. Learn and apply share one hash (shape_occupancy_hash, 11_dsl.cuh).
+// it, the op is a no-op. Learn and apply share one hash (shape_occupancy_hash, 12_dsl.cuh).
 __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     res = src;  // pass everything through; default is no-op
@@ -1231,7 +1231,7 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
     }
     if (key < 0 || tgt < 0 || key == tgt) return res;
 
-    // Fingerprint the key glyph's occupancy (shared recipe in 11_dsl.cuh).
+    // Fingerprint the key glyph's occupancy (shared recipe in 12_dsl.cuh).
     uint32_t hsh = gpu_shape_hash_of_paint(src.objects[key]);
 
     // Look up the color; miss -> no-op.
@@ -1259,7 +1259,7 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 // trailing Union re-stamping the separate marker object reproduces it either way.
 __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx, int lane) {
     gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
-        // Fingerprint the object's occupancy (shared recipe in 11_dsl.cuh).
+        // Fingerprint the object's occupancy (shared recipe in 12_dsl.cuh).
         const uint32_t hsh = gpu_shape_hash_of_paint(obj);
         for (int k = 0; k < ctx.shape_color_count && k < GPU_MAX_SHAPE_KEYS; ++k)
             if (ctx.shape_color_keys[k] == hsh) return (int)ctx.shape_color_vals[k];

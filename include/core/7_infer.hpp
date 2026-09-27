@@ -13,7 +13,7 @@
 #include "2_size.hpp"
 #include "3_background.hpp"
 #include "6_correspondence.hpp"
-#include "7_vocabulary.hpp"
+#include "8_vocabulary.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -1784,7 +1784,7 @@ struct slide_to_touch_rule {
 };
 
 // THE SEEDS THE OP WILL BE HANDED. The DSL fills its seed list off the input
-// before a program runs (16_fixed_dsl.hpp), and this says the same list from
+// before a program runs (17_fixed_dsl.hpp), and this says the same list from
 // this side of the fence, so a replay below can be checked against what the op
 // will really do. The rule itself is not restated -- 4_objects.hpp's read_seeds
 // is the one copy of it -- only the grid it is asked about.

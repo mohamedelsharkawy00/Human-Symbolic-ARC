@@ -4,9 +4,9 @@
 //
 //   spell <task-id> "<program>"          one program
 //   spell <task-id> --file <path>        one program per line, first that solves wins
-#include "15_solver_beam.hpp"
-#include "13_puzzle_loader.hpp"
-#include "19_cuda_solver.cuh"
+#include "16_solver_beam.hpp"
+#include "14_puzzle_loader.hpp"
+#include "20_cuda_solver.cuh"
 #include <cstdio>
 #include <fstream>
 #include <iostream>

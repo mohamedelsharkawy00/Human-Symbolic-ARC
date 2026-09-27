@@ -8,24 +8,24 @@
 //
 // What a person at a window expects is kept here: the puzzle list, pause,
 // settings, sounds, and pictures of what the search is doing. The child
-// streams what it paints and where it stands (21_search_stream.hpp); this
+// streams what it paints and where it stands (22_search_stream.hpp); this
 // replays it into its own copy of the puzzle and counters, and the frame draws
 // those as if the search were local. Hovering a program asks the child what it
 // paints, since only the child has a GPU context to run it with.
 //
 // A child is started once the window has stayed on a puzzle for a moment, so
 // stepping through puzzles costs nothing, and it waits paused until told to
-// run -- which makes unpausing instant. A benchmark (30_benchmark.hpp) runs its
+// run -- which makes unpausing instant. A benchmark (31_benchmark.hpp) runs its
 // puzzles through the same child, one process each.
-#include "13_puzzle_loader.hpp"
-#include "14_solver_log.hpp"
-#include "20_submission.hpp"   // describe_result, puzzle_result
-#include "21_search_stream.hpp"
-#include "22_grid_buffer.hpp"
-#include "23_global_app_state.hpp"
-#include "26_sound_manager.hpp"
-#include "27_gui.hpp"   // load_font_atlas
-#include "28_os_utilities.hpp"   // search_process
+#include "14_puzzle_loader.hpp"
+#include "15_solver_log.hpp"
+#include "21_submission.hpp"   // describe_result, puzzle_result
+#include "22_search_stream.hpp"
+#include "23_grid_buffer.hpp"
+#include "24_global_app_state.hpp"
+#include "27_sound_manager.hpp"
+#include "28_gui.hpp"   // load_font_atlas
+#include "29_os_utilities.hpp"   // search_process
 
 #include <atomic>
 #include <chrono>
@@ -291,7 +291,7 @@ public:
 
   void log_debug(const string &msg) { m_log.debug(msg); }
 
-  // --- A benchmark (30_benchmark.hpp). ---
+  // --- A benchmark (31_benchmark.hpp). ---
   // Takes over the search: the one running now is killed, and the window's
   // own controls do nothing until end_benchmark.
   inline void begin_benchmark() {

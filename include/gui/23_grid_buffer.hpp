@@ -1,8 +1,8 @@
 #pragma once
 // How a grid is laid out inside gpu_buffer, the cell buffer the Vulkan shader
 // draws from. The solver never sees it: it says what it painted, and the GUI
-// copies that in here (29_solver_session.hpp).
-#include "12_environment.hpp"
+// copies that in here (30_solver_session.hpp).
+#include "13_environment.hpp"
 #include <algorithm>
 #include <cstring>
 #include <vector>
