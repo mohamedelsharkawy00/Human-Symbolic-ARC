@@ -15,6 +15,13 @@
 // already holds; nothing is searched, and nothing is scored. The moment this
 // starts trying sentences to see which fits, it has stopped being inference and
 // become a second solver.
+//
+// HAND-WRITE THE PROGRAM FIRST. Before teaching the reading to say a puzzle,
+// write its solution by hand in solutions/<id>.txt and check it with arc_spell.
+// If the words cannot say it, the gap is the vocabulary, and no reading can
+// spell what the DSL has no word for. 0bb8deee is waiting on exactly that: its
+// four panes are read, but no word lays each pane's figure out by the pane it
+// came from (Layout goes by how the figures line up), so there is nothing to say.
 
 #pragma once
 #include "7_infer.hpp"
@@ -557,6 +564,12 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     if (pick.fitted && (pick.way == pane_pick_rule::Emptiest || pick.way == pane_pick_rule::Fullest)) {
         const int ground = inf.background.input_elected();
         if (!is_color(ground)) return false;
+        // The walls are laid back by their color, so a wall whose color each
+        // grid says for itself has no word to lay it back with.
+        if (!is_color(split.color)) {
+            said.no_word_for.push_back("walls laid back in each grid's own color");
+            return false;
+        }
         // Size counts opaque cells, so remove the ground before cutting panes.
         // Restore it after painting; the selected pane keeps its full frame.
         const string selector = pick.way == pane_pick_rule::Emptiest

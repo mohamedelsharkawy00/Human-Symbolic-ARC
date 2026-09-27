@@ -274,7 +274,8 @@ inline void report_pane_split(ostream& report, const pane_split_facts& split) {
     if (split.holds())
         report << "  cut " << cut_names[split.cut]
                << "  axis " << axis_names[split.axis]
-               << "  color " << (int)split.color
+               << "  color " << (split.cut == pane_split_facts::Wall && split.color < 0
+                                     ? string("each grid's own") : to_string(split.color))
                << "  panes " << (int)split.down << "x" << (int)split.across;
     report << "\n";
     for (size_t which = 0; which < split.pairs.size(); ++which) {

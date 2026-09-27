@@ -925,6 +925,9 @@ struct pane_split_facts : pane_cut {
         }
     };
     vector<vector<pane>> pairs;
+    // The elected background, which a wall is never the color of. Kept for the
+    // grids that say their own wall's color.
+    int8_t ground = -1;
 
     bool held = false;
     bool holds() const { return held; }
@@ -1046,8 +1049,9 @@ struct pane_split_facts : pane_cut {
             rows = even_spans(one.height, down);
             cols = even_spans(one.width, across);
         } else {
-            if (!is_color(color)) return false;
-            full_lines(one, color, row_lines, col_lines);
+            const int line = cut == Wall ? wall_of(one) : color;
+            if (!is_color(line)) return false;
+            full_lines(one, line, row_lines, col_lines);
             rows = spans_between(one.height, row_lines);
             cols = spans_between(one.width, col_lines);
         }
@@ -1055,15 +1059,61 @@ struct pane_split_facts : pane_cut {
         return lay_out(rows, cols, true, found);
     }
 
-    // Reads every training input, keeps the readings they all agree on, and holds
-    // only when exactly one of those survives the precedence.
+    // The wall's color in this grid: the one the pairs agreed on, or when they
+    // agreed only on the cut, the one color besides the ground whose full lines
+    // cut this grid the same way. -1 when none does, or several do.
+    int wall_of(const grid& one) const {
+        if (cut != Wall) return -1;
+        if (is_color(color)) return color;
+        int wall = -1;
+        vector<int> row_lines, col_lines;
+        vector<pane> panes;
+        for (int line = 0; line < COLOR_COUNT; ++line) {
+            if (line == ground) continue;
+            full_lines(one, line, row_lines, col_lines);
+            const auto rows = spans_between(one.height, row_lines);
+            const auto cols = spans_between(one.width, col_lines);
+            if ((int)rows.size() != down || (int)cols.size() != across ||
+                !lay_out(rows, cols, true, panes)) continue;
+            if (wall >= 0) return -1;
+            wall = line;
+        }
+        return wall;
+    }
+
+    // Each grid's walls with their color left out, so the pairs can agree on a
+    // cut whose color is each grid's own. A grid that two such walls cut the
+    // same way has no one wall, so neither is kept.
+    static void without_wall_colors(vector<pair<pane_cut, vector<pane>>>& found) {
+        for (auto& [named, panes] : found)
+            if (named.cut == Wall) named.color = -1;
+        vector<pair<pane_cut, vector<pane>>> kept;
+        for (const auto& one : found)
+            if (ranges::count_if(found, [&](const auto& other) { return other.first == one.first; }) == 1)
+                kept.push_back(one);
+        found = std::move(kept);
+    }
+
+    // The same cut in every pair, wall color and all. Failing that, the same cut
+    // with each grid naming its own wall: four areas split by one line each way
+    // are the rule, whatever color the lines are drawn in.
     static pane_split_facts detect(const vector<example>& train, int8_t background,
                                    split_freedom allowed = {}) {
+        pane_split_facts facts = agreed_on(train, background, allowed, false);
+        if (!facts.holds()) facts = agreed_on(train, background, allowed, true);
+        return facts;
+    }
+
+    // Reads every training input, keeps the readings they all agree on, and holds
+    // only when exactly one of those survives the precedence.
+    static pane_split_facts agreed_on(const vector<example>& train, int8_t background,
+                                      split_freedom allowed, bool own_walls) {
         if (train.empty()) return {};
         vector<pair<pane_cut, vector<pane>>> found;
         vector<pane_cut> agreed;
         for (size_t i = 0; i < train.size(); ++i) {
             readings_of(train[i].input, background, allowed, found);
+            if (own_walls) without_wall_colors(found);
             // A wall is a wall whether or not the answer is a pane wide: the
             // input alone shows it, so it is admitted on its own evidence. A cut
             // that follows no line shows nothing, and fits almost any grid, so it
@@ -1093,8 +1143,10 @@ struct pane_split_facts : pane_cut {
 
         const pane_cut won = agreed.front();
         pane_split_facts facts{ won };
+        facts.ground = background;
         for (const auto& train_pair : train) {
             readings_of(train_pair.input, background, allowed, found);
+            if (own_walls) without_wall_colors(found);
             for (const auto& [named, panes] : found)
                 if (named == won) { facts.pairs.push_back(panes); break; }
         }
@@ -1383,12 +1435,13 @@ struct pane_pick_rule {
         // A cell of the chosen pane describes a pane of the full lattice.
         // Replay Fit's integer sampling, then restore the divider color, just
         // as the emitted sentences do. The existing pick owns ties and counts.
-        if (split.cut != pane_split_facts::Wall ||
+        const int wall = split.wall_of(input);
+        if (!is_color(wall) ||
             source.width != split.across || source.height != split.down) return false;
         drawn = grid(input.width, input.height);
         for (int r = 0; r < input.height; ++r)
             for (int c = 0; c < input.width; ++c)
-                drawn.data[r][c] = input.data[r][c] == split.color ? split.color :
+                drawn.data[r][c] = input.data[r][c] == wall ? (int8_t)wall :
                     source.color_at(input, r * source.height / input.height,
                                            c * source.width / input.width);
         return true;
