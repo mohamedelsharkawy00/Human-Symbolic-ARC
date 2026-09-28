@@ -631,6 +631,38 @@ bool redraws_every_output(const vector<example>& train, Draw draw) {
     return true;
 }
 
+// THE CANVAS A PROGRAM PAINTS ON, sized and closed as the kernel does it: the
+// size rule's box, or under BoundingBox the largest grid there is, cropped at
+// the end to what was painted. `paint` lays its cells on it, TRANSPARENT where
+// nothing is yet, or says false. What nothing painted takes the elected output
+// ground; with none elected it would stay empty, so the drawing is declined.
+template <class Paint>
+bool draw_on_canvas(const grid& input, const output_dimension_rule& size, int8_t ground_out,
+                    grid& drawn, Paint paint) {
+    const bool closes = size.Chosen == output_dimension_rule::BoundingBox;
+    int width = MAX_GRID_DIM, height = MAX_GRID_DIM;
+    if (!closes && !size.size_for(input, width, height)) return false;
+    grid canvas(width, height);
+    canvas.fill(TRANSPARENT);
+    if (!paint(canvas)) return false;
+    cell_box kept{ 0, 0, height - 1, width - 1 };
+    if (closes) {
+        kept = {};
+        for (int r = 0; r < height; ++r)
+            for (int c = 0; c < width; ++c)
+                if (canvas.data[r][c] != TRANSPARENT) kept.include_cell(r, c);
+        if (kept.empty()) return false;
+    }
+    drawn = grid(kept.width(), kept.height());
+    for (int r = 0; r < drawn.height; ++r)
+        for (int c = 0; c < drawn.width; ++c) {
+            const int color = canvas.data[kept.row0 + r][kept.col0 + c];
+            if (color == TRANSPARENT && !is_color(ground_out)) return false;
+            drawn.data[r][c] = color == TRANSPARENT ? ground_out : (int8_t)color;
+        }
+    return true;
+}
+
 // A REPEATING PICTURE WITH NOISE ON IT, AND THE OUTPUT IS THE PICTURE CLEAN.
 // The input is a lattice of copies that noise has scribbled over, so no cut of
 // it finds the copies -- 0607ce86 cuts into rubble every way it is read. What
@@ -1483,6 +1515,82 @@ struct pane_pick_rule {
     }
 };
 
+// EVERY PANE'S DRAWING, CUT DOWN TO WHAT IT HOLDS AND GATHERED WHERE ITS PANE WAS.
+//
+// pane_mask_rule makes one drawing out of the panes and pane_pick_rule keeps
+// one of them; here each pane keeps its own drawing, cropped, and the drawings
+// are laid together the way the panes lay, in any number of rows and columns.
+// It is what `InputWithoutBackground Panes Layout[0]` paints: Panes hands each
+// pane back in its own frame, Layout bands the pieces by their frames and draws
+// what each holds, and Layout[0] makes every cell as big as the largest drawing.
+// Nothing about the drawings' size is in the rule; each grid says its own.
+struct pane_gather_rule {
+    bool held = false;
+    bool holds() const { return held; }
+
+    // Draws what the sentence paints for one input, on the canvas the size rule
+    // gives it -- or, under BoundingBox, on the largest canvas there is, closed on
+    // what was painted, as the kernel closes it. Declines when no pane holds
+    // anything, since then nothing is laid out at all.
+    static bool draw(const grid& input, const pane_split_facts& split, int8_t background,
+                     int8_t ground_out, const output_dimension_rule& size, grid& drawn) {
+        vector<pane_split_facts::pane> boxes;
+        if (!split.panes_of(input, boxes) || boxes.empty() ||
+            (int)boxes.size() > MAX_OBJECTS_IN_A_LIST) return false;
+        const int count = (int)boxes.size();
+        // What each pane holds, and the cell that holds the largest of them.
+        vector<cell_box> drawings((size_t)count);
+        int cell_w = 0, cell_h = 0;
+        int16_t row_lows[MAX_OBJECTS_IN_A_LIST], row_highs[MAX_OBJECTS_IN_A_LIST];
+        int16_t col_lows[MAX_OBJECTS_IN_A_LIST], col_highs[MAX_OBJECTS_IN_A_LIST];
+        for (int p = 0; p < count; ++p) {
+            const auto& box = boxes[(size_t)p];
+            for (int r = 0; r < box.height; ++r)
+                for (int c = 0; c < box.width; ++c)
+                    if (box.color_at(input, r, c) != background) drawings[(size_t)p].include_cell(r, c);
+            cell_w = max(cell_w, drawings[(size_t)p].width());
+            cell_h = max(cell_h, drawings[(size_t)p].height());
+            row_lows[p] = box.top;
+            row_highs[p] = (int16_t)(box.top + box.height - 1);
+            col_lows[p] = box.left;
+            col_highs[p] = (int16_t)(box.left + box.width - 1);
+        }
+        if (cell_w == 0 || cell_h == 0) return false;
+        // The bands come off the frames, the same grouping the kernel reads.
+        int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
+        int order[MAX_OBJECTS_IN_A_LIST];
+        const int rows = overlapping_bands(count, row_lows, row_highs, row_of, order);
+        const int cols = overlapping_bands(count, col_lows, col_highs, col_of, order);
+        const int laid_w = min(cols * cell_w, MAX_GRID_DIM), laid_h = min(rows * cell_h, MAX_GRID_DIM);
+        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+            for (int p = 0; p < count; ++p) {
+                const auto& box = boxes[(size_t)p];
+                const cell_box& drawing = drawings[(size_t)p];
+                for (int r = 0; r < min(cell_h, drawing.height()); ++r)
+                    for (int c = 0; c < min(cell_w, drawing.width()); ++c) {
+                        const int row = row_of[p] * cell_h + r, col = col_of[p] * cell_w + c;
+                        const int color = box.color_at(input, drawing.row0 + r, drawing.col0 + c);
+                        if (color == background || row >= min(laid_h, canvas.height) ||
+                            col >= min(laid_w, canvas.width)) continue;
+                        canvas.data[row][col] = (int8_t)color;
+                    }
+            }
+            return true;
+        });
+    }
+
+    static pane_gather_rule detect(const vector<example>& train, const pane_split_facts& split,
+                                   int8_t background, int8_t ground_out,
+                                   const output_dimension_rule& size) {
+        if (!split.holds() || !is_color(background) || !is_color(ground_out)) return {};
+        pane_gather_rule rule;
+        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            return draw(pair.input, split, background, ground_out, size, drawn);
+        });
+        return rule;
+    }
+};
+
 // The output is a grid of input-sized blocks, each one a turned copy of the
 // input or plain background. Every pose that draws a block is kept, not just one.
 // Which blocks are copies is the correspondence's to say; this is what it adds.
@@ -1718,14 +1826,17 @@ struct piece_slam_rule {
 };
 
 // Paint at an absolute grid position. Transparent cells leave the canvas alone.
-// False means some paint fell outside; callers must discard that partial drawing.
-inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0) {
+// Laid under rather than over, as Underlay lays it, a cell only fills what
+// nothing has painted yet. False means some paint fell outside; callers must
+// discard that partial drawing.
+inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0, bool over = true) {
     for (int row = 0; row < piece.summary.h; ++row)
         for (int col = 0; col < piece.summary.w; ++col) {
             const int color = piece.cells[row][col];
             if (color == TRANSPARENT) continue;
             if (!canvas.contains(row0 + row, col0 + col)) return false;
-            canvas.data[row0 + row][col0 + col] = color;
+            if (over || canvas.data[row0 + row][col0 + col] == TRANSPARENT)
+                canvas.data[row0 + row][col0 + col] = color;
         }
     return true;
 }
@@ -1903,6 +2014,112 @@ struct slide_to_touch_rule {
             const int8_t stays = colors[which], slides = colors[1 - which];
             // Pieces already touching were never slid up against anything.
             if (draws_every_output(stays, slides, moved) && moved) return { stays, slides };
+        }
+        return {};
+    }
+};
+
+// PIECES THAT SLIDE TO AN EDGE, AND THE REST LEFT WHERE IT LIES. Every piece,
+// or one color's pieces, go one of the eight ways until they meet the edge of
+// the canvas, passing over whatever is in the way, and land over or under what
+// stays. That is MoveToEdge on a pick, so the replay steps each piece as the
+// kernel does (steps_to_edge), and how far is the canvas's to say -- it differs
+// from piece to piece, and no count of cells is written into the sentence.
+//
+// THE ELECTED CUT FIRST, THEN THE OTHERS. The election keeps the shortest
+// reading, which can join the pieces that slide to the ones that stay: in
+// 3618c87e it joins each blue dot to the gray under it and reads a recolor.
+// Plainest first after that: every piece before one color, the sides before
+// the diagonals, over before under.
+//
+// A SLIDE THE CANVAS HIDES IS NO SLIDE. Where the pieces laid where they lie
+// already draw every output, nothing has to go anywhere -- 1cf80156 is a crop,
+// and every piece pushed up and then cropped reads the same, falsely.
+struct edge_slide_rule {
+    segmentation_methods segmentation = segmentation_methods::unset;
+    // The color whose pieces slide, or -1 when every piece does.
+    int8_t color = -1;
+    int8_t way = heading::up;
+    // Laid over what stays, as Union lays it, or under it, as Underlay does.
+    bool over = true;
+    bool held = false;
+    bool holds() const { return held; }
+
+    // SelectColor picks a piece that carries the color anywhere.
+    bool slides(const object& piece) const {
+        if (!is_color(color)) return true;
+        for (int r = 0; r < piece.summary.h; ++r)
+            for (int c = 0; c < piece.summary.w; ++c)
+                if (piece.cells[r][c] == color) return true;
+        return false;
+    }
+
+    // One input's output as the sentences paint it: what stays, where it lies,
+    // then each sliding piece in the cut's own order, later over earlier.
+    bool draw(const grid& input, const vector<object>& pieces, int8_t ground_out,
+              const output_dimension_rule& size, grid& drawn) const {
+        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+            for (const object& piece : pieces)
+                if (!slides(piece) && !paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0))
+                    return false;
+            const heading_step step = step_of(way);
+            for (const object& piece : pieces) {
+                if (!slides(piece)) continue;
+                const int steps = steps_to_edge(box_of(piece.summary), canvas.width, canvas.height, way);
+                if (!paint_piece(canvas, piece, piece.summary.y0 + steps * step.down,
+                                 piece.summary.x0 + steps * step.across, over)) return false;
+            }
+            return true;
+        });
+    }
+
+    static edge_slide_rule detect(const vector<example>& train, segmentation_methods elected,
+                                  int8_t ground_in, int8_t ground_out,
+                                  const output_dimension_rule& size) {
+        if (train.empty() || !is_color(ground_in)) return {};
+        vector<segmentation_methods> cuts{ elected };
+        for (const auto cut : { segmentation_methods::connected_monochrome,
+                                segmentation_methods::all_cells_of_one_color,
+                                segmentation_methods::connected_multicolor })
+            if (cut != elected) cuts.push_back(cut);
+        for (const auto cut : cuts) {
+            if (!boxed_by_its_cells(cut)) continue;
+            // Each pair cut once; every reading below is asked of the same pieces.
+            vector<vector<object>> pieces;
+            uint16_t colors = 0;
+            for (const example& pair : train) {
+                pieces.push_back(pieces_as_said(pair.input, ground_in, cut));
+                for (const object& piece : pieces.back())
+                    for (int r = 0; r < piece.summary.h; ++r)
+                        for (int c = 0; c < piece.summary.w; ++c)
+                            if (is_color(piece.cells[r][c])) colors |= (uint16_t)(1u << piece.cells[r][c]);
+            }
+            bool as_they_lie = true;
+            for (size_t i = 0; i < train.size() && as_they_lie; ++i) {
+                grid drawn;
+                as_they_lie = draw_on_canvas(train[i].input, size, ground_out, drawn, [&](grid& canvas) {
+                    for (const object& piece : pieces[i])
+                        if (!paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0)) return false;
+                    return true;
+                }) && drawn == train[i].output;
+            }
+            if (as_they_lie) continue;
+            for (int color = -1; color < COLOR_COUNT; ++color) {
+                if (color >= 0 && !(colors >> color & 1)) continue;
+                for (int way = 0; way < heading::count; ++way)
+                    for (bool over : { true, false }) {
+                        // With every piece sliding nothing stays to lie under.
+                        if (!over && color < 0) continue;
+                        const edge_slide_rule trying{ cut, (int8_t)color, (int8_t)way, over, true };
+                        bool every = true;
+                        for (size_t i = 0; i < train.size() && every; ++i) {
+                            grid drawn;
+                            every = trying.draw(train[i].input, pieces[i], ground_out, size, drawn) &&
+                                    drawn == train[i].output;
+                        }
+                        if (every) return trying;
+                    }
+            }
         }
         return {};
     }
@@ -2575,6 +2792,47 @@ struct rarest_color_rule {
     }
 };
 
+// THE OUTPUT IS THE INPUT SEEN THROUGH THE SIZE RULE'S BOX, AT ONE CORNER.
+// The canvas is the box, so painting the input crops it, and pushing the input
+// down or right is what brings its bottom or right side into view: `Input
+// SelectAll MoveToEdge[..] Union`. No lattice, no pieces and no count of cells
+// -- the box says how much. A box larger than the input pads instead, which is
+// the same sentence. Corners are tried with the fewest pushes first, and one
+// corner must hold for every pair.
+struct corner_crop_rule {
+    bool held = false;
+    // The pushes that bring this corner into view.
+    bool down = false, right = false;
+    bool holds() const { return held; }
+
+    bool draw(const grid& input, int8_t ground_out, const output_dimension_rule& size, grid& drawn) const {
+        if (input.empty()) return false;
+        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+            // The input is one piece as big as itself, so its cells are its box.
+            const cell_box whole{ 0, 0, input.height - 1, input.width - 1 };
+            const int top = down ? steps_to_edge(whole, canvas.width, canvas.height, heading::down) : 0;
+            const int left = right ? steps_to_edge(whole, canvas.width, canvas.height, heading::right) : 0;
+            for (int r = 0; r < input.height; ++r)
+                for (int c = 0; c < input.width; ++c)
+                    if (canvas.contains(top + r, left + c)) canvas.data[top + r][left + c] = input.data[r][c];
+            return true;
+        });
+    }
+
+    static corner_crop_rule detect(const vector<example>& train, int8_t ground_out,
+                                   const output_dimension_rule& size) {
+        if (train.empty()) return {};
+        for (bool down : { false, true })
+            for (bool right : { false, true }) {
+                const corner_crop_rule trying{ true, down, right };
+                if (redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                        return trying.draw(pair.input, ground_out, size, drawn);
+                    })) return trying;
+            }
+        return {};
+    }
+};
+
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
@@ -2590,6 +2848,7 @@ struct inference {
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
     slide_to_touch_rule slide_to_touch;
+    edge_slide_rule edge_slide;
     project_on_seeds_rule project_on_seeds;
     bridge_rule bridge;
     mark_lattice_rule mark_lattice;
@@ -2598,10 +2857,12 @@ struct inference {
     input_blocks_rule input_blocks;
     ranked_layout_rule ranked_layout;
     rarest_color_rule rarest_color;
+    corner_crop_rule corner_crop;
     ray_extension_rule ray_extension;
     pane_split_facts pane_split;
     pane_mask_rule pane_mask;
     pane_pick_rule pane_pick;
+    pane_gather_rule pane_gather;
     correspondence_election correspondence;
     background_election background;
 };
@@ -2631,6 +2892,9 @@ inline inference infer(const vector<example>& train) {
     // the only question left is which one. Asked after the mask, because making
     // a drawing is the stronger claim and should get first refusal.
     inf.pane_pick = pane_pick_rule::detect(train, inf.pane_split, ground_in);
+    // And when no one pane is the answer and nothing is made of them together,
+    // every pane may be: its drawing kept, cropped, and laid where the pane was.
+    inf.pane_gather = pane_gather_rule::detect(train, inf.pane_split, ground_in, ground_out, inf.size);
     // Edge level of correspondence, under the elected background, with the way
     // of cutting the grid up chosen by what it manages to explain.
     inf.correspondence = select_segmentation(train, ground_in);
@@ -2647,6 +2911,10 @@ inline inference infer(const vector<example>& train) {
     // because a layout that puts every piece somewhere new is the larger claim
     // and should get first refusal; this one leaves most of the grid alone.
     inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    // Pieces that slide to the canvas edge, over whatever is in the way. It reads
+    // its own cut when the elected one joins the slider to what it passes over.
+    inf.edge_slide = edge_slide_rule::detect(train, inf.correspondence.segmentation,
+                                             ground_in, ground_out, inf.size);
     inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in, ground_out);
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
@@ -2659,6 +2927,7 @@ inline inference infer(const vector<example>& train) {
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence, ground_in, ground_out);
     inf.ranked_layout = ranked_layout_rule::detect(train, ground_in, ground_out, inf.size);
     inf.rarest_color = rarest_color_rule::detect(train, ground_in, ground_out, inf.size);
+    inf.corner_crop = corner_crop_rule::detect(train, ground_out, inf.size);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).

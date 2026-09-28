@@ -13,6 +13,9 @@
 #   XOR           the union painted, then the intersection taken back out
 #   PRIORITY      the winner painted, each loser laid under it in turn
 #   AS THEY COME  the panes laid down in the order they were cut
+#   GATHER        Layout[0]: each pane's drawing, in the panes' own rows and columns
+#   CORNER        no panes at all: the input through the size rule's box at one
+#                 corner, asked before a pick that names only a place
 # A pose, where the panes face each other rather than repeat, is said by naming
 # the first pane's band, taking the others, and turning those.
 #
@@ -35,7 +38,7 @@
 #      where it was cut. say_the_reading closes every sentence in one place now,
 #      and says the hand there where the words have not left all of it marked.
 #
-# The programs run 7 to 42 ops. MAX_SEARCH_DEPTH is 32, so the six priorities
+# The programs run 3 to 42 ops. MAX_SEARCH_DEPTH is 32, so the six priorities
 # are past what the search can reach at any budget; the rest are reachable in
 # principle and were not reached in practice -- 0520fde7 is the only one of the
 # 31 that had a saved solution before, at 4.59M attempts and 17.8s, and it is
@@ -49,6 +52,8 @@
   InputWithoutBackground Panes SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Fit Union
   Input Colors SelectColor[5] InvertSelection DeleteSelection SelectAll Union
   Input SelectAll Recolor[0] Underlay
+0bb8deee  GATHER
+  InputWithoutBackground Panes Layout[0] SelectAll Union
 0c9aba6e  NOR
   InputWithoutBackground Panes SelectAll Origin UnionList AddColor[8] Colors SelectColor[8] InvertSelection DeleteSelection SelectAll Union
 195ba7dc  OR
@@ -61,8 +66,8 @@
   Input Colors SelectColor[8] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
   Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Underlay
   Input Panes SelectAll Origin Recolor[0] Underlay
-2dee498d  OR
-  Input Panes SelectColumn[0] InvertSelection DeleteSelection SelectAll Origin Union
+2dee498d  CORNER top-left
+  Input SelectAll Union
 31d5ba1a  XOR
   InputWithoutBackground Panes SelectAll Origin UnionList Recolor[6] Union
   InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
@@ -80,6 +85,8 @@
   Input Panes SelectAll Origin Recolor[0] Underlay
 506d28a5  OR
   InputWithoutBackground Panes SelectAll Origin UnionList Recolor[3] Union
+5bd6f4ac  CORNER top-right
+  Input SelectAll MoveToEdge[3] Union
 5d2a5c43  OR
   InputWithoutBackground Panes SelectAll Origin UnionList Recolor[8] Union
 6430c8c4  NOR

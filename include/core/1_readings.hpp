@@ -462,6 +462,42 @@ ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
     return bands;
 }
 
+// THE EIGHT WAYS A PIECE CAN GO, numbered as MoveToEdge and ExtendTo take them:
+// the four sides, then the diagonals.
+struct heading {
+    enum : int8_t { up, down, left, right, up_left, up_right, down_left, down_right, count };
+};
+inline constexpr const char* const heading_names[heading::count] = {
+    "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right" };
+
+// One step that way. A switch and not a table, so the kernel reads the same
+// steps the host does; a heading out of range goes up.
+struct heading_step { int down, across; };
+ARC_HOST_DEVICE inline heading_step step_of(int way) {
+    switch (way) {
+    case heading::down:       return {  1,  0 };
+    case heading::left:       return {  0, -1 };
+    case heading::right:      return {  0,  1 };
+    case heading::up_left:    return { -1, -1 };
+    case heading::up_right:   return { -1,  1 };
+    case heading::down_left:  return {  1, -1 };
+    case heading::down_right: return {  1,  1 };
+    default:                  return { -1,  0 };
+    }
+}
+
+// How far a box goes that way before its far side meets the edge of a canvas
+// this size, as MoveToEdge takes it: negative when that side already lies past
+// the edge, and on a diagonal whichever edge comes first.
+ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
+    const heading_step step = step_of(way);
+    const int room_down = step.down > 0 ? height - 1 - box.row1 : box.row0;
+    const int room_across = step.across > 0 ? width - 1 - box.col1 : box.col0;
+    if (step.across == 0) return room_down;
+    if (step.down == 0) return room_across;
+    return room_down < room_across ? room_down : room_across;
+}
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.

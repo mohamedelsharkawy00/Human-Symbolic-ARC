@@ -131,13 +131,14 @@ enum class inferred_amount { none, some, all };
   X(ExtendOrthogonal            , 2                 , 10                       , generate , none, true , false) \
   X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
   X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
-  X(Layout                      , 2                 , 10                       , translate, none, false, false) \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
   X(SelectLargestObject         , 0                 , 9                        , select   , none, false, false) \
   X(SelectSmallestObject        , 0                 , 9                        , select   , none, false, false) \
   X(AddColor                    , 0                 , arc::COLOR_COUNT - 1     , generate , none, true , false) \
   X(MaskBy                      , 0                 , 10                       , map      , none, true , false) \
   X(MaskOut                     , 0                 , 10                       , map      , none, true , false) \
+  /* Layout[0] reads its cell size off the pieces instead of being told it. */  \
+  X(Layout                      , 0                 , 10                       , translate, none, false, false) \
   X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, true , false) \
   X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
   X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \

@@ -37,6 +37,24 @@ struct output_dimension_rule {
     // True once a sizing policy is selected, including the BoundingBox fallback.
     bool holds() const { return Chosen != NotInferredYet; }
 
+    // The canvas this rule gives one input before anything is painted on it.
+    // False under BoundingBox, where only the drawing says, and when the size
+    // would not fit a grid at all.
+    bool size_for(const grid& input, int& out_width, int& out_height) const {
+        switch (Chosen) {
+        case Identity: out_width = input.width; out_height = input.height; break;
+        case Fixed:    out_width = width;       out_height = height;       break;
+        case Scale:
+            if (width_denominator <= 0 || height_denominator <= 0) return false;
+            out_width = input.width * width_numerator / width_denominator;
+            out_height = input.height * height_numerator / height_denominator;
+            break;
+        default: return false;
+        }
+        return out_width > 0 && out_height > 0 &&
+               out_width <= MAX_GRID_DIM && out_height <= MAX_GRID_DIM;
+    }
+
     // Picks how output size is decided, first match wins
     static output_dimension_rule infer_rule(const vector<example>& train) {
         if (train.empty())

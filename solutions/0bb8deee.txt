@@ -1,0 +1,9 @@
+InputWithoutBackground Panes Layout[0] SelectAll Union
+Puzzle:       0bb8deee
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.1140
+Attempts:     0
+Nodes:        5
+Best Score:   1935.0000
+Max Depth:    5

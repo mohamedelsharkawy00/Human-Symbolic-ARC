@@ -1,9 +1,9 @@
-Colors SelectAll AddColor[0] Colors SelectAll SortBySize[1] SelectAll MoveToEdge[1] Underlay
-Puzzle: 3618c87e
-Train: Solved
-Test: Solved
-Elapsed: 00:00:03.6983
-Attempts: 1714000
-Nodes: 10
-Best Score: 1571.5000
-Max Depth: 7
+Input Split[1] SelectColor[1] InvertSelection Union Input Split[1] SelectColor[1] MoveToEdge[1] Union
+Puzzle:       3618c87e
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.0925
+Attempts:     0
+Nodes:        10
+Best Score:   1902.5000
+Max Depth:    10

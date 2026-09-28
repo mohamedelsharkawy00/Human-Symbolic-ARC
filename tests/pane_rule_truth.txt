@@ -1,8 +1,8 @@
 # Pane rule ground truth: what the panes come to, once the split has cut.
-# Format:  <id>  mask <panes> <pose>   |   <id>  pick <the reason>
+# Format:  <id>  mask <panes> <pose>   |   <id>  pick <the reason>   |   <id>  gather <lattice>
 #   Prefix a line with WRONG to mark a known failure (not a regression).
 #
-# TWO RULES, and the stronger one is asked first.
+# THREE RULES, and the stronger one is asked first.
 #
 # pane_mask_rule MAKES a drawing. At each position every pane is reduced to one
 # bit -- something here, or ground -- and each pattern of those bits either
@@ -17,15 +17,21 @@
 # The ways are tried plainest first, a property before a place. Fitted picks
 # prefer occupancy before palette: a sparse blueprint can also have an odd palette.
 #
+# pane_gather_rule keeps EVERY pane's drawing, cropped, and lays the drawings
+# out the way the panes lie, any number each way, each cell as big as the
+# largest drawing. Asked last.
+#
 # VERIFIED END TO END: each rule is read off the TRAIN pairs only, then asked
 # for the held-out TEST answer. The original 37 were right, with no declines.
 # 09629e4f also fits all four training pairs and the held-out test after fitting.
+# 0bb8deee, the one gather, fits all three and the held-out test.
 #
-# Listed: 33 mask rows and 5 pick rows.
+# Listed: 33 mask rows, 5 pick rows and 1 gather row.
 
 0520fde7  mask  panes 2  pose 0
 09629e4f  pick  the emptiest  fitted behind the walls
 0b148d64  pick  the odd palette
+0bb8deee  gather  panes 2x2
 0c9aba6e  mask  panes 2  pose 0
 195ba7dc  mask  panes 2  pose 0
 1b2d62fb  mask  panes 2  pose 0

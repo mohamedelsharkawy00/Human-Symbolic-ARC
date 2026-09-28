@@ -1436,12 +1436,6 @@ __device__ static int gpu_layout_bands(const gpu_object_list& src, int n, bool r
     return arc::overlapping_bands(n, lows, highs, band_of, order);
 }
 
-// Layout[k]: arrange the objects on k-sized graph paper. Overlapping vertical
-// spans share a row, overlapping horizontal spans share a column; rows sort
-// top-to-bottom, columns left-to-right. Each object's pixels are copied
-// UNRESIZED into its own k x k cell (cell origin = (col*k, row*k)), clipped to
-// the cell. Result is one (cols*k) x (rows*k) object at the origin — grid-
-// aligned by construction, so ScaleDown[k] reads exactly one object per cell.
 // WHICH BAND A PIECE SITS IN, not what the piece is. Every other selector names
 // something the piece carries -- its color, its holes, its size -- so none of
 // them can say "the middle row of them". This one names where a piece sits among
@@ -1462,16 +1456,45 @@ __device__ gpu_object_list& gpu_exec_select_band(gpu_exec_context& ctx, const gp
     return res;
 }
 
+// Layout[k]: arrange the objects on k-sized graph paper. Overlapping vertical
+// spans share a row, overlapping horizontal spans share a column; rows sort
+// top-to-bottom, columns left-to-right. Each object's drawing is copied
+// UNRESIZED into its own k x k cell (cell origin = (col*k, row*k)), clipped to
+// the cell. Result is one (cols*k) x (rows*k) object at the origin — grid-
+// aligned by construction, so ScaleDown[k] reads exactly one object per cell.
+// WHERE A PIECE SITS IS ITS FRAME; WHAT IT DRAWS IS WHAT IT HOLDS. The bands
+// read the frames and the cells get the painted cells, from the top-left of
+// what is painted rather than of the frame. For a trimmed piece the two are
+// the same box. A pane is not trimmed -- its frame is the pane -- so after
+// Panes the bands are the panes' own rows and columns while each cell gets the
+// figure the pane holds, wherever it sat inside it.
+// Layout[0] reads the cell off the pieces instead of taking it as a number: as
+// wide as the widest drawing and as tall as the tallest.
 __device__ gpu_object_list& gpu_exec_layout(gpu_exec_context& ctx, const gpu_object_list& src, int k) {
     auto& res = gpu_acquire(ctx);
     int n = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
-    if (n <= 0 || k <= 0) return res;
+    if (n <= 0 || k < 0) return res;
+
+    // Where each drawing starts inside its frame, and the cell that holds them.
+    int8_t top_of[GPU_KERNEL_MAX_OBJECTS], left_of[GPU_KERNEL_MAX_OBJECTS];
+    int cell_w = k, cell_h = k;
+    for (int i = 0; i < n; ++i) {
+        arc::cell_box drawing;
+        GPU_DEV_FOR_EACH_PIXEL(src.objects[i], r, c, v) { (void)v; drawing.include_cell(r, c); }
+        top_of[i] = (int8_t)(drawing.empty() ? 0 : drawing.row0);
+        left_of[i] = (int8_t)(drawing.empty() ? 0 : drawing.col0);
+        if (k == 0) {
+            cell_w = max(cell_w, drawing.width());
+            cell_h = max(cell_h, drawing.height());
+        }
+    }
+    if (cell_w <= 0 || cell_h <= 0) return res;
 
     int8_t row_of[GPU_KERNEL_MAX_OBJECTS], col_of[GPU_KERNEL_MAX_OBJECTS];
     int rows = gpu_layout_bands(src, n, true, row_of);
     int cols = gpu_layout_bands(src, n, false, col_of);
-    int nw = min(cols * k, GPU_MAX_GRID);
-    int nh = min(rows * k, GPU_MAX_GRID);
+    int nw = min(cols * cell_w, GPU_MAX_GRID);
+    int nh = min(rows * cell_h, GPU_MAX_GRID);
 
     gpu_fixed_object& obj = res.objects[0];
     obj.x0 = 0; obj.y0 = 0;
@@ -1481,12 +1504,15 @@ __device__ gpu_object_list& gpu_exec_layout(gpu_exec_context& ctx, const gpu_obj
 
     for (int i = 0; i < n; ++i) {
         const auto& s = src.objects[i];
-        int ox = col_of[i] * k, oy = row_of[i] * k;
-        for (int r = 0; r < s.height && r < k; ++r)
-            for (int c = 0; c < s.width && c < k; ++c) {
-                int gr = oy + r, gc = ox + c;
-                if (gr < nh && gc < nw && s.mask[r][c] != GPU_TRANSPARENT)
-                    obj.mask[gr][gc] = s.mask[r][c];
+        const int ox = col_of[i] * cell_w, oy = row_of[i] * cell_h;
+        const int top = top_of[i], left = left_of[i];
+        // Shift/Union can grow the box beyond the packed mask's actual extent.
+        const int height = min((int)s.height, GPU_MAX_GRID), width = min((int)s.width, GPU_MAX_GRID);
+        for (int r = 0; r < cell_h && top + r < height; ++r)
+            for (int c = 0; c < cell_w && left + c < width; ++c) {
+                const int gr = oy + r, gc = ox + c;
+                const int8_t v = s.mask[top + r][left + c];
+                if (gr < nh && gc < nw && v != GPU_TRANSPARENT) obj.mask[gr][gc] = v;
             }
     }
     res.count = 1;
@@ -2204,14 +2230,8 @@ __device__ gpu_object_list& gpu_exec_tile(gpu_exec_context& ctx, const gpu_objec
     return res;
 }
 
-// 8 unit directions: up, down, left, right, then the 4 diagonals.
-__device__ const int8_t GPU_DIR8[8][2] = {
-    { 0,-1}, { 0, 1}, {-1, 0}, { 1, 0},
-    {-1,-1}, { 1,-1}, {-1, 1}, { 1, 1}
-};
-
-// For each object: find the center cell, draw rays in 4 directions
-// (GPU_DIR8[dir_first..dir_first+3]) for `radius` steps using the center
+// For each object: find the center cell, draw rays in 4 directions (the
+// headings from dir_first, arc::heading) for `radius` steps using the center
 // cell's color. Output is one combined object per input.
 __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gpu_object_list& src, int8_t radius, int dir_first) {
     auto& res = gpu_acquire(ctx);
@@ -2275,42 +2295,39 @@ __device__ inline bool gpu_obj_contains(const gpu_fixed_object& o, int x, int y)
 // per input (body + trail), composing via Union. Obstacle field = the union of
 // all input objects, rasterized into op_scratch. Pass 1 measures body+trail
 // extent; pass 2 paints into the packed mask with identical march logic.
-// Slam to the grid edge: slide each object along dir as far as the grid
-// allows, ignoring paint. Shape unchanged.
+// Slam to the grid edge: slide each object along dir until its painted cells
+// meet the canvas edge that way, ignoring paint. Shape unchanged.
 // (ExtendTo grows a trail; Slam squashes inside the box; this one TRAVELS.)
+// PAST THE EDGE ALREADY, IT SLIDES BACK until its far side lies on the edge,
+// rather than refusing to move. A grid larger than the canvas pushed right
+// shows its right side, so a crop at a corner is the size rule's box and a
+// push, with no count of cells in it. Inside the canvas nothing changes: the
+// slide stops at whichever edge it meets first.
 __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
     auto& res = gpu_acquire(ctx);
-    int di = (dir >= 0 && dir < 8) ? dir : 0;
-    int dx = GPU_DIR8[di][0], dy = GPU_DIR8[di][1];
+    const arc::heading_step step = arc::step_of(dir);
     res.count = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
     for (int i = 0; i < res.count; ++i) {
         res.objects[i] = src.objects[i];
         auto& o = res.objects[i];
         // Only what was picked travels; the rest stay where they are.
         if (!o.selected) continue;
-        int w = min((int)o.width, GPU_MAX_GRID), h = min((int)o.height, GPU_MAX_GRID);
-        int steps = 0;
-        for (; steps <= GPU_MAX_GRID; ++steps) {
-            bool blocked = false;
-            for (int r = 0; r < h && !blocked; ++r)
-                for (int c = 0; c < w; ++c) {
-                    if (o.mask[r][c] == GPU_TRANSPARENT) continue;
-                    int gr = o.y0 + r + (steps + 1) * dy;
-                    int gc = o.x0 + c + (steps + 1) * dx;
-                    if (gr < 0 || gr >= ctx.output.height || gc < 0 || gc >= ctx.output.width) { blocked = true; break; }
-                }
-            if (blocked) break;
-        }
-        o.y0 = (int16_t)(o.y0 + steps * dy);
-        o.x0 = (int16_t)(o.x0 + steps * dx);
+        arc::cell_box painted;
+        GPU_DEV_FOR_EACH_PIXEL(o, r, c, v) { (void)v; painted.include_cell(o.y0 + r, o.x0 + c); }
+        if (painted.empty()) continue;
+        const int steps = arc::steps_to_edge(painted, ctx.output.width, ctx.output.height, dir);
+        o.x0 = (int16_t)(o.x0 + steps * step.across);
+        o.x1 = (int16_t)(o.x1 + steps * step.across);
+        o.y0 = (int16_t)(o.y0 + steps * step.down);
+        o.y1 = (int16_t)(o.y1 + steps * step.down);
     }
     return res;
 }
 
 __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
     auto& res = gpu_acquire(ctx);
-    int di = (dir >= 0 && dir < 8) ? dir : 0;
-    int ddx = GPU_DIR8[di][0], ddy = GPU_DIR8[di][1];
+    const arc::heading_step step = arc::step_of(dir);
+    const int ddx = step.across, ddy = step.down;
     int gw = ctx.output.width  > 0 ? (int)ctx.output.width  : (int)ctx.input.width;
     int gh = ctx.output.height > 0 ? (int)ctx.output.height : (int)ctx.input.height;
     if (gw <= 0 || gh <= 0) return res;

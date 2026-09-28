@@ -19,9 +19,11 @@
 // HAND-WRITE THE PROGRAM FIRST. Before teaching the reading to say a puzzle,
 // write its solution by hand in solutions/<id>.txt and check it with arc_spell.
 // If the words cannot say it, the gap is the vocabulary, and no reading can
-// spell what the DSL has no word for. 0bb8deee is waiting on exactly that: its
-// four panes are read, but no word lays each pane's figure out by the pane it
-// came from (Layout goes by how the figures line up), so there is nothing to say.
+// spell what the DSL has no word for. But write it out before calling a word
+// missing: 0bb8deee looked like that gap, and one sentence a pane said it in
+// words there already were. Writing those out found the real gap, a smaller
+// one: Layout drew each piece from its frame's corner instead of drawing what
+// it holds. With that mended, any lattice of panes is one sentence.
 
 #pragma once
 #include "7_infer.hpp"
@@ -612,6 +614,54 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     return true;
 }
 
+// THE INPUT THROUGH THE SIZE RULE'S BOX, AT ONE CORNER. The canvas is the box,
+// so painting the input crops it, and a push down or right brings that side into
+// view. It is a place and not a reason, so a pane picked for a reason outranks
+// it: a reason still names the pane on a test where it has moved, a corner does
+// not. A pane picked only for its place is this, said without the lattice.
+inline bool say_corner_crop(const inference& inf, said_reading& said) {
+    const auto& crop = inf.corner_crop;
+    if (!crop.holds()) return false;
+    if (inf.pane_pick.holds() && inf.pane_pick.way != pane_pick_rule::AtIndex) return false;
+    string words = "Input SelectAll";
+    if (crop.down) words += " " + spell("MoveToEdge", heading::down);
+    if (crop.right) words += " " + spell("MoveToEdge", heading::right);
+    say_closed(said, words, "Union");
+    return true;
+}
+
+// PIECES SLID TO AN EDGE. What stays is painted where it lies, then the pieces
+// that slide are pushed to the edge and laid over or under it. Both sentences
+// paint only their pick, since the pick is the whole point: the one lays what
+// stays, the other what moved. Every piece sliding is one sentence.
+inline bool say_edge_slide(const inference& inf, said_reading& said) {
+    const auto& slide = inf.edge_slide;
+    if (!slide.holds()) return false;
+    const char* cut = word_for_segmentation(slide.segmentation);
+    if (!cut) return false;
+    const string pieces = string("Input ") + cut;
+    const string push = spell("MoveToEdge", slide.way);
+    if (!is_color(slide.color)) {
+        say_closed(said, pieces + " SelectAll " + push, "Union");
+        return true;
+    }
+    const string pick = pieces + " " + spell("SelectColor", slide.color);
+    said.sentences.push_back(closed_on_the_pick(pick + " InvertSelection", "Union"));
+    said.sentences.push_back(closed_on_the_pick(pick + " " + push, slide.over ? "Union" : "Underlay"));
+    return true;
+}
+
+// EVERY PANE'S DRAWING, CROPPED, WHERE ITS PANE WAS. Panes hands each pane
+// back in its own frame, and Layout bands pieces by their frames and draws what
+// each holds, so the panes' rows and columns become the layout's -- however
+// many there are -- and each cell gets its pane's figure wherever it sat.
+// Layout[0] takes the cell from the drawings, so no size is written here.
+inline bool say_pane_gather(const inference& inf, said_reading& said) {
+    if (!inf.pane_split.holds() || !inf.pane_gather.holds()) return false;
+    say_closed(said, "InputWithoutBackground Panes " + spell("Layout", 0), "Union");
+    return true;
+}
+
 // The size-ranked color layers are independent sources: each gets its own
 // extension, and the seed body is a separate paint when the rule calls for it.
 inline bool say_ray_extension(const inference& inf, said_reading& said) {
@@ -671,7 +721,11 @@ inline said_reading say_the_reading(const inference& inf) {
     // Asked first: a split is a fact about the frame, and where it holds the
     // panes are what the pairs are about. Nothing below knows they are there.
     if (say_panes(inf, said)) return said;
+    // Except one pane chosen only for where it sits: a corner of the input says
+    // the same place with no lattice, so it is asked before the pick.
+    if (say_corner_crop(inf, said)) return said;
     if (say_pane_pick(inf, said)) return said;
+    if (say_pane_gather(inf, said)) return said;
     if (say_ray_extension(inf, said)) return said;
     if (say_mark_lattice(inf, said)) return said;
     if (say_input_blocks(inf, said)) return said;
@@ -715,6 +769,7 @@ inline said_reading say_the_reading(const inference& inf) {
         return said;
     }
     if (say_ranked_layout(inf, said)) return said;
+    if (say_edge_slide(inf, said)) return said;
     // The least common color alone. The size rule's box is the crop, so the
     // sentence only picks that color and paints it where it lies.
     if (inf.rarest_color.holds()) {

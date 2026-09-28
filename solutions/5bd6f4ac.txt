@@ -1,0 +1,9 @@
+Input SelectAll MoveToEdge[3] Union
+Puzzle:       5bd6f4ac
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.1049
+Attempts:     0
+Nodes:        4
+Best Score:   2449.5000
+Max Depth:    4

@@ -509,6 +509,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);
     report_pane_pick(report, inf.pane_pick);
+    report << "[pane_gather] holds " << inf.pane_gather.holds() << "\n\n";
     report_color_swaps(report, inf.color_swaps);
     report_shape_color_map(report, inf.shape_color_map);
     report_unchanged(report, inf.unchanged);
@@ -526,6 +527,19 @@ inline void log_inference(const string& id, const inference& inf,
     report_input_blocks(report, inf.input_blocks);
     report_ray_extension(report, inf.ray_extension);
     report << "[rarest_color] holds " << inf.rarest_color.holds() << "\n\n";
+    report << "[edge_slide] holds " << inf.edge_slide.holds();
+    if (inf.edge_slide.holds())
+        report << "  cut " << segmentation_names[(int)inf.edge_slide.segmentation]
+               << "  pieces " << (is_color(inf.edge_slide.color) ? "of color " + to_string(inf.edge_slide.color)
+                                                                  : string("all"))
+               << "  way " << heading_names[inf.edge_slide.way]
+               << "  laid " << (inf.edge_slide.over ? "over" : "under");
+    report << "\n\n";
+    report << "[corner_crop] holds " << inf.corner_crop.holds();
+    if (inf.corner_crop.holds())
+        report << "  corner " << (inf.corner_crop.down ? "bottom" : "top") << "-"
+               << (inf.corner_crop.right ? "right" : "left");
+    report << "\n\n";
     report_said_reading(report, inf);
     report_agreed_moves(report, inf.correspondence);
     report_pieces_seen(report, inf.correspondence);
