@@ -2692,6 +2692,35 @@ __device__ void gpu_exec_rotate_warp(gpu_exec_context& ctx, bool normalize, int 
     }
 }
 
+// Copy each selected object to each unselected destination, aligning like
+// anchors of their frames. 0..8 name the 3x3 anchors in row-major order;
+// 4 aligns centers. The result is copies only, all selected, in source then
+// destination order. Colors, holes and sizes survive; destinations contribute
+// only positions and frames. Painting/recoloring remain separate operations.
+__device__ gpu_object_list& gpu_exec_copy_to(gpu_exec_context& ctx, const gpu_object_list& src, int anchor) {
+    auto& res = gpu_acquire(ctx);
+    int picked = 0;
+    for (int i = 0; i < src.count; ++i) picked += src.objects[i].selected;
+    if (!picked) { res = src; return res; }
+    // Do not silently publish only a prefix of a Cartesian product.
+    if (picked * (src.count - picked) > GPU_KERNEL_MAX_OBJECTS) return res;
+    for (int i = 0; i < src.count; ++i) {
+        const auto& pattern = src.objects[i];
+        if (!pattern.selected || pattern.width <= 0 || pattern.height <= 0) continue;
+        for (int j = 0; j < src.count; ++j) {
+            const auto& target = src.objects[j];
+            if (target.selected || target.width <= 0 || target.height <= 0) continue;
+            auto& copy = res.objects[res.count++];
+            copy = pattern;
+            copy.x0 = (int16_t)arc::aligned_copy_start(pattern.width, target.x0, target.width, anchor % 3);
+            copy.y0 = (int16_t)arc::aligned_copy_start(pattern.height, target.y0, target.height, anchor / 3);
+            copy.x1 = (int16_t)(copy.x0 + copy.width - 1);
+            copy.y1 = (int16_t)(copy.y0 + copy.height - 1);
+        }
+    }
+    return res;
+}
+
 // Project the template (src.objects[0]) onto each seed in ctx.seed_objs.
 // For every seed: direction = sign(seed_center - tpl_center); first stamp aligns
 // edges with the seed on the far side from the template, then copies march
@@ -3109,6 +3138,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Tile:           result = last ? &gpu_exec_tile(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Pattern:        result = last ? &gpu_exec_pattern(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::ProjectOnSeeds: result = last ? &gpu_exec_project_on_seeds(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::CopyTo:         result = last ? &gpu_exec_copy_to(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::IntersectionList:  result = last ? &gpu_exec_intersect_list(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::UnionList:         result = last ? &gpu_exec_union_list(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Layout:         result = last ? &gpu_exec_layout(ctx, *last, value) : &gpu_acquire(ctx); break;

@@ -1,0 +1,9 @@
+Input SelectAll Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeToInteriorColorMap Union
+Puzzle:       dbff022c
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        12
+Best Score:   5690.0000
+Max Depth:    12

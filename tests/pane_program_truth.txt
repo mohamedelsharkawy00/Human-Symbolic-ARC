@@ -14,6 +14,7 @@
 #   PRIORITY      the winner painted, each loser laid under it in turn
 #   AS THEY COME  the panes laid down in the order they were cut
 #   GATHER        Layout[0]: each pane's drawing, in the panes' own rows and columns
+#   COPY          CopyTo[4]: the largest figure copied to the other figures' centers
 #   CORNER        no panes at all: the input through the size rule's box at one
 #                 corner, asked before a pick that names only a place
 # A pose, where the panes face each other rather than repeat, is said by naming
@@ -77,6 +78,9 @@
 34b99a2b  XOR
   InputWithoutBackground Panes SelectAll Origin UnionList Recolor[2] Union
   InputWithoutBackground Panes SelectAll Origin IntersectionList Difference
+363442ee  COPY
+  Input SelectAll Union
+  InputWithoutBackground Panes Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] CopyTo[4] Union
 3d31c5b3  PRIORITY
   Input Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Union
   Input Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay

@@ -127,6 +127,8 @@ enum class inferred_amount { none, some, all };
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
+  /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
+  X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
   X(ExtendDiagonal              , 2                 , 10                       , generate , none, true , false) \
   X(ExtendOrthogonal            , 2                 , 10                       , generate , none, true , false) \
   X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \

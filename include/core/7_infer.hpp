@@ -1827,14 +1827,18 @@ struct piece_slam_rule {
 
 // Paint at an absolute grid position. Transparent cells leave the canvas alone.
 // Laid under rather than over, as Underlay lays it, a cell only fills what
-// nothing has painted yet. False means some paint fell outside; callers must
-// discard that partial drawing.
-inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0, bool over = true) {
+// nothing has painted yet. Unless clipping is requested, false means some paint
+// fell outside; callers must discard that partial drawing.
+inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
+                        bool over = true, bool clip = false) {
     for (int row = 0; row < piece.summary.h; ++row)
         for (int col = 0; col < piece.summary.w; ++col) {
             const int color = piece.cells[row][col];
             if (color == TRANSPARENT) continue;
-            if (!canvas.contains(row0 + row, col0 + col)) return false;
+            if (!canvas.contains(row0 + row, col0 + col)) {
+                if (clip) continue;
+                return false;
+            }
             if (over || canvas.data[row0 + row][col0 + col] == TRANSPARENT)
                 canvas.data[row0 + row][col0 + col] = color;
         }
@@ -2119,6 +2123,89 @@ struct edge_slide_rule {
                         }
                         if (every) return trying;
                     }
+            }
+        }
+        return {};
+    }
+};
+
+// ONE FIGURE COPIED TO THE OTHER PIECES. The largest connected figure supplies
+// the drawing, the others supply frames, and the examples agree on one anchor.
+// Try the input's pieces first, then the already-elected panes without their
+// separators. No color, template size, destination count or coordinates are
+// baked into the claim. Trim gives the op the same tight frames read here.
+// The op itself accepts any selection of source figures;
+// this reading only names the unambiguous largest one.
+struct copy_to_rule {
+    bool held = false;
+    bool panes = false;
+    int8_t anchor = 4;
+    bool holds() const { return held; }
+
+    static vector<object> pieces(const grid& input, int8_t ground,
+                                 const pane_split_facts& split, bool use_panes) {
+        grid source = input;
+        if (use_panes) {
+            vector<pane_split_facts::pane> frames;
+            if (!split.panes_of(input, frames) || frames.size() > MAX_OBJECTS_IN_A_LIST) return {};
+            for (int r = 0; r < source.height; ++r)
+                for (int c = 0; c < source.width; ++c) source.data[r][c] = ground;
+            for (const auto& frame : frames)
+                for (int r = frame.top; r < frame.top + frame.height; ++r)
+                    for (int c = frame.left; c < frame.left + frame.width; ++c)
+                        source.data[r][c] = input.data[r][c];
+        }
+        return pieces_as_said(source, ground, segmentation_methods::connected_multicolor);
+    }
+
+    static int source_index(const vector<object>& objects) {
+        if (objects.size() < 2 || objects.size() > MAX_OBJECTS_IN_A_LIST) return -1;
+        int largest = 0;
+        for (int i = 1; i < (int)objects.size(); ++i)
+            if (objects[i].summary.count > objects[largest].summary.count) largest = i;
+        for (int i = 0; i < (int)objects.size(); ++i)
+            if (i != largest && objects[i].summary.count == objects[largest].summary.count) return -1;
+        return largest;
+    }
+
+    static grid draw(const grid& input, const vector<object>& objects, int source, int anchor) {
+        grid drawn = input;
+        const auto& pattern = objects[source];
+        for (int i = 0; i < (int)objects.size(); ++i) {
+            if (i == source) continue;
+            const auto& target = objects[i].summary;
+            const int row = aligned_copy_start(pattern.summary.h, target.y0, target.h, anchor / 3);
+            const int col = aligned_copy_start(pattern.summary.w, target.x0, target.w, anchor % 3);
+            paint_piece(drawn, pattern, row, col, /*over=*/true, /*clip=*/true);
+        }
+        return drawn;
+    }
+
+    static copy_to_rule detect(const vector<example>& train, int8_t ground,
+                               const pane_split_facts& split) {
+        if (train.empty() || !is_color(ground)) return {};
+        bool changed = false;
+        for (const auto& pair : train) {
+            if (pair.input.width != pair.output.width || pair.input.height != pair.output.height) return {};
+            changed |= pair.input != pair.output;
+        }
+        if (!changed) return {};
+        for (bool use_panes : { false, true }) {
+            if (use_panes && !split.holds()) continue;
+            vector<vector<object>> cut;
+            vector<int> sources;
+            bool readable = true;
+            for (const auto& pair : train) {
+                cut.push_back(pieces(pair.input, ground, split, use_panes));
+                sources.push_back(source_index(cut.back()));
+                if (sources.back() < 0) { readable = false; break; }
+            }
+            if (!readable) continue;
+            for (int anchor = 0; anchor < 9; ++anchor) {
+                bool every = true;
+                for (size_t i = 0; i < train.size() && every; ++i)
+                    every = draw(train[i].input, cut[i], sources[i], anchor) == train[i].output;
+                if (every) return { true, use_panes, (int8_t)anchor };
             }
         }
         return {};
@@ -2850,6 +2937,7 @@ struct inference {
     slide_to_touch_rule slide_to_touch;
     edge_slide_rule edge_slide;
     project_on_seeds_rule project_on_seeds;
+    copy_to_rule copy_to;
     bridge_rule bridge;
     mark_lattice_rule mark_lattice;
     interior_spread_rule interior_spread;
@@ -2916,6 +3004,7 @@ inline inference infer(const vector<example>& train) {
     inf.edge_slide = edge_slide_rule::detect(train, inf.correspondence.segmentation,
                                              ground_in, ground_out, inf.size);
     inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, ground_in, ground_out);
+    inf.copy_to = copy_to_rule::detect(train, ground_in, inf.pane_split);
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
     inf.bridge = bridge_rule::detect(train, inf.correspondence, ground_in, ground_out);

@@ -521,6 +521,10 @@ inline void log_inference(const string& id, const inference& inf,
     report_overlap_corner(report, inf.overlap_corner);
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
+    report << "[copy_to] holds " << inf.copy_to.holds();
+    if (inf.copy_to.holds())
+        report << "  panes " << inf.copy_to.panes << "  anchor " << (int)inf.copy_to.anchor;
+    report << "\n\n";
     report_bridge(report, inf.bridge);
     report_mark_lattice(report, inf.mark_lattice);
     report << "[interior_spread] holds " << inf.interior_spread.holds() << "\n\n";

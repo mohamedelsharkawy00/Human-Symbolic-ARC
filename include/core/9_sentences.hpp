@@ -770,6 +770,14 @@ inline said_reading say_the_reading(const inference& inf) {
     }
     if (say_ranked_layout(inf, said)) return said;
     if (say_edge_slide(inf, said)) return said;
+    if (inf.copy_to.holds()) {
+        say_closed(said, "Input", "Union");
+        const string pieces = string("InputWithoutBackground ") +
+            (inf.copy_to.panes ? "Panes " : "") +
+            "Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] ";
+        said.sentences.push_back(closed_on_the_pick(pieces + spell("CopyTo", inf.copy_to.anchor), "Union"));
+        return said;
+    }
     // The least common color alone. The size rule's box is the crop, so the
     // sentence only picks that color and paints it where it lies.
     if (inf.rarest_color.holds()) {

@@ -1,0 +1,4 @@
+Input SelectAll Union InputWithoutBackground Panes Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] CopyTo[4] Union
+# Verified: all 3 training examples and the held-out test; 0 search attempts.
+# Panes removes the divider; Trim makes frames fit their figures.
+# CopyTo[4] copies the selected figure to the centers of the other pieces.

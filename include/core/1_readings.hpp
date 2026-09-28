@@ -21,6 +21,14 @@ struct object_summary {
     int16_t count = 0;       // number of cells in the object
 };
 
+// Align like anchors of two spans: 0 = first cell, 1 = middle cell,
+// 2 = last cell. Even spans use the earlier of the two middle cells.
+// Copy placement shares this arithmetic between the reading and the GPU.
+ARC_HOST_DEVICE constexpr int aligned_copy_start(int source_size, int target_start,
+                                                 int target_size, int anchor) {
+    return target_start + (target_size - 1) * anchor / 2 - (source_size - 1) * anchor / 2;
+}
+
 // A cell's place in the largest grid as one number, counted row by row. Lists
 // of cells hold these, so a cell costs two bytes rather than a pair, and the
 // packed store below finds its cells the same way.

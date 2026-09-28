@@ -121,6 +121,11 @@ add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
 
+# Focused execution/inference regression; build explicitly when changing placement.
+add_executable(arc_copy_to_tests EXCLUDE_FROM_ALL "tests/copy_to.cpp")
+target_link_libraries(arc_copy_to_tests PRIVATE arc_gpu)
+target_compile_definitions(arc_copy_to_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 # The GUI: a window onto the search, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA
 # context: GUI code that reached for the GPU would fail to link.
