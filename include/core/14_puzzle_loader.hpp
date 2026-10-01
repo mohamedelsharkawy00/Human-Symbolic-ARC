@@ -257,6 +257,21 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
         (!learned || claimed != shape_color_map_rule::body_recolor);
     task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =
         (!learned || claimed != shape_color_map_rule::interior_fill);
+    // A color taken from a partner is only ever the partner inference read off
+    // the pairs; anywhere else the op would paint by a relation nothing bore out.
+    using said_as = correspondence_election::fired_rule::said_as;
+    bool colored_by_partner = false, placed_by_partner = false, mirrored_by_partner = false;
+    if (const auto& election = inf.correspondence; !election.readings.empty()) {
+        const auto& read = election.readings[election.chosen];
+        for (const int8_t which : read.line) {
+            colored_by_partner = colored_by_partner || read.fired[which].as == said_as::color_from;
+            placed_by_partner = placed_by_partner || read.fired[which].as == said_as::align_to;
+            mirrored_by_partner = mirrored_by_partner || read.fired[which].as == said_as::mirror_around;
+        }
+    }
+    task.dead_ops[(int)node_type::ColorFrom] = !colored_by_partner;
+    task.dead_ops[(int)node_type::AlignTo] = !placed_by_partner;
+    task.dead_ops[(int)node_type::MirrorAround] = !mirrored_by_partner;
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one

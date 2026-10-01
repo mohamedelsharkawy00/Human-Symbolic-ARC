@@ -160,6 +160,13 @@ inline void report_shape_color_map(ostream& report, const shape_color_map_rule& 
     for (int i = 0; i < rule.count; ++i)
         report << "shape " << rule.keys[i]
           << " -> color " << (int)rule.colors[i] << "\n";
+    // Read off the elected reading: which of its pieces keyed which, as the
+    // pairs below number them.
+    for (size_t which = 0; which < rule.read.size(); ++which) {
+        const auto& read = rule.read[which];
+        report << "  pair " << which << "  key in[" << read.key << "]  target in["
+          << read.target << "] became " << (int)read.became << "\n";
+    }
     report << "\n";
 }
 
@@ -188,10 +195,10 @@ inline void report_color_diff(ostream& report, const color_diff_facts& diff) {
 // and still differ here.
 inline void report_correspondence_readings(ostream& report, const correspondence_election& correspondence) {
     report << "[correspondence] segmentation " << segmentation_names[(int)correspondence.segmentation] << "\n";
-    // Which readings were actually in the election. Everything else below was
-    // run for the table and never competed — see select_segmentation.
-    report << "  ELECTED FROM the readings marked SEARCHED; the rest never"
-              " competed and are shown only so the table can be read\n";
+    // Which readings were actually in the election: each way of seeing objects'
+    // best, as [fired] lists them. The rest never competed -- see competes.
+    report << "  ELECTED FROM each way of seeing objects' best reading, the ones [fired] lists;"
+              " the block segmentations never compete, their readings are evidence for rules\n";
     for (size_t i = 0; i < correspondence.readings.size(); ++i) {
         const auto& reading = correspondence.readings[i];
         report << "  reading " << i
@@ -207,6 +214,38 @@ inline void report_correspondence_readings(ostream& report, const correspondence
         report << "   " << reading_title(reading);
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
+}
+
+// WHAT EACH WAY OF SEEING OBJECTS WAS TAKEN TO SAY, a rule a line, a rule that
+// reads another's evidence a step under it, and what all of them leave over.
+// Only the segmentations that compete: the block claims show up as rules.
+inline void report_fired(ostream& report, const correspondence_election& correspondence) {
+    report << "\n[fired] each segmentation's own reading, rule by rule\n";
+    for (size_t method = 0; method < correspondence.best_of.size(); ++method) {
+        const int16_t kept = correspondence.best_of[method];
+        if (kept < 0 || !correspondence_election::competes((segmentation_methods)method)) continue;
+        const auto& reading = correspondence.readings[kept];
+        report << "  reading " << kept << "  " << segmentation_names[(int)reading.segmentation]
+          << (kept == correspondence.chosen ? "   ELECTED" : "") << "\n";
+        for (const auto& [which, depth] : reading.fired_in_order()) {
+            const auto& rule = reading.fired[which];
+            report << "    " << string((size_t)depth * 2, ' ') << rule.name;
+            if (rule.stands_alone) report << "  by itself";
+            if (rule.pieces || rule.cells)
+                report << "  " << rule.pieces << " pieces, " << rule.cells << " cells";
+            if (!rule.says.empty()) report << "  " << rule.says;
+            if (!rule.no_word_for.empty()) report << "  no word for " << rule.no_word_for;
+            report << "\n";
+        }
+        report << "    left over  " << reading.unclaimed() << " of " << correspondence.cells << " cells\n";
+        // The order the cut's own line says them in, which is the program.
+        if (!reading.line.empty()) {
+            report << "    said as";
+            for (const int8_t which : reading.line) report << "  " << reading.fired[which].name;
+            report << "\n";
+        }
+    }
+    report << "\n";
 }
 
 // Which way the pieces' cells piled up inside their own boxes, if they did.
@@ -455,7 +494,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
       << " sits_on " << pair.sits_on << " hidden " << pair.partly_hidden
       << " turned " << pair.turned << " dropped " << pair.dropped
       << "  made " << pair.made() << "  gone " << pair.gone()
-      << "  unexplained " << (int)pair.left_over.size() - pair.made() - pair.gone()
+      << "  unexplained " << pair.unmatched() - pair.made() - pair.gone()
       << "  carried_cells " << pair.exact_covered_cells
       << "  created_cells " << pair.created_cells << "\n";
     for (const bool input : { true, false }) {
@@ -515,12 +554,30 @@ inline void log_inference(const string& id, const inference& inf,
     report_unchanged(report, inf.unchanged);
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
+    report_fired(report, inf.correspondence);
     report_diagonal_continuation(report, inf.diagonal_continuation);
     report_periodic_denoise(report, inf.periodic_denoise);
     report_piece_slam(report, inf.piece_slam);
     report_overlap_corner(report, inf.overlap_corner);
     report_slide_to_touch(report, inf.slide_to_touch);
     report_project_on_seeds(report, inf.project_on_seeds);
+    report << "[snap_to_anchors] holds " << inf.snap_to_anchors.holds() << "\n\n";
+    report << "[piece_frame] holds " << inf.frame.holds();
+    static constexpr const char* frame_kinds[] = { "cut out", "scaled up", "scaled down", "tiled", "posed",
+                                                   "fractal", "repeat unit", "laid out" };
+    if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::laid_out)
+        report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
+               << "  cell " << (int)inf.frame.factor;
+    else if (inf.frame.holds() && inf.frame.kind != piece_frame_rule::cut_out)
+        report << "  " << frame_kinds[inf.frame.kind] << "  factor " << (int)inf.frame.factor;
+    else if (inf.frame.holds())
+        report << "  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
+               << "  how " << (int)inf.frame.how << "  value " << (int)inf.frame.value;
+    report << "\n\n";
+    if (inf.framed) {
+        report << "[framed] the same-size puzzle read through the frame\n";
+        report_fired(report, inf.framed->correspondence);
+    }
     report << "[copy_to] holds " << inf.copy_to.holds();
     if (inf.copy_to.holds())
         report << "  panes " << inf.copy_to.panes << "  anchor " << (int)inf.copy_to.anchor;

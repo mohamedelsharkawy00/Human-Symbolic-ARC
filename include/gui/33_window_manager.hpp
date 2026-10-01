@@ -422,17 +422,6 @@ private:
         scrub_to(x);
         return 0;
       }
-      // A held table follows the cursor the same way, cell by cell. Off the
-      // cells nothing changes, so sweeping past the edge and back keeps what
-      // was last landed on rather than snapping to an end.
-      if (m_sweeping_cells) {
-        for (const auto &z : m_app_state.pick_zones)
-          if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) {
-            z.which->store(z.value);
-            break;
-          }
-        return 0;
-      }
       // Handle drag: the drawer's bottom edge follows the cursor. Dragging down
       // opens/expands; dragging up shrinks; releasing near the top closes. Once
       // the cursor has moved past a small deadzone it's a drag (consumed), so
@@ -497,17 +486,6 @@ private:
             return 0;
           }
         }
-        // A cell of a table lands on press and takes the whole gesture, the
-        // same as a track. It also HOLDS the gesture: dragging across the table
-        // walks the cells under the cursor, so comparing a row is one sweep
-        // instead of a press per cell.
-        for (const auto &z : m_app_state.pick_zones) {
-          if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) {
-            z.which->store(z.value);
-            m_sweeping_cells = true;
-            return 0;
-          }
-        }
       }
       // Drag from the handle, or from any empty space inside the open panel
       // (not over a tab/op zone).
@@ -545,10 +523,6 @@ private:
       // the button and drag handling below, so neither may act on the release.
       if (m_scrub) {
         m_scrub = nullptr;
-        return 0;
-      }
-      if (m_sweeping_cells) {
-        m_sweeping_cells = false;
         return 0;
       }
       bool was_drag = m_dragging_handle;
@@ -601,8 +575,6 @@ private:
   // The track being scrubbed, null when none is. Its geometry is copied on the
   // press: the zone list is rebuilt every frame, so the zone itself won't keep.
   track* m_scrub = nullptr;
-  // A press that landed on a table cell and has not been let go of.
-  bool m_sweeping_cells = false;
   int m_scrub_x = 0, m_scrub_w = 0, m_scrub_stops = 0, m_scrub_knob = 0;
 
   // Put the held track on the stop under x, pinned to its ends, then store what

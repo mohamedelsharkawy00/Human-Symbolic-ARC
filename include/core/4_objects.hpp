@@ -101,6 +101,9 @@ ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
 
 // Extend's seed and rays are shared by inference and execution. Ties go to
 // the first cell in row-major order; the seed itself is not part of the rays.
+// Each ray cell is handed over as its offset from the seed, down and across,
+// so whoever paints it clips it to what it paints on: a long ray runs on to the
+// edge of the grid, not to the end of some frame of its own.
 struct ray_seed { int row = -1, col = -1; };
 
 template <class Cell>
@@ -127,14 +130,22 @@ ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool di
                                 : (direction < 2 ? (direction == 0 ? -1 : 1) : 0);
         const int dy = diagonal ? (direction % 2 == 0 ? -1 : 1)
                                 : (direction >= 2 ? (direction == 2 ? -1 : 1) : 0);
-        for (int step = 1; step <= radius; ++step) {
-            const int row = seed.row + radius + dy * step;
-            const int col = seed.col + radius + dx * step;
-            // Extend's expanded object mask has the same limit as a grid.
-            if (row >= 0 && row < MAX_GRID_DIM && col >= 0 && col < MAX_GRID_DIM)
-                paint(row, col);
-        }
+        for (int step = 1; step <= radius; ++step) paint(dy * step, dx * step);
     }
+}
+
+// TileX's and TileY's step, shared by inference and execution. A tiled piece is
+// laid again and again `period` cells apart, counted from where it stands, its
+// first column (TileX) or row (TileY) at `start`: it stays put, and its copies
+// run both ways from it to the edges. So the cell `at` along that axis shows
+// the piece's own cell `(at - start) mod period` along it -- or none, -1, where
+// that falls past the piece's `size` cells. Counted from the canvas's edge
+// instead, a piece off that count -- 4f537728's marker at column 11, three
+// apart -- is laid in the gaps beside its own place.
+ARC_HOST_DEVICE inline int tiled_source(int at, int start, int period, int size) {
+    if (period <= 0) return -1;
+    const int source = ((at - start) % period + period) % period;
+    return source < size ? source : -1;
 }
 
 // VoteDenoise's arithmetic, in one place for the kernel and for inference.

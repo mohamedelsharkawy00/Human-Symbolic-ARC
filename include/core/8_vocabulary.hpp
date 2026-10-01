@@ -2,6 +2,37 @@
 // Numbered after 7_infer.hpp, whose elected facts some ops name. The vocabulary
 // itself compiles against 0_core.hpp alone. Read by 9_sentences.hpp, which spells
 // programs, and 12_dsl.cuh, which runs them, from the same definitions.
+//
+// WORDS THE READING CANNOT SAY YET (as of 2026-10-01). Inference says a word only
+// after replaying it on every training pair on the host, with the arithmetic the
+// GPU op runs, and seeing it at work in every pair. The ops below have no such
+// replay in the general reading: no inferred program uses them, except where one
+// special-case rule spells them for its own pattern. To unlock one:
+//   1. Move the op's arithmetic into a shared ARC_HOST_DEVICE helper and have the
+//      GPU op in src/cuda_solver.cu call it (snap_to_anchors and slam_cells in
+//      7_infer.hpp are the pattern), so the replay and the op cannot differ.
+//   2. Replay it in 7_infer.hpp: a *_holds check asked in finish_the_line for a
+//      same-size word, a frame kind in choose_piece_frame for a size change, or a
+//      whole_line rule for a word that redraws every output by itself.
+//   3. Spell it in 9_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
+//   4. Check with arc_said on the training set (no solved puzzle lost, the wrong
+//      count not up), arc_copy_to_tests, and the readouts' fully-explained-but-
+//      unsolved list.
+// Read what earlier paints left on the canvas, so they wait on composition:
+//   Output, ReadUnder, MaskBy, MaskOut, Intersection, Difference (only the input-
+//   blocks and pane rules spell it), AlignToCanvas (only slide-to-touch does).
+// IntersectionList: folds the picked pieces into one; only the pane rules say it.
+// Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
+// Partition: cuts tiles on walls the selection marks; overlaps the pane rules.
+// Panes: only the pane rules say it; it is not a frame kind yet.
+// Fit: stretches a picked piece to the input's own size, so the output keeps the
+//   input's size -- a same-size whole-grid word, not a frame. Only pane-pick says it.
+// NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
+//   mark-lattice rule says them.
+// SortBySize: said only as a helper where a word reads list order (size rank,
+//   project on seeds); it changes nothing visible by itself.
+// Skew: its range is -1..1, but the op keeps 47 slopes and -1 does nothing; fix
+//   the range before it can be said.
 #pragma once
 #include "0_core.hpp"
 #include <string_view>
@@ -127,10 +158,14 @@ enum class inferred_amount { none, some, all };
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
+  /* Each picked piece wears its partner's color, as partner_by numbers them. */ \
+  X(ColorFrom                   , 0                 , 7                        , map      , none, true , false) \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
-  X(ExtendDiagonal              , 2                 , 10                       , generate , none, true , false) \
-  X(ExtendOrthogonal            , 2                 , 10                       , generate , none, true , false) \
+  /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \
+  /* as long as a grid is wide, so a ray can run on to any edge.              */ \
+  X(ExtendDiagonal              , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, true , false) \
+  X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, true , false) \
   X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
   X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
@@ -143,6 +178,12 @@ enum class inferred_amount { none, some, all };
   X(Layout                      , 0                 , 10                       , translate, none, false, false) \
   X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, true , false) \
   X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
+  /* Each picked piece moves level with its partner: rows first, then columns, */ \
+  /* each by every way partner_by finds one.                                   */ \
+  X(AlignTo                     , 0                 , 15                       , translate, none, true , false) \
+  /* Each picked piece drawn again mirrored around its partner's middle or the */ \
+  /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
+  X(MirrorAround                , 0                 , 26                       , generate , none, true , false) \
   X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \

@@ -30,6 +30,7 @@
 #include "8_vocabulary.hpp"
 #include <bit>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,39 @@ inline string pick_only_color(int color) {
     return "SelectAll InvertSelection " + spell("SelectColor", color);
 }
 
+// The pieces of any of the colors in `colors`, a bit each, picked from none.
+// Selectors add, so each color is one more SelectColor.
+inline string pick_colors(uint16_t colors) {
+    string pick = "SelectAll InvertSelection";
+    for (int color = 0; color < COLOR_COUNT; ++color)
+        if (colors >> color & 1) pick += " " + spell("SelectColor", color);
+    return pick;
+}
+
+// A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
+// the color most cells wear, every color but that one -- when `how` names one,
+// else by its colors.
+inline string pick_words(uint16_t colors, int8_t how, int8_t value) {
+    using fired_rule = correspondence_election::fired_rule;
+    static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
+                                                 "SelectSmallestObject", "SelectRow", "SelectColumn",
+                                                 "SelectMostCommonColor",
+                                                 "SelectMostCommonColor InvertSelection" };
+    static_assert(size(selectors) == (size_t)fired_rule::pick_kinds);
+    // SelectMostCommonColor takes no value: which color it picks is the list's to say.
+    if (how == fired_rule::most_common || how == fired_rule::not_most_common)
+        return string("SelectAll InvertSelection ") + selectors[how];
+    if (how >= 0) return "SelectAll InvertSelection " + spell(selectors[how], value);
+    return pick_colors(colors);
+}
+
+// THE PIECES A RULE PICKS, as words, picked from none: by its pick of holes or of
+// size, by its colors, by its one color -- or every piece.
+inline string pick_of(const correspondence_election::fired_rule& rule) {
+    if (rule.pick_by >= 0 || rule.picks) return pick_words(rule.picks, rule.pick_by, rule.pick_value);
+    return rule.color < 0 ? string("SelectAll") : pick_only_color(rule.color);
+}
+
 struct said_reading {
     vector<string> sentences;
     vector<string> no_word_for;
@@ -58,6 +92,9 @@ struct said_reading {
     // said more than one way -- everything after it hangs off the chosen
     // reading's own pieces, so a rival segmentation has no follow-on to go with it.
     vector<string> other_openings;
+    // Cells of the pairs these sentences leave unexplained. A rule that speaks
+    // holds over every cell, so only the cut's own line leaves any.
+    int left_unexplained = 0;
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
@@ -68,7 +105,6 @@ inline const char* word_for_segmentation(segmentation_methods segmentation) {
         case segmentation_methods::connected_multicolor:   return "Split[0]";
         case segmentation_methods::all_cells_of_one_color: return "Colors";
         case segmentation_methods::minimal_repeating_set:  return "Pattern";
-        case segmentation_methods::smallest_of_two_grids:  return nullptr;
         default:                                          return nullptr;
     }
 }
@@ -715,83 +751,246 @@ inline bool say_ranked_layout(const inference& inf, said_reading& said) {
     return true;
 }
 
-inline said_reading say_the_reading(const inference& inf) {
-    const correspondence_election& facts = inf.correspondence;
-    said_reading said;
-    // Asked first: a split is a fact about the frame, and where it holds the
-    // panes are what the pairs are about. Nothing below knows they are there.
-    if (say_panes(inf, said)) return said;
-    // Except one pane chosen only for where it sits: a corner of the input says
-    // the same place with no lattice, so it is asked before the pick.
-    if (say_corner_crop(inf, said)) return said;
-    if (say_pane_pick(inf, said)) return said;
-    if (say_pane_gather(inf, said)) return said;
-    if (say_ray_extension(inf, said)) return said;
-    if (say_mark_lattice(inf, said)) return said;
-    if (say_input_blocks(inf, said)) return said;
-    // A noisy lattice, voted clean. The whole input is the one piece the vote
-    // reads, so there is nothing to cut first and nothing left to explain.
-    if (inf.periodic_denoise.holds()) {
-        say_sentence(said, "Input", "SelectAll", "VoteDenoise", "Union");
-        return said;
+// THE INPUT REPEATS, AND THE OUTPUT CARRIES THE REPEAT. Pattern cuts the input
+// into its repeating block, the block's own cell-level map is spelled once, and
+// Tile[0] carries it across. A claim about the grid, read off the block's own
+// matching, so it is said whichever way of seeing objects won the election; the
+// generic object recolor of the cut's own line has another scope.
+inline bool say_motif_continuation(const inference& inf, said_reading& said) {
+    const auto& motif = inf.motif_continuation;
+    if (!motif.holds() || !inf.size.holds() ||
+        inf.size.Chosen == output_dimension_rule::BoundingBox) return false;
+    const auto map_word = word_for_color_map(motif.color_map);
+    if (!map_word) {
+        said.no_word_for.push_back("the motif's cell-color mapping");
+        return false;
     }
-    // THE GAPS BETWEEN PIECES OF ONE COLOUR, FILLED. Said under the cut its
-    // replay held under, which need not be the elected one, and laid under what
-    // is there, so a bar that crosses a wall goes behind it. The paint needs the
-    // whole hand said out loud, since the bars come back unmarked (mark_after).
-    if (inf.bridge.holds())
-        if (const char* cut = word_for_segmentation(inf.bridge.segmentation)) {
-            say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
-                                       {"SelectAll", "Bridge"} }, "Underlay");
-            return said;
-        }
-    if (inf.interior_fill.holds()) {
-        say_closed(said, "InputWithoutBackground SelectAll Split[0] SelectAll Trim " +
-                   spell("InteriorColor", inf.interior_fill.color), "Union");
-        return said;
-    }
-    if (inf.interior_spread.holds()) {
-        // Paint the cores, then restore the original boundaries. Reread the
-        // input for Outline: the recolored hand has lost its boundary colors.
-        say_closed(said, "Input", "Union");
-        const string pieces = "InputWithoutBackground SelectAll Split[0] SelectAll";
-        say_closed(said, pieces + " Recolor[10]", "Union");
-        say_closed(said, pieces + " Outline", "Union");
-        return said;
-    }
-    if (inf.hole_colors.holds()) {
-        vector<beat> recolors = { {"SelectAll", "Split[1]"} };
-        for (int holes = 0; holes < hole_color_rule::key_count; ++holes)
-            if (is_color(inf.hole_colors.colors[holes]))
-                recolors.push_back({"SelectAll InvertSelection " + spell("SelectObjectsWithHoles", holes),
-                                    spell("Recolor", inf.hole_colors.colors[holes])});
-        say_beats(said, "InputWithoutBackground", recolors, "Union");
-        return said;
-    }
-    if (say_ranked_layout(inf, said)) return said;
-    if (say_edge_slide(inf, said)) return said;
-    if (inf.copy_to.holds()) {
-        say_closed(said, "Input", "Union");
-        const string pieces = string("InputWithoutBackground ") +
-            (inf.copy_to.panes ? "Panes " : "") +
-            "Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] ";
-        said.sentences.push_back(closed_on_the_pick(pieces + spell("CopyTo", inf.copy_to.anchor), "Union"));
-        return said;
-    }
-    // The least common color alone. The size rule's box is the crop, so the
-    // sentence only picks that color and paints it where it lies.
-    if (inf.rarest_color.holds()) {
-        said.sentences.push_back(closed_on_the_pick("Input Colors SelectSmallestObject[0]", "Union"));
-        return said;
-    }
-    if (facts.chosen_pairs().empty()) return said;
+    vector<beat> beats = { {"SelectAll", word_for_segmentation(segmentation_methods::minimal_repeating_set)} };
+    if (!map_word->empty()) beats.push_back({"SelectAll", *map_word});
+    beats.push_back({"SelectAll", "Tile[0]"});
+    say_beats(said, "Input", beats, "Union");
+    return true;
+}
 
-    // A whole-input block is not a repeating unit extracted by Pattern. Until
-    // its placement is explained, copying it has no complete sentence here.
-    if (facts.segmentation == segmentation_methods::smallest_of_two_grids) {
-        said.no_word_for.push_back("the placement of whole-input copies");
-        return said;
+// A NOISY LATTICE, VOTED CLEAN. The whole input is the one piece the vote
+// reads, so there is nothing to cut first and nothing left to explain.
+inline bool say_periodic_denoise(const inference& inf, said_reading& said) {
+    if (!inf.periodic_denoise.holds()) return false;
+    say_sentence(said, "Input", "SelectAll", "VoteDenoise", "Union");
+    return true;
+}
+
+// THE GAPS BETWEEN PIECES OF ONE COLOUR, FILLED. Said under the cut its
+// replay held under, which need not be the elected one, and laid under what
+// is there, so a bar that crosses a wall goes behind it. The paint needs the
+// whole hand said out loud, since the bars come back unmarked (mark_after).
+inline bool say_bridge(const inference& inf, said_reading& said) {
+    if (!inf.bridge.holds()) return false;
+    const char* cut = word_for_segmentation(inf.bridge.segmentation);
+    if (!cut) return false;
+    say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
+                               {"SelectAll", "Bridge"} }, "Underlay");
+    return true;
+}
+
+// Every hollow filled with the one color the rule read.
+inline bool say_interior_fill(const inference& inf, said_reading& said) {
+    if (!inf.interior_fill.holds()) return false;
+    say_closed(said, "InputWithoutBackground SelectAll Split[0] SelectAll Trim " +
+               spell("InteriorColor", inf.interior_fill.color), "Union");
+    return true;
+}
+
+// Paint the cores, then restore the original boundaries. Reread the input for
+// Outline: the recolored hand has lost its boundary colors.
+inline bool say_interior_spread(const inference& inf, said_reading& said) {
+    if (!inf.interior_spread.holds()) return false;
+    say_closed(said, "Input", "Union");
+    const string pieces = "InputWithoutBackground SelectAll Split[0] SelectAll";
+    say_closed(said, pieces + " Recolor[10]", "Union");
+    say_closed(said, pieces + " Outline", "Union");
+    return true;
+}
+
+// Each piece recolored by how many holes it has.
+inline bool say_hole_colors(const inference& inf, said_reading& said) {
+    if (!inf.hole_colors.holds()) return false;
+    vector<beat> recolors = { {"SelectAll", "Split[1]"} };
+    for (int holes = 0; holes < hole_color_rule::key_count; ++holes)
+        if (is_color(inf.hole_colors.colors[holes]))
+            recolors.push_back({"SelectAll InvertSelection " + spell("SelectObjectsWithHoles", holes),
+                                spell("Recolor", inf.hole_colors.colors[holes])});
+    say_beats(said, "InputWithoutBackground", recolors, "Union");
+    return true;
+}
+
+// The largest figure copied onto the others, the input laid down first.
+inline bool say_copy_to(const inference& inf, said_reading& said) {
+    if (!inf.copy_to.holds()) return false;
+    say_closed(said, "Input", "Union");
+    const string pieces = string("InputWithoutBackground ") +
+        (inf.copy_to.panes ? "Panes " : "") +
+        "Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] ";
+    said.sentences.push_back(closed_on_the_pick(pieces + spell("CopyTo", inf.copy_to.anchor), "Union"));
+    return true;
+}
+
+// The least common color alone. The size rule's box is the crop, so the
+// sentence only picks that color and paints it where it lies.
+inline bool say_rarest_color(const inference& inf, said_reading& said) {
+    if (!inf.rarest_color.holds()) return false;
+    said.sentences.push_back(closed_on_the_pick("Input Colors SelectSmallestObject[0]", "Union"));
+    return true;
+}
+
+// ONE RULE ON THE CUT'S LINE, AS WORDS: the beats it adds. The Trim picked every
+// piece, so a line about one color picks it from none picked.
+inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, const inference& inf) {
+    using said_as = correspondence_election::fired_rule::said_as;
+    const string pick = pick_of(rule);
+    vector<beat> beats;
+    switch (rule.as) {
+        case said_as::turn:
+            for (const string& word : words_for_pose(rule.value)) beats.push_back({pick, word});
+            break;
+        case said_as::move_down:   beats.push_back({pick, spell("MoveColumn", rule.value)}); break;
+        case said_as::move_across: beats.push_back({pick, spell("MoveRow", rule.value)}); break;
+        case said_as::recolor:     beats.push_back({pick, spell("Recolor", rule.value)}); break;
+        case said_as::color_from:  beats.push_back({pick, spell("ColorFrom", rule.value)}); break;
+        case said_as::align_to:    beats.push_back({pick, spell("AlignTo", rule.value)}); break;
+        case said_as::mirror_around: beats.push_back({pick, spell("MirrorAround", rule.value)}); break;
+        case said_as::outlined:    beats.push_back({pick, "Outline"}); break;
+        case said_as::recolor_picked: beats.push_back({pick, spell("Recolor", rule.value)}); break;
+        case said_as::removed:     beats.push_back({pick, "DeleteSelection"}); break;
+        case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
+        case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
+        case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;
+        case said_as::learned_table:
+            if (const char* word = word_for_learned_recolor(inf.shape_color_map))
+                beats.push_back({"SelectAll", word});
+            break;
+        case said_as::size_rank:
+            // A color layer can hold several disconnected pieces; the rank
+            // belongs to each piece, not their combined color.
+            if (inf.correspondence.segmentation == segmentation_methods::all_cells_of_one_color)
+                beats.push_back({"SelectAll", "Split[0]"});
+            // SizeRankColorMap reads list order, so say the sort too.
+            beats.push_back({"SelectAll", "SortBySize[0]"});
+            beats.push_back({"SelectAll", "SizeRankColorMap"});
+            break;
+        default: break;
     }
+    return beats;
+}
+
+// WHAT A RULE DRAWS OFF THE PIECES, as the one beat of a sentence said after the
+// line: the pieces picked and the word that draws -- rays, bars, filled hollows,
+// trails, filled boxes, copies, repeats -- and whether what it draws goes over what is
+// already down or under it. False for a rule that draws nothing after the line.
+inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint) {
+    using said_as = correspondence_election::fired_rule::said_as;
+    const string pick = pick_of(rule);
+    switch (rule.as) {
+        case said_as::extend_rays: {
+            // Rays only, the pieces are already down; painted over in the rule's
+            // own color unless it is the one color picked.
+            string act = spell(rule.value >= 32 ? "ExtendDiagonal" : "ExtendOrthogonal", rule.value % 32);
+            if (rule.picks != (uint16_t)(1u << rule.paint)) act += " " + spell("Recolor", rule.paint);
+            drawn = { pick, act };
+            paint = "Union";
+            return true;
+        }
+        case said_as::bridged: {
+            // Bridge reads every piece and hands the bars back unmarked, so the
+            // inversion picks the bars alone, to paint them and to paint over.
+            string act = "Bridge InvertSelection";
+            if (rule.paint >= 0) act += " " + spell("Recolor", rule.paint);
+            drawn = { "SelectAll", act };
+            paint = "Underlay";
+            return true;
+        }
+        case said_as::filled:      drawn = { pick, spell("InteriorColor", rule.paint) }; paint = "Underlay"; return true;
+        case said_as::trailed:     drawn = { pick, spell("ExtendTo", rule.value) };      paint = "Union";    return true;
+        case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
+        case said_as::copied_onto: drawn = { pick, spell("CopyTo", rule.value) };        paint = "Union";    return true;
+        case said_as::tiled_along:
+            drawn = { pick, spell(rule.value >= 32 ? "TileY" : "TileX", rule.value % 32) };
+            paint = "Union";
+            return true;
+        default:                   return false;
+    }
+}
+
+// THE FRAME'S WORDS IN FRONT OF A LINE: each sentence that opens on the input
+// opens instead on the input framed -- the piece the frame's pick takes, cut out
+// and moved to the corner (the cut, the pick, every other piece deleted, then
+// Origin), or the whole input scaled up, scaled down or tiled -- and the line's
+// own cut carves that. False for a line that opens any other way.
+inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& said) {
+    string framed;
+    switch (frame.kind) {
+    case piece_frame_rule::scaled_up:   framed = "Input SelectAll " + spell("ScaleUp", frame.factor); break;
+    case piece_frame_rule::scaled_down: framed = "Input SelectAll " + spell("ScaleDown", frame.factor); break;
+    case piece_frame_rule::tiled:       framed = "Input SelectAll " + spell("Tile", 0); break;
+    case piece_frame_rule::fractal:     framed = "InputWithoutBackground SelectAll Fractal"; break;
+    case piece_frame_rule::repeat_unit: framed = "Input SelectAll Pattern"; break;
+    case piece_frame_rule::posed:
+        framed = "Input SelectAll";
+        for (const string& word : words_for_pose(frame.factor)) framed += " " + word;
+        break;
+    default: {
+        const char* cut = word_for_segmentation(frame.cut);
+        if (!cut) return false;
+        // Every piece needs no pick, and nothing to delete.
+        const bool every = frame.how < 0 && frame.colors == (uint16_t)((1u << COLOR_COUNT) - 1);
+        framed = string("Input SelectAll ") + cut + " SelectAll Trim " +
+                 (every ? string() : pick_words(frame.colors, frame.how, frame.value) +
+                                     " InvertSelection DeleteSelection ") +
+                 (frame.kind == piece_frame_rule::laid_out ? "SelectAll " + spell("Layout", frame.factor)
+                  : string(frame.merged ? "SelectAll UnionList " : "") + "SelectAll Origin");
+    }
+    }
+    auto reframe = [&](string& sentence) {
+        if (sentence.rfind("CurrentObjects ", 0) == 0) return true;
+        if (sentence.rfind("Input ", 0) != 0) return false;
+        sentence = framed + sentence.substr(5);
+        return true;
+    };
+    for (string& sentence : said.sentences)
+        if (!reframe(sentence)) return false;
+    for (string& opening : said.other_openings)
+        if (!reframe(opening)) return false;
+    return !said.sentences.empty();
+}
+
+// A RULE THAT STANDS ALONE, SAID: the whole program of the rule it names.
+inline bool say_rival(const correspondence_election::fired_rule& rule, const inference& inf,
+                      said_reading& said) {
+    using speaker = bool (*)(const inference&, said_reading&);
+    // In own_sentences order.
+    static constexpr speaker by_rule[] = {
+        say_panes, say_corner_crop, say_pane_pick, say_pane_gather, say_ray_extension,
+        say_mark_lattice, say_input_blocks, say_periodic_denoise, say_bridge,
+        say_interior_fill, say_interior_spread, say_hole_colors, say_ranked_layout,
+        say_edge_slide, say_copy_to, say_rarest_color, say_motif_continuation };
+    static_assert(size(by_rule) == (size_t)own_sentences::count);
+    return rule.value >= 0 && rule.value < (int)size(by_rule) && by_rule[rule.value](inf, said);
+}
+
+// THE ELECTED CUT'S OWN LINE: its pieces, cut and trimmed, and the acts every
+// pair agrees on. An explanation like any rule's, and what it leaves
+// unexplained is the reading's left over that nothing it says accounts for --
+// a rule with a sentence of its own is a rival, so what that rule claims is
+// still unsaid here.
+inline bool say_the_cut(const inference& inf, said_reading& said) {
+    const correspondence_election& facts = inf.correspondence;
+    if (facts.chosen_pairs().empty()) return false;
+    const auto& read = facts.readings[facts.chosen];
+    said.left_unexplained = read.unclaimed();
+    // Pieces that do not redraw the output where they lie, with nothing on the
+    // line to say what else happened.
+    if (!inf.pieces_redraw && read.line.empty())
+        said.no_word_for.push_back("what happened to the pieces the reading matched");
 
     // A piece that sits on what is already there is laid under it, not over.
     const bool some_sit_on = ranges::any_of(facts.chosen_pairs(), [](const auto& pair) {
@@ -807,7 +1006,7 @@ inline said_reading say_the_reading(const inference& inf) {
     // The segmentation methods that explained just as much. Said as openings of their own so a
     // search can try each, rather than trusting the order they were declared in.
     vector<const char*> tied;
-    auto spoken = [&]() -> said_reading& {
+    auto spoken = [&]() {
         say_beats(said, "Input", beats, combine);
         // A tied opening closes the way the chosen one did, so the rest of the
         // line still follows it.
@@ -818,11 +1017,8 @@ inline said_reading say_the_reading(const inference& inf) {
             for (const string& seen : said.other_openings) already = already || seen == opening;
             if (!already) said.other_openings.push_back(opening);
         }
-        return said;
+        return true;
     };
-
-    const degrees_of_freedom allowed = facts.chosen < (int8_t)facts.readings.size()
-                             ? facts.readings[facts.chosen].allowed : degrees_of_freedom{};
 
     if (const char* segmentation = word_for_segmentation(facts.segmentation)) {
         say(segmentation);
@@ -832,20 +1028,8 @@ inline said_reading say_the_reading(const inference& inf) {
         if (boxed_by_its_cells(facts.segmentation)) say("Trim");
     }
     else said.no_word_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
-
-    // A complete continuation has its own cell-level map. Spell that map once,
-    // then repeat the motif; the generic object recolor below has another scope.
-    if (inf.motif_continuation.holds() && inf.size.holds() &&
-        inf.size.Chosen != output_dimension_rule::BoundingBox) {
-        const auto map_word = word_for_color_map(inf.motif_continuation.color_map);
-        if (!map_word) {
-            said.no_word_for.push_back("the motif's cell-color mapping");
-            return spoken();
-        }
-        if (!map_word->empty()) say(*map_word);
-        say("Tile[0]");
-        return spoken();
-    }
+    // The cut as its words open the line, said again by every paint after it.
+    const vector<beat> opening = beats;
 
     for (int8_t cell : facts.tied_with_chosen) {
         if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
@@ -853,20 +1037,25 @@ inline said_reading say_the_reading(const inference& inf) {
             tied.push_back(segmentation);
     }
 
+    // A RULE THAT DREW EVERY OUTPUT BY ITSELF from the cut's own pieces is the
+    // line's first and only entry, and is said its own way.
+    using said_as = correspondence_election::fired_rule::said_as;
+    const said_as whole = read.line.empty() ? said_as::unsaid : read.fired[read.line.front()].as;
+
     // THE SAME CONTINUATION, READ ALONG THE DIAGONALS. Which color sits on which
     // diagonal is read off the grid in hand, so the sentence carries the lean and
     // nothing else -- that is what makes DiagTile a rule and not a table. Said
     // below the tied openings rather than above them, because all the op reads is
     // the input's own cells where they sat, and any opening that hands those over
     // is as good as the one the election happened to pick.
-    if (inf.diagonal_continuation.holds()) {
+    if (whole == said_as::diagonal_tile) {
         say(spell("DiagTile", inf.diagonal_continuation.lean));
         return spoken();
     }
 
     // PIECES THAT PILED UP INSIDE THEIR OWN BOXES. The slide drew every output
     // by itself, so it is the whole of what happened.
-    if (inf.piece_slam.holds()) {
+    if (whole == said_as::piece_slam) {
         say(spell(inf.piece_slam.rows ? "SlamRow" : "SlamColumn", inf.piece_slam.step));
         return spoken();
     }
@@ -874,7 +1063,7 @@ inline said_reading say_the_reading(const inference& inf) {
     // PIECES LAID INTO A CORNER CHAIN, each hung off the last one's bottom-right
     // cell. Like the slam, the layout drew every output by itself, so it is the
     // whole of what happened and the acts below have nothing left to explain.
-    if (inf.overlap_corner.holds()) {
+    if (whole == said_as::corner_chain) {
         say("OverlapCorner");
         return spoken();
     }
@@ -886,7 +1075,7 @@ inline said_reading say_the_reading(const inference& inf) {
     // that layer alone -- the other is still in hand, waiting for its own
     // sentence. Before a paint read the mark, saying this meant deleting every
     // other layer first and carving the input again for the next one.
-    if (inf.slide_to_touch.holds()) {
+    if (whole == said_as::slide_to_touch) {
         // The Trim above picked every piece, so each line picks its colour
         // from none picked.
         say_beats(said, "Input", beats, "Withhold");
@@ -895,7 +1084,7 @@ inline said_reading say_the_reading(const inference& inf) {
             " " + pick_only_color(inf.slide_to_touch.stays), "Union"));
         said.sentences.push_back(closed_on_the_pick(
             "CurrentObjects " + pick_only_color(inf.slide_to_touch.slides) + " AlignToCanvas", "Union"));
-        return said;
+        return true;
     }
 
     // THE TEMPLATE STAMPED ALONG EVERY MARKER. SortBySize[0] hands over the
@@ -903,7 +1092,7 @@ inline said_reading say_the_reading(const inference& inf) {
     // and the markers it repeats it along are the DSL's own -- this line never
     // names them. Like the slam and the chain, the stamping drew every output
     // by itself, so nothing is left for the acts below to explain.
-    if (inf.project_on_seeds.holds()) {
+    if (whole == said_as::project_on_seeds) {
         // ProjectOnSeeds hands back the input with the stamps over it, so the
         // pieces found sitting on one another are markers under their own
         // stamps -- the projection working, not a piece laid beneath another.
@@ -923,149 +1112,89 @@ inline said_reading say_the_reading(const inference& inf) {
         say(spell("Recolor", worn));
         spoken();
         say_closed(said, "InputWithoutBackground", "Union");
-        return said;
+        return true;
     }
 
-    // A LINE IS A SELECTION AND WHAT HAPPENED TO IT. One piece can turn AND move
-    // AND change colour, so a line carries several acts, and the grammar gives
-    // each act its own sentence sharing the line's GET and SELECT. Only the last
-    // of them paints; the rest withhold, which is what that word is for.
-    //
-    // EACH ACT STANDS ON ITS OWN EVIDENCE. Asked as one key, a turn that differs
-    // between pairs took the colour down with it -- 017c7c7b recolours 1 to 2 in
-    // every pair and says so on every edge, and the reading lost it because the
-    // poses read 0, 5 and 5. Turn, move and colour are three questions, so a
-    // disagreement about one says nothing about the others.
-    //
-    // AN ACT MUST HOLD IN EVERY PAIR, or it is one example's accident.
-    struct seen_act { int8_t color; int8_t what; int8_t value; };
-    auto same_act = [](const seen_act& one, const seen_act& other) {
-        return one.color == other.color && one.what == other.what && one.value == other.value;
+    // BODIES SNAPPED ONTO THEIR ANCHORS. The op reads every piece the cut hands
+    // over as one grid and hands back only the bodies it set down, so they are
+    // all that is painted, over the ground -- nothing sits under them.
+    if (whole == said_as::snap_to_anchors) {
+        combine = "Union";
+        say("SnapToAnchors");
+        return spoken();
+    }
+
+    // THE REST OF THE LINE IS WHAT THE READING FIRED, in the order it says it:
+    // its acts, then the words its recolor is said with. A rule that fired and
+    // has no word names the word the language lacks. What a rule draws off the
+    // pieces -- rays, bars, filled hollows, trails, filled boxes, copies -- is
+    // said after the line, each in a sentence of its own that opens with the cut
+    // again: it reads the pieces as the cut hands them over, which is what its
+    // replay read, and paints only what it draws, over what is down or under it,
+    // so it neither reads what the line or another paint changed nor undoes it.
+    vector<std::pair<beat, const char*>> afterwards;
+    for (const int8_t which : read.line) {
+        const auto& rule = read.fired[which];
+        beat drawn;
+        const char* paint = nullptr;
+        if (!rule.no_word_for.empty()) said.no_word_for.push_back(rule.no_word_for);
+        else if (drawn_after(rule, drawn, paint)) afterwards.push_back({ drawn, paint });
+        else for (const beat& one : beats_of(rule, inf)) beats.push_back(one);
+    }
+
+    spoken();
+    for (const auto& [drawn, paint] : afterwards) {
+        for (size_t i = 0; i < opening.size(); ++i)
+            say_sentence(said, "Input", opening[i].pick, opening[i].act, "Withhold", i == 0);
+        said.sentences.push_back(closed_on_the_pick("CurrentObjects " + drawn.pick + " " + drawn.act, paint));
+    }
+    return true;
+}
+
+// ONE CHOICE AMONG EVERY EXPLANATION ON THE LIST. Each rule that stands alone is
+// an explanation of the pairs, and so is the elected cut's own line. All of them
+// are asked and priced alike -- complete first, meaning no cell left unexplained
+// and no word missing, then the fewest ops -- and the cheapest is said; a tie
+// goes to the one listed first. The list says what fired; nothing here keeps a
+// roster of its own, so a rule that is not on the list is not asked.
+// THE SECOND LIST KEEPS EVERY MISSING WORD. A rule that held and could not be
+// said names what the language lacks, whichever explanation is said.
+inline said_reading say_the_reading(const inference& inf) {
+    vector<said_reading> spoke;
+    vector<string> missing;
+    auto heard = [&](bool it_spoke, said_reading& one) {
+        if (it_spoke) spoke.push_back(std::move(one));
+        else missing.insert(missing.end(), one.no_word_for.begin(), one.no_word_for.end());
     };
-    enum : int8_t { act_turn, act_down, act_across, act_recolor };
-    vector<seen_act> acts_in_every_pair;
-    // Whether any piece landed anywhere but where it started, whether or not
-    // the act that did it survived being asked of every pair.
-    bool a_piece_moved = false;
-    // And whether one was drawn again somewhere new while it stayed where it
-    // was, which no act below says.
-    bool a_piece_was_copied = false;
-    for (size_t which = 0; which < facts.chosen_pairs().size(); ++which) {
-        const auto& pair = facts.chosen_pairs()[which];
-        vector<seen_act> here;
-        auto note = [&](int8_t color, int8_t what, int8_t value) {
-            if (value == 0 && what != act_recolor) return;   // nothing happened
-            for (const auto& already : here)
-                if (same_act(already, {color, what, value})) return;
-            here.push_back({color, what, value});
-        };
-        for (const auto& edge : pair.edges) {
-            const auto* source = pair.source_of(edge);
-            if (!edge.from_input || !edge.same_shape || !source) continue;
-            const auto& piece = *source;
-            note(piece.color, act_turn,   edge.pose);
-            // A copy's landing is not a movement of the single original. Asked
-            // as places and not edges: a piece found from both grids has two
-            // edges for its one landing (places_went), and read as a copy, so
-            // not one move was ever said.
-            if (pair.places_went(edge.from) != 1) {
-                a_piece_was_copied = a_piece_was_copied ||
-                    edge.row != piece.summary.y0 || edge.col != piece.summary.x0;
-            } else {
-                const int8_t down   = (int8_t)(edge.row - piece.summary.y0);
-                const int8_t across = (int8_t)(edge.col - piece.summary.x0);
-                a_piece_moved = a_piece_moved || down != 0 || across != 0;
-                note(piece.color, act_down,   down);
-                note(piece.color, act_across, across);
-            }
-            if (!edge.exact)
-                for (int8_t was = 0; was < COLOR_COUNT; ++was)
-                    if (edge.color_map.changes(was)) note(was, act_recolor, edge.color_map[was]);
+    const auto& election = inf.correspondence;
+    if (!election.readings.empty())
+        for (const auto& rule : election.readings[election.chosen].fired) {
+            if (!rule.stands_alone) continue;
+            said_reading one;
+            heard(say_rival(rule, inf, one), one);
         }
-        if (which == 0) { acts_in_every_pair = here; continue; }
-        vector<seen_act> still;
-        for (const auto& act : acts_in_every_pair)
-            for (const auto& mine : here)
-                if (same_act(act, mine)) { still.push_back(act); break; }
-        acts_in_every_pair = still;
+    said_reading line;
+    heard(say_the_cut(inf, line), line);
+    // A SIZE CHANGE, READ THROUGH ITS FRAME: the framed reading's line, every
+    // sentence of it that opens on the input opening on the framed input -- the
+    // piece cut out and moved to the corner -- instead.
+    if (inf.framed) {
+        said_reading framed;
+        heard(say_the_cut(*inf.framed, framed) && frame_the_sentences(inf.frame, framed), framed);
     }
-
-    bool a_recolor_was_said = false, a_move_was_said = false;
-    for (const auto& act : acts_in_every_pair) {
-        if (act.what == act_recolor) a_recolor_was_said = true;
-        if (act.what == act_down || act.what == act_across) a_move_was_said = true;
-        // The Trim picked every piece, so a line about one color picks it from
-        // none picked.
-        const string pick = act.color < 0 ? string("SelectAll") : pick_only_color(act.color);
-        vector<string> words;
-        switch (act.what) {
-            case act_turn:    words = words_for_pose(act.value); break;
-            case act_down:    words = {spell("MoveColumn", act.value)}; break;
-            case act_across:  words = {spell("MoveRow", act.value)}; break;
-            case act_recolor: words = {spell("Recolor", act.value)}; break;
-            default: break;
-        }
-        for (const string& word : words) beats.push_back({pick, word});
-    }
-
-    // A PIECE MOVED AND NOTHING HERE SAYS WHERE IT WENT. An act has to hold in
-    // every pair, so a slide that differs from piece to piece -- or one whose
-    // pieces wear a different colour in every pair, since an act is asked under
-    // the colour it happened to -- leaves the table empty. Empty then reads as
-    // "nothing happened", and the line says to segment the input and paint it
-    // straight back. That is the language missing a word for the arrangement,
-    // not the pieces standing still, and this is the moment to say so.
-    if (allowed.translate && a_piece_moved && !a_move_was_said)
-        said.no_word_for.push_back("where each piece went");
-    // A PIECE DRAWN AGAIN AND NOTHING HERE SAYS WHERE. Left unsaid, the line
-    // paints the input straight back and the copies were never there -- 06df4c85
-    // said exactly that, with nothing in this list to show a word was missing.
-    if (allowed.translate && a_piece_was_copied)
-        said.no_word_for.push_back("where each copy was drawn");
-
-    // A swap is said over the pieces, so it only has to hold where a piece is.
-    // Candidates that fail even that remain available to search.
-    //
-    // AND ONLY WHERE THE READING LET A COLOUR CHANGE AT ALL. A swap IS a
-    // recolour, so a reading that matched every piece without one has already
-    // said these pieces kept their colours -- and over_the_pieces is in no
-    // position to argue, because the cells it reads are the ones a piece LEFT.
-    // 05f2a901 is the puzzle that shows it: the shape slides up against the
-    // block, [Move] matches all six pieces exactly, 0 recoloured, and 0<->2
-    // holds over the pieces for one reason only -- a shape that moves away
-    // leaves ground where it stood and covers ground where it lands, which
-    // reads cell for cell as the two trading places. Said, it paints the shape
-    // away and the reading draws an empty grid, while its own second list has
-    // already named the thing it cannot say: where each piece went.
-    if (allowed.recolor)
-        for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
-            if (inf.color_swaps.over_the_pieces[variant])
-                say(spell("BidiColorMap", variant));
-
-    if (allowed.recolor)
-        for (const auto& pair : facts.chosen_pairs())
-            if (pair.found_recolored > 0) {
-                if (const char* word = word_for_learned_recolor(inf.shape_color_map))
-                    say(word);
-                else if (!a_recolor_was_said && inf.colors.output_colors_by_size_count > 0) {
-                    // The palette's existing detector recognized this ordering.
-                    // A color layer can hold several disconnected pieces; the
-                    // rank belongs to each piece, not their combined color.
-                    if (facts.segmentation == segmentation_methods::all_cells_of_one_color)
-                        say("Split[0]");
-                    // SizeRankColorMap reads list order, so say the sort too.
-                    say("SortBySize[0]");
-                    say("SizeRankColorMap");
-                }
-                else if (!a_recolor_was_said)
-                    said.no_word_for.push_back("a recolor");
-                break;
-            }
-
-    // A piece that sits on its landing changed shape, and nothing here says how.
-    if (some_sit_on) said.no_word_for.push_back("how a piece changed its shape");
-
-    return spoken();
+    auto price = [](const said_reading& one) {
+        int ops = 0;
+        for (const string& sentence : one.sentences)
+            each_program_word(sentence, [&](std::string_view, node_type) { ++ops; });
+        const bool complete = one.no_word_for.empty() && one.left_unexplained == 0;
+        return tuple{ !complete, one.left_unexplained, ops };
+    };
+    const said_reading* cheapest = nullptr;
+    for (const auto& one : spoke)
+        if (!cheapest || price(one) < price(*cheapest)) cheapest = &one;
+    said_reading said = cheapest ? *cheapest : said_reading{};
+    said.no_word_for.insert(said.no_word_for.begin(), missing.begin(), missing.end());
+    return said;
 }
 
 }  // namespace arc

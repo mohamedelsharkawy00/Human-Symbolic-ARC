@@ -925,12 +925,20 @@ inline vector<row_place> refusals_of(const vector<correspondence_election::pair_
   return all;
 }
 
-// The cells the reading could not account for, in the order they were found.
+// The cells the reading could not account for, in the order they were found,
+// less the ones a fired rule accounts for after all: each place once, however
+// many words it still waits on.
 inline vector<row_place> left_over_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<row_place> all;
-  for (size_t pair = 0; pair < pairs.size(); ++pair)
-    for (size_t i = 0; i < pairs[pair].left_over.size(); ++i)
+  for (size_t pair = 0; pair < pairs.size(); ++pair) {
+    bool taken[2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    for (size_t i = 0; i < pairs[pair].left_over.size(); ++i) {
+      const auto& cell = pairs[pair].left_over[i];
+      if (cell.claimed_by >= 0 || taken[cell.from_input][cell.row][cell.col]) continue;
+      taken[cell.from_input][cell.row][cell.col] = true;
       all.push_back({ (int8_t)pair, (int16_t)i });
+    }
+  }
   return all;
 }
 
@@ -1113,7 +1121,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
                                 const reading_on_screen &walked,
-                                int view, int rank, int step, int drawn,
+                                int view, int rank, int cut, int cuts, int step, int drawn,
                                 int piece_at, int dropped_at, int motif_at,
                                 int left_over_at) {
   const bool facts_face = (view == global_app_state::INFERENCE_FACTS);
@@ -1238,7 +1246,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // of them. This was the width of "DROPPED" alone, and the moment a label
       // grew past it the name ran straight through its own value.
       static const char* const pane_labels[] = {
-          "READING", "LINE", "LEFT OVER", "REFUSED", "MOTIF", "EACH CELL" };
+          "CUT", "LINE", "LEFT OVER", "REFUSED", "MOTIF" };
       int label_col = 0;
       for (const char* name : pane_labels) label_col = max(label_col, text_w(name, scale));
       // THREE CHARACTERS CLEAR OF THE LONGEST LABEL. At one character the widest
@@ -1293,14 +1301,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
 
       // NO RULE ABOVE THE FIRST BLOCK — a divider parts two things, and there is
       // nothing above this one to part it from.
-      // Which reading of the segmentation is on screen, and how many there are. THE
-      // NUMBER IS ITS CELL IN THE TABLE BELOW, counted across, so a step is a step
-      // along that table and never a jump off it.
+      // Which way of cutting the grid is on screen, and how many there are. A
+      // cut is shown at the one reading it kept, the combination of freedoms that
+      // entered the election for it; the rest are in the log.
       // COUNTED FROM ZERO, like the log and like the lists themselves. Counted
       // from one it read as a different number from the same thing, and every
       // sentence about a reading had to say which of the two it meant.
-      row_head("READING", to_text("%4d OF %d", rank, max(1, readings)),
-               rank == correspondence.chosen);
+      row_head("CUT", to_text("%4d OF %d", cut, max(1, cuts)), rank == correspondence.chosen);
       {
         int x = control_x + button("< [SHIFT C]", control_x, ty, ui_action::cycle_coarseness_back) + pad;
         button("> [C]", x, ty, ui_action::cycle_coarseness);
@@ -1314,7 +1321,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                            int color, ui_action back, ui_action fwd, track* which) {
         // RIGHT-ALIGNED, because OFF is three characters and 7 is one, and a
         // wandering OF makes four rows read as four different shapes.
-        // Counted from zero, the same as READING above and the same as the log.
+        // Counted from zero, the same as CUT above and the same as the log.
         row_head(name, at == SHOW_OFF ? to_text("%4s OF %d", "OFF", count)
                      : at == SHOW_ALL ? to_text("%4s OF %d", "ALL", count)
                                       : to_text("%4d OF %d", at, count));
@@ -1339,13 +1346,13 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       if (rank >= readings) return;
       const auto& R = correspondence.readings[rank];
       const auto& pairs = correspondence.readings[rank].pairs;
-      // WHICH READING THIS IS, in words. The table below says it too, but only by
-      // where the boxed cell sits, and hunting for it is work the reader should
-      // not have to do to know what is on screen.
-      detail(to_text("%s %s  ---  %s", segmentation_names_lead,
+      // WHICH CUT THIS IS, in words, and the reading's number, which is what the
+      // log calls it. What its pieces were allowed to do is the list below:
+      // what they actually did.
+      detail(to_text("%s %s  ---  READING %d", segmentation_names_lead,
                      segmentation_names[clamp((int)R.segmentation, 0,
                                        (int)segmentation_methods::count)],
-                     R.allowed.label().c_str()));
+                     rank));
       static const char* kind_name[] = { "EXACT", "RECOLORED", "SITS ON" };
       // The pieces the reading cut out, and the matches it threw away. Neither is
       // reachable through the lines: a piece with no edge draws nothing, and a
@@ -1480,12 +1487,20 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           const auto& cell = pairs[at.pair].left_over[at.which];
           // MADE, GONE, or simply not accounted for — the mirror this pane used
           // to read dropped that field, so the number could be said and the
-          // reason could not.
+          // reason could not. A cell a change carried names every word it still
+          // waits on instead.
+          string why;
+          for (const auto& same : pairs[at.pair].left_over) {
+            if (same.claimed_by >= 0 || same.from_input != cell.from_input ||
+                same.row != cell.row || same.col != cell.col) continue;
+            if (!why.empty()) why += ", ";
+            why += same.waits >= 0 ? "NO WORD FOR " + string(correspondence_election::missing_words[same.waits])
+                 : !same.made_or_gone ? "UNEXPLAINED"
+                 : same.from_input    ? "IT WENT NOWHERE"
+                                      : "IT WAS MADE HERE";
+          }
           said = to_text("PAIR %d  %s  CELL AT %d,%d  %s", (int)at.pair,
-                         cell.from_input ? "INPUT" : "OUTPUT", (int)cell.col, (int)cell.row,
-                         !cell.made_or_gone ? "UNEXPLAINED"
-                         : cell.from_input  ? "IT WENT NOWHERE"
-                                            : "IT WAS MADE HERE");
+                         cell.from_input ? "INPUT" : "OUTPUT", (int)cell.col, (int)cell.row, why.c_str());
         }
         detail(said);
       }
@@ -1493,132 +1508,44 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // divide() expects, and the first rule sat lower in its gap than the rest.
       // Give back the difference and all the gaps draw the same.
 
-      // What this reading COST, the whole reason it leads or trails: pieces it
-      // used and output cells no edge of any kind accounts for, over the train
-      // set. Without it the coarseness steps are unnamed preferences.
-      // EVERY READING AT ONCE: how the grid was segmented and which way round down
-      // the side, what the pieces were allowed to do across the top. Stepping
-      // them one at a time never says how they relate — the table says it in one
-      // look, and the number in a cell is what that correspondence could not
-      // account for ON EITHER GRID, so the best cells are the small ones and you
-      // read for them without being told.
+      // WHAT THE CUT ON SCREEN WAS TAKEN TO SAY, a rule a row, each with what it
+      // accounts for: the input pieces its edges are about and the cells on both
+      // grids they carry. A rule that reads another's evidence sits a step under
+      // it, and says what it names instead of counting cells, since the cells
+      // were already the other rule's. The list is as long as what fired, so a
+      // reading that needed three things shows three and one that needed none
+      // shows none. The last row is what all of them together leave over: the
+      // rules composed when it reads zero.
       divide();
       {
-        const int methods = (int)segmentation_methods::count;
-        // THE COLUMNS ARE WHAT FITS ACROSS. Freedoms doubled when hanging off the
-        // edge became one of them, and sixteen columns ran off the panel and off
-        // the screen. So the table says the other three across the top, as it
-        // always did, and says this one by drawing the whole block of segmentation methods twice:
-        // once for pieces that must stay on the grid, once for pieces that may
-        // hang off it. Same reading in the same place either way — a cell is
-        // still its reading's own cell, the block just says which half it is in.
-        const int modes = degrees_of_freedom::COMBINATIONS / 2;
-        // THE LIST IS THIS TABLE. A reading is kept at its own cell, one row per
-        // segmentation method and one column per freedom, so a cell knows which reading it stands
-        // for without anything having to be looked up — and stepping the reading
-        // walks the table you are looking at.
-        // A ROW IS NAMED BY WHAT IT COST TO LOOK AT, because that is what decided
-        // whether it got searched at all. Said in the label, not in a column of
-        // its own: it is one number per row, and a column would repeat it eight
-        // times as though the freedoms changed it.
-        // NO COST COLUMN. What a segmentation costs to say orders the walk and breaks a
-        // dead tie, and nothing else — the rows here are in segmentation method order, not cost
-        // order, so a number beside them read as a ranking that ranks nothing.
-        // It is still in the log, where a diagnostic belongs.
-        int label_w = text_w(segmentation_names_lead, scale);
-        for (int c = 0; c < methods; ++c)
-          label_w = max(label_w, text_w(segmentation_names[c], scale));
-        // EVERY CELL IS THE SAME BOX, as wide as the widest thing a column ever
-        // holds — a freedom's name, or the biggest number. Cut to its own text a
-        // single digit read as a smaller thing than three, and the boxes down a
-        // column no longer lined up with each other.
-        // MEASURED OVER WHAT A COLUMN ACTUALLY HOLDS. Measured over every freedom
-        // name, the one that has no column — it titles the second block instead —
-        // still set the width of all of them, and the table ran off the panel.
-        int widest = text_w("9999", scale);
-        for (int freedom = 0; freedom < degrees_of_freedom::FREEDOMS - 1; ++freedom)
-          widest = max(widest, text_w(degrees_of_freedom::freedom_names[freedom], scale));
-        const int cell_w = widest + pad * 2;
-        const int chip_w = widest + pad;
-        // THE LABEL ENDS IN A NUMBER, so a one-character gap made that number read
-        // as the first cell of the row. The columns start a clear space away.
-        const int gx = tx + label_w + pad * 10;
-        // EACH COLUMN SAYS WHAT IT IS, AT THE COLUMN. Three named rows of bars
-        // meant reading downwards to decode one column, and a freedom that was
-        // OFF drew nothing — which looks the same as a row that is missing.
-        // A dash is present and legible; a blank is not.
-        // TWO AXES, TWO TITLES, AND THEY FINISH ONE SENTENCE. Down the side is
-        // what an object IS; across the top is what it MAY DO. A reader who has
-        // both can say a cell out loud without a legend: "an object is a group of
-        // cells that touch, and it may move and turn".
-        // CENTRED ON WHAT THEY TITLE. A heading pinned to the left edge of a wide
-        // block reads as the first item of it, not as the name of the whole.
-        auto centred = [&](const string& name, int from_x, int width) {
-          label_chip(name, ty, from_x + (width - text_w(name, scale)) / 2);
-        };
-        // EVERY COLUMN IS THE SAME BOX WIDE, so its heading sits in the middle of
-        // it and so does what it holds. Pinned to the left edge instead, a number
-        // drifts as it gains a digit and the heading no longer names the column
-        // under it.
-        auto cell_x = [&](int m) { return gx + m * cell_w - pad / 2; };
-        // ONE BOX FOR A CELL AND FOR THE HEADING OVER IT. Cut to its own text
-        // instead, a three-letter heading and a one-digit number were two widths
-        // in the same column. Hands back where it drew, so a cell that wants a
-        // border round it puts it on the box and not on the writing.
-        auto column_chip = [&](const string& s, int m, bool inverted) {
-          const int chip_x = cell_x(m) + (cell_w - chip_w) / 2;
-          if (inverted && colored_fonts.count(0))
-            fill_rect(context, UI_COLOR_LINE, chip_x, ty - pad / 2, chip_w, 5 * scale + pad);
-          draw_text(context, inverted && colored_fonts.count(0) ? colored_fonts[0] : font,
-                    s, cell_x(m) + (cell_w - text_w(s, scale)) / 2, ty, scale);
-          return chip_x;
-        };
-        centred(degrees_of_freedom::freedom_names_lead, cell_x(0), modes * cell_w);
-        ty += row_h;
-        // ONE FREEDOM PER LINE, IN ITS OWN WORD. Three initials side by side
-        // needed a legend under the table to be read at all, and one of them
-        // could be taken for either of two freedoms. A dash where a word would
-        // be says the freedom was withheld — a blank would look like a gap.
-        // The freedoms that have a column of their own: everything but the last.
-        const int across = degrees_of_freedom::FREEDOMS - 1;
-        for (int freedom = 0; freedom < across; ++freedom) {
-          // On the last line, so it sits against the sentences it names.
-          if (freedom == across - 1)
-            centred(segmentation_names_lead, tx, label_w);
-          for (int m = 0; m < modes; ++m)
-            column_chip(degrees_of_freedom::from_index(m).may(freedom)
-                            ? degrees_of_freedom::freedom_names[freedom] : "-", m, true);
+        const auto order = R.fired_in_order();
+        // THE NAMES ARE ONE COLUMN however deep they sit, so every count
+        // starts on one edge and a sum can be read straight down.
+        const int step_in = pad * 6;
+        int name_w = text_w("LEFT OVER", scale);
+        for (const auto& [which, depth] : order)
+          name_w = max(name_w, depth * step_in + text_w(R.fired[which].name, scale));
+        const int said_x = tx + name_w + pad * 6;
+        for (const auto& [which, depth] : order) {
+          const auto& rule = R.fired[which];
+          label_chip(rule.name, ty, tx + depth * step_in);
+          // Counts only for a rule that accounts for something, but always the
+          // same width, so what a rule says starts on one edge down the list.
+          // A rule that stands alone explains every pair by itself, not a share.
+          const string counts = rule.pieces || rule.cells
+              ? to_text("%3d %-6s %4d CELLS", rule.pieces, rule.pieces == 1 ? "PIECE" : "PIECES", rule.cells)
+              : to_text("%-21s", rule.stands_alone ? "BY ITSELF" : "");
+          string said = counts;
+          if (!rule.says.empty()) said += "  " + rule.says;
+          if (!rule.no_word_for.empty()) said += "  NO WORD FOR " + rule.no_word_for;
+          if (!measuring) draw_text(context, font, said, said_x, ty, scale);
           ty += row_h;
         }
-        // THE SAME ROWS, TWICE, THE SECOND TIME WITH THE LAST FREEDOM GRANTED.
-        // Its own name titles the second block, so the sentence still finishes:
-        // an object is a group of cells that touch, and it may move and turn and
-        // hang off the edge.
-        for (int half = 0; half < 2; ++half) {
-          if (half) {
-            centred(degrees_of_freedom::freedom_names[across], cell_x(0), modes * cell_w);
-            ty += row_h;
-          }
-          for (int c = 0; c < methods; ++c) {
-            label_chip(segmentation_names[c], ty);
-            for (int m = 0; m < modes; ++m) {
-              const int i = c * degrees_of_freedom::COMBINATIONS + m + half * modes;
-              if (i >= readings) continue;
-              const string s = to_string(correspondence.readings[i].left_over);
-              // The one inference chose reads inverted; the one on screen is boxed.
-              const int chip_x = column_chip(s, m, i == correspondence.chosen);
-              if (i == rank)
-                draw_border(context, chip_x, ty - pad / 2, chip_w, 5 * scale + pad,
-                            max(1, scale / 2));
-              app_state.pick_zones.push_back({cell_x(m), ty - (row_h - 5 * scale) / 2,
-                                              cell_w, row_h, &app_state.inference_rank.at, i});
-            }
-            ty += row_h;
-          }
-        }
-        named_line("EACH CELL", to_text(
-            "CELLS IT COULD NOT ACCOUNT FOR, OF %d ON BOTH GRIDS, EVERY PAIR",
-            (int)correspondence.cells));
+        label_chip("LEFT OVER", ty);
+        if (!measuring)
+          draw_text(context, font, to_text("%11s%4d CELLS OF %d ON BOTH GRIDS", "", R.unclaimed(),
+                                           (int)correspondence.cells), said_x, ty, scale);
+        ty += row_h;
       }
 
       // The same questions asked of every line of the reading, pair by pair, plus
@@ -1675,7 +1602,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                  to_text("%d-%d", most_sources, most_landings),
                  to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
                  to_string(hidden), to_string(turned),
-                 to_string(pr.discarded.size()), to_string(pr.left_over.size()));
+                 to_string(pr.discarded.size()), to_string(pr.unclaimed()));
       }
       // Why the dropped ones were dropped, over the whole reading. EVERY reason
       // there is: the copy this pane used to read had three buckets for four
@@ -2100,7 +2027,6 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 
   app_state.click_zones.clear();
   app_state.slider_zones.clear();
-  app_state.pick_zones.clear();
   {
     lock_guard<mutex> lk(app_state.node_zones_mtx);
     app_state.node_zones.clear();
@@ -2336,11 +2262,18 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
   // once here, for the wrap and for the pane.
   if (int view = app_state.inference_view.load(); view != global_app_state::INFERENCE_OFF) {
     const auto &correspondence = task.inf.correspondence;
-    const int readings = max(1, (int)correspondence.readings.size());
-    // Told which reading inference chose and how many there are, it hands back
-    // the one to show — following the chosen one until somebody steps away.
-    const int rank =
-        app_state.inference_rank.pick(correspondence.chosen, readings);
+    // THE STEPPER WALKS THE CUTS, each at the one reading it kept: the
+    // combination of freedoms that entered the election for it. Told which cut
+    // inference chose and how many there are, it hands back the one to show —
+    // following the chosen one until somebody steps away.
+    vector<int> kept;
+    for (size_t method = 0; method < correspondence.best_of.size(); ++method)
+      if (correspondence.best_of[method] >= 0 &&
+          correspondence_election::competes((segmentation_methods)method))
+        kept.push_back(correspondence.best_of[method]);
+    const int elected_cut = (int)(ranges::find(kept, (int)correspondence.chosen) - kept.begin());
+    const int cut = app_state.inference_rank.pick(elected_cut, max(1, (int)kept.size()));
+    const int rank = kept.empty() ? 0 : kept[min(cut, (int)kept.size() - 1)];
     // WALKED FOR THE ONE READING ON SCREEN, and worked out here rather than
     // stored: these are places in the facts, not copies of them.
     static const vector<correspondence_election::pair_info> nothing;
@@ -2432,8 +2365,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
                        (int)arc_color::orange, rings);
       }
     }
-    draw_inference_pane(context, font, app_state, task, lay, walked, view, rank,
-                        step, drawn, piece_at, dropped_at, motif_at, left_over_at);
+    draw_inference_pane(context, font, app_state, task, lay, walked, view, rank, cut,
+                        (int)kept.size(), step, drawn, piece_at, dropped_at, motif_at, left_over_at);
   }
 
   // The op palette goes last, so it is over everything. It already swallows every

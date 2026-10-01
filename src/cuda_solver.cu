@@ -1102,6 +1102,144 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
     return res;
 }
 
+// THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
+// paint fills on the canvas, whether it paints a cell there, and whether it is
+// picked -- the questions partner_of and partner_color ask (1_readings.hpp),
+// asked as inference's partner_pieces asks them of the pieces it replays.
+struct gpu_partner_view {
+    const gpu_object_list& list;
+    __device__ arc::cell_box box(int i) const {
+        const gpu_fixed_object& obj = list.objects[i];
+        const gpu_painted_box paint = gpu_box_of_paint(obj);
+        arc::cell_box found;
+        if (paint.width > 0 && paint.height > 0) {
+            found.include_cell(obj.y0 + paint.y0, obj.x0 + paint.x0);
+            found.include_cell(obj.y0 + paint.y0 + paint.height - 1, obj.x0 + paint.x0 + paint.width - 1);
+        }
+        return found;
+    }
+    __device__ bool painted(int i, int row, int col) const {
+        const gpu_fixed_object& obj = list.objects[i];
+        const int down = row - obj.y0, across = col - obj.x0;
+        return down >= 0 && across >= 0 && down < obj.height && across < obj.width &&
+               obj.mask[down][across] != GPU_TRANSPARENT;
+    }
+    // Object i's one partner by `how` among the objects not picked, or -1.
+    __device__ int partner(arc::partner_by how, int i) const {
+        return arc::partner_of(how, i, list.count, [&](int j) { return box(j); },
+                               [&](int j, int row, int col) { return painted(j, row, col); },
+                               [&](int j) { return (bool)list.objects[j].selected; });
+    }
+    // The color object i takes from its partners by `how`, or -1.
+    __device__ int color_from(arc::partner_by how, int i) const {
+        return arc::partner_color(how, i, list.count, [&](int j) { return box(j); },
+                                  [&](int j, int row, int col) { return painted(j, row, col); },
+                                  [&](int j) { return (int)gpu_obj_first_color(list.objects[j]); },
+                                  [&](int j) { return (bool)list.objects[j].selected; });
+    }
+};
+
+// ColorFrom[how]: each picked object takes the color of its partner among the
+// objects not picked -- the nearest, one in its rows or columns, the one around
+// it or inside it, one it touches, one of its shape as it lies or turned -- and
+// paints every cell it paints in it. The partner is found by partner_color
+// (1_readings.hpp), the walk inference replays, so the two cannot disagree. An
+// object with no partner, or partners that disagree, keeps its colors. Nothing
+// moves and nothing is dropped.
+__device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i) {
+        if (!src.objects[i].selected) continue;
+        const int color = view.color_from((arc::partner_by)how, i);
+        if (color < 0) continue;
+        auto& obj = res.objects[i];
+        for (int r = 0; r < obj.height; ++r)
+            for (int c = 0; c < obj.width; ++c)
+                if (obj.mask[r][c] != GPU_TRANSPARENT) obj.mask[r][c] = (int8_t)color;
+    }
+    return res;
+}
+
+// AlignTo[value]: each picked object slides, down or across alone, until its
+// painted box starts on the row its one partner's does -- or, for values past
+// the first partner_by::count, the column. The partner is found among the
+// objects not picked by partner_of (1_readings.hpp), the walk inference
+// replays: value % count says how. Partners are never picked, so none of them
+// moves while the others read them. An object with no partner, or several,
+// stays where it is.
+__device__ gpu_object_list& gpu_exec_align_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    constexpr int ways = (int)arc::partner_by::count;
+    if (value < 0 || value >= 2 * ways) return res;
+    const bool columns = value >= ways;
+    const auto how = (arc::partner_by)(value % ways);
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i) {
+        if (!src.objects[i].selected) continue;
+        const int partner = view.partner(how, i);
+        if (partner < 0) continue;
+        const arc::cell_box own = view.box(i), there = view.box(partner);
+        auto& obj = res.objects[i];
+        if (columns) { const int16_t by = (int16_t)(there.col0 - own.col0); obj.x0 += by; obj.x1 += by; }
+        else         { const int16_t by = (int16_t)(there.row0 - own.row0); obj.y0 += by; obj.y1 += by; }
+    }
+    return res;
+}
+
+// MirrorAround[value]: each picked object is drawn again mirrored around the
+// middle of its one partner among the objects not picked -- left to right, top
+// to bottom, or all four ways at once, value / MIRROR_PARTNERS -- or, for the
+// last partner, around the middle of the grid itself. partner_of (1_readings.hpp)
+// finds the partner, the walk inference replays. The picked object stays; its
+// copies join the list after every object there was, picked as it is, as
+// CopyTo's are -- a sentence that picked every piece paints what it holds
+// without picking again. An object with no partner, or several, gets no copy.
+__device__ gpu_object_list& gpu_exec_mirror_around(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    constexpr int partners = arc::MIRROR_PARTNERS;
+    if (value < 0 || value >= (int)arc::mirror_by::count * partners) return res;
+    const auto mirror = (arc::mirror_by)(value / partners);
+    const int how = value % partners;
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i) {
+        const gpu_fixed_object& piece = src.objects[i];
+        if (!piece.selected || piece.width <= 0 || piece.height <= 0) continue;
+        // Twice the middle's row and column, so a middle between two cells is whole.
+        int row2 = ctx.input.height - 1, col2 = ctx.input.width - 1;
+        if (how < (int)arc::partner_by::count) {
+            const int partner = view.partner((arc::partner_by)how, i);
+            if (partner < 0) continue;
+            const arc::cell_box there = view.box(partner);
+            row2 = there.row0 + there.row1;
+            col2 = there.col0 + there.col1;
+        }
+        for (int way = 0; way < 3; ++way) {
+            if (mirror != arc::mirror_by::four_ways && way != (int)mirror) continue;
+            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
+            const bool across = way != 1, down = way != 0;
+            gpu_fixed_object& copy = res.objects[res.count++];
+            copy = piece;
+            for (int r = 0; r < piece.height; ++r)
+                for (int c = 0; c < piece.width; ++c)
+                    copy.mask[r][c] = (int8_t)piece.mask[down ? piece.height - 1 - r : r][across ? piece.width - 1 - c : c];
+            if (across) {
+                copy.x0 = (int16_t)(col2 - (piece.x0 + piece.width - 1));
+                copy.x1 = (int16_t)(copy.x0 + piece.width - 1);
+            }
+            if (down) {
+                copy.y0 = (int16_t)(row2 - (piece.y0 + piece.height - 1));
+                copy.y1 = (int16_t)(copy.y0 + piece.height - 1);
+            }
+        }
+    }
+    return res;
+}
+
 __device__ int gpu_object_hole_count(const gpu_fixed_object& obj) {
     return arc::object_hole_count(min((int)obj.height, GPU_MAX_GRID),
                              min((int)obj.width, GPU_MAX_GRID),
@@ -1159,10 +1297,13 @@ __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, con
 
 // ShapeColorMap: repaint the main object to a color picked by a small glyph's
 // SHAPE, using the puzzle-level table learned host-side (shape_color_map_rule::detect_body_recolor).
-// Removes nothing: key = smallest-bbox object, target = largest-bbox object; the
-// target is recolored to table[hash(key)], everything else passes through. If the
-// table is empty (rejected by the consistency gate) or the glyph's shape isn't in
-// it, the op is a no-op. Learn and apply share one hash (shape_occupancy_hash, 12_dsl.cuh).
+// key = smallest-bbox object, target = largest-bbox object; the target is
+// recolored to table[hash(key)] and the key, read, is used up: dropped from the
+// list as DeleteSelection drops an object, so nothing is painted where it was --
+// whatever lies under it shows, where painting it the background would cover.
+// Everything else passes through. If the table is empty (rejected by the
+// consistency gate) or the glyph's shape isn't in it, the op is a no-op and the
+// key stays. Learn and apply share one hash (shape_occupancy_hash, 12_dsl.cuh).
 __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     res = src;  // pass everything through; default is no-op
@@ -1194,6 +1335,9 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
     for (int r = 0; r < robj.height; ++r)
         for (int c = 0; c < robj.width; ++c)
             if (robj.mask[r][c] != GPU_TRANSPARENT) robj.mask[r][c] = color;
+    // Use the key up: close the list over it.
+    for (int i = key; i + 1 < res.count; ++i) res.objects[i] = res.objects[i + 1];
+    res.count--;
     return res;
 }
 
@@ -1556,15 +1700,9 @@ __device__ gpu_object_list& gpu_exec_shift(gpu_exec_context& ctx, const gpu_obje
         // Move only selected objects; the rest ride through in place. No
         // selection means Shift moves nothing — acts never fall back to "all".
         if (!obj.selected) { res.count++; continue; }
-        int dx = 0, dy = 0;
-        switch (dir) {
-        case 0: dy = -obj.height; break; case 1: dx = obj.width; break;
-        case 2: dy = obj.height; break;  case 3: dx = -obj.width; break;
-        case 4: dx = obj.width; dy = obj.height; break;
-        case 5: dx = -obj.width; dy = obj.height; break;
-        case 6: dx = obj.width; dy = -obj.height; break;
-        case 7: dx = -obj.width; dy = -obj.height; break;
-        }
+        // Its own size away, the way shift_by (1_readings.hpp) numbers them.
+        const arc::heading_step by = arc::shift_by(dir, obj.width, obj.height);
+        const int dx = by.across, dy = by.down;
         obj.x0 += (int16_t)dx; obj.y0 += (int16_t)dy;
         obj.x1 += (int16_t)dx; obj.y1 += (int16_t)dy;
         res.count++;
@@ -2003,8 +2141,9 @@ __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool ho
     }
 
     // Emit one tiled output object per source object. Each output spans the
-    // full canvas on the tiled axis (period = `period`), preserving the
-    // source's own bbox on the fixed axis.
+    // full canvas on the tiled axis (period = `period`, counted from where the
+    // source stands, arc::tiled_source), preserving the source's own bbox on
+    // the fixed axis.
     int per = (int)period;
     int n_out = min(src_count, GPU_KERNEL_MAX_OBJECTS);
     for (int i = 0; i < n_out; ++i) {
@@ -2046,8 +2185,8 @@ __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool ho
                 int cc = c + t2;
                 int8_t v = GPU_TRANSPARENT;
                 if (r < oh && cc < ow) {
-                    int pr = horizontal ? r  : (r  % per);
-                    int pc = horizontal ? (cc % per) : cc;
+                    const int pr = horizontal ? r : arc::tiled_source(r, sy, per, sh);
+                    const int pc = horizontal ? arc::tiled_source(cc, sx, per, sw) : cc;
                     if (pr >= 0 && pr < sh && pc >= 0 && pc < sw) v = obj.mask[pr][pc];
                 }
                 pv[t2] = v;
@@ -2247,29 +2386,32 @@ __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gp
         if (seed.row < 0) continue;
         const int8_t center_color = obj.mask[seed.row][seed.col];
 
-        // Expand the original object's bbox by radius on all sides.
-        int x0 = obj.x0 - radius;
-        int y0 = obj.y0 - radius;
-        int x1 = obj.x1 + radius;
-        int y1 = obj.y1 + radius;
-        int nw = min(x1 - x0 + 1, GPU_MAX_GRID);
-        int nh = min(y1 - y0 + 1, GPU_MAX_GRID);
+        // The object's box grown by radius on every side, clipped to the canvas:
+        // a ray that runs past the edge would never be painted there anyway, and
+        // a frame no wider than the canvas holds every ray that shows -- one
+        // anchored off the object's corner cut the long ones short on its far
+        // sides.
+        const int x0 = max(obj.x0 - radius, 0), y0 = max(obj.y0 - radius, 0);
+        const int x1 = min(obj.x1 + radius, GPU_MAX_GRID - 1), y1 = min(obj.y1 + radius, GPU_MAX_GRID - 1);
+        if (x1 < x0 || y1 < y0) continue;
 
         gpu_fixed_object& out = res.objects[res.count++];
         // The rays belong to the object that grew them, so they carry its mark.
         out.selected = obj.selected;
         out.x0 = (int16_t)x0; out.y0 = (int16_t)y0;
         out.x1 = (int16_t)x1; out.y1 = (int16_t)y1;
-        out.width = (int16_t)nw; out.height = (int16_t)nh;
+        out.width = (int16_t)(x1 - x0 + 1); out.height = (int16_t)(y1 - y0 + 1);
         out.mask.clear();
 
         // RAYS ONLY: do NOT copy the seed/body pixels -- output is just the rays.
         // Callers that need the originals must re-stamp them (e.g. with a
         // Union). A single-pixel seed thus contributes no cell of its own, only
         // its 4 arms. (radius 0 => empty output.)
-
-        arc::each_extended_ray(seed, radius, dir_first == 4,
-            [&](int row, int col) { out.mask[row][col] = center_color; });
+        const int seed_row = obj.y0 + seed.row - y0, seed_col = obj.x0 + seed.col - x0;
+        arc::each_extended_ray(seed, radius, dir_first == 4, [&](int down, int across) {
+            const int row = seed_row + down, col = seed_col + across;
+            if (row >= 0 && row < out.height && col >= 0 && col < out.width) out.mask[row][col] = center_color;
+        });
     }
     return res;
 }
@@ -2766,187 +2908,54 @@ __device__ gpu_object_list& gpu_exec_project_on_seeds(gpu_exec_context& ctx, con
     return res;
 }
 
-// --- SnapToAnchors helpers ---------------------------------------------------
-// 8 dihedral transforms of a relative offset (r,c): i&3 = number of 90deg CW
-// rotations ((r,c)->(c,-r)); i>=4 adds a vertical reflection (negate row).
-// Mirrors the coordinate math in gpu_exec_transform_warp, without the kernel/
-// pool plumbing — used here to try all rigid orientations cheaply in one op.
-__device__ inline void snap_dihedral(int i, int r, int c, int& outr, int& outc) {
-    int rr = r, cc = c;
-    int rot = i & 3;
-    for (int k = 0; k < rot; ++k) { int nr = cc, nc = -rr; rr = nr; cc = nc; }
-    if (i >= 4) rr = -rr;
-    outr = rr; outc = cc;
-}
-
 // SnapToAnchors: rigidly stamp each "body" onto its color-coded anchor cluster.
-//   - body color  = most frequent present color (background must already be
-//                   stripped upstream, e.g. via Foreground; only GPU_TRANSPARENT
-//                   counts as empty here).
-//   - bodies      = mixed-color 8-connected components that contain the body color.
-//   - key-pixels  = a body's cells whose color != body color.
-//   - loose anchors = cells in components WITHOUT the body color (the scattered
-//                   single cells), bucketed by color.
-// For each body, find the (anchor-key, loose-anchor, dihedral orientation) that
-// maps the most key-pixels onto same-colored loose anchors (exact when all align;
-// best-effort otherwise), then stamp the transformed full body there. Output =
-// the stamped bodies only; originals + loose anchors are consumed.
+// Where each body goes is arc::snap_to_anchors' to say (7_infer.hpp) -- the body
+// color, the runs, the keys and anchors, the eight turns and the tie-break --
+// and the rule that replays this op asks it the same question, so the two
+// cannot set a body down differently. What stays here is only the shape the
+// answer is written into: one object per body set down, drawn turned about its
+// key onto the anchor that key lands on. Output = the stamped bodies only;
+// originals + loose anchors are consumed.
 __device__ gpu_object_list& gpu_exec_snap_to_anchors(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
 
     gpu_fixed_grid temp;
     // Full-ceiling canvas (see gpu_exec_split): don't crop a grown stream to input dims.
     gpu_paint_objects(src, GPU_MAX_GRID, GPU_MAX_GRID, temp);
-    int W = temp.width, H = temp.height;
+    const int W = temp.width, H = temp.height;
     if (W <= 0 || H <= 0) return res;
 
-    // 1. body color = most frequent present (non-transparent) color.
-    int freq[GPU_MAX_COLORS]; for (int i = 0; i < GPU_MAX_COLORS; ++i) freq[i] = 0;
-    for (int r = 0; r < H; ++r)
-        for (int c = 0; c < W; ++c) {
-            int8_t v = temp.data[r][c];
-            if (arc::is_color(v)) freq[v]++;
-        }
-    int bodycol = -1, bestfreq = 0;
-    for (int i = 0; i < GPU_MAX_COLORS; ++i) if (freq[i] > bestfreq) { bestfreq = freq[i]; bodycol = i; }
-    if (bodycol < 0) return res;
-
-    // 2. mixed-color 8-connected component labeling over non-transparent cells.
-    constexpr int MAXC = 64;
     int8_t label[GPU_MAX_GRID][GPU_MAX_GRID];
-    for (int r = 0; r < GPU_MAX_GRID; ++r)
-        for (int c = 0; c < GPU_MAX_GRID; ++c) label[r][c] = -1;
-    bool comp_has_body[MAXC];
-    int16_t qr[GPU_GRID_CELLS], qc[GPU_GRID_CELLS];
-    int ncomp = 0;
-    const int8_t ndr[] = {-1,-1,-1, 0, 0, 1, 1, 1};
-    const int8_t ndc[] = {-1, 0, 1,-1, 1,-1, 0, 1};
-    for (int r = 0; r < H && ncomp < MAXC; ++r) {
-        for (int c = 0; c < W && ncomp < MAXC; ++c) {
-            if (temp.data[r][c] == GPU_TRANSPARENT || label[r][c] != -1) continue;
-            int id = ncomp++;
-            bool hb = false;
-            int head = 0, tail = 0;
-            qr[tail] = (int16_t)r; qc[tail] = (int16_t)c; tail++;
-            label[r][c] = (int8_t)id;
-            while (head < tail) {
-                int cr = qr[head], cc = qc[head]; head++;
-                if (temp.data[cr][cc] == bodycol) hb = true;
-                for (int d = 0; d < 8; ++d) {
-                    int nr = cr + ndr[d], nc = cc + ndc[d];
-                    if (nr < 0 || nr >= H || nc < 0 || nc >= W) continue;
-                    if (temp.data[nr][nc] == GPU_TRANSPARENT || label[nr][nc] != -1) continue;
-                    label[nr][nc] = (int8_t)id;
-                    if (tail < GPU_GRID_CELLS) { qr[tail] = (int16_t)nr; qc[tail] = (int16_t)nc; tail++; }
-                }
-            }
-            comp_has_body[id] = hb;
-        }
-    }
-
-    // 3. loose anchors = cells in components WITHOUT the body color. Build a
-    //    position lookup (loose_color) plus per-color candidate lists.
-    constexpr int MAX_ANCHORS_PER_COLOR = 16;
-    int8_t loose_color[GPU_MAX_GRID][GPU_MAX_GRID];
-    int16_t anc_r[GPU_MAX_COLORS][MAX_ANCHORS_PER_COLOR];
-    int16_t anc_c[GPU_MAX_COLORS][MAX_ANCHORS_PER_COLOR];
-    int anc_n[GPU_MAX_COLORS]; for (int i = 0; i < GPU_MAX_COLORS; ++i) anc_n[i] = 0;
-    for (int r = 0; r < GPU_MAX_GRID; ++r)
-        for (int c = 0; c < GPU_MAX_GRID; ++c) loose_color[r][c] = GPU_TRANSPARENT;
-    for (int r = 0; r < H; ++r)
-        for (int c = 0; c < W; ++c) {
-            int8_t v = temp.data[r][c];
-            if (v == GPU_TRANSPARENT) continue;
-            int id = label[r][c];
-            if (id < 0 || comp_has_body[id]) continue;   // body cell, not loose
-            loose_color[r][c] = v;
-            if (arc::is_color(v) && anc_n[v] < MAX_ANCHORS_PER_COLOR) {
-                anc_r[v][anc_n[v]] = (int16_t)r; anc_c[v][anc_n[v]] = (int16_t)c; anc_n[v]++;
-            }
-        }
-
-    // 4. per body: gather key-pixels, find best rigid placement, stamp.
-    constexpr int MAXK = 12;
-    for (int id = 0; id < ncomp; ++id) {
-        if (!comp_has_body[id]) continue;
-        int kcolor[MAXK], krow[MAXK], kcol_[MAXK], nk = 0;
-        for (int r = 0; r < H && nk < MAXK; ++r)
-            for (int c = 0; c < W && nk < MAXK; ++c)
-                if (label[r][c] == id) {
-                    int8_t v = temp.data[r][c];
-                    if (v != bodycol && v != GPU_TRANSPARENT) {
-                        kcolor[nk] = v; krow[nk] = r; kcol_[nk] = c; nk++;
-                    }
-                }
-        if (nk == 0) continue;
-
-        int best_score = 0, best_ak = -1, best_ar = 0, best_ac = 0, best_ori = 0;
-        for (int ak = 0; ak < nk; ++ak) {
-            int col = kcolor[ak], br = krow[ak], bc = kcol_[ak];
-            for (int ci = 0; ci < anc_n[col]; ++ci) {
-                int ar = anc_r[col][ci], ac = anc_c[col][ci];
-                for (int ori = 0; ori < 8; ++ori) {
-                    int score = 0;
-                    for (int j = 0; j < nk; ++j) {
-                        int dr, dc; snap_dihedral(ori, krow[j] - br, kcol_[j] - bc, dr, dc);
-                        int tr = ar + dr, tc = ac + dc;
-                        if (tr >= 0 && tr < H && tc >= 0 && tc < W &&
-                            loose_color[tr][tc] == kcolor[j]) score++;
-                    }
-                    if (score > best_score) {
-                        best_score = score; best_ak = ak;
-                        best_ar = ar; best_ac = ac; best_ori = ori;
-                    }
-                }
-            }
-        }
-        if (best_ak < 0 || best_score < 1) continue;
-
-        // 5. stamp: transform every body cell about the anchor key.
-        int br = krow[best_ak], bc = kcol_[best_ak];
-        int x0 = GPU_MAX_GRID, y0 = GPU_MAX_GRID, x1 = -1, y1 = -1;
-        for (int r = 0; r < H; ++r)
-            for (int c = 0; c < W; ++c)
-                if (label[r][c] == id) {
-                    int dr, dc; snap_dihedral(best_ori, r - br, c - bc, dr, dc);
-                    int tr = best_ar + dr, tc = best_ac + dc;
+    arc::snap_to_anchors(W, H, [&](int r, int c) { return (int)temp.data[r][c]; }, label,
+        [&](int run, int way, int key_row, int key_col, int to_row, int to_col) {
+            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return false;
+            int x0 = GPU_MAX_GRID, y0 = GPU_MAX_GRID, x1 = -1, y1 = -1;
+            for (int r = 0; r < H; ++r)
+                for (int c = 0; c < W; ++c) {
+                    if (label[r][c] != run) continue;
+                    int dr, dc; arc::snap_turn(way, r - key_row, c - key_col, dr, dc);
+                    const int tr = to_row + dr, tc = to_col + dc;
                     if (tr < 0 || tr >= GPU_MAX_GRID || tc < 0 || tc >= GPU_MAX_GRID) continue;
                     if (tc < x0) x0 = tc; if (tr < y0) y0 = tr;
                     if (tc > x1) x1 = tc; if (tr > y1) y1 = tr;
                 }
-        if (x1 < 0) continue;
-        if (res.count >= GPU_KERNEL_MAX_OBJECTS) break;
-        auto& obj = res.objects[res.count];
-        obj.x0 = (int16_t)x0; obj.y0 = (int16_t)y0;
-        obj.x1 = (int16_t)x1; obj.y1 = (int16_t)y1;
-        obj.width = (int16_t)(x1 - x0 + 1); obj.height = (int16_t)(y1 - y0 + 1);
-        obj.mask.clear();
-        for (int r = 0; r < H; ++r)
-            for (int c = 0; c < W; ++c)
-                if (label[r][c] == id) {
-                    int dr, dc; snap_dihedral(best_ori, r - br, c - bc, dr, dc);
-                    int tr = best_ar + dr, tc = best_ac + dc;
+            if (x1 < 0) return false;
+            auto& obj = res.objects[res.count];
+            obj.x0 = (int16_t)x0; obj.y0 = (int16_t)y0;
+            obj.x1 = (int16_t)x1; obj.y1 = (int16_t)y1;
+            obj.width = (int16_t)(x1 - x0 + 1); obj.height = (int16_t)(y1 - y0 + 1);
+            obj.mask.clear();
+            for (int r = 0; r < H; ++r)
+                for (int c = 0; c < W; ++c) {
+                    if (label[r][c] != run) continue;
+                    int dr, dc; arc::snap_turn(way, r - key_row, c - key_col, dr, dc);
+                    const int tr = to_row + dr, tc = to_col + dc;
                     if (tr < 0 || tr >= GPU_MAX_GRID || tc < 0 || tc >= GPU_MAX_GRID) continue;
                     obj.mask[tr - y0][tc - x0] = temp.data[r][c];
                 }
-        res.count++;
-
-        // Consume the matched anchors so another body can't reuse this cluster.
-        for (int j = 0; j < nk; ++j) {
-            int dr, dc; snap_dihedral(best_ori, krow[j] - br, kcol_[j] - bc, dr, dc);
-            int tr = best_ar + dr, tc = best_ac + dc;
-            if (tr >= 0 && tr < H && tc >= 0 && tc < W && loose_color[tr][tc] == kcolor[j]) {
-                loose_color[tr][tc] = GPU_TRANSPARENT;
-                int cc = kcolor[j];
-                for (int q = 0; q < anc_n[cc]; ++q)
-                    if (anc_r[cc][q] == tr && anc_c[cc][q] == tc) {
-                        anc_r[cc][q] = anc_r[cc][anc_n[cc]-1];
-                        anc_c[cc][q] = anc_c[cc][anc_n[cc]-1];
-                        anc_n[cc]--; break;
-                    }
-            }
-        }
-    }
+            res.count++;
+            return true;
+        });
     return res;
 }
 
@@ -3116,6 +3125,9 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             // Recolor handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::Recolor:        result = &gpu_acquire(ctx); break;
             case node_type::BidiColorMap:   result = last ? &gpu_exec_bidi_color_map(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::ColorFrom:      result = last ? &gpu_exec_color_from(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::AlignTo:        result = last ? &gpu_exec_align_to(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::MirrorAround:   result = last ? &gpu_exec_mirror_around(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectColor:    result = last ? &gpu_exec_select_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectAll:      result = last ? &gpu_exec_select_all(ctx, *last) : &gpu_acquire(ctx); break;

@@ -31,11 +31,34 @@ struct correspondence_election {
     using edge = object_matching::edge;
     using rejection = object_matching::rejection;
 
-    // An uncovered cell. made_or_gone means its object has no identified partner.
+    // WHAT A CHANGE CAN LEAVE UNSAID, a word each: where a carried piece went,
+    // where it was drawn again, how it turned, the colors it came out in, the
+    // cells drawn on the ground about it, and how it changed its shape.
+    enum class missing : int8_t { where_it_went, where_it_was_copied, how_it_turned, a_recolor,
+                                  drawn_on_the_ground, how_it_changed_shape, count };
+    static constexpr const char* missing_words[] = {
+        "where each piece went", "where each copy was drawn", "how each piece turned",
+        "a recolor", "the cells drawn on the ground", "how a piece changed its shape" };
+
+    // A CELL NOTHING HAS EXPLAINED YET, in the color its own grid shows it in.
+    // Either no match covers it at all -- made_or_gone when its object has no
+    // identified partner -- or a match carried it through a change, and it
+    // `waits` on the word for that change: about the input piece `about`, -1
+    // when no one piece is, having shown `other` on the other grid -- what an
+    // input cell became, what an output cell was. `piece` is its object on its
+    // own grid, -1 for a cell no piece holds, and `claimed_by` the fired rule
+    // that accounts for it after all, -1 while nothing does.
     struct left_over_cell {
         bool from_input = true;
         int8_t row = 0, col = 0;
         bool made_or_gone = false;
+        int16_t piece = -1;
+        int8_t claimed_by = -1;
+        int8_t color = -1;
+        int8_t waits = -1;
+        int16_t about = -1;
+        int8_t other = -1;
+        bool waits_for(missing word) const { return waits == (int8_t)word; }
     };
     using enum object_matching::refusal_reason;
     static constexpr auto& refusal_names = object_matching::refusal_names;
@@ -87,10 +110,50 @@ struct correspondence_election {
             const auto& objects = objects_on(!link.from_input);
             return link.to >= 0 && (size_t)link.to < objects.size() ? &objects[link.to] : nullptr;
         }
+        // THE INPUT PIECE AN EDGE IS ABOUT, whichever grid it was read from: the
+        // one it left, the one it named on landing, or the one its landing sits
+        // exactly on. A backward positional correspondence needs an identifiable
+        // input object, so -1 when the landing is partly hidden, hangs off the
+        // grid, or fits two pieces.
+        int input_piece_of(const edge& link) const {
+            if (link.from_input) return link.from;
+            if (link.to >= 0) return link.to;
+            if (link.hidden || link.outside) return -1;
+            const auto& source = output_info[link.from];
+            const auto [width, height] = posed_size(link.pose, source.summary.w, source.summary.h);
+            int found = -1;
+            for (size_t i = 0; i < input_info.size(); ++i) {
+                const auto& target = input_info[i];
+                if (target.summary.y0 != link.row || target.summary.x0 != link.col ||
+                    target.summary.w != width || target.summary.h != height ||
+                    target.summary.count != source.summary.count || target.shape != source.shape)
+                    continue;
+                if (found >= 0) return -1;
+                found = (int)i;
+            }
+            return found;
+        }
         // Left-over cells whose object has no partner: made on the output side,
         // gone from the input side.
         int made() const { return partnerless_cells(false); }
         int gone() const { return partnerless_cells(true); }
+        // Left-over cells no fired rule accounts for: what is still unexplained
+        // once every rule has said what it says. A cell waiting on two words is
+        // one cell unexplained, so each place counts once.
+        int unclaimed() const {
+            bool counted[2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            int left = 0;
+            for (const auto& cell : left_over) {
+                bool& seen = counted[cell.from_input][cell.row][cell.col];
+                if (cell.claimed_by < 0 && !seen) { seen = true; ++left; }
+            }
+            return left;
+        }
+        // Left-over cells no match covered at all, as the matching left them.
+        int unmatched() const {
+            return (int)ranges::count_if(left_over, [](const left_over_cell& cell) {
+                return cell.waits < 0; });
+        }
         int partnerless_cells(bool on_input) const {
             return (int)ranges::count_if(left_over, [&](const left_over_cell& cell) {
                 return cell.made_or_gone && cell.from_input == on_input;
@@ -132,6 +195,66 @@ struct correspondence_election {
     int cells = 0;
     // The selected segmentation, shared by all training pairs.
     segmentation_methods segmentation = segmentation_methods::unset;
+    // A RULE A READING WAS TAKEN TO SAY, and what it accounts for: the input
+    // pieces its edges are about and the cells on both grids they carry, or,
+    // for a rule that explains a choice rather than cells, what it says.
+    // `under` is the rule whose evidence it reads, -1 for one that stands on
+    // the matches alone. `stands_alone` marks a rule said in a sentence of its
+    // own rather than as part of the cut's line: a rival explanation, not a part.
+    struct fired_rule {
+        string name;
+        int pieces = 0, cells = 0;
+        int8_t under = -1;
+        string says;
+        bool stands_alone = false;
+        // HOW IT IS SAID, when it is: an act on the pieces of `color` -- turned by
+        // pose `value`, moved `value` down or across, recolored to `value`,
+        // painted the color of the partner partner_by `value` finds, moved level
+        // with that partner's rows or columns, or drawn again mirrored around its
+        // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
+        // diagonals for `value` past 32 and otherwise up, down and to the sides,
+        // `value` % 32 long, painted `paint`; the bars bridged between pieces of
+        // one color or the hollows filled, in `paint` or their own for -1; or
+        // hollowed to the outline; or the pieces a pick by holes or by size takes,
+        // recolored to `value`; or the picked pieces removed, slid to the edge
+        // the way heading `value` numbers, moved their own size the way Shift
+        // numbers, grown a trail that way, their boxes filled in `paint`,
+        // copied onto the pieces not picked, lined up CopyTo's way `value`, or
+        // repeated down their columns for `value` past 32 and otherwise along
+        // their rows, every `value` % 32 cells -- or a swap
+        // of the pair numbered `value`, or the word a learned table or the size
+        // ranking picks; or one of the rules read off the cut's own pieces that is
+        // the whole rest of its line; or a rule that stands alone and says a whole
+        // program of its own, the one numbered `value`.
+        enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
+                                learned_table, size_rank, color_from, align_to, mirror_around,
+                                extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
+                                shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
+                                piece_slam,
+                                corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
+                                own_sentences } as = unsaid;
+        int8_t color = -1, value = 0;
+        // The colors whose pieces it picks, a bit each, when it picks by more
+        // than the one `color`.
+        uint16_t picks = 0;
+        // The color it paints what it draws in, when it draws in one of its own.
+        int8_t paint = -1;
+        // WHICH PIECES IT PICKS when not by color: the ones with `pick_value`
+        // holes, or the one `pick_value` down the order of size, largest or
+        // smallest first, or the ones in the band of rows or of columns numbered
+        // `pick_value`, or the ones wearing the color most cells wear, or every
+        // one but those -- the picks SelectObjectsWithHoles, SelectLargestObject,
+        // SelectSmallestObject, SelectRow, SelectColumn and SelectMostCommonColor
+        // make, the last turned round by InvertSelection. -1 when it picks by
+        // color.
+        enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
+                                  not_most_common, pick_kinds };
+        int8_t pick_by = -1, pick_value = 0;
+        // What the language has no word for, when this fired and cannot be said.
+        string no_word_for;
+    };
+    // The one rule the matching fires that no freedom names.
+    static constexpr const char* sits_on_name = "Sits On";
     // Scores for each segmentation and permission combination.
     // Table index: segmentation * degrees_of_freedom::COMBINATIONS + allowed.index().
     struct reading {
@@ -152,6 +275,62 @@ struct correspondence_election {
         // Used for preliminary ordering and logging; matching still runs when false.
         bool objects_can_fit = true;
         int exact = 0, recolored = 0, sits_on = 0;
+        // WHAT IT WAS TAKEN TO SAY, one rule each, listed for the reading each
+        // segmentation kept -- the one that entered the election -- and empty
+        // for the combinations that lost to it.
+        vector<fired_rule> fired;
+        // THE CUT'S OWN LINE, in the order it is said: indices into `fired`. A
+        // rule that fired and has no word sits where it would have been said.
+        vector<int8_t> line;
+        // ONE MORE RULE, listed under the one it reads, said next on the line,
+        // and accounting for the cells it explains: `claims(pair, cell)` names
+        // them. Each cell is claimed once, by the first rule that asks, and
+        // counted as that rule's. Hands back where the rule sits on the list.
+        template <class Claims>
+        int8_t say_fired(fired_rule rule, int8_t under, Claims claims) {
+            const int8_t index = (int8_t)fired.size();
+            rule.under = under;
+            for (size_t which = 0; which < pairs.size(); ++which)
+                for (auto& cell : pairs[which].left_over)
+                    if (cell.claimed_by < 0 && claims(which, cell)) {
+                        cell.claimed_by = index;
+                        ++rule.cells;
+                    }
+            fired.push_back(std::move(rule));
+            line.push_back(index);
+            return index;
+        }
+        int8_t say_fired(fired_rule rule, int8_t under) {
+            return say_fired(std::move(rule), under, [](size_t, const left_over_cell&) { return false; });
+        }
+        // The rule this reading fired by that name, -1 when it fired none.
+        int8_t fired_named(const string& name) const {
+            for (size_t i = 0; i < fired.size(); ++i)
+                if (fired[i].name == name) return (int8_t)i;
+            return -1;
+        }
+        // What every rule together still leaves unexplained, on every pair: the
+        // cells nothing claims, whether no match covered them or a change they
+        // were carried through still waits on its word.
+        int unclaimed() const {
+            int left = 0;
+            for (const auto& pair : pairs) left += pair.unclaimed();
+            return left;
+        }
+        // The rules in the order they are read: each one, then the rules that
+        // read its evidence, a step deeper. Hands back (rule, depth) pairs.
+        vector<std::pair<int, int>> fired_in_order() const {
+            vector<std::pair<int, int>> order;
+            auto visit = [&](auto&& self, int under, int depth) -> void {
+                for (int i = 0; i < (int)fired.size(); ++i)
+                    if (fired[i].under == under) {
+                        order.push_back({ i, depth });
+                        self(self, i, depth + 1);
+                    }
+            };
+            visit(visit, -1, 0);
+            return order;
+        }
     };
     vector<reading> readings;
     // Index of the selected reading in readings.
@@ -171,6 +350,62 @@ struct correspondence_election {
     const vector<pair_info>& chosen_pairs() const {
         static const vector<pair_info> empty;
         return readings.empty() ? empty : readings[chosen].pairs;
+    }
+    // WHAT EACH WAY OF SEEING OBJECTS STILL HAS NO WORD FOR, once every rule
+    // that says anything has claimed its cells: an entry for each word some
+    // cell still waits on, under the freedom it would be said with and on the
+    // line where the word would go, with the pieces and cells still waiting.
+    // Asked last, so a rule read off the elected reading after the acts has
+    // taken back what it says before anything is called missing.
+    void list_what_is_missing() {
+        for (size_t method = 0; method < best_of.size(); ++method) {
+            if (best_of[method] < 0 || !competes((segmentation_methods)method)) continue;
+            auto& read = readings[best_of[method]];
+            for (int word = 0; word < (int)missing::count; ++word) {
+                fired_rule rule;
+                rule.name = "No Word";
+                rule.no_word_for = missing_words[word];
+                // Each piece once: the input piece a cell is about, or failing
+                // one, the output piece it is.
+                vector<std::pair<size_t, int>> whose;
+                for (size_t which = 0; which < read.pairs.size(); ++which)
+                    for (const auto& cell : read.pairs[which].left_over) {
+                        if (cell.claimed_by >= 0 || cell.waits != word) continue;
+                        ++rule.cells;
+                        const int piece = cell.about >= 0 ? cell.about
+                                        : !cell.from_input && cell.piece >= 0 ? -2 - cell.piece : -1;
+                        if (piece != -1 && ranges::find(whose, std::pair{ which, piece }) == whose.end())
+                            whose.push_back({ which, piece });
+                    }
+                if (!rule.cells) continue;
+                rule.pieces = (int)whose.size();
+                read.say_fired(std::move(rule), said_under(read, (missing)word));
+            }
+        }
+    }
+    // The rule a missing word would be said under: the freedom it needs.
+    static int8_t said_under(const reading& read, missing word) {
+        const auto& freedom = degrees_of_freedom::freedom_names;
+        switch (word) {
+            case missing::where_it_went:
+            case missing::where_it_was_copied:  return read.fired_named(freedom[0]);
+            case missing::how_it_turned:        return read.fired_named(freedom[1]);
+            case missing::a_recolor:            return read.fired_named(freedom[2]);
+            case missing::how_it_changed_shape: return read.fired_named(sits_on_name);
+            default:                            return -1;
+        }
+    }
+
+    // A WAY OF SEEING OBJECTS, AS OPPOSED TO A CLAIM ABOUT THEM. Cells grouped by
+    // touch or by color can be unhelpful but never wrong, so those compete in the
+    // election. The two fixed-step block segmentations are claims the pairs can
+    // prove wrong -- the grid repeats, one grid is copies of the other -- so their
+    // matching is evidence for the rules that make those claims, read whichever
+    // way of seeing won.
+    static constexpr bool competes(segmentation_methods segmentation) {
+        return segmentation != segmentation_methods::minimal_repeating_set &&
+               segmentation != segmentation_methods::smallest_of_two_grids &&
+               segmentation != segmentation_methods::unset;
     }
 
     // 1. Compare the readings and keep the one that best explains the examples.
@@ -202,6 +437,8 @@ struct correspondence_election {
         };
         // Keep every reading in its final table slot. Only the best permission
         // combination per segmentation enters the election; ties keep the first.
+        // A claim's best reading is kept too, for its rule to read, but it does
+        // not stand.
         vector<int> best_of_method;
         facts.best_of.assign((size_t)segmentation_methods::count, -1);
         for (const auto& prepared : preparations) {
@@ -213,8 +450,11 @@ struct correspondence_election {
                                                 degrees_of_freedom::from_index(packed));
                 if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
-            best_of_method.push_back(best);
             facts.best_of[(size_t)prepared.look.segmentation] = (int16_t)best;
+            if (!competes(prepared.look.segmentation)) continue;
+            list_what_fired(train, background, prepared, facts.readings[best]);
+            read_the_acts(train, background, prepared, facts.readings[best]);
+            best_of_method.push_back(best);
         }
 
         // Combine compression cost with the cost of unexplained cells.
@@ -229,12 +469,22 @@ struct correspondence_election {
                                 + (one.made + one.gone) * half_said;
             return one.describe_cost + unsaid * spelling_out;
         };
+        // A CUT THE PROGRAM CAN HOLD: no input cut into more pieces than a list
+        // holds. The kernel drops the pieces past that, so a line read off more
+        // is said of pieces the program never has -- 4f537728's lattice, cut
+        // block by block, is 98 of them, where cut by color it is two.
+        auto holds_in_a_list = [](const reading& one) {
+            return ranges::all_of(one.pairs, [](const pair_info& pair) {
+                return (int)pair.input_info.size() <= MAX_OBJECTS_IN_A_LIST;
+            });
+        };
         // Which of two readings the election prefers: negative for the first,
         // positive for the second, 0 for a tie. Using objects at all comes first,
-        // then the lower price, and only prices within same_price of each other
-        // are settled by using fewer objects.
+        // then a cut the program can hold, then the lower price, and only prices
+        // within same_price of each other are settled by using fewer objects.
         auto order = [&](const reading& one, const reading& other) {
             if ((one.objects_used > 0) != (other.objects_used > 0)) return one.objects_used > 0 ? -1 : 1;
+            if (holds_in_a_list(one) != holds_in_a_list(other)) return holds_in_a_list(one) ? -1 : 1;
             if (abs(price_of(one) - price_of(other)) > same_price)
                 return price_of(one) < price_of(other) ? -1 : 1;
             if (one.objects_used != other.objects_used) return one.objects_used < other.objects_used ? -1 : 1;
@@ -457,25 +707,6 @@ private:
 
         // Group equal input-to-output movements within this pair.
         // Count each input object once per movement, using its input color.
-        // A backward positional correspondence needs an identifiable input object.
-        auto input_object_of = [&](const edge& edge) {
-            if (edge.from_input) return (int)edge.from;
-            if (edge.to >= 0) return (int)edge.to;
-            if (edge.hidden || edge.outside) return -1;
-            const auto& source = pair.output_info[edge.from];
-            const auto [width, height] = posed_size(edge.pose, source.summary.w, source.summary.h);
-            int found = -1;
-            for (size_t i = 0; i < pair.input_info.size(); ++i) {
-                const auto& target = pair.input_info[i];
-                if (target.summary.y0 != edge.row || target.summary.x0 != edge.col ||
-                    target.summary.w != width || target.summary.h != height ||
-                    target.summary.count != source.summary.count || target.shape != source.shape)
-                    continue;
-                if (found >= 0) return -1;
-                found = (int)i;
-            }
-            return found;
-        };
         vector<pair_info::moved_together> moves;
         vector<vector<int>> who_moved;
         for (const auto& edge : pair.edges) {
@@ -483,7 +714,7 @@ private:
             if (!edge.same_shape || !one_object) continue;
             const auto went = object_matching::move_of(edge, *one_object);
             const int8_t down = (int8_t)went.first, across = (int8_t)went.second;
-            const int speaker = input_object_of(edge);
+            const int speaker = pair.input_piece_of(edge);
             if (speaker < 0 || (size_t)speaker >= pair.input_info.size()) continue;
             const int8_t input_color = pair.input_info[speaker].color;
             size_t at = 0;
@@ -655,6 +886,7 @@ private:
                                const vector<object>& our_objects,
                                const vector<object_info>& ours,
                                const vector<edge>& leaving_here,
+                               const grid& other_grid,
                                bool from_input) {
             // Mark cells actually covered by incoming shape matches.
             bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -669,11 +901,11 @@ private:
             for (const auto& edge : landing_here)
                 if (edge.to >= 0 && (size_t)edge.to < has_a_partner.size())
                     has_a_partner[edge.to] = true;
-            // Also mark source cells when their shape matched without extending outside the target.
+            // Also mark the cells each piece took with it to its landing.
             for (const auto& edge : leaving_here) {
-                if (!edge.same_shape || edge.outside != 0) continue;
                 if (edge.from < 0 || (size_t)edge.from >= ours.size()) continue;
-                our_objects[edge.from].each_cell([&](int row, int col, int8_t) { carried[row][col] = true; });
+                cells_it_took(edge, our_objects[edge.from], other_grid,
+                              [&](int row, int col) { carried[row][col] = true; });
             }
             // Which object each cell belongs to, so a cell can be asked about
             // the object it is part of.
@@ -681,7 +913,7 @@ private:
             for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
             for (size_t i = 0; i < ours.size() && i < our_objects.size(); ++i)
                 our_objects[i].each_cell([&](int row, int col, int8_t) { object_at[row][col] = (int16_t)i; });
-            walk_colored_cells(one_grid, background, [&](int row, int col, int) {
+            walk_colored_cells(one_grid, background, [&](int row, int col, int color) {
                 if (carried[row][col]) return;
                 if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
                 // An uncovered cell is created or removed if its object has no partner.
@@ -689,13 +921,13 @@ private:
                 const bool nobody_claims_the_object =
                     which < 0 || !has_a_partner[which];
                 pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col,
-                                           nobody_claims_the_object });
+                                           nobody_claims_the_object, which, -1, (int8_t)color });
             });
         };
         unexplained(output, forward, input_objects, output_objects,
-                    pair.output_info, backward, false);
+                    pair.output_info, backward, input, false);
         unexplained(input, backward, output_objects, input_objects,
-                    pair.input_info, forward, true);
+                    pair.input_info, forward, output, true);
 
         // Count output cells covered by exact matches and those left uncovered.
         bool covered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -741,6 +973,27 @@ private:
                 }
             }
         }
+    }
+
+    // THE CELLS A PIECE TOOK WITH IT TO ITS LANDING, handed to `mark` in grid
+    // coordinates. Every one when it went whole; none when some of it hangs off
+    // the grid, since that part never arrived; and when it was found partly
+    // behind something, only the ones its landing shows. A hidden cell is a claim
+    // that something else is in front of it, and nothing here explains that
+    // something or says which of the two is on top -- credited, a piece whose
+    // cells had simply changed read as a piece that never changed at all.
+    template <class Mark>
+    static void cells_it_took(const edge& link, const object& piece, const grid& landing, Mark mark) {
+        if (!link.same_shape || link.outside != 0) return;
+        piece.each_cell([&](int row, int col, int8_t color) {
+            if (link.hidden) {
+                const auto [down, across] = posed_place(link.pose, piece.summary.w, piece.summary.h,
+                                                        row - piece.summary.y0, col - piece.summary.x0);
+                if (!landing.contains(link.row + down, link.col + across) ||
+                    landing.data[link.row + down][link.col + across] != color) return;
+            }
+            mark(row, col);
+        });
     }
 
     static void mark_painted(const vector<edge>& edges,
@@ -790,6 +1043,430 @@ private:
                     });
                 patches.push_back({ summary_of(box, cells), !open });
             }
+    }
+
+    // 5. What a kept reading's edges were taken to say, rule by rule. An edge
+    // came across as it was, or needed some of the freedoms, or was found partly
+    // behind something, or only sits on a piece; each rule names the input pieces
+    // its edges are about and the cells on both grids they carry, counted the way
+    // left over counts them. An edge that moved and was recolored counts under
+    // both, so the rules can add up past the whole; left over is still what none
+    // of them carried.
+    static void list_what_fired(const vector<example>& train, int8_t background,
+                                const prepared_segmentation& prepared, reading& facts) {
+        constexpr int freedoms = degrees_of_freedom::FREEDOMS;
+        // As it was, then each freedom in its own place, then the two that are not.
+        enum : int { as_it_was, partly_hidden = 1 + freedoms, sitting_on, kinds };
+        auto kinds_of = [](const pair_info& pair, const edge& link) {
+            if (!link.same_shape) return 1u << sitting_on;
+            const object_info* source = pair.source_of(link);
+            const auto went = source ? object_matching::move_of(link, *source) : std::pair<int, int>{};
+            // In the order degrees_of_freedom numbers them: move, turn, color, hang off.
+            const bool needed[freedoms] = { went.first != 0 || went.second != 0, link.pose != 0,
+                                            !link.exact, link.outside > 0 };
+            unsigned said = link.hidden ? 1u << partly_hidden : 0u;
+            for (int freedom = 0; freedom < freedoms; ++freedom)
+                if (needed[freedom]) said |= 1u << (1 + freedom);
+            return said ? said : 1u << as_it_was;
+        };
+        int pieces[kinds] = {}, cells[kinds] = {};
+        bool fired[kinds] = {};
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            if (!prepared.pairs[which].read) continue;
+            const pair_info& pair = facts.pairs[which];
+            const grid* on_grid[2] = { &train[which].input, &train[which].output };
+            const vector<object>* objects[2] = { &prepared.pairs[which].input_objects,
+                                                 &prepared.pairs[which].output_objects };
+            // Per kind, the cells its edges carry on each grid, and the input pieces they name.
+            bool carried[kinds][2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            vector<vector<bool>> named(kinds, vector<bool>(pair.input_info.size(), false));
+            for (const auto& link : pair.edges) {
+                const unsigned said = kinds_of(pair, link);
+                const int from = link.from_input ? 0 : 1, into = 1 - from;
+                const int piece = pair.input_piece_of(link);
+                for (int kind = 0; kind < kinds; ++kind) {
+                    if (!(said >> kind & 1)) continue;
+                    fired[kind] = true;
+                    // Where it landed, as far as the grid shows it, and the piece it
+                    // left when it went whole -- the two things left over credits.
+                    mark_painted({ link }, *objects[from], *objects[into], *on_grid[into],
+                                 carried[kind][into], false, true);
+                    cells_it_took(link, (*objects[from])[link.from], *on_grid[into],
+                                  [&](int row, int col) { carried[kind][from][row][col] = true; });
+                    if (piece >= 0 && (size_t)piece < named[kind].size()) named[kind][piece] = true;
+                }
+            }
+            for (int kind = 0; kind < kinds; ++kind) {
+                for (int side = 0; side < 2; ++side)
+                    walk_colored_cells(*on_grid[side], background, [&](int row, int col, int) {
+                        cells[kind] += carried[kind][side][row][col]; });
+                pieces[kind] += (int)count(named[kind].begin(), named[kind].end(), true);
+            }
+        }
+        auto name_of = [](int kind) -> string {
+            if (kind == as_it_was) return degrees_of_freedom::from_index(0).label();
+            if (kind == partly_hidden) return "Partly Hidden";
+            if (kind == sitting_on) return sits_on_name;
+            return degrees_of_freedom::freedom_names[kind - 1];
+        };
+        facts.fired.clear();
+        facts.line.clear();
+        for (int kind = 0; kind < kinds; ++kind)
+            if (fired[kind]) facts.fired.push_back({ name_of(kind), pieces[kind], cells[kind] });
+    }
+
+    // 6. THE ACTS THE CUT'S OWN LINE SAYS: what happened to the pieces of one
+    // color, the same way in every pair -- turned, moved down or across,
+    // recolored -- each listed under the freedom it needed and said on the line
+    // in the order it was read. A line is a selection and what happened to it,
+    // so one piece that turns AND moves AND changes colour is several acts.
+    //
+    // EACH ACT STANDS ON ITS OWN EVIDENCE. Asked as one key, a turn that differs
+    // between pairs took the colour down with it -- 017c7c7b recolours 1 to 2 in
+    // every pair and says so on every edge, and the reading lost it because the
+    // poses read 0, 5 and 5. Turn, move and colour are three questions, so a
+    // disagreement about one says nothing about the others.
+    //
+    // AN ACT MUST HOLD IN EVERY PAIR, or it is one example's accident.
+    static void read_the_acts(const vector<example>& train, int8_t background,
+                              const prepared_segmentation& prepared, reading& facts) {
+        struct seen_act {
+            int8_t color, what, value;
+            bool operator==(const seen_act&) const = default;
+        };
+        // Which piece of which pair each act was seen on, to count what it covers.
+        struct seen_on { seen_act act; size_t pair; int piece; };
+        vector<seen_act> acts_in_every_pair;
+        vector<seen_on> where;
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            const auto& pair = facts.pairs[which];
+            vector<seen_act> here;
+            auto note = [&](int8_t color, fired_rule::said_as what, int8_t value, int piece) {
+                if (value == 0 && what != fired_rule::recolor) return;   // nothing happened
+                const seen_act act{ color, (int8_t)what, value };
+                where.push_back({ act, which, piece });
+                if (ranges::find(here, act) == here.end()) here.push_back(act);
+            };
+            for (const auto& edge : pair.edges) {
+                const auto* source = pair.source_of(edge);
+                if (!edge.from_input || !edge.same_shape || !source) continue;
+                const auto& piece = *source;
+                note(piece.color, fired_rule::turn, edge.pose, edge.from);
+                // A copy's landing is not a movement of the single original. Asked
+                // as places and not edges: a piece found from both grids has two
+                // edges for its one landing (places_went), and read as a copy, so
+                // not one move was ever said.
+                if (pair.places_went(edge.from) == 1) {
+                    note(piece.color, fired_rule::move_down,   (int8_t)(edge.row - piece.summary.y0), edge.from);
+                    note(piece.color, fired_rule::move_across, (int8_t)(edge.col - piece.summary.x0), edge.from);
+                }
+                if (!edge.exact)
+                    for (int8_t was = 0; was < COLOR_COUNT; ++was)
+                        if (edge.color_map.changes(was))
+                            note(was, fired_rule::recolor, edge.color_map[was], edge.from);
+            }
+            if (which == 0) { acts_in_every_pair = here; continue; }
+            erase_if(acts_in_every_pair, [&](const seen_act& act) {
+                return ranges::find(here, act) == here.end(); });
+        }
+
+        // AN ACT IS SAID OF EVERY PIECE IT PICKS. The line picks by color -- every
+        // piece that holds a cell of it, or every piece there is for a piece of
+        // several colors -- so an act that happened to some of them and not the
+        // rest says something false of the rest, and is not the act. Each picked
+        // piece must have been carried, and carried that way: turned by that pose,
+        // moved that far and only once, or recolored so that all of it wears the
+        // new color, since Recolor paints a piece whole.
+        auto holds_a_cell_of = [&](size_t which, int piece, int color) {
+            bool found = false;
+            prepared.pairs[which].input_objects[piece].each_cell([&](int, int, int8_t cell) {
+                found = found || cell == color; });
+            return found;
+        };
+        auto said_of_every_piece = [&](const seen_act& act) {
+            for (size_t which = 0; which < facts.pairs.size(); ++which) {
+                const auto& pair = facts.pairs[which];
+                for (int piece = 0; piece < (int)pair.input_info.size(); ++piece) {
+                    if (act.color >= 0 && !holds_a_cell_of(which, piece, act.color)) continue;
+                    const auto& box = pair.input_info[piece].summary;
+                    bool carried = false;
+                    for (const auto& edge : pair.edges) {
+                        if (!edge.from_input || !edge.same_shape || edge.from != piece) continue;
+                        carried = true;
+                        bool that_way = true;
+                        switch (act.what) {
+                            case fired_rule::turn:
+                                that_way = edge.pose == act.value;
+                                break;
+                            case fired_rule::move_down:
+                                that_way = pair.places_went(piece) == 1 && edge.row - box.y0 == act.value;
+                                break;
+                            case fired_rule::move_across:
+                                that_way = pair.places_went(piece) == 1 && edge.col - box.x0 == act.value;
+                                break;
+                            default:
+                                prepared.pairs[which].input_objects[piece].each_cell([&](int, int, int8_t cell) {
+                                    that_way = that_way && edge.color_map.apply(cell) == act.value; });
+                                break;
+                        }
+                        if (!that_way) return false;
+                    }
+                    if (!carried) return false;
+                }
+            }
+            return true;
+        };
+        erase_if(acts_in_every_pair, [&](const seen_act& act) { return !said_of_every_piece(act); });
+
+        // EVERY CHANGE IS WRITTEN DOWN BEFORE ANY ACT IS SAID, cell by cell, so
+        // an act accounts for what it says by claiming those cells, and whatever
+        // no rule claims is what the reading has no word for.
+        write_down_what_changed(train, background, prepared, facts);
+
+        // WHAT THE ACTS SAY OF ONE PIECE. An act accounts only for the pieces it
+        // picks, so one said move says nothing of a piece that went somewhere
+        // else. A piece's turn is said when every pose it landed in is, and its
+        // move when it went to one place and every landing is said down and
+        // across. An act has to hold in every pair, so a slide that differs from
+        // piece to piece leaves no act, and the line would paint the piece
+        // straight back: the language missing a word, not the piece standing
+        // still. Nor does any act say a landing found only from the output side,
+        // or a piece drawn again where it stayed -- 06df4c85 said exactly that,
+        // with nothing to show a word was missing.
+        auto said_by_an_act = [&](fired_rule::said_as what, int value, size_t which, int piece) {
+            return ranges::any_of(acts_in_every_pair, [&](const seen_act& act) {
+                return act.what == what && act.value == value &&
+                       (act.color < 0 || holds_a_cell_of(which, piece, act.color)); });
+        };
+        auto acts_say = [&](missing word, size_t which, int piece) {
+            const auto& pair = facts.pairs[which];
+            if (piece < 0 || (size_t)piece >= pair.input_info.size()) return false;
+            if (word == missing::where_it_went && pair.places_went(piece) != 1) return false;
+            const auto& box = pair.input_info[piece].summary;
+            bool carried = false;
+            for (const auto& link : pair.edges) {
+                if (!link.from_input || !link.same_shape || link.from != piece) continue;
+                carried = true;
+                if (word == missing::how_it_turned) {
+                    if (link.pose != 0 && !said_by_an_act(fired_rule::turn, link.pose, which, piece)) return false;
+                    continue;
+                }
+                const int down = link.row - box.y0, across = link.col - box.x0;
+                if ((down != 0 && !said_by_an_act(fired_rule::move_down, down, which, piece)) ||
+                    (across != 0 && !said_by_an_act(fired_rule::move_across, across, which, piece)))
+                    return false;
+            }
+            return carried;
+        };
+
+        const auto& freedom = degrees_of_freedom::freedom_names;
+        const int8_t moves = facts.fired_named(freedom[0]), turns = facts.fired_named(freedom[1]),
+                     colors = facts.fired_named(freedom[2]);
+        auto what_it_did = [](const seen_act& act) -> string {
+            switch (act.what) {
+                case fired_rule::turn:        return "turns, pose " + to_string(act.value);
+                case fired_rule::move_down:   return act.value > 0 ? "moves " + to_string(act.value) + " down"
+                                                                   : "moves " + to_string(-act.value) + " up";
+                case fired_rule::move_across: return act.value > 0 ? "moves " + to_string(act.value) + " right"
+                                                                   : "moves " + to_string(-act.value) + " left";
+                default:                      return "becomes " + to_string(act.value);
+            }
+        };
+        for (const auto& act : acts_in_every_pair) {
+            fired_rule rule;
+            rule.name = act.color < 0 ? string("Every Piece") : "Color " + to_string(act.color);
+            rule.says = what_it_did(act);
+            rule.as = (fired_rule::said_as)act.what;
+            rule.color = act.color;
+            rule.value = act.value;
+            // The pieces it was seen on, each once.
+            vector<std::pair<size_t, int>> counted;
+            for (const auto& seen : where) {
+                if (seen.act != act || ranges::find(counted, std::pair{ seen.pair, seen.piece }) != counted.end())
+                    continue;
+                counted.push_back({ seen.pair, seen.piece });
+                ++rule.pieces;
+            }
+            // The cells it accounts for. A turn or a move: those of the pieces it
+            // picks, once the acts say their turn or their move whole. A recolor:
+            // every cell that was its color and came out in its value, on either
+            // grid, since a recolor is said of colors.
+            const missing word = act.what == fired_rule::turn    ? missing::how_it_turned
+                               : act.what == fired_rule::recolor ? missing::a_recolor
+                                                                 : missing::where_it_went;
+            const int8_t under = act.what == fired_rule::turn    ? turns
+                               : act.what == fired_rule::recolor ? colors : moves;
+            facts.say_fired(std::move(rule), under, [&](size_t which, const left_over_cell& cell) {
+                if (!cell.waits_for(word)) return false;
+                if (word == missing::a_recolor)
+                    return cell.from_input ? cell.color == act.color && cell.other == act.value
+                                           : cell.color == act.value && cell.other == act.color;
+                return acts_say(word, which, cell.about) &&
+                       (act.color < 0 || holds_a_cell_of(which, cell.about, act.color));
+            });
+        }
+    }
+
+    // 7. EVERY CHANGE THE MATCHES FOUND, CELL BY CELL, in the colors both grids
+    // show: a carried piece that went somewhere, was drawn again or turned; a
+    // cell that came out in another color, or was drawn where the input had
+    // ground; a piece that only sits on its landing. Written down whether or not
+    // anything says it yet: each cell waits on the word for its change, a rule
+    // that says the change claims it when it is said, and what none claims is
+    // what the reading has no word for. A cell waits on each word once.
+    static void write_down_what_changed(const vector<example>& train, int8_t background,
+                                        const prepared_segmentation& prepared, reading& facts) {
+        for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            if (!prepared.pairs[which].read) continue;
+            auto& pair = facts.pairs[which];
+            // Both grids and their pieces, by side: [true] is the input's.
+            const grid* grids[2] = { &train[which].output, &train[which].input };
+            const vector<object>* pieces[2] = { &prepared.pairs[which].output_objects,
+                                                &prepared.pairs[which].input_objects };
+            int16_t piece_at[2][MAX_GRID_DIM][MAX_GRID_DIM];
+            for (const bool side : { false, true }) {
+                for (auto& row : piece_at[side]) ranges::fill(row, (int16_t)-1);
+                for (size_t i = 0; i < pieces[side]->size(); ++i)
+                    (*pieces[side])[i].each_cell([&](int row, int col, int8_t) {
+                        piece_at[side][row][col] = (int16_t)i; });
+            }
+            bool written[(int)missing::count][2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            auto wait = [&](missing word, bool from_input, int row, int col, int about, int8_t other) {
+                const grid& on = *grids[from_input];
+                if (!on.contains(row, col)) return;
+                const int8_t color = (int8_t)on.data[row][col];
+                // The ground is no cell of anything.
+                if (!is_color(color) || color == background) return;
+                bool& done = written[(int)word][from_input][row][col];
+                if (done) return;
+                done = true;
+                left_over_cell cell;
+                cell.from_input = from_input;
+                cell.row = (int8_t)row;
+                cell.col = (int8_t)col;
+                cell.piece = piece_at[from_input][row][col];
+                cell.color = color;
+                cell.waits = (int8_t)word;
+                cell.about = (int16_t)about;
+                cell.other = other;
+                pair.left_over.push_back(cell);
+            };
+            // The cells one edge speaks for: every cell of the piece it leaves,
+            // on its own grid, whatever its landing shows -- a piece found partly
+            // behind something still went there whole -- then both ends of every
+            // cell the landing does show. `visit(from_input, row, col, was, now)`
+            // sees each, `was` its color on the input and `now` on the output.
+            auto each_end = [&](const edge& link, auto&& visit) {
+                const auto& from = *pieces[link.from_input];
+                if (link.from < 0 || (size_t)link.from >= from.size()) return;
+                from[link.from].each_cell([&](int row, int col, int8_t color) {
+                    const int8_t mapped = (int8_t)link.color_map.apply(color);
+                    if (link.from_input) visit(true, row, col, color, mapped);
+                    else                 visit(false, row, col, mapped, color);
+                });
+                each_carried_cell(link, from[link.from], *grids[!link.from_input],
+                                  [&](int in_row, int in_col, int8_t was, int out_row, int out_col, int8_t now) {
+                    visit(true, in_row, in_col, was, now);
+                    visit(false, out_row, out_col, was, now);
+                });
+            };
+
+            // A CARRIED PIECE: where it went, where it was drawn again, how it
+            // turned, read off every landing it has -- one found only from the
+            // output side moved or turned it as surely.
+            for (int piece = 0; piece < (int)pair.input_info.size(); ++piece) {
+                const auto& box = pair.input_info[piece].summary;
+                bool carried = false, moved = false, turned = false;
+                bool landed_elsewhere = false, landed_turned = false;
+                for (const auto& link : pair.edges) {
+                    if (!link.same_shape || pair.input_piece_of(link) != piece) continue;
+                    if (link.from_input) {
+                        carried = true;
+                        moved = moved || link.row != box.y0 || link.col != box.x0;
+                        turned = turned || link.pose != 0;
+                        continue;
+                    }
+                    const auto went_by = object_matching::move_of(link, *pair.source_of(link));
+                    landed_elsewhere = landed_elsewhere || went_by.first != 0 || went_by.second != 0;
+                    landed_turned = landed_turned || link.pose != 0;
+                }
+                const bool copied = carried && pair.places_went(piece) > 1;
+                const bool went = carried ? moved && !copied : landed_elsewhere;
+                if (!carried) turned = landed_turned;
+                const bool happened[] = { facts.allowed.translate && went, facts.allowed.translate && copied,
+                                          facts.allowed.pose && turned };
+                const missing words[] = { missing::where_it_went, missing::where_it_was_copied,
+                                          missing::how_it_turned };
+                for (const auto& link : pair.edges) {
+                    if (!link.same_shape || pair.input_piece_of(link) != piece) continue;
+                    each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
+                        for (int i = 0; i < (int)size(words); ++i)
+                            if (happened[i]) wait(words[i], from_input, row, col, piece, from_input ? now : was);
+                    });
+                }
+            }
+
+            // A CELL THAT CAME OUT IN ANOTHER COLOR, read from either grid. Where
+            // the input's own edge already speaks for the piece, it is that edge
+            // that is asked. A cell the input had as ground was drawn there, and
+            // no piece held it to recolor: that is a word of its own. A piece
+            // recolored with no color named waits on a recolor all the same, one
+            // no act or swap can say, since neither color is known.
+            for (const auto& link : pair.edges) {
+                if (!link.same_shape || link.exact) continue;
+                const int piece = pair.input_piece_of(link);
+                if (!link.from_input && piece >= 0 && ranges::any_of(pair.edges, [&](const edge& other) {
+                        return other.from_input && other.same_shape && !other.exact && other.from == piece; }))
+                    continue;
+                bool named = false;
+                each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
+                    if (was == now) return;
+                    named = true;
+                    if (was != background)
+                        wait(missing::a_recolor, from_input, row, col, piece, from_input ? now : was);
+                    else if (!from_input)
+                        wait(missing::drawn_on_the_ground, false, row, col, piece, was);
+                });
+                if (!named)
+                    each_end(link, [&](bool from_input, int row, int col, int8_t, int8_t) {
+                        if (from_input == link.from_input) wait(missing::a_recolor, from_input, row, col, piece, -1);
+                    });
+            }
+
+            // A PIECE THAT ONLY SITS ON ITS LANDING changed its shape, and
+            // nothing says how: both pieces, whole.
+            for (const auto& link : pair.edges) {
+                if (link.same_shape) continue;
+                const int piece = pair.input_piece_of(link);
+                for (const bool side : { link.from_input, !link.from_input }) {
+                    const int index = side == link.from_input ? link.from : link.to;
+                    if (index < 0 || (size_t)index >= pieces[side]->size()) continue;
+                    (*pieces[side])[index].each_cell([&](int row, int col, int8_t) {
+                        wait(missing::how_it_changed_shape, side, row, col, piece, -1); });
+                }
+            }
+        }
+    }
+
+    // EVERY CELL ONE EDGE CARRIED, as the two places it joins: where the cell
+    // sat on the input, in the color it had there, and where it sat on the
+    // output, in the color it came out in -- handed to `visit(in_row, in_col,
+    // was, out_row, out_col, now)` whichever grid the edge was read from. Only
+    // where the landing shows the piece: a cell behind something else is not
+    // one it carried.
+    template <class Visit>
+    static void each_carried_cell(const edge& link, const object& piece, const grid& landing, Visit&& visit) {
+        if (!link.same_shape) return;
+        piece.each_cell([&](int row, int col, int8_t color) {
+            const auto [down, across] = posed_place(link.pose, piece.summary.w, piece.summary.h,
+                                                    row - piece.summary.y0, col - piece.summary.x0);
+            const int at_row = link.row + down, at_col = link.col + across;
+            if (!landing.contains(at_row, at_col)) return;
+            const int8_t there = (int8_t)landing.data[at_row][at_col];
+            if (there != link.color_map.apply(color)) return;
+            if (link.from_input) visit(row, col, color, at_row, at_col, there);
+            else                 visit(at_row, at_col, there, row, col, color);
+        });
     }
 
 };

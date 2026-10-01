@@ -132,7 +132,7 @@ ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
             const int source_row = row * factor + dr;
             const int source_col = col * factor + dc;
             if (source_row >= height || source_col >= width) continue;
-            const int8_t color = mask[source_row][source_col];
+            const int8_t color = (int8_t)mask[source_row][source_col];
             if (color == TRANSPARENT) continue;
             ++counts[color % COLOR_COUNT];
             ++non_transparent;
@@ -506,6 +506,23 @@ ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int hei
     return room_down < room_across ? room_down : room_across;
 }
 
+// WHERE SHIFT MOVES A BOX, its own size away, the ways Shift numbers them: up,
+// right, down, left, then down-right, down-left, up-right, up-left. The kernel
+// and the reading that replays it take the step from here.
+ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
+    switch (way) {
+    case 0:  return { -height, 0 };
+    case 1:  return { 0, width };
+    case 2:  return { height, 0 };
+    case 3:  return { 0, -width };
+    case 4:  return { height, width };
+    case 5:  return { height, -width };
+    case 6:  return { -height, width };
+    case 7:  return { -height, -width };
+    default: return { 0, 0 };
+    }
+}
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.
@@ -748,6 +765,129 @@ inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied
         best = min(best, hash);
     }
     return best;
+}
+
+// WHO A PIECE TAKES ITS COLOR FROM: another piece of the same grid, found by how
+// the two sit -- the nearest one, one sharing its rows or its columns, the one
+// whose box holds it or that its box holds, one it touches, or one of its very
+// shape, as it lies or turned any of the eight ways round. The rule that reads
+// it off the pairs and the op that does it both ask here, so the two cannot
+// disagree about which piece is the partner. Numbered in the order they are
+// asked.
+enum class partner_by : int8_t { nearest, same_row, same_column, around_it, inside_it, touching,
+                                 same_shape, same_shape_turned, count };
+
+// HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
+// or all four ways at once. The middle is a partner's, one of the partner_by
+// ways, or past those the grid's own -- so MIRROR_PARTNERS counts one more.
+enum class mirror_by : int8_t { left_right, top_bottom, four_ways, count };
+constexpr int MIRROR_PARTNERS = (int)partner_by::count + 1;
+
+// The gap between two boxes, the empty rows plus the empty columns between
+// them; 0 when they touch or overlap.
+ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
+    const int rows = one.row0 > other.row1 ? one.row0 - other.row1 - 1
+                   : other.row0 > one.row1 ? other.row0 - one.row1 - 1 : 0;
+    const int cols = one.col0 > other.col1 ? one.col0 - other.col1 - 1
+                   : other.col0 > one.col1 ? other.col0 - one.col1 - 1 : 0;
+    return rows + cols;
+}
+
+// Every partner the piece `mine` has by `how` among the pieces not `picked`,
+// handed to `visit(other)` -- for the nearest, only the ones no other is nearer
+// than. The pieces are read through two questions, so one walk serves a grid's
+// pieces and the op's alike: `box_of(i)`, the box its paint fills on the grid,
+// and `painted(i, row, col)`, whether it paints that cell of the grid, false
+// off it.
+template <class BoxOf, class Painted, class Picked, class Visit>
+ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, int count, BoxOf box_of,
+                                         Painted painted, Picked picked, Visit visit) {
+    const cell_box own = box_of(mine);
+    if (own.empty()) return;
+    // Its paint read against another's turned by `pose`: the same cells painted.
+    auto same_paint = [&](int other, const cell_box& box, int pose) {
+        const int height = (pose & 1) ? box.width() : box.height();
+        const int width = (pose & 1) ? box.height() : box.width();
+        if (height != own.height() || width != own.width()) return false;
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col) {
+                const auto [from_row, from_col] = pose_source(pose, box.width(), box.height(), row, col);
+                if (painted(mine, own.row0 + row, own.col0 + col) !=
+                    painted(other, box.row0 + from_row, box.col0 + from_col))
+                    return false;
+            }
+        return true;
+    };
+    int nearest = 1 << 30;
+    if (how == partner_by::nearest)
+        for (int other = 0; other < count; ++other) {
+            if (other == mine || picked(other)) continue;
+            const cell_box box = box_of(other);
+            if (box.empty()) continue;
+            const int gap = box_gap(own, box);
+            if (gap < nearest) nearest = gap;
+        }
+    for (int other = 0; other < count; ++other) {
+        if (other == mine || picked(other)) continue;
+        const cell_box box = box_of(other);
+        if (box.empty()) continue;
+        bool partner = false;
+        switch (how) {
+            case partner_by::nearest:     partner = box_gap(own, box) == nearest; break;
+            case partner_by::same_row:    partner = own.row0 <= box.row1 && box.row0 <= own.row1; break;
+            case partner_by::same_column: partner = own.col0 <= box.col1 && box.col0 <= own.col1; break;
+            case partner_by::around_it:
+                partner = box.row0 <= own.row0 && box.col0 <= own.col0 && own.row1 <= box.row1 && own.col1 <= box.col1;
+                break;
+            case partner_by::inside_it:
+                partner = own.row0 <= box.row0 && own.col0 <= box.col0 && box.row1 <= own.row1 && box.col1 <= own.col1;
+                break;
+            case partner_by::touching:
+                for (int row = own.row0; row <= own.row1 && !partner; ++row)
+                    for (int col = own.col0; col <= own.col1 && !partner; ++col) {
+                        if (!painted(mine, row, col)) continue;
+                        for (int down = -1; down <= 1 && !partner; ++down)
+                            for (int across = -1; across <= 1 && !partner; ++across)
+                                partner = painted(other, row + down, col + across);
+                    }
+                break;
+            case partner_by::same_shape: partner = same_paint(other, box, 0); break;
+            case partner_by::same_shape_turned:
+                for (int pose = 0; pose < POSE_COUNT && !partner; ++pose) partner = same_paint(other, box, pose);
+                break;
+            default: break;
+        }
+        if (partner) visit(other);
+    }
+}
+
+// The color the piece `mine` takes from its partners: the one color every
+// partner wears, `color_of(i)` telling each one's, or -1 when it has none or
+// they disagree.
+template <class BoxOf, class Painted, class ColorOf, class Picked>
+ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, int count, BoxOf box_of,
+                                         Painted painted, ColorOf color_of, Picked picked) {
+    int color = -1;
+    bool clash = false;
+    each_partner(how, mine, count, box_of, painted, picked, [&](int other) {
+        const int worn = color_of(other);
+        if (color < 0) color = worn;
+        else if (worn != color) clash = true;
+    });
+    return clash ? -1 : color;
+}
+
+// The piece `mine`'s one partner, or -1 when it has none or several: a place
+// is read off one piece, never agreed among many.
+template <class BoxOf, class Painted, class Picked>
+ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, int count, BoxOf box_of,
+                                      Painted painted, Picked picked) {
+    int found = -1, partners = 0;
+    each_partner(how, mine, count, box_of, painted, picked, [&](int other) {
+        found = other;
+        ++partners;
+    });
+    return partners == 1 ? found : -1;
 }
 
 }  // namespace arc

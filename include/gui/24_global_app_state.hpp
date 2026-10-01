@@ -151,14 +151,6 @@ struct slider_zone {
 	int stops;
 	int knob; // the handle's width, so the hit test lands where the handle draws
 };
-// Press to put one number in one counter. A cell of a table is a choice, and a
-// choice needs no action of its own — an action per cell would be one name per
-// cell, and a table's whole point is that its cells are not named.
-struct pick_zone {
-	int x, y, w, h;
-	atomic<int>* which;
-	int value;
-};
 // THE GUI'S SIDE OF THE SEARCH: which puzzle is up, and the pictures kept of
 // the search. `search` is this side's copy of its counters, kept up to date
 // from what the search's process says; its mutex guards the puzzle, and this
@@ -198,9 +190,9 @@ struct global_app_state {
 	// what each thing on the grids is.
 	enum : int { INFERENCE_OFF, INFERENCE_FACTS, INFERENCE_LINES, INFERENCE_STEPS };
 	atomic<int> inference_view{INFERENCE_OFF};
-	// Which reading of how the grid splits up. The readings are kept in the
-	// order their table is drawn, so this is a cell of that table — and
-	// following the elected one is a state of its own, see shown_reading.
+	// Which way of cutting the grid up is on screen, each shown at the one
+	// reading it kept, so this counts cuts and not readings — and following the
+	// elected one is a state of its own, see shown_reading.
 	shown_reading inference_rank;
 	// Which single line is on screen, which piece of the reading to read off,
 	// and which thrown-away match. Lines that land on the same place paint over
@@ -259,7 +251,6 @@ struct global_app_state {
 
 	vector<click_zone> click_zones;
 	vector<slider_zone> slider_zones;
-	vector<pick_zone> pick_zones;
 	mutex node_zones_mtx;
 	vector<node_zone> node_zones;
 	atomic<uint64_t> hovered_hash{0};
@@ -290,7 +281,7 @@ inline string serialize_settings(const global_app_state& app, bool muted, int pu
 	line("minimized", (int)app.gui_minimized.load());
 	line("logging", (int)(app.log_mode.load() == logging_mode::stream));
 	line("inference_view", app.inference_view.load());
-	line("inference_rank", app.inference_rank.at.load());
+	line("inference_cut", app.inference_rank.at.load());
 	line("inference_edge", app.inference_edge.at.load());
 	line("inference_piece", app.inference_piece.at.load());
 	line("inference_dropped", app.inference_dropped.at.load());
@@ -309,8 +300,10 @@ inline void apply_settings(global_app_state& app, const unordered_map<string, st
 	app.inference_view.store(settings_int(kv, "inference_view", global_app_state::INFERENCE_OFF)
 	                         % global_app_state::INFERENCE_STEPS);
 	// -1 says nothing was picked, so a fresh app opens on whatever each
-	// puzzle chose rather than on a cell that meant something last time.
-	app.inference_rank.at.store(settings_int(kv, "inference_rank", -1));
+	// puzzle chose rather than on a cell that meant something last time. Saved
+	// under its own name since it counts cuts: a reading number saved by an
+	// older build would land on a cut that means something else.
+	app.inference_rank.at.store(settings_int(kv, "inference_cut", -1));
 	// Logging stays where it was left: a run whose log is off records nothing,
 	// and finding that out afterwards costs the run.
 	app.log_mode.store(settings_int(kv, "logging", 0) ? logging_mode::stream : logging_mode::none);
