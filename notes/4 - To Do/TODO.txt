@@ -1,0 +1,72 @@
+ARC — future work (parked, eyeball later)
+==========================================
+
+COMPOSER (the original goal behind the op-palette drawer)
+  The drawer is currently a read-only browser: drag it open, tab through op
+  families, read the ops. Next layer is making it a real composer:
+  - Click an op to append it into a draft program.
+  - Live result of the draft via the existing hover-preview engine
+    (gui.hpp ~700-1016: execute_tree_via_flat per example, shows accumulator
+    + object strip).
+  - Annotation pickers (choose the [c]/[k] variant when appending an
+    annotated op).
+  - Reorder / delete ops in the draft.
+  - Tooltips per op (needs op-description metadata — see below).
+  Hooks already in place to build on: role_of() gives an op's tab (the ROLE
+  column of NODE_PRIMITIVES, cuda_dsl.cuh); the drawer already owns
+  click_zones for tabs, so op boxes just need their own zones + a
+  draft-program buffer in global_app_state.
+
+GROUP PUZZLES BY SIZE RULE (GUI, later)
+  Browse/sort/filter the puzzle list by the inferred dimension_rule
+  (Identity / Scale / Fixed / BoundingBox). infer() already computes it per
+  puzzle at load. Uses: jump to all Scale puzzles when testing a tiling op;
+  see which class the unsolved tasks cluster in; pick benchmark subsets per
+  class. Could extend to other inference facts later (bg color, kept
+  fraction, output-colors count).
+
+OP DESCRIPTIONS METADATA
+  Per-op one-line descriptions for tooltips in the composer. Add a column to
+  NODE_PRIMITIVES (cuda_dsl.cuh) — the same move the ROLE column made on
+  2026-08-16, so the pattern is proven: a column becomes an array, and a new
+  op cannot be added without filling it in. A sidecar table can drift; a
+  column cannot.
+
+MOVE THE STANDARDS OUT OF CLAUDE.md INTO A CLAUDE CODE OUTPUT STYLE
+  CLAUDE.md is handed to Claude as a user message, said once when the
+  session starts. An output style is part of the system prompt AND gets
+  re-said after every single message. Same words, one is remembered, the
+  other keeps being told. That is why long sessions drift from the
+  standards and why repeating a rule mid-session works.
+  What moves: section 2 (Standards) and section 12 (Do not steer) — those
+  are rules about how Claude talks and works, which is exactly what a
+  style is for. What stays in CLAUDE.md: facts about this project — the
+  command port (3), worktrees (4), the deadline (1) — because those are
+  things to know, not ways to behave. Section 5 (Thinking) could go
+  either way, try it in the style.
+  How: a markdown file at .claude/output-styles/, filename becomes the
+  name. Must set `keep-coding-instructions: true` in the frontmatter or
+  Claude Code drops its own built-in engineering instructions — that flag
+  is off by default and is the one way to get this wrong. Then set
+  "outputStyle" in .claude/settings.local.json (it is already set there,
+  to the built-in "Concise"). Takes effect on /clear or a new session.
+  Worth knowing before betting on it: the style reaches the main
+  conversation only, subagents run their own prompt and never see it.
+  Docs: https://code.claude.com/docs/en/output-styles
+
+WATCH-ITEMS (do NOT build unless a real puzzle makes them recur — frequency
+discipline: only fuse/add an op that actually shows up repeatedly)
+  - Merge         = Union + Target[10] pair (depth-compression sugar only).
+  - DifferenceL   = ANDNOT fold over the object list (completes List-fold).
+  - Gestalt ops   = Symmetry / Gravity / Connect (currently partial/implicit).
+  - Compose[footprint, color_source] algebra redesign — collapse
+    Union/Underlay/Intersection/Difference + idioms into one annotated op.
+    Big churn (touches every solution's import tokens + search vocabulary);
+    adopt only if idiom-juggling (MaskBy[10],Union etc.) starts costing
+    real puzzles. See notes/2 - DSL/Op Algebra.md.
+
+DONE (2026-07-01) — kept here as a pointer, delete when stale
+  - Op-palette drawer: top-edge, drag-only, resizable, 7 alphabetical tabs.
+  - GPU pool 24->48 (deep-program scoring fix, static_assert guards it).
+  - Auto-solve now starts paused (global_app_state is_paused{true}).
+  Full detail: 5 - Competition/session_2026-07-01.md
