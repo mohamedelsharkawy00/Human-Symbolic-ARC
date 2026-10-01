@@ -4287,16 +4287,30 @@ inline bool copy_onto_holds(const replay_facts& facts, const piece_pick& pick, i
     return fresh;
 }
 
+// WHAT IS DOWN on the canvas where a paint said after the line lands, pair by
+// pair: the cut's pieces, and every paint said before it.
+struct cells_down { bool at[MAX_GRID_DIM][MAX_GRID_DIM] = {}; };
+
+// Whether a paint laid `lay` lands on a cell that has something down or not:
+// over it lands everywhere, under it only where nothing is, as Underlay paints,
+// and onto it only where something is, as MaskBy[10] keeps.
+inline bool lands(int8_t lay, bool down) {
+    using rule = correspondence_election::fired_rule;
+    return lay == rule::laid_under ? !down : lay == rule::laid_onto ? down : true;
+}
+
 // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, replayed. TileX lays each
 // picked piece again every `period` cells across the whole canvas, in its own
 // rows; TileY the same down the canvas, in its own columns -- counted from where
 // the piece stands, both ways, tiled_source (4_objects.hpp), the step the op
-// takes. It explains the copies only if every pair's output shows every cell
-// they draw in its piece's color, and one at least new in each -- which, the
+// takes. Laid `lay` on what is down (`canvas`), a copy lands only where it may
+// (lands). It explains the copies only if every pair's output shows every cell
+// they land on in its piece's color, and one at least new in each -- which, the
 // first copy being the piece itself, is a second copy in each. Hands back the
 // cells the copies drew, pair by pair, and whether it picked every piece.
-inline bool tile_holds(const replay_facts& facts, const piece_pick& pick, bool down, int period,
-                       vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
+inline bool tile_holds(const replay_facts& facts, const piece_pick& pick, bool down, int period, int8_t lay,
+                       const vector<cells_down>& canvas, vector<vector<std::pair<int, int>>>& drawn,
+                       bool& every_piece) {
     drawn.assign(facts.train.size(), {});
     every_piece = true;
     if (!facts.overlays) return false;
@@ -4318,6 +4332,7 @@ inline bool tile_holds(const replay_facts& facts, const piece_pick& pick, bool d
                     const int row = down ? at : box.y0 + other, col = down ? box.x0 + other : at;
                     const int8_t color = down ? piece.cells[source][other] : piece.cells[other][source];
                     if (color == (int8_t)TRANSPARENT || !pair.output.contains(row, col)) continue;
+                    if (!lands(lay, canvas[which].at[row][col])) continue;
                     if (pair.output.data[row][col] != color) return false;
                     drawn[which].push_back({ row, col });
                     drew_here = drew_here || pair.input.data[row][col] != color;
@@ -4416,13 +4431,15 @@ static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count 
 // picked piece nearest its middle -- up, down and to the sides, or along the
 // diagonals -- `radius` cells long, in that cell's color (nearest_ray_seed and
 // each_extended_ray, 4_objects.hpp, the walk the op takes), and the line may
-// paint them over in one color of its own. It explains the drawing only if
-// every pair's output shows every ray cell on the grid in one color, the same
-// in every pair and not the ground, and one ray cell at least is new in each. Hands
-// back that color, the cells the rays drew, pair by pair, and whether it picked
-// every piece.
-inline bool rays_hold(const replay_facts& facts, const piece_pick& pick, bool diagonal, int radius,
-                      int8_t& paint, vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
+// paint them over in one color of its own. Laid `lay` on what is down
+// (`canvas`), a ray lands only where it may (lands). It explains the drawing
+// only if every pair's output shows every ray cell it lands on in one color,
+// the same in every pair and not the ground, and one ray cell at least is new
+// in each. Hands back that color, the cells the rays drew, pair by pair, and
+// whether it picked every piece.
+inline bool rays_hold(const replay_facts& facts, const piece_pick& pick, bool diagonal, int radius, int8_t lay,
+                      const vector<cells_down>& canvas, int8_t& paint, vector<vector<std::pair<int, int>>>& drawn,
+                      bool& every_piece) {
     paint = -1;
     drawn.assign(facts.train.size(), {});
     every_piece = true;
@@ -4442,7 +4459,7 @@ inline bool rays_hold(const replay_facts& facts, const piece_pick& pick, bool di
             bool shows = true;
             each_extended_ray(seed, radius, diagonal, [&](int down, int across) {
                 const int row = box.y0 + seed.row + down, col = box.x0 + seed.col + across;
-                if (!pair.output.contains(row, col)) return;
+                if (!pair.output.contains(row, col) || !lands(lay, canvas[which].at[row][col])) return;
                 const int8_t there = (int8_t)pair.output.data[row][col];
                 if (paint < 0) paint = there;
                 shows = shows && there == paint;
@@ -5361,6 +5378,41 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     auto covered_claims = [](const vector<vector<std::pair<int, int>>>& drawn) -> claim {
         return [drawn](size_t which, const left_over_cell& cell) { return on_cells(drawn, which, cell.row, cell.col); };
     };
+    // Whether the line leaves every piece where the cut finds it: none of its
+    // words moves, reshapes or removes one, though it may recolor them.
+    auto moves_cells = [](const rule& step) {
+        switch (step.as) {
+            case rule::recolor:
+            case rule::swap_colors:
+            case rule::size_rank:
+            case rule::color_from:
+            case rule::recolor_picked:
+            case rule::extend_rays:
+            case rule::bridged:
+            case rule::filled:
+            case rule::trailed:
+            case rule::boxed:
+            case rule::copied_onto:
+            case rule::tiled_along: return false;
+            default:                return true;
+        }
+    };
+    const bool still = ranges::none_of(read.line, [&](int8_t which) { return moves_cells(read.fired[which]); });
+    // WHAT IS DOWN WHERE A RAY OR A REPEAT LANDS: the cut's pieces, which a still
+    // line leaves where they lie, and every one of those paints said before it.
+    // Laid under it or only onto it, a paint reads it, so those two ways are
+    // asked only of a still line; laid over it, a paint needs nothing of it.
+    vector<cells_down> canvas(train.size());
+    for (size_t which = 0; which < train.size() && which < opened.cuts.size(); ++which)
+        for (const object& piece : opened.cuts[which])
+            piece.each_cell([&](int row, int col, int8_t) { canvas[which].at[row][col] = true; });
+    auto lay_on_canvas = [&](const vector<vector<std::pair<int, int>>>& drawn) {
+        for (size_t which = 0; which < drawn.size() && which < canvas.size(); ++which)
+            for (const auto& [row, col] : drawn[which]) canvas[which].at[row][col] = true;
+    };
+    vector<int8_t> lays = { rule::laid_over };
+    if (still) lays.insert(lays.end(), { rule::laid_under, rule::laid_onto });
+    static constexpr const char* laid_words[] = { "", ", laid under what is down", ", only onto what is down" };
 
     // RAYS A PIECE GROWS: up, down and to the sides, or along the diagonals, as
     // long as every pair bears out, painted in one color, its own or one the line
@@ -5379,20 +5431,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     for (const piece_pick& pick : draw_picks)
         while (true) {
             heard best;
-            for (const bool diagonal : { false, true })
-                for (int radius = rays.high; radius >= rays.low; --radius) {
-                    int8_t paint = -1;
-                    vector<vector<std::pair<int, int>>> drawn;
-                    bool every_piece = false;
-                    if (!rays_hold(opened, pick, diagonal, radius, paint, drawn, every_piece)) continue;
-                    weigh(best, (diagonal ? 32 : 0) + radius, pick, 0, every_piece, paint, covered_claims(drawn));
-                }
+            int8_t best_lay = rule::laid_over;
+            vector<vector<std::pair<int, int>>> best_drawn;
+            for (const int8_t lay : lays)
+                for (const bool diagonal : { false, true })
+                    for (int radius = rays.high; radius >= rays.low; --radius) {
+                        int8_t paint = -1;
+                        vector<vector<std::pair<int, int>>> drawn;
+                        bool every_piece = false;
+                        if (!rays_hold(opened, pick, diagonal, radius, lay, canvas, paint, drawn, every_piece))
+                            continue;
+                        const int before = best.said;
+                        weigh(best, (diagonal ? 32 : 0) + radius, pick, 0, every_piece, paint, covered_claims(drawn));
+                        if (best.said > before) { best_lay = lay; best_drawn = std::move(drawn); }
+                    }
             if (best.value < 0) break;
             const bool own = pick.how < 0 && pick.colors == (uint16_t)(1u << best.paint);
-            say(best, rule::extend_rays,
+            const int8_t said = say(best, rule::extend_rays,
                 string("grows rays ") + (best.value >= 32 ? "along the diagonals" : "up, down and to the sides") + ", " +
                     to_string(best.value % 32) + " long, in " +
-                    (own ? string("its own color") : "color " + to_string(best.paint)), -1);
+                    (own ? string("its own color") : "color " + to_string(best.paint)) + laid_words[best_lay], -1);
+            read.fired[said].lay = best_lay;
+            lay_on_canvas(best_drawn);
         }
 
     // A TRAIL A PIECE GROWS one of the eight ways, in its own color, until it meets
@@ -5440,17 +5500,24 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     for (const piece_pick& pick : draw_picks)
         while (true) {
             heard best;
-            for (const bool down : { false, true })
-                for (int period = tiles.low; period <= tiles.high; ++period) {
-                    vector<vector<std::pair<int, int>>> drawn;
-                    bool every_piece = false;
-                    if (!tile_holds(opened, pick, down, period, drawn, every_piece)) continue;
-                    weigh(best, (down ? 32 : 0) + period, pick, 0, every_piece, -1, covered_claims(drawn));
-                }
+            int8_t best_lay = rule::laid_over;
+            vector<vector<std::pair<int, int>>> best_drawn;
+            for (const int8_t lay : lays)
+                for (const bool down : { false, true })
+                    for (int period = tiles.low; period <= tiles.high; ++period) {
+                        vector<vector<std::pair<int, int>>> drawn;
+                        bool every_piece = false;
+                        if (!tile_holds(opened, pick, down, period, lay, canvas, drawn, every_piece)) continue;
+                        const int before = best.said;
+                        weigh(best, (down ? 32 : 0) + period, pick, 0, every_piece, -1, covered_claims(drawn));
+                        if (best.said > before) { best_lay = lay; best_drawn = std::move(drawn); }
+                    }
             if (best.value < 0) break;
-            say(best, rule::tiled_along,
+            const int8_t said = say(best, rule::tiled_along,
                 "is repeated every " + to_string(best.value % 32) + " cells " +
-                    (best.value >= 32 ? "down its columns" : "along its rows"), -1);
+                    (best.value >= 32 ? "down its columns" : "along its rows") + laid_words[best_lay], -1);
+            read.fired[said].lay = best_lay;
+            lay_on_canvas(best_drawn);
         }
 
     // WHAT IS ALREADY DOWN when the bars, the fills and the boxes are laid under
@@ -5465,24 +5532,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                     as == rule::tiled_along)
                     painted_before[which].push_back({ cell.row, cell.col });
             }
-    auto moves_cells = [](const rule& step) {
-        switch (step.as) {
-            case rule::recolor:
-            case rule::swap_colors:
-            case rule::size_rank:
-            case rule::color_from:
-            case rule::recolor_picked:
-            case rule::extend_rays:
-            case rule::bridged:
-            case rule::filled:
-            case rule::trailed:
-            case rule::boxed:
-            case rule::copied_onto:
-            case rule::tiled_along: return false;
-            default:                return true;
-        }
-    };
-    const bool still = ranges::none_of(read.line, [&](int8_t which) { return moves_cells(read.fired[which]); });
     auto lay_down = [&](const vector<vector<std::pair<int, int>>>& drawn) {
         for (size_t which = 0; which < drawn.size() && which < painted_before.size(); ++which)
             painted_before[which].insert(painted_before[which].end(), drawn[which].begin(), drawn[which].end());

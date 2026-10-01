@@ -121,6 +121,13 @@ add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
 
+# EVERY READOUT, WRITTEN DOWN: infers each training puzzle and writes its
+# inference readout, running nothing on the GPU. Left out of the default build;
+# scripts\probe.bat builds it and runs it, and scripts\readouts.py reads it.
+add_executable(arc_probe EXCLUDE_FROM_ALL "scripts/probe.cpp")
+target_link_libraries(arc_probe PRIVATE arc_core)
+target_compile_definitions(arc_probe PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 # Focused execution/inference regression; build explicitly when changing placement.
 add_executable(arc_copy_to_tests EXCLUDE_FROM_ALL "tests/copy_to.cpp")
 target_link_libraries(arc_copy_to_tests PRIVATE arc_gpu)

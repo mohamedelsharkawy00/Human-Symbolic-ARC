@@ -19,8 +19,9 @@
 //      count not up), arc_copy_to_tests, and the readouts' fully-explained-but-
 //      unsolved list.
 // Read what earlier paints left on the canvas, so they wait on composition:
-//   Output, ReadUnder, MaskBy, MaskOut, Intersection, Difference (only the input-
-//   blocks and pane rules spell it), AlignToCanvas (only slide-to-touch does).
+//   Output, ReadUnder, MaskOut, Intersection, Difference (only the input-blocks
+//   and pane rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy
+//   is said as MaskBy[10] alone, for rays and repeats laid only onto what is down.
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts tiles on walls the selection marks; overlaps the pane rules.

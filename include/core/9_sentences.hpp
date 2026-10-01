@@ -883,6 +883,16 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
     return beats;
 }
 
+// HOW A PAINT LIES ON WHAT IS DOWN, as words: over it, Union; under it,
+// Underlay, which lands only where nothing is; only onto it, MaskBy[10] -- any
+// color -- and then Union, so it lands only where something is.
+inline string onto_words(const correspondence_election::fired_rule& rule) {
+    return rule.lay == correspondence_election::fired_rule::laid_onto ? " " + spell("MaskBy", 10) : string();
+}
+inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
+    return rule.lay == correspondence_election::fired_rule::laid_under ? "Underlay" : "Union";
+}
+
 // WHAT A RULE DRAWS OFF THE PIECES, as the one beat of a sentence said after the
 // line: the pieces picked and the word that draws -- rays, bars, filled hollows,
 // trails, filled boxes, copies, repeats -- and whether what it draws goes over what is
@@ -896,8 +906,8 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             // own color unless it is the one color picked.
             string act = spell(rule.value >= 32 ? "ExtendDiagonal" : "ExtendOrthogonal", rule.value % 32);
             if (rule.picks != (uint16_t)(1u << rule.paint)) act += " " + spell("Recolor", rule.paint);
-            drawn = { pick, act };
-            paint = "Union";
+            drawn = { pick, act + onto_words(rule) };
+            paint = laid_paint(rule);
             return true;
         }
         case said_as::bridged: {
@@ -914,8 +924,8 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
         case said_as::copied_onto: drawn = { pick, spell("CopyTo", rule.value) };        paint = "Union";    return true;
         case said_as::tiled_along:
-            drawn = { pick, spell(rule.value >= 32 ? "TileY" : "TileX", rule.value % 32) };
-            paint = "Union";
+            drawn = { pick, spell(rule.value >= 32 ? "TileY" : "TileX", rule.value % 32) + onto_words(rule) };
+            paint = laid_paint(rule);
             return true;
         default:                   return false;
     }

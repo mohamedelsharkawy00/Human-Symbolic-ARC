@@ -239,6 +239,10 @@ struct correspondence_election {
         uint16_t picks = 0;
         // The color it paints what it draws in, when it draws in one of its own.
         int8_t paint = -1;
+        // HOW A PAINT SAID AFTER THE LINE LIES on what is down: over it, under it
+        // -- only where nothing is -- or only onto it, where something is.
+        enum laid : int8_t { laid_over, laid_under, laid_onto };
+        int8_t lay = laid_over;
         // WHICH PIECES IT PICKS when not by color: the ones with `pick_value`
         // holes, or the one `pick_value` down the order of size, largest or
         // smallest first, or the ones in the band of rows or of columns numbered
