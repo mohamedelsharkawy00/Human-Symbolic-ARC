@@ -74,6 +74,33 @@ notebook on the uploaded source, use `python scripts/kaggle_push.py --kernel`.
 Check the accelerator and time budget before a full run. Starting a notebook
 does not submit it to the competition.
 
+## Kaggle output and scoring (checked 2026-10-03)
+
+The [competition evaluation page](https://www.kaggle.com/competitions/arc-prize-2026-arc-agi-2/overview/evaluation)
+requires `submission.json`, with every challenge task ID. Each task maps to a
+list with one entry per test input, in the same order. Each entry has both
+`attempt_1` and `attempt_2`, each holding a full grid. Grids are rectangular
+integer arrays, colors 0-9, dimensions 1-30 (the
+[ARC format](https://github.com/arcprize/ARC-AGI-2/blob/main/readme.md)).
+
+The Kaggle score counts test outputs: an output earns one point if either
+attempt exactly matches its answer, including dimensions and every cell.
+Divide correct outputs by all test outputs. This differs from `arc_said`'s
+whole-puzzle tally, which requires every test output in a puzzle to match.
+Fitting the demonstration pairs alone earns no points.
+
+Our writer repeats its one prediction in both attempt slots. This meets the
+format but gives no second distinct guess. With no accepted program it echoes
+the test input; that is a valid grid, not evidence of a solved puzzle.
+
+The user-requested local evaluation on 2026-10-03 used commit `1dcfc8b`,
+inference only, with test answers withheld until scoring: 120 tasks, 167 test
+outputs, **0 right / 167 wrong (0%)**. One program fit its demonstration pairs
+but failed its test; 119 tasks had no accepted program. All entries validated,
+with zero child failures and zero search. Saved locally in `out/eval-one-shot/`
+(`run.log`, `kaggle/working/submission.json`, `score.py`, `score.json`).
+No solver rules were changed using evaluation feedback.
+
 ## Claude Code cloud
 
 Use `python3 scripts/cloud_setup.py` as the environment setup command, run from

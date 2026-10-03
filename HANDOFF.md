@@ -13,6 +13,21 @@
 - Still locked: the list at the top of `include/core/8_vocabulary.hpp`.
 
 ## Kaggle and cloud preparation
+- User requested a local evaluation and a fresh check of Kaggle's output rules
+  on 2026-10-03. Commit `1dcfc8b`, inference only: **0/167 test outputs**,
+  0/120 whole tasks. One task fit its demonstration pairs but failed its test;
+  119 had no accepted program. All 120 entries valid, zero process failures,
+  zero search, test answers withheld from the solver until external scoring.
+  Evidence: `out/eval-one-shot/score.json`, `score.py`, `run.log`, and
+  `kaggle/working/submission.json` inside that directory. This is the first
+  recorded evaluation baseline here; gained/lost are not available.
+  Training remains 146 right, 1 wrong, 0 gained, 0 lost; no solver edits.
+  This supports a coverage/generalization problem, although the hidden zero's
+  exact cause remains unverified. Fixing the JSON loader did not fix local eval.
+  Kaggle counts exact matches per test OUTPUT, accepting either of two attempts;
+  `arc_said` counts whole tasks. Both attempt keys, every ID, and ordered test
+  entries are required. Our identical attempts are valid but offer no second
+  guess. Official links and details are now in README.md's scoring section.
 - Current source passed the private `mohamedelsharkawy0/arc-smoke-check` notebook
   on Kaggle's T4 / CUDA 12.8: three tasks, valid predictions, no child failures.
   This is a plumbing check, not a score or competition submission.
