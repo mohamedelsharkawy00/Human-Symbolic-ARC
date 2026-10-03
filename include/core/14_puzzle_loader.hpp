@@ -285,6 +285,69 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     task.inferred = true;
 }
 
+// Bounded JSON values: field order and whitespace carry no meaning. In
+// particular, an output belongs to its example object, not the next input.
+namespace puzzle_json {
+inline void space(const string& text, size_t& pos, size_t end) {
+  while (pos < end && isspace((unsigned char)text[pos])) ++pos;
+}
+
+inline size_t value_end(const string& text, size_t pos, size_t end) {
+  if (pos >= end) return string::npos;
+  if (text[pos] == '"') {
+    for (++pos; pos < end; ++pos) {
+      if (text[pos] == '\\') ++pos;
+      else if (text[pos] == '"') return pos + 1;
+    }
+    return string::npos;
+  }
+  if (text[pos] == '{' || text[pos] == '[') {
+    const char close = text[pos] == '{' ? '}' : ']';
+    for (++pos; pos < end;) {
+      if (text[pos] == close) return pos + 1;
+      if (text[pos] == '"' || text[pos] == '{' || text[pos] == '[') {
+        pos = value_end(text, pos, end);
+        if (pos == string::npos) return pos;
+      } else {
+        if (text[pos] == '}' || text[pos] == ']') return string::npos;
+        ++pos;
+      }
+    }
+    return string::npos;
+  }
+  const size_t start = pos;
+  while (pos < end && !isspace((unsigned char)text[pos]) &&
+         text[pos] != ',' && text[pos] != '}' && text[pos] != ']') ++pos;
+  return pos == start ? string::npos : pos;
+}
+
+template <typename Fn>
+bool members(const string& text, size_t begin, size_t end, Fn fn) {
+  if (begin >= end || text[begin] != '{' || text[end - 1] != '}') return false;
+  size_t pos = begin + 1;
+  space(text, pos, end);
+  if (pos == end - 1) return true;
+  while (pos < end - 1) {
+    if (text[pos] != '"') return false;
+    const size_t key_end = value_end(text, pos, end);
+    if (key_end == string::npos) return false;
+    const string key = text.substr(pos + 1, key_end - pos - 2);
+    pos = key_end;
+    space(text, pos, end);
+    if (pos >= end || text[pos++] != ':') return false;
+    space(text, pos, end);
+    const size_t last = value_end(text, pos, end);
+    if (last == string::npos || !fn(key, pos, last)) return false;
+    pos = last;
+    space(text, pos, end);
+    if (pos == end - 1) return true;
+    if (pos >= end || text[pos++] != ',') return false;
+    space(text, pos, end);
+  }
+  return false;
+}
+} // namespace puzzle_json
+
 // Parse a single task from an in-memory JSON string `content` (which must
 // contain this task's "train"/"test" sections) into `out`, tagging it with
 // `id`. Nothing is read off it yet: that is infer_into_puzzle, asked for
@@ -303,63 +366,29 @@ inline bool load_task_from_content(const string &content, const string &id,
 
     if (content.empty()) return false;
 
-    size_t train_start = content.find("\"train\":");
-    size_t test_start = content.find("\"test\":");
-    if (train_start == string::npos || test_start == string::npos) return false;
-
-    auto get_section_end = [&](size_t start) {
-      int depth = 0;
-      bool found_open = false;
-      for (size_t k = start; k < content.size(); ++k) {
-        if (content[k] == '[') {
-          depth++;
-          found_open = true;
-        } else if (content[k] == ']') {
-          depth--;
-        }
-        if (found_open && depth == 0) return k;
-      }
-      return content.size();
-    };
-
     auto parse_examples = [&](size_t start, size_t end, vector<example> &out_vec,
-                              bool is_train) {
-      size_t csr = start;
-      while (csr < end) {
-        size_t in_pos = content.find("\"input\"", csr);
-        if (in_pos == string::npos || in_pos > end) break;
-
-        grid in_g = parse_grid(content, in_pos);
-        if (in_g.width == 0 || in_g.height == 0) break;
-
-        if (in_g.width > MAX_GRID_DIM || in_g.height > MAX_GRID_DIM) {
-          out_vec.clear();
-          return;
-        }
-        csr = in_pos;
-
+                              bool is_train) -> bool {
+      if (content[start] != '[' || content[end - 1] != ']') return false;
+      size_t csr = start + 1;
+      puzzle_json::space(content, csr, end);
+      while (csr < end - 1) {
+        const size_t example_end = puzzle_json::value_end(content, csr, end);
+        if (example_end == string::npos) return false;
         example ex;
-        ex.input = in_g;
-
-        size_t out_pos = content.find("\"output\"", csr);
-        bool has_output = (out_pos != string::npos && out_pos < end);
-
-        if (has_output) {
-          grid out_g = parse_grid(content, out_pos);
-          csr = out_pos;
-
-          if (out_g.width > 0) {
-            if (out_g.width > MAX_GRID_DIM || out_g.height > MAX_GRID_DIM) {
-              out_vec.clear();
-              return;
-            }
-            ex.output = out_g;
-          } else {
-            ex.output.width = 0;
-          }
-        } else {
-          ex.output.width = 0;
-        }
+        bool has_input = false, has_output = false;
+        const bool parsed = puzzle_json::members(content, csr, example_end,
+            [&](const string& key, size_t first, size_t last) {
+          if (key != "input" && key != "output") return true;
+          bool& seen = key == "input" ? has_input : has_output;
+          if (seen || content[first] != '[') return false;
+          grid drawn = parse_grid(content, first);
+          if (first != last || drawn.width <= 0 || drawn.height <= 0 ||
+              drawn.width > MAX_GRID_DIM || drawn.height > MAX_GRID_DIM) return false;
+          (key == "input" ? ex.input : ex.output) = drawn;
+          seen = true;
+          return true;
+        });
+        if (!parsed || !has_input || (is_train && !has_output)) return false;
 
         // Test outputs are absent from the challenges JSON (the answers live in a
         // separate solutions file). If one was supplied for this test example,
@@ -374,11 +403,29 @@ inline bool load_task_from_content(const string &content, const string &id,
         }
 
         out_vec.push_back(ex);
+        csr = example_end;
+        puzzle_json::space(content, csr, end);
+        if (csr == end - 1) break;
+        if (csr >= end || content[csr++] != ',') return false;
+        puzzle_json::space(content, csr, end);
+        if (csr == end - 1) return false;
       }
+      return !out_vec.empty();
     };
 
-    parse_examples(train_start, get_section_end(train_start), task.train, true);
-    parse_examples(test_start, get_section_end(test_start), task.test, false);
+    size_t begin = 0, end = content.size();
+    puzzle_json::space(content, begin, end);
+    while (end > begin && isspace((unsigned char)content[end - 1])) --end;
+    bool has_train = false, has_test = false;
+    if (!puzzle_json::members(content, begin, end,
+        [&](const string& key, size_t first, size_t last) {
+      if (key != "train" && key != "test") return true;
+      const bool train = key == "train";
+      bool& seen = train ? has_train : has_test;
+      if (seen) return false;
+      seen = true;
+      return parse_examples(first, last, train ? task.train : task.test, train);
+    }) || !has_train || !has_test) return false;
 
     out = std::move(task);
     return true;

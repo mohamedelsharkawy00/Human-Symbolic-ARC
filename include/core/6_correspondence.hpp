@@ -1136,7 +1136,11 @@ private:
                               const prepared_segmentation& prepared, reading& facts) {
         struct seen_act {
             int8_t color, what, value;
-            bool operator==(const seen_act&) const = default;
+            // GCC 11 (Kaggle) crashes when ranges instantiates a local class's
+            // defaulted equality. Spell out the same three comparisons.
+            bool operator==(const seen_act& other) const {
+                return color == other.color && what == other.what && value == other.value;
+            }
         };
         // Which piece of which pair each act was seen on, to count what it covers.
         struct seen_on { seen_act act; size_t pair; int piece; };

@@ -108,19 +108,38 @@ def record_push():
     with open(PUSH_STAMP, "w") as fh:
         json.dump({"status": remote_version(), "at": time.strftime("%Y-%m-%d %H:%M:%S")}, fh, indent=2)
 
-def push_kernel():
+def push_kernel(smoke=False):
     """Re-pin the notebook to the newest dataset version, guarded the same way.
 
     The raw `kaggle kernels push` has no guard of its own, and every worktree
     shares one kernel, so going through here is what makes the rule real.
     """
     kernel_dir = os.path.join(ROOT, "kaggle", "src", "arc_build")
-    r = subprocess.run(["kaggle", "kernels", "push", "-p", kernel_dir],
+    subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "build_to_ipynb.py")], check=True)
+    if smoke:
+        with open(os.path.join(kernel_dir, "kernel-metadata.json")) as fh:
+            meta = json.load(fh)
+        with open(os.path.join(kernel_dir, meta["code_file"]), encoding="utf-8") as fh:
+            notebook = json.load(fh)
+        notebook["cells"][0]["source"].insert(0, 'import os; os.environ["ARC_SMOKE_CHECK"] = "1"\n')
+        meta["id"] = meta["id"].rsplit("/", 1)[0] + "/arc-smoke-check"
+        meta["title"] = "ARC Smoke Check"
+        meta["is_private"] = True
+        kernel_dir = os.path.join(ROOT, "out", "kaggle-smoke")
+        os.makedirs(kernel_dir, exist_ok=True)
+        with open(os.path.join(kernel_dir, "kernel-metadata.json"), "w") as fh:
+            json.dump(meta, fh, indent=2)
+        with open(os.path.join(kernel_dir, meta["code_file"]), "w", encoding="utf-8") as fh:
+            json.dump(notebook, fh, indent=1)
+    command = ["kaggle", "kernels", "push", "-p", kernel_dir]
+    if smoke:
+        command += ["--timeout", "1200"]
+    r = subprocess.run(command,
                        capture_output=True, text=True)
     print(r.stdout.strip())
     if r.returncode != 0:
         print(r.stderr.strip()); sys.exit(1)
-    print("kernel re-pinned to the latest dataset version.")
+    print("private smoke check started." if smoke else "kernel re-pinned to the latest dataset version.")
 
 def push(msg):
     r = subprocess.run(
@@ -151,10 +170,12 @@ if __name__ == "__main__":
     ap.add_argument("-m", "--message", default="update source", help="dataset version message")
     ap.add_argument("--kernel", action="store_true",
                     help="re-pin the notebook instead of pushing the source")
+    ap.add_argument("--smoke", action="store_true",
+                    help="run a separate private 3-task notebook on the uploaded source")
     args = ap.parse_args()
     check_owner()
-    if args.kernel:
-        push_kernel()
+    if args.kernel or args.smoke:
+        push_kernel(smoke=args.smoke)
         sys.exit(0)
     sync()
     push(args.message)

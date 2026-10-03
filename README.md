@@ -55,7 +55,43 @@ NVCC builds, which define nothing, keep the API.
 # 6. Kaggle
 1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp` and `src\cuda_solver.cu` as a Kaggle dataset; nothing from `include\gui` goes.
 2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it on Kaggle's GPU and starts one `arc_headless` per GPU. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`.
-3. Run the same thing locally before pushing: `arc_headless.exe` with `ARC_DATASET` set to test, eval, train or custom, and optionally `ARC_TIMEOUT` (seconds per puzzle, default 120), `ARC_PUZZLE_LIMIT`, and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`, as the Kaggle run does.
+3. Kaggle uses inference only: `ARC_INFERENCE_ONLY=1`. It emits programs, accepts the first that exactly reproduces every training output, and predicts the test outputs. No search runs. Run the same path locally with `arc_headless.exe`, `ARC_INFERENCE_ONLY=1`, and `ARC_DATASET` set to test, eval, train or custom. Optional controls are `ARC_PUZZLE_LIMIT` and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`. One task can be run with `arc_headless --task ID --datasets MASK --infer-only --out FILE`. The older search path is still available when inference-only is not set.
+
+Before a full Kaggle run, upload the current source and run the private smoke notebook:
+
+```text
+python scripts/kaggle_push.py -m "submission preparation"
+python scripts/kaggle_push.py --smoke
+kaggle kernels status mohamedelsharkawy0/arc-smoke-check
+kaggle kernels output mohamedelsharkawy0/arc-smoke-check -p out/kaggle-smoke-result
+```
+
+This builds on the assigned GPU, runs inference on three test tasks,
+and checks task IDs, prediction counts and grid format. The output
+is `smoke_predictions.json`, not a full submission or a score measurement.
+The separate `arc-build` notebook keeps its full-run settings. To start that
+notebook on the uploaded source, use `python scripts/kaggle_push.py --kernel`.
+Check the accelerator and time budget before a full run. Starting a notebook
+does not submit it to the competition.
+
+## Claude Code cloud
+
+Use `python3 scripts/cloud_setup.py` as the environment setup command, run from
+the repository root. It needs Python 3 and a C++20 compiler (`g++`, or set
+`CXX=clang++`). It builds the CPU inference tool and fetches missing puzzle data
+using the existing public-data script. For an offline build, add `--build-only`.
+The checkout must contain these setup files.
+
+```text
+out/cloud/arc_probe out/probe/cloud 00576224
+```
+
+Omit the puzzle ID to write all training readouts. This target uses neither CUDA
+nor Vulkan. It supports work on the reading and program emission; it does not
+run the emitted programs or replace GPU score and CopyTo checks. `CLAUDE.md`
+loads the repository's existing rules for Claude.
+
+Configure the command in Claude's [cloud environment setup script](https://code.claude.com/docs/en/cloud-environments#setup-scripts).
 
 # 7. Logs
 1. Nothing in `logs/` accumulates. Each file is the current one of its kind, cleared by whatever starts the next.

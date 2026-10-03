@@ -3502,7 +3502,9 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
     // __launch_bounds__ occupancy cap above) to on-chip shared memory instead of local/
     // DRAM. We qualify: CUDA 13.2, whole-program compile, static smem only, launch bounds
     // defined. Makes the occupancy cap far cheaper (spills no longer hit DRAM latency).
+#if __CUDACC_VER_MAJOR__ >= 13
     asm volatile (".pragma \"enable_smem_spilling\";");
+#endif
 
     // Warp-cooperative: one block == one warp == one job. Most DSL ops run warp-parallel
     // in gpu_eval_program_warp; paint/crop stay on lane 0; write-back + score run on

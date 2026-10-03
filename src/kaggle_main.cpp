@@ -132,9 +132,12 @@ static int solve_one(int argc, char **argv) {
 	const double timeout = atof(arg_after(argc, argv, "--timeout").c_str());
 	const string out_path = arg_after(argc, argv, "--out");
 	const bool serve = has_arg(argc, argv, "--serve");
+	const bool inference_only = has_arg(argc, argv, "--infer-only");
 	const bool timed = timeout > 0;
-	if (id.empty() || flags == 0 || timed != !out_path.empty() || (!serve && !timed)) {
-		fprintf(stderr, "--task needs --datasets, and --timeout with --out unless --serve\n");
+	if (id.empty() || flags == 0 ||
+	    (inference_only ? (serve || out_path.empty()) :
+	     (timed != !out_path.empty() || (!serve && !timed)))) {
+		fprintf(stderr, "--task needs --datasets and --out with --infer-only or --timeout; --serve is interactive\n");
 		return 1;
 	}
 
@@ -148,6 +151,60 @@ static int solve_one(int argc, char **argv) {
 	if (!cuda_init()) {
 		fprintf(stderr, "no usable GPU, nothing solved\n");
 		return 1;
+	}
+	if (inference_only) {
+		// Same selection as arc_said: only programs emitted by inference, and
+		// only the first that draws every training output exactly. No beam.
+		const auto started = chrono::steady_clock::now();
+		puzzle p;
+		const auto* answers = tasks.solutions_for(id);
+		if (!load_task_from_content(found->content, id, p, answers)) return 1;
+		infer_into_puzzle(p);
+		string accepted;
+		for (const string& program : p.suggested_programs) {
+			node* tree = environment::parse(program);
+			if (!tree) continue;
+			const int nodes = environment::count_nodes(tree);
+			bool fits = !p.train.empty();
+			for (const auto& pair : p.train) {
+				grid drawn; float score = 0; bool solved = false;
+				environment::execute_tree_via_flat(tree, pair, drawn, p, nodes, score, solved);
+				if (drawn != pair.output) { fits = false; break; }
+			}
+			if (fits) {
+				p.best_tree = tree;
+				p.best_node_count = nodes;
+				p.is_solved = true;
+				accepted = program;
+				break;
+			}
+			environment::remove(tree);
+		}
+		bool right = p.is_solved && answers && answers->size() == p.test.size();
+		size_t test_index = 0;
+		puzzle_result result;
+		result.id = id;
+		result.solved = p.is_solved;
+		result.entry = submission_line(p, [&](const example& ex) {
+			grid drawn = ex.input;
+			if (p.best_tree) {
+				float score = 0; bool solved = false;
+				environment::execute_tree_via_flat(p.best_tree, ex, drawn, p,
+				                                 p.best_node_count, score, solved);
+			}
+			if (right && drawn != (*answers)[test_index]) right = false;
+			++test_index;
+			return drawn;
+		});
+		result.test_solved = right;
+		result.elapsed = chrono::duration<double>(chrono::steady_clock::now() - started).count();
+		const char* verdict = !p.is_solved ? "UNSOLVED" : !answers ? "FIT" : right ? "SOLVED" : "WRONG";
+		result.text = id + "\t" + verdict + "\t" + accepted + "\nMode: inference only; search attempts: 0\n";
+		const bool ok = result.write(out_path);
+		environment::remove(p.best_tree);
+		p.best_tree = nullptr;
+		cuda_runtime_shutting_down();
+		return ok ? 0 : 1;
 	}
 
 	solver_options options;
@@ -274,6 +331,7 @@ static int run_shard(const filesystem::path &self) {
 		return 1;
 	}
 	const double timeout = env_number("ARC_TIMEOUT", 120.0);
+	const bool inference_only = env_number("ARC_INFERENCE_ONLY", 0) != 0;
 	const int limit = (int)env_number("ARC_PUZZLE_LIMIT", 0);
 	const int shard_index = (int)env_number("ARC_SHARD_INDEX", 0);
 	const int shard_total = max(1, (int)env_number("ARC_SHARD_TOTAL", 1));
@@ -284,8 +342,10 @@ static int run_shard(const filesystem::path &self) {
 	const int chunk = (total + shard_total - 1) / shard_total;  // ceil
 	const int first = min(total, shard_index * chunk);
 	const int last = min(total, first + chunk);
-	fprintf(stderr, "shard %d/%d: tasks [%d, %d) of %d, %.0fs each\n",
-	        shard_index, shard_total, first, last, total, timeout);
+	fprintf(stderr, "shard %d/%d: tasks [%d, %d) of %d\n",
+	        shard_index, shard_total, first, last, total);
+	if (inference_only) fprintf(stderr, "MODE: inference only, no search timeout\n");
+	else fprintf(stderr, "MODE: search, %.0fs each\n", timeout);
 
 	const filesystem::path scratch =
 		filesystem::temp_directory_path() / ("arc_shard_" + to_string(shard_index));
@@ -297,9 +357,11 @@ static int run_shard(const filesystem::path &self) {
 		const challenge_task &task = tasks.tasks[i];
 		const string result_path = (scratch / (task.id + ".txt")).string();
 		const auto started = chrono::steady_clock::now();
-		const int status = system(shell_line({self.string(), "--task", task.id, "--datasets",
-		                                      to_string(flags), "--timeout", to_string(timeout),
-		                                      "--out", result_path}).c_str());
+		vector<string> command{self.string(), "--task", task.id, "--datasets",
+		                       to_string(flags), "--out", result_path};
+		if (inference_only) command.push_back("--infer-only");
+		else { command.push_back("--timeout"); command.push_back(to_string(timeout)); }
+		const int status = system(shell_line(command).c_str());
 		if (status != 0) fprintf(stderr, "%s: its run exited with %d\n", task.id.c_str(), status);
 		const double took = chrono::duration<double>(chrono::steady_clock::now() - started).count();
 
