@@ -12,6 +12,49 @@
   onto them (MaskBy[10]).
 - Still locked: the list at the top of `include/core/8_vocabulary.hpp`.
 
+## Decisions and open questions from 2026-10-03
+- Today's code/preparation changes were pushed to main as `1dcfc8b`; Kaggle
+  scoring rules and the local evaluation baseline followed as `f6d59cf`.
+  The 240 visible test tasks were checked: all are identical to training
+  tasks. The 57 visible fits are not a measure of unseen-task performance.
+- The next proposed solver work is the per-pair background problem below.
+  No design was selected and no implementation started. Keep training as the
+  development measure; today's evaluation was explicitly requested by the
+  user, not a change to the standing rule or permission to tune on evaluation.
+- Claude cloud preparation is in main, but an actual Claude cloud session
+  has not been configured or verified. Connect this repo on main and set its
+  environment setup script to `python3 scripts/cloud_setup.py`. It needs a
+  C++20 compiler and network access to fetch public puzzle data when absent.
+  Ready scope: CPU inference edits and readouts. Program execution, accuracy
+  scoring, and CopyTo still need the local GPU or Kaggle.
+- We considered a CPU executor to make a $100 cloud-credit offer more useful.
+  The user decided it is not worth doing now. No CPU executor/prototype was
+  implemented; do not start one as an assumed prerequisite for cloud work.
+  Correction to the initial assessment: substantial CPU/GPU logic IS shared
+  through ARC_HOST_DEVICE helpers in `1_readings.hpp` and `7_infer.hpp`:
+  segmentation, matching partners, placement, rays, repeats, snapping, etc.
+  The missing layer is full program execution: object selection/list state,
+  canvas composition, and CPU equivalents for CUDA-specific parallel loops.
+  `17_fixed_dsl.hpp` prepares data, while `18_dsl_executor.hpp` invokes CUDA.
+  The interpreter mentions 76 operation types; accepted training programs
+  use 67. These counts do NOT imply 67 separate algorithm rewrites.
+  The quoted 2-4 working days / 2-4 hour prototype were rough estimates only,
+  not measured work or a reliable dollar estimate.
+- Latest user question before this handoff update: what the "project
+  coordinator limit" in Claude resets. We verified what a coordinator does
+  (directs worker threads), but NOT that specific limit's meaning or reset
+  behavior. Asked for its exact wording/screenshot and reset tooltip; none
+  received yet. Do not claim an ordinary usage reset clears every limit.
+  Official reset guidance says an offer restores the session OR weekly
+  allowance it specifies, not credit balances. The user's $100 offer terms
+  and eligibility are also unverified. References:
+  https://support.claude.com/en/articles/17007452-what-is-a-limit-reset
+  https://claude.com/blog/projects-redesigned
+  https://code.claude.com/docs/en/cloud-environments#setup-scripts
+- No solver changes followed the completed audit/evaluation. Last verified
+  training counts remain 146 right, 1 wrong, 0 gained, 0 lost; CopyTo 20/20,
+  loader checks 17/17, explained-but-unsolved 1. Later work was analysis/docs.
+
 ## Kaggle and cloud preparation
 - User requested a local evaluation and a fresh check of Kaggle's output rules
   on 2026-10-03. Commit `1dcfc8b`, inference only: **0/167 test outputs**,
@@ -67,9 +110,12 @@
   T4 version 38 COMPLETE: 107.7s compile, 95.1s inference, 240 valid entries,
   57 fits, zero child failures/search. Predictions exactly match version 37.
   Outputs: `out/kaggle-v38-result/`. Submission was rejected: daily team
-  allowance (1) already used. Kaggle said try tomorrow UTC (18 hours).
-  Next: submit exact notebook version 38 after the allowance resets, then
-  check its hidden score. Version 38 has NOT been submitted successfully.
+  allowance (1) already used. On October 3 Kaggle said to retry October 4 UTC
+  (about 18 hours at that time; not a live countdown).
+  Pending: exact notebook version 38 may be submitted after reset to test the
+  loader fix on hidden data. It has NOT been submitted successfully. The later
+  local evaluation still scored zero, so do not promise this retry improves
+  the score; the proposed development priority is solver coverage below.
 - The new inference-only runner passed all 1000 training tasks locally:
   exactly the same 147 accepted programs and verdicts as arc_said (146 right,
   1 wrong, 0 gained, 0 lost), zero search steps and zero child failures.
