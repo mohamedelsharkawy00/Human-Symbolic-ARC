@@ -1,4 +1,109 @@
-# Handoff, 2026-10-05
+# Handoff, 2026-10-06
+
+## Next session: fix puzzles, then DRY code (the user's plan)
+- The speed stage is done (next section): a full score takes about 30 s and
+  the readouts 32 s, and nothing the reading says changed. Check a change
+  the same way: programs, readouts and summary identical, or say what moved.
+- Puzzles: the TO DO list under "IN PROGRESS" below, items 1-3 and 5. The 3
+  wrong ones (5582e5ca, c35c1b4c, 11852cab) make that stage not yet good.
+- DRY: the replays (`*_holds`, 7_infer.hpp) repeat the same pair loops,
+  picked-piece handling and change checks. About 20 of them each make their
+  pieces ready (partner_pieces); see "STILL OPEN" in the next section.
+
+## Speed of the dataset run: profiled, matching, parallel (2026-10-05)
+- User paused feature work to address dataset run time and code repetition.
+  CPU profiling requested first; no solver rules changed. Then agreed: the
+  duplicate-placement scan, and matching, the biggest time consumer. Then,
+  in the user's order: puzzles read in parallel (done), and only then the
+  replay pieces (partner_pieces, below): the nothing-kept way done, the rest
+  waits on the user's decisions.
+- Now: arc_said about 30 s cool (less since the replay pieces), arc_probe
+  32 s for all 1000 puzzles; 163 right, 3 wrong; every program and readout
+  as before all this. More threads than the CPU has did not help (20: 26 s,
+  40: 27 s), and a hot laptop runs the same thing in 75 s.
+- scripts/profile.bat now builds RelWithDebInfo and profiles arc_said, then
+  exports function, source-line, thread and call-stack reports. Each run has
+  its own profiling/output/cpu-<timestamp>/ folder (ignored by git).
+- VTune user-mode launch stalled before CUDA startup on this machine. Attach
+  after startup works (profiling/collect_cpu.ps1); score covers all puzzles,
+  profile excludes startup/attachment. No admin needed. A control-connection
+  error occurred on target exit; separate finalization recovered the capture.
+  The runner now finalizes separately and requires both score and report.
+  Collection skips finalization with -finalization-mode=none (this VTune
+  ignores -no-auto-finalize, so every capture had been finalized twice).
+- Full capture: profiling/output/cpu-20261005-164441-893/. summary.txt:
+  850.629 s elapsed, 838.082 s sampled CPU. Programs/verdicts exactly match
+  out/fixes-said.txt: 163 right, 3 wrong, gained 0, lost 0.
+- Source attribution: 5_matching.hpp 38.04% of sampled CPU; 1_readings.hpp
+  19.74%; vector 11.87%; 7_infer.hpp 1.72%. Matching's duplicate-placement
+  scan at 5_matching.hpp:736-737 accounts for about 12.8% (107.1 s).
+  Runtime functions include unsymbolized VCRUNTIME functions (14.89% total
+  module time) and malloc_base (6.32%). Do not mistake CPU samples for GPU
+  elapsed time or treat the name-based area summary as inclusive caller cost.
+- MATCHING MADE FASTER, NO READING CHANGED (5_matching.hpp). Started in a
+  Codex session (the first two), finished in a Claude session:
+  - A source's shape matches skip a corner it already placed through a
+    per-source table, not a scan of every match found.
+  - The greedy fallback reuses the fitting's cells and order instead of
+    redrawing every piece inside every comparison. The fitting now keeps one
+    candidate per match, empty ones too (the work budget still counts only
+    the ones that show cells, as before).
+  - Each source is turned once per pose, not once per hit; whether a match
+    lands on more than background is asked as it is kept (posed_for).
+  - The fitting sorts its candidates once (best_first). Each cell's options
+    are listed in that order in one flat list (options_at), and the extras
+    (keep_what_fitted) and the greedy pass read best_first: three sorts per
+    fitting and one per cell are now one.
+  - Checked each step: programs and verdicts identical to
+    out/fixes-said.txt (163 right, 3 wrong, gained 0, lost 0), and all 1000
+    readouts identical to out/probe/fixes (out/probe/matchspeed after the
+    first two, out/probe/matchspeed2 after all four).
+  - Time: profiled 850.6 s -> 665.9 s after the first two
+    (cpu-20261005-171532-192). After all four, Release arc_said run back to
+    back with the last commit built apart: 1188 s -> 321 s, the same 166
+    lines (out/head-said.txt, out/matchspeed3-said.txt). One earlier run of
+    the new code took 209 s: this laptop varies a lot run to run (the 887 s
+    above was the same code as the 1188 s), so compare times back to back.
+    Readouts (arc_probe, all 1000): 218 s.
+- Where the time went in cpu-20261005-171532-192 (inclusive CPU, 655 s):
+  read_figures 95%; matching (collect_edges) 57%, of it gather_matches 32%
+  and set_up_the_fitting 17% (the last two fixes go at those); finish_the_line
+  28%, of it partner_pieces 19% (124 s). Running programs on the GPU: 4.5%.
+- PUZZLES READ IN PARALLEL: arc_said and arc_probe read a puzzle on every
+  CPU thread (scripts/in_parallel.hpp) and hand back their lines in the
+  dataset's order. The reading shares nothing between puzzles (no global
+  state, no caches). The GPU checks stay one puzzle at a time (a mutex in
+  said.cpp): every run goes through one scratch slot
+  (cuda_dsl_upload_scratch_example), and programs are parsed into one
+  unsynchronized pool (node_pool). ARC_THREADS=n sets the threads (unset:
+  all); scripts/profile.bat sets 1, so profiles compare with earlier ones.
+  - Numbers: arc_said 321 s -> 30 s, arc_probe 218 s -> 32 s (without its
+    build). The same 166 lines (out/parallel-said.txt), all 1000 readouts
+    and the summary identical (out/probe/parallel): 163 right, 3 wrong,
+    gained 0, lost 0, explained but unsolved 2 -> 2.
+  - Not run: the Linux cloud build of arc_probe (cloud_setup.py already
+    passes -pthread). Not done: the cuts inside one puzzle in parallel
+    (to-do 4 below), and the Kaggle runner (src/kaggle_main.cpp).
+- THE PIECES MADE READY ONCE A PICK, NOTHING KEPT (the user's choice, over
+  a notebook that remembers). rays_hold and tile_holds were asked every
+  length x both ways x every lay of a pick, and each try rebuilt every
+  pair's piece boxes and picks though only the pick decides them. Now the
+  caller makes them ready once a pick (handed_pieces, 7_infer.hpp), every
+  try reads them, and they are dropped after. Safe because `opened` is const:
+  nothing carries that hand while the pick is asked.
+  - Numbers: programs identical (out/handed-said.txt), all 1000 readouts and
+    the summary identical (out/probe/handed): 163 right, 3 wrong, gained 0,
+    lost 0, explained but unsolved 2 -> 2. Old and new run in turn on a hot
+    laptop: CPU time 538/509 s -> 415/368 s (about -25%), wall 81/71 s ->
+    64/48 s (cool, the old one ran in 26 s).
+- STILL OPEN, THE USER DECIDES: the other ~18 replays still make their
+  pieces ready every try (about 15 s of CPU in the single-thread profile).
+  Proposed and understood, not chosen yet: replay_facts keeps the pieces it
+  made ready, and the one door that changes the pieces (carry_the_hand)
+  wipes them, so nothing stale can be read. The user asked whether keeping
+  them beats remaking them (here: big work, a few KB), and chose the
+  nothing-kept way first.
+- The existing 3 wrong cases below remain unresolved.
 
 ## IN PROGRESS: one measure for every choice, and WouldFit (2026-10-05)
 Pushed as a checkpoint at the user's request. NOT yet a good change by the
@@ -63,7 +168,9 @@ AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
      too, and say_the_plan deletes it first). The mirror word was right.
   3. 11852cab: needs copies turned around the middle (quarter turns), a new
      way for MirrorAround; mirroring fit the training pairs by coincidence.
-  4. Speed: read the cuts (and plans) in parallel; 887 s vs 344 s.
+  4. Speed: read the cuts (and plans) in parallel; 887 s vs 344 s. Since
+     then matching went 1188 s -> 321 s and the puzzles are read in
+     parallel: 30 s (the speed section above).
   5. Then: re-export solutions/ (many programs reworded since the export);
      9565186b is sayable as "every color but the most common, Recolor[5]"
      but not found; 18286ef8 ("the 9 steps toward the 6") lacks a word.

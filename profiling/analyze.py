@@ -1,11 +1,6 @@
-"""Analyze VTune CPU stacks CSV + Nsight Systems GPU CSVs and produce a unified report.
+"""Summarize VTune CPU profiles and optional Nsight GPU reports.
 
-Updated April 2026 for full-CUDA architecture:
-- Hot path: GPU kernel (dsl_exec_and_score_kernel_v2)
-- CPU hot path: beam search generation + program packing
-- Source-line breakdown targets: 19_solver_executor.hpp, 16_solver_beam.hpp,
-  cuda_solver.cu, 17_fixed_dsl.hpp
-- Nsight Systems: CUDA kernel times, memory transfers, API overhead
+Usage: python profiling/analyze.py [run-directory]
 """
 
 import csv
@@ -17,7 +12,7 @@ from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+OUTPUT_DIR = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(SCRIPT_DIR, "output")
 REPORT_PATH = os.path.join(OUTPUT_DIR, "hotspots.txt")
 
 # VTune CSV paths
@@ -38,6 +33,9 @@ TOP_N = 80
 
 # --- Source files of interest for line-level breakdown ---
 HOT_SOURCE_FILES = {
+    "1_readings.hpp", "3_background.hpp", "4_objects.hpp",
+    "5_matching.hpp", "6_correspondence.hpp", "7_infer.hpp",
+    "9_sentences.hpp", "said.cpp",
     "19_solver_executor.hpp",
     "16_solver_beam.hpp",
     "cuda_solver.cu",
@@ -63,7 +61,7 @@ OS_KERNEL = {"ntoskrnl", "win32kfull.sys", "win32kbase.sys", "win32k.sys",
 NOISE = {"imagehlp", "dbghelp", "graphics-hook64", "apphelp",
          "wpprecorder.sys", "directxdatabasehelper", "shcore"}
 
-ARC_MODULE = "arc"
+ARC_MODULES = {"arc", "arc_said", "arc_headless", "arc_probe"}
 CAT_LABELS = {
     "ARC":    "ARC",
     "MEM":    "ARC:mem",
@@ -93,7 +91,7 @@ def simplify_name(name: str) -> str:
     mod = get_module(name)
     func = get_function(name)
 
-    if mod.lower() != ARC_MODULE:
+    if categorize(mod) != "ARC":
         return name
 
     # ILT thunks
@@ -150,7 +148,7 @@ def categorize(module: str) -> str:
     if mod.endswith(".exe") or mod.endswith(".dll") or mod.endswith(".sys"):
         mod = mod.rsplit(".", 1)[0]
 
-    if mod == ARC_MODULE:
+    if mod in ARC_MODULES:
         return "ARC"
     if mod in INDIRECT_MEMORY or mod in {m.lower() for m in INDIRECT_MEMORY}:
         return "MEM"
@@ -278,6 +276,11 @@ def build_area_breakdown(hotspots: list[tuple[str, float, float, int]]) -> list[
     areas: dict[str, float] = defaultdict(float)
 
     area_patterns = [
+        ("word_replay", ["_holds", "replay", "partner_pieces"]),
+        ("matching", ["matching", "correspondence", "segmentation"]),
+        ("object_cells", ["arc::object::", "arc::object_cells::", "arc::pose_source"]),
+        ("dsl_emission", ["say_the_", "sentence", "spell"]),
+        ("inference", ["infer", "read_figures", "read_the_cut", "finish_the_line", "carry_the_hand", "says_the_most"]),
         ("beam_search",     ["step", "generate_phase", "generate_binary",
                              "find_slots", "rebuild_skeleton", "advance_level",
                              "execute_current_phase", "check_yield"]),
@@ -294,13 +297,13 @@ def build_area_breakdown(hotspots: list[tuple[str, float, float, int]]) -> list[
         ("fixed_dsl",       ["fixed_init_context", "fixed_execute", "fixed_exec_",
                              "to_gpu_object_list"]),
         ("display_ui",      ["update_grid", "update_example", "update_display",
-                             "render", "draw", "present", "swap"]),
+                             "render", "present", "swapchain"]),
     ]
 
     for name, exc, _, _ in hotspots:
         func = get_function(name).lower()
         mod = get_module(name).lower()
-        if mod != ARC_MODULE:
+        if categorize(mod) != "ARC":
             continue
 
         matched = False
@@ -553,7 +556,7 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
         if has_ncu:
             sources.append("Nsight Compute")
 
-        w(f"ARC Profiling Report  |  {datetime.now():%Y-%m-%d %H:%M:%S}  |  {total} samples  |  {' + '.join(sources)}")
+        w(f"ARC Profiling Report  |  {datetime.now():%Y-%m-%d %H:%M:%S}  |  {total} sampled CPU ms  |  {' + '.join(sources)}")
         w("=" * 120)
 
         # =========================================================
@@ -642,17 +645,17 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
         w("  CPU Time Breakdown by Category")
         w(f"  ARC total (direct + indirect)  {arc_all:7.2f}%")
         w(f"    |- Direct code               {cats['ARC']:7.2f}%")
-        w(f"    |- Memory ops (memcpy/set)    {cats['MEM']:7.2f}%")
+        w(f"    |- C runtime (incl. memory)    {cats['MEM']:7.2f}%")
         w(f"    |- Heap (new/delete/malloc)   {cats['HEAP']:7.2f}%")
-        w(f"  CUDA runtime                  {cats['CUDA']:7.2f}%  <- CPU waiting on GPU / kernel launch")
-        w(f"  GPU / Vulkan                  {cats['GPU']:7.2f}%  <- display rendering")
+        w(f"  CUDA runtime                  {cats['CUDA']:7.2f}%")
+        w(f"  GPU / Vulkan                  {cats['GPU']:7.2f}%")
         w(f"  OS / Kernel                   {cats['OS']:7.2f}%")
         w()
 
         # Functional area breakdown
         if area_breakdown:
             w("=" * 120)
-            w("  ARC Functional Area Breakdown")
+            w("  ARC Functional Area Breakdown (function-name estimates)")
             w(f"  {'Area':<25}  {'CPU%':>7}  {'Bar':<30}")
             w(f"  {'---':<25}  {'---':>7}  {'---':<30}")
             for area, pct in area_breakdown:
@@ -662,7 +665,7 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
 
         # Top functions
         w("=" * 120)
-        w(f"  {'#':>4}  {'Exc%':>7}  {'Smpl':>6}  {'Cat':>9}  {'Bar':<20}  Function")
+        w(f"  {'#':>4}  {'Exc%':>7}  {'CPU ms':>6}  {'Cat':>9}  {'Bar':<20}  Function")
         w(f"  {'---':>4}  {'---':>7}  {'---':>6}  {'---':>9}  {'---':<20}  {'---':<55}")
 
         for i, (name, exc, inc, cnt) in enumerate(hotspots[:TOP_N], 1):
@@ -684,7 +687,7 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
                 lines = source_breakdown[fname]
                 file_total = sum(p for _, _, p in lines)
                 w()
-                w(f"  --- {fname} ({file_total:.2f}% total) ---")
+                w(f"  --- {fname} ({file_total:.2f}% in shown lines) ---")
                 w(f"  {'Line':>6}  {'CPU%':>7}  Function")
                 for lineno, func, pct in lines:
                     w(f"  {lineno:6d}  {pct:6.2f}%  {func}")
@@ -738,7 +741,7 @@ def main() -> None:
     print(f"Report written to {REPORT_PATH}")
 
     if hotspots:
-        print(f"Total CPU samples: {sum(h[3] for h in hotspots)}")
+        print(f"Sampled CPU time (ms): {sum(h[3] for h in hotspots)}")
 
     # Console summary
     print()

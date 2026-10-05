@@ -6,8 +6,12 @@
 // root, through scripts\probe.bat:
 //   arc_probe <out-dir> [id...]
 // scripts\readouts.py reads what it writes.
+//
+// The puzzles are read at once, one per CPU thread (in_parallel.hpp): each
+// writes its own readout, and the summary keeps the dataset's order.
 #include "16_solver_beam.hpp"
 #include "14_puzzle_loader.hpp"
+#include "in_parallel.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -25,18 +29,29 @@ int main(int argc, char** argv) {
     filesystem::current_path(out);
     FILE* summary = fopen("summary.txt", "w");
     if (!summary) { fprintf(stderr, "cannot write %s\n", (out / "summary.txt").string().c_str()); return 1; }
-    int idx = 0;
-    for (const auto& entry : set.tasks) {
-        const int at = idx++;
-        if (!only.empty() && ranges::find(only, entry.id) == only.end()) continue;
+    // Each puzzle asked, by its place in the dataset, which its readout names.
+    vector<int> asked;
+    for (int at = 0; at < (int)set.tasks.size(); ++at)
+        if (only.empty() || ranges::find(only, set.tasks[(size_t)at].id) != only.end()) asked.push_back(at);
+    vector<string> lines(asked.size());
+    in_parallel((int)asked.size(), [&](int which) {
+        const int at = asked[(size_t)which];
+        const auto& entry = set.tasks[(size_t)at];
         puzzle task;
-        if (!load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id))) continue;
+        if (!load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id))) return;
         infer_into_puzzle(task, { at, (int)set.tasks.size(), DS_TRAIN }, true);
         const auto& rule = task.inf.shape_color_map;
-        fprintf(summary, "%s\tshape %d/%d", entry.id.c_str(), (int)rule.claimed_by, rule.count);
-        for (int i = 0; i < rule.count; ++i) fprintf(summary, " %u>%d", rule.keys[i], rule.colors[i]);
-        fprintf(summary, "\t%s\n", task.suggested_programs.empty() ? "-" : task.suggested_programs.front().c_str());
-    }
+        char shape[64];
+        snprintf(shape, sizeof shape, "\tshape %d/%d", (int)rule.claimed_by, rule.count);
+        string& line = lines[(size_t)which];
+        line = entry.id + shape;
+        for (int i = 0; i < rule.count; ++i) {
+            char key[32];
+            snprintf(key, sizeof key, " %u>%d", rule.keys[i], (int)rule.colors[i]);
+            line += key;
+        }
+        line += "\t" + (task.suggested_programs.empty() ? string("-") : task.suggested_programs.front()) + "\n";
+    }, [&](int which) { fputs(lines[(size_t)which].c_str(), summary); });
     fclose(summary);
     return 0;
 }

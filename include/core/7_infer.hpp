@@ -3619,6 +3619,17 @@ struct replay_facts {
         : replay_facts(pairs, {}, {}, inf.correspondence.segmentation) {}
 };
 
+// THE PIECES A PICK TAKES, pair by pair, made ready once for a word asked many
+// ways over -- every length, both ways round, every lay -- whose tries differ in
+// everything but the pieces. Kept only while that word is asked, and only while
+// nothing carries the hand: `facts` must not change under it.
+inline vector<partner_pieces> handed_pieces(const replay_facts& facts, const piece_pick& pick) {
+    vector<partner_pieces> handed;
+    handed.reserve(facts.cuts.size());
+    for (const vector<object>& cut : facts.cuts) handed.emplace_back(cut, pick);
+    return handed;
+}
+
 // Whether a pick by `colors` picks by the same colors in every pair: each pair's
 // pieces hold the same ones of them. A pick whose colors change from pair to pair
 // names each pair's own colors rather than a rule, and a test brings its own.
@@ -4405,9 +4416,11 @@ inline bool lands(int8_t lay, bool down) {
 // (lands). It explains the copies only if every pair's output shows every cell
 // they land on in its piece's color, and one at least new in each -- which, the
 // first copy being the piece itself, is a second copy in each. Hands back the
-// cells the copies drew, pair by pair, and whether it picked every piece.
-inline bool tile_holds(const replay_facts& facts, const piece_pick& pick, bool down, int period, int8_t lay,
-                       const vector<cells_down>& canvas, vector<vector<std::pair<int, int>>>& drawn,
+// cells the copies drew, pair by pair, and whether it picked every piece. Handed
+// the pieces its pick takes (handed_pieces), since it is asked every period,
+// both ways and every lay of one pick.
+inline bool tile_holds(const replay_facts& facts, const vector<partner_pieces>& handed, bool down, int period,
+                       int8_t lay, const vector<cells_down>& canvas, vector<vector<std::pair<int, int>>>& drawn,
                        bool& every_piece) {
     drawn.assign(facts.train.size(), {});
     every_piece = true;
@@ -4416,7 +4429,7 @@ inline bool tile_holds(const replay_facts& facts, const piece_pick& pick, bool d
     for (size_t which = 0; which < facts.train.size(); ++which) {
         const example& pair = facts.train[which];
         bool drew_here = false;
-        const partner_pieces cut(facts.cuts[which], pick);
+        const partner_pieces& cut = handed[which];
         every_piece = every_piece && cut.every_piece_picked();
         const int along = down ? pair.output.height : pair.output.width;
         for (int i = 0; i < cut.count(); ++i) {
@@ -4534,10 +4547,12 @@ static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count 
 // only if every pair's output shows every ray cell it lands on in one color,
 // the same in every pair and not the ground, and one ray cell at least is new
 // in each. Hands back that color, the cells the rays drew, pair by pair, and
-// whether it picked every piece.
-inline bool rays_hold(const replay_facts& facts, const piece_pick& pick, bool diagonal, int radius, int8_t lay,
-                      const vector<cells_down>& canvas, int8_t& paint, vector<vector<std::pair<int, int>>>& drawn,
-                      bool& every_piece) {
+// whether it picked every piece. Handed the pieces its pick takes
+// (handed_pieces), since it is asked every length, both ways and every lay of
+// one pick.
+inline bool rays_hold(const replay_facts& facts, const vector<partner_pieces>& handed, bool diagonal, int radius,
+                      int8_t lay, const vector<cells_down>& canvas, int8_t& paint,
+                      vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
     paint = -1;
     drawn.assign(facts.train.size(), {});
     every_piece = true;
@@ -4546,7 +4561,7 @@ inline bool rays_hold(const replay_facts& facts, const piece_pick& pick, bool di
     for (size_t which = 0; which < facts.train.size(); ++which) {
         const example& pair = facts.train[which];
         bool drew_here = false;
-        const partner_pieces cut(facts.cuts[which], pick);
+        const partner_pieces& cut = handed[which];
         every_piece = every_piece && cut.every_piece_picked();
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
@@ -5549,7 +5564,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                   row_of(node_type::ExtendOrthogonal).high == row_of(node_type::ExtendDiagonal).high &&
                   row_of(node_type::ExtendDiagonal).high < 32,
                   "one ray length is said the same both ways round, and fits under the diagonal's 32");
-    for (const piece_pick& pick : draw_picks)
+    for (const piece_pick& pick : draw_picks) {
+        const vector<partner_pieces> handed = handed_pieces(opened, pick);
         while (true) {
             heard best;
             int8_t best_lay = rule::laid_over;
@@ -5560,7 +5576,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                         int8_t paint = -1;
                         vector<vector<std::pair<int, int>>> drawn;
                         bool every_piece = false;
-                        if (!rays_hold(opened, pick, diagonal, radius, lay, canvas, paint, drawn, every_piece))
+                        if (!rays_hold(opened, handed, diagonal, radius, lay, canvas, paint, drawn, every_piece))
                             continue;
                         const int before = best.said;
                         weigh(best, (diagonal ? 32 : 0) + radius, pick, 0, every_piece, paint, covered_claims(drawn));
@@ -5575,6 +5591,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             read.fired[said].lay = best_lay;
             lay_on_canvas(best_drawn);
         }
+    }
 
     // A TRAIL A PIECE GROWS one of the eight ways, in its own color, until it meets
     // the edge of the grid or another piece -- asked again of the same pick, like
@@ -5618,7 +5635,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                   row_of(node_type::TileX).high == row_of(node_type::TileY).high &&
                   row_of(node_type::TileY).high < 32,
                   "one period is said the same both ways round, and fits under the columns' 32");
-    for (const piece_pick& pick : draw_picks)
+    for (const piece_pick& pick : draw_picks) {
+        const vector<partner_pieces> handed = handed_pieces(opened, pick);
         while (true) {
             heard best;
             int8_t best_lay = rule::laid_over;
@@ -5628,7 +5646,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                     for (int period = tiles.low; period <= tiles.high; ++period) {
                         vector<vector<std::pair<int, int>>> drawn;
                         bool every_piece = false;
-                        if (!tile_holds(opened, pick, down, period, lay, canvas, drawn, every_piece)) continue;
+                        if (!tile_holds(opened, handed, down, period, lay, canvas, drawn, every_piece)) continue;
                         const int before = best.said;
                         weigh(best, (down ? 32 : 0) + period, pick, 0, every_piece, -1, covered_claims(drawn));
                         if (best.said > before) { best_lay = lay; best_drawn = std::move(drawn); }
@@ -5640,6 +5658,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             read.fired[said].lay = best_lay;
             lay_on_canvas(best_drawn);
         }
+    }
 
     // WHAT IS ALREADY DOWN when the bars, the fills and the boxes are laid under
     // it: every cell a paint said over it before them claimed -- the pieces

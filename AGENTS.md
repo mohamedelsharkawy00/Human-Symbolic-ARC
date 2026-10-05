@@ -34,8 +34,9 @@ language lacks.
 - Build: `scripts\build.bat x64-Release NOLAUNCH`
 - Score: `out\x64-Release\arc_said.exe > said.txt` prints a line per puzzle
   whose program fits the training pairs (id, SOLVED or WRONG, program) and a
-  tally on stderr. `arc_said <id>` runs one puzzle. A full run takes 2 to 6
-  minutes, depending on the machine.
+  tally on stderr. `arc_said <id>` runs one puzzle. A full run reads a
+  puzzle on every CPU thread and takes about 30 s on the 20-thread laptop;
+  `ARC_THREADS=1` reads one at a time (the profiler does).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
   shows what it drew beside what was wanted, pair by pair.
 - Tests: none besides the score and the readouts. `tests/puzzles` holds small
