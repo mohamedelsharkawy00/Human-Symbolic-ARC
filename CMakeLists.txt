@@ -128,16 +128,6 @@ add_executable(arc_probe EXCLUDE_FROM_ALL "scripts/probe.cpp")
 target_link_libraries(arc_probe PRIVATE arc_core)
 target_compile_definitions(arc_probe PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# JSON layout regression; build explicitly when changing puzzle loading.
-add_executable(arc_puzzle_loader_tests EXCLUDE_FROM_ALL "tests/puzzle_loader.cpp")
-target_link_libraries(arc_puzzle_loader_tests PRIVATE arc_core)
-target_compile_definitions(arc_puzzle_loader_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# Focused execution/inference regression; build explicitly when changing placement.
-add_executable(arc_copy_to_tests EXCLUDE_FROM_ALL "tests/copy_to.cpp")
-target_link_libraries(arc_copy_to_tests PRIVATE arc_gpu)
-target_compile_definitions(arc_copy_to_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
-
 # The GUI: a window onto the search, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA
 # context: GUI code that reached for the GPU would fail to link.

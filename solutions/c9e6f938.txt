@@ -1,0 +1,6 @@
+Input SelectAll Tile[0] Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] FlipHorizontal SelectAll Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       c9e6f938
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

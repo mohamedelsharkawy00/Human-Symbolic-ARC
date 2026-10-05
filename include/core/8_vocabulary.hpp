@@ -3,7 +3,7 @@
 // itself compiles against 0_core.hpp alone. Read by 9_sentences.hpp, which spells
 // programs, and 12_dsl.cuh, which runs them, from the same definitions.
 //
-// WORDS THE READING CANNOT SAY YET (as of 2026-10-01). Inference says a word only
+// WORDS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says a word only
 // after replaying it on every training pair on the host, with the arithmetic the
 // GPU op runs, and seeing it at work in every pair. The ops below have no such
 // replay in the general reading: no inferred program uses them, except where one
@@ -16,8 +16,7 @@
 //      whole_line rule for a word that redraws every output by itself.
 //   3. Spell it in 9_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
 //   4. Check with arc_said on the training set (no solved puzzle lost, the wrong
-//      count not up), arc_copy_to_tests, and the readouts' fully-explained-but-
-//      unsolved list.
+//      count not up) and the readouts' fully-explained-but-unsolved list.
 // Read what earlier paints left on the canvas, so they wait on composition:
 //   Output, ReadUnder, MaskOut, Intersection, Difference (only the input-blocks
 //   and pane rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy
@@ -26,8 +25,11 @@
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts tiles on walls the selection marks; overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
-// Fit: stretches a picked piece to the input's own size, so the output keeps the
-//   input's size -- a same-size whole-grid word, not a frame. Only pane-pick says it.
+// SelectUnique: marks the one drawing with no twin (unique_drawing in
+//   1_readings.hpp); only the pane pick says it, for the odd pane.
+// Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
+//   painted output bounds [2]. Pane-pick uses [0]; explicit background fill uses
+//   [1] or [2]. General piece-stretch readings still need a replay.
 // NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
 //   mark-lattice rule says them.
 // SortBySize: said only as a helper where a word reads list order (size rank,
@@ -104,7 +106,6 @@ enum class inferred_amount { none, some, all };
   X(FlipHorizontal              , 0                 , 0                        , translate, none, true , false) \
   X(FlipVertical                , 0                 , 0                        , translate, none, true , false) \
   X(Input                       , 0                 , 0                        , get      , none, false, false) \
-  X(InputWithoutBackground      , 0                 , 0                        , get      , all , false, false) \
   X(Output                      , 0                 , 0                        , get      , none, false, false) \
   X(CurrentObjects              , 0                 , 0                        , get      , none, false, false) \
   X(Origin                      , 0                 , 0                        , translate, none, true , false) \
@@ -116,14 +117,14 @@ enum class inferred_amount { none, some, all };
   X(Outline                     , 0                 , 0                        , reduce   , none, true , false) \
   X(SelectMostCommonColor       , 0                 , 0                        , select   , none, false, false) \
   /* Colors extracts the palette as objects — a producing act, not a source. */  \
-  X(Colors                      , 0                 , 0                        , map      , some, false, true ) \
+  X(Colors                      , 0                 , 0                        , map      , none, false, true ) \
   X(Trim                        , 0                 , 0                        , reduce   , none, true , false) \
   X(OverlapCorner               , 0                 , 0                        , map      , none, false, false) \
   X(Underlay                    , 0                 , 0                        , combine  , none, false, false) \
   /* Withhold closes the beat without painting, so a sentence that only sets  */ \
   /* up the hand is sayable and does not read as damage to the canvas.        */ \
   X(Withhold                    , 0                 , 0                        , combine  , none, false, false) \
-  X(Fit                         , 0                 , 0                        , reduce   , none, true , false) \
+  X(Fit                         , 0                 , 2                        , reduce   , none, true , false) \
   X(Intersection                , 0                 , 0                        , combine  , none, false, false) \
   X(Fractal                     , 0                 , 0                        , generate , none, true , false) \
   X(Difference                  , 0                 , 0                        , combine  , none, false, false) \
@@ -149,7 +150,7 @@ enum class inferred_amount { none, some, all };
   X(NormalizeOrientation        , 0                 , 1                        , translate, none, false, false) \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
   X(Skew                        , -1                , 1                        , translate, none, true , false) \
-  X(Split                       , 0                 , 2                        , generate , some, false, true ) \
+  X(Split                       , 0                 , 2                        , generate , none, false, true ) \
   /* Cells slide a step and pile at the wall, so a step past the wall says */    \
   X(SlamColumn                  , -1                , 1                        , translate, none, true , false) \
   /* nothing new: the answers run out at the object, not at the grid. */         \
@@ -170,9 +171,11 @@ enum class inferred_amount { none, some, all };
   X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
   X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
+  X(SelectUnique                , 0                 , 0                        , select   , none, false, false) \
+  X(SelectElectedBackground     , 0                 , 0                        , select   , none, false, false) \
   X(SelectLargestObject         , 0                 , 9                        , select   , none, false, false) \
   X(SelectSmallestObject        , 0                 , 9                        , select   , none, false, false) \
-  X(AddColor                    , 0                 , arc::COLOR_COUNT - 1     , generate , none, true , false) \
+  X(AddColor                    , 0                 , 11                       , generate , none, true , false) \
   X(MaskBy                      , 0                 , 10                       , map      , none, true , false) \
   X(MaskOut                     , 0                 , 10                       , map      , none, true , false) \
   /* Layout[0] reads its cell size off the pieces instead of being told it. */  \

@@ -1,0 +1,6 @@
+Input SelectAll BidiColorMap[36] Union Output SelectAll AddColor[1] Underlay
+
+Puzzle:       c8f0f002
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

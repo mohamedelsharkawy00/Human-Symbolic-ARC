@@ -1,9 +1,6 @@
-Input SelectAll Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] DeleteSelection Withhold CurrentObjects SelectAll Recolor[2] Union InputWithoutBackground SelectAll Union
+Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] DeleteSelection Withhold CurrentObjects SelectAll Recolor[2] Union Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       0b17323b
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0940
-Attempts:     0
-Nodes:        29
-Best Score:   2157.0000
-Max Depth:    29
+Found by:     inference, no search

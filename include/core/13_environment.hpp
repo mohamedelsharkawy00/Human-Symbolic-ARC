@@ -556,7 +556,7 @@ namespace arc {
 		static inline int8_t fill_target_objects(const puzzle& p, const grid& output,
 		                                         gpu_object_summary* dst) {
 			object_summary found[MAX_TARGET_OBJECTS];
-			int count = find_objects_by_color(output, p.inf.background.output_elected(),
+			int count = find_objects_by_color(output, p.inf.ground_election.output_elected(),
 			                                  found, MAX_TARGET_OBJECTS);
 			if (count > GPU_MAX_TARGET_OBJECTS) count = GPU_MAX_TARGET_OBJECTS;
 			for (int k = 0; k < count; ++k) {
@@ -570,13 +570,9 @@ namespace arc {
 			return (int8_t)count;
 		}
 
-		// Detect invariant colors: present in ALL training inputs.
-		// MOVED to 7_infer.hpp (arc::color_facts::detect_presence).
-		// Reading the always-present (across_inputs) colors is inference's job. The
-		// engine only needs the single dominant background color for
-		// segmentation (Colors skips it, Split erases it), and takes it from
-		// inf.background.input_elected(). p.invariant_colors is the one place that
-		// still holds a copy, because fixed_init_context cannot name `inference`.
+		// Color facts are learned in 7_infer.hpp. VoteDenoise still reads the
+		// elected input background as evidence; Colors and Split do not.
+		// Fixed-init keeps invariant_colors for its own input facts.
 
 		// OutputColorsBySize: train output colors ranked by total pixel count (desc),
 		// summed across all train outputs. Verified consistent: every train output must
@@ -718,12 +714,6 @@ namespace arc {
 			}
 			ex.shape_color_count = learned.holds() ? (int8_t)learned.count : (int8_t)0;
 
-			// The canvas the INPUT figures sit on — what segmentation excludes.
-			ex.background_color = p.inf.background.input_elected();
-
-			// The canvas the output figures sit on. The kernel starts the canvas
-			// in this color, so the skeleton's closing underlay costs no nodes.
-			ex.output_background_color = p.inf.background.output_elected();
 
 			ex.rule_type = (int8_t)p.inf.size.Chosen;
 			ex.rule_params[0] = (int16_t)p.inf.size.width;

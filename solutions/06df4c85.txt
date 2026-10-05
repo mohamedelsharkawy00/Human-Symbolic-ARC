@@ -1,1 +1,6 @@
-Input Colors SelectAll SortBySize[1] Union Seeds Bridge SelectAll Underlay Input SelectAll Underlay
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge SelectAll Underlay Output SelectAll AddColor[0] Underlay
+
+Puzzle:       06df4c85
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

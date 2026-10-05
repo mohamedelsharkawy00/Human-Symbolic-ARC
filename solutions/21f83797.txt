@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal[29] Recolor[2] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo[2] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo[0] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo[1] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo[3] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll TileX[9] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll AddColor[1] Underlay Output SelectAll AddColor[0] Underlay
+
+Puzzle:       21f83797
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

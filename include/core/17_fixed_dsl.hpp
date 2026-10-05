@@ -178,22 +178,11 @@ static inline void fixed_init_context(
     // Convert input grid
     grid_to_fixed(ex.input.data, ex.input.width, ex.input.height, ctx.input);
 
-    // Determine output dimensions
-    if (rule.Chosen == output_dimension_rule::Fixed) {
-        ctx.output.width = (int16_t)rule.width;
-        ctx.output.height = (int16_t)rule.height;
-    } else if (rule.Chosen == output_dimension_rule::Scale) {
-        ctx.output.width = (int16_t)(ex.input.width * rule.width_numerator / rule.width_denominator);
-        ctx.output.height = (int16_t)(ex.input.height * rule.height_numerator / rule.height_denominator);
-    } else if (rule.Chosen == output_dimension_rule::BoundingBox) {
-        ctx.output.width = GPU_MAX_GRID;
-        ctx.output.height = GPU_MAX_GRID;
-    } else {
-        ctx.output.width = (int16_t)std::min(ex.input.width, (int)GPU_MAX_GRID);
-        ctx.output.height = (int16_t)std::min(ex.input.height, (int)GPU_MAX_GRID);
-    }
-    ctx.output.width = (int16_t)std::min((int)ctx.output.width, (int)GPU_MAX_GRID);
-    ctx.output.height = (int16_t)std::min((int)ctx.output.height, (int)GPU_MAX_GRID);
+    // Use the same sizing contract as host replay and the execution kernel.
+    int width, height;
+    rule.canvas_size_for(ex.input.width, ex.input.height, width, height);
+    ctx.output.width = (int16_t)width;
+    ctx.output.height = (int16_t)height;
     ctx.output.clear_cells();
 
     // HOW FAR EVERY CELL IS FROM THE NEAREST CELL OF EACH COLOR IN THE ANSWER,

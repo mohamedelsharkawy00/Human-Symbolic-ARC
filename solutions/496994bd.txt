@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll MirrorAround[17] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       496994bd
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

@@ -60,9 +60,10 @@ inline void report_piece(ostream& report, const correspondence_election::object_
 // The colors a map changes, each as " was->now". False when it changes none.
 inline bool report_recoloring(ostream& report, const recoloring& map) {
     bool changed = false;
-    for (int was = 0; was < COLOR_COUNT; ++was)
+    auto said = [](int value) { return is_color(value) ? to_string(value) : string("empty"); };
+    for (int was = TRANSPARENT; was < COLOR_COUNT; ++was)
         if (map.changes(was)) {
-            report << " " << was << "->" << (int)map[was];
+            report << " " << said(was) << "->" << said(map[was]);
             changed = true;
         }
     return changed;
@@ -341,7 +342,8 @@ inline void report_pane_mask(ostream& report, const pane_mask_rule& mask) {
         if (!says.said()) continue;
         report << "  ";
         for (int p = 0; p < mask.panes; ++p) report << (pattern >> p & 1 ? '#' : '.');
-        if (says.paint >= 0) report << "  paint " << (int)says.paint;
+        if (says.leaves_empty) report << "  empty";
+        else if (says.paint >= 0) report << "  paint " << (int)says.paint;
         else report << "  copy pane " << (int)says.copy_pane;
         report << "\n";
     }
@@ -543,8 +545,19 @@ inline void log_inference(const string& id, const inference& inf,
 
     report_header(report, id, idx, count, dataset_flags);
     report_dims(report, inf.size);
-    report_colors(report, inf.colors, inf.background.input_elected());
-    report_background(report, inf.background);
+    report_colors(report, inf.colors, TRANSPARENT);
+    // The reading read figures with no ground; its plan came from the election
+    // it keeps beside it, and the plan it chose is starred.
+    report_background(report, inf.ground_election);
+    report << "[ground plans]";
+    auto side = [](const background_source& ground) {
+        return ground.per_grid ? string("each input's own")
+             : is_color(ground.color) ? to_string((int)ground.color) : string("none");
+    };
+    for (const ground_plan& plan : ground_plans(inf.ground_election))
+        report << "  |" << (plan == inf.plan ? "*" : " ") << "delete " << side(plan.deleted)
+               << ", fill " << side(plan.filled);
+    report << "\n\n";
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);
     report_pane_pick(report, inf.pane_pick);

@@ -505,7 +505,7 @@ public:
   inline int16_t ranked_variant_value(node_type type, int idx) const {
     int16_t v = get_variant_value(type, idx);
     if (type != node_type::AddColor && type != node_type::Recolor) return v;
-    const auto& background = m_puzzle.inf.background;
+    const auto& background = m_puzzle.inf.ground_election;
     int8_t bg = background.output_elected();
     if (bg < 0) bg = background.input_elected();
     if (bg < 0) return v;

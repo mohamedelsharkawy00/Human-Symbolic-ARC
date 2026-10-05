@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor InvertSelection CopyTo[0] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       e76a88a6
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

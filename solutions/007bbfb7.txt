@@ -1,9 +1,6 @@
-InputWithoutBackground SelectAll Fractal Union
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Fractal Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       007bbfb7
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        4
-Best Score:   4025.0000
-Max Depth:    4
+Found by:     inference, no search

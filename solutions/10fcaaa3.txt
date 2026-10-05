@@ -1,1 +1,6 @@
-Input Tile[0] SelectAll Union Colors Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input Tile[0] Colors SelectAll Union
+Input Tile[0] SelectAll Union CurrentObjects Colors SelectColor[0] DeleteSelection Colors SelectColor[0] DeleteSelection Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input Tile[0] Colors SelectColor[0] DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       10fcaaa3
+Train:        Solved
+Test:         Solved
+Found by:     manual, migrated to explicit background steps

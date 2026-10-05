@@ -1,0 +1,6 @@
+Input SelectAll Pattern Split[0] Withhold CurrentObjects SelectAll Trim Union
+
+Puzzle:       7b7f7511
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

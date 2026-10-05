@@ -1,9 +1,6 @@
-Input SelectAll Pattern Withhold CurrentObjects SelectAll BidiColorMap[9] Withhold CurrentObjects SelectAll Tile[0] Union
+Input SelectAll Pattern Withhold CurrentObjects SelectAll BidiColorMap[9] Withhold CurrentObjects SelectAll Tile[0] Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       017c7c7b
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        12
-Best Score:   465.0000
-Max Depth:    12
+Found by:     inference, no search

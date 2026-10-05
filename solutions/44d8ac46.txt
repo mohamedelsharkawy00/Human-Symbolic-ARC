@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeToInteriorColorMap Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       44d8ac46
+Train:        Solved
+Test:         Failed
+Found by:     inference, no search

@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] Recolor[2] SelectAll Union Input Colors SelectElectedBackground DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal[29] Recolor[1] Union Input Colors SelectElectedBackground DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendDiagonal[1] Recolor[3] Union Input Colors SelectElectedBackground AddColor[11] Fit[1] Underlay
+
+Puzzle:       140c817e
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

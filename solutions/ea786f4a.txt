@@ -1,0 +1,6 @@
+Input Split[0] Withhold CurrentObjects SelectAll Trim Union Input Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendDiagonal[29] Recolor[0] Union
+
+Puzzle:       ea786f4a
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

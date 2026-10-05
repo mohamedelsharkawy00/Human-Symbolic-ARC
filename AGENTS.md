@@ -19,6 +19,9 @@ language lacks.
 - No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
 - You have priority over the old code: change it when it is wrong, and say so.
 - Finish one stage completely and consistently before starting the next.
+- Every concept has one owner. If the same handling starts spreading into more
+  places, stop and move it to its owner instead of patching each place (DRY,
+  separation of concerns).
 
 ## Working with the user
 - Short, plain words, no jargon. They often reply "TLDR": keep answers to a few
@@ -35,8 +38,8 @@ language lacks.
   minutes, depending on the machine.
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
   shows what it drew beside what was wanted, pair by pair.
-- CopyTo checks: `cmake --build --preset x64-Release --target arc_copy_to_tests`
-  (in a developer prompt), then `out\x64-Release\arc_copy_to_tests.exe`.
+- Tests: none besides the score and the readouts. `tests/puzzles` holds small
+  made-up puzzles to view in the app (the CUS dataset button).
 - Readouts: `scripts\probe.bat <label> [id...]` writes the inference readout of
   each puzzle to `out\probe\<label>\logs\inference\<id>.txt`: background,
   readings, fired rules, sentences.
@@ -44,15 +47,20 @@ language lacks.
   `explained` (readings that explain every cell yet are unsolved; must not
   grow), `missing` (which missing words block the unsolved puzzles).
 - A change is good when no solved puzzle is lost, the wrong count does not go
-  up, CopyTo passes, and no new "explained but unsolved" appears.
+  up, and no new "explained but unsolved" appears.
 
 ## Where things are
 - `include/core`, numbered in reading order. Inference lives in
-  `3_background.hpp` (background election), `6_correspondence.hpp` (readings,
-  fired rules, the line, missing words, choosing the cut), `7_infer.hpp`
-  (replays `*_holds`, picks, frames, `carry_the_hand`, `finish_the_line`,
-  `infer`), `9_sentences.hpp` (the line spelled as programs) and `10_log.hpp`
-  (readouts).
+  `3_background.hpp` (background election and the ground plan: the one owner
+  of the background), `6_correspondence.hpp` (readings, fired rules, the line,
+  missing words, choosing the cut), `7_infer.hpp` (replays `*_holds`, picks,
+  frames, `carry_the_hand`, `finish_the_line`, `read_figures`, `infer`),
+  `9_sentences.hpp` (the line spelled as programs, `say_the_plan`) and
+  `10_log.hpp` (readouts).
+- The background: `infer` asks the election for plans (delete what first,
+  fill what last), reads each plan's figures with `read_figures` (no detector
+  sees a background; empty cells are nothing), keeps the plan that explains
+  most, and `say_the_plan` writes its delete and fill once.
 - `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the words the
   reading cannot say yet and how to unlock one.
 - `src/cuda_solver.cu`: the GPU ops.

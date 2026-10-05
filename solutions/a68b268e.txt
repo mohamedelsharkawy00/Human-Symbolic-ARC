@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectAll Origin Underlay Input Panes SelectAll Origin Recolor[0] Underlay
+
+Puzzle:       a68b268e
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

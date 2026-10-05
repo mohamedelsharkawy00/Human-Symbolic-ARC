@@ -12,6 +12,7 @@
 // and choose the grouping and allowed changes that best explain them.
 #pragma once
 #include "5_matching.hpp"
+#include "3_background.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -414,14 +415,14 @@ struct correspondence_election {
 
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
-    static correspondence_election infer(const vector<example>& train, int8_t background) {
+    static correspondence_election infer(const vector<example>& train, background_source background) {
 
         // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
         // because every reading's leftovers are a share of it.
         int facts_cells = 0;
         for (const auto& train_pair : train)
             for (const grid* one : { &train_pair.input, &train_pair.output })
-                walk_colored_cells(*one, background, [&](int, int, int) { ++facts_cells; });
+                walk_colored_cells(*one, background.on(train_pair.input), [&](int, int, int) { ++facts_cells; });
 
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
@@ -450,14 +451,14 @@ struct correspondence_election {
             for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
                 const int cell = (int)prepared.look.segmentation * degrees_of_freedom::COMBINATIONS + packed;
                 reading& scored = facts.readings[cell];
-                scored = detect_correspondence(train, background, prepared,
+                scored = detect_correspondence(train, prepared,
                                                 degrees_of_freedom::from_index(packed));
                 if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
             facts.best_of[(size_t)prepared.look.segmentation] = (int16_t)best;
             if (!competes(prepared.look.segmentation)) continue;
-            list_what_fired(train, background, prepared, facts.readings[best]);
-            read_the_acts(train, background, prepared, facts.readings[best]);
+            list_what_fired(train, prepared, facts.readings[best]);
+            read_the_acts(train, prepared, facts.readings[best]);
             best_of_method.push_back(best);
         }
 
@@ -516,6 +517,7 @@ private:
             vector<object> input_objects, output_objects;
             int step_width = 0, step_height = 0;
             bool read = false;
+            int8_t background = -1;
         };
         vector<prepared_pair> pairs;
     };
@@ -525,7 +527,7 @@ private:
 
     // 2. Prepare each segmentation once, before trying its permissions.
     static prepared_segmentation prepare_segmentation(const vector<example>& train,
-                                                      int8_t background, segmentation_methods segmentation) {
+                                                      background_source source, segmentation_methods segmentation) {
         prepared_segmentation prepared;
         prepared.look.segmentation = segmentation;
         prepared.pairs.resize(train.size());
@@ -533,7 +535,9 @@ private:
         int counted = 0;
         // Segment before matching so another matching pass can reuse the objects.
         for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
+            const int8_t background = source.on(train[pair_index].input);
             auto& saved = prepared.pairs[pair_index];
+            saved.background = background;
             const grid& input = train[pair_index].input;
             const grid& output = train[pair_index].output;
             saved.read = !input.empty() && !output.empty();
@@ -578,7 +582,7 @@ private:
 
     // 3. Follow one reading through the examples.
     // One reading: match each example, reconcile their evidence, then describe what survived.
-    static reading detect_correspondence(const vector<example>& train, int8_t background,
+    static reading detect_correspondence(const vector<example>& train,
                                                        const prepared_segmentation& prepared,
                                                        degrees_of_freedom allowed) {
         reading facts = prepared.look;
@@ -587,10 +591,10 @@ private:
         for (const auto& pair : prepared.pairs) facts.pairs.push_back(pair.info);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read)
-                match_one_pair(train, background, prepared, allowed, facts, i, nullptr);
-        reconcile_examples(train, background, prepared, allowed, facts);
+                match_one_pair(train, prepared, allowed, facts, i, nullptr);
+        reconcile_examples(train, prepared, allowed, facts);
         for (size_t i = 0; i < train.size(); ++i)
-            if (prepared.pairs[i].read) summarize_pair(train, background, prepared, facts, i);
+            if (prepared.pairs[i].read) summarize_pair(train, prepared, facts, i);
         add_up_the_pairs(facts);
         return facts;
     }
@@ -617,10 +621,11 @@ private:
     }
 
     // Match both directions, merge duplicate links, and record shared movements.
-    static void match_one_pair(const vector<example>& train, int8_t background,
+    static void match_one_pair(const vector<example>& train,
                                const prepared_segmentation& prepared, degrees_of_freedom allowed,
                                reading& facts, size_t pair_index,
                                const what_the_pairs_agreed* agreed) {
+        const int8_t background = prepared.pairs[pair_index].background;
         const bool pattern_reading =
             facts.segmentation == segmentation_methods::minimal_repeating_set ||
             facts.segmentation == segmentation_methods::smallest_of_two_grids;
@@ -741,7 +746,7 @@ private:
     }
 
     // Let movements supported by all examples constrain ambiguous matches.
-    static void reconcile_examples(const vector<example>& train, int8_t background,
+    static void reconcile_examples(const vector<example>& train,
                                    const prepared_segmentation& prepared, degrees_of_freedom allowed,
                                    reading& facts) {
         // Use a color to constrain matches only when every read pair has one shared,
@@ -784,15 +789,16 @@ private:
                     const object_info* source = pair.source_of(link);
                     return source && object_matching::the_pairs_disagree(agreed[which], link, *source);
                 });
-                if (any_disagrees) match_one_pair(train, background, prepared, allowed, facts, which, &agreed[which]);
+                if (any_disagrees) match_one_pair(train, prepared, allowed, facts, which, &agreed[which]);
             }
 
     }
 
     // Describe the final links, unmatched objects, and unexplained cells of one pair.
-    static void summarize_pair(const vector<example>& train, int8_t background,
+    static void summarize_pair(const vector<example>& train,
                                const prepared_segmentation& prepared,
                                reading& facts, size_t pair_index) {
+        const int8_t background = prepared.pairs[pair_index].background;
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
@@ -1056,7 +1062,7 @@ private:
     // left over counts them. An edge that moved and was recolored counts under
     // both, so the rules can add up past the whole; left over is still what none
     // of them carried.
-    static void list_what_fired(const vector<example>& train, int8_t background,
+    static void list_what_fired(const vector<example>& train,
                                 const prepared_segmentation& prepared, reading& facts) {
         constexpr int freedoms = degrees_of_freedom::FREEDOMS;
         // As it was, then each freedom in its own place, then the two that are not.
@@ -1076,6 +1082,7 @@ private:
         int pieces[kinds] = {}, cells[kinds] = {};
         bool fired[kinds] = {};
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            const int8_t background = prepared.pairs[which].background;
             if (!prepared.pairs[which].read) continue;
             const pair_info& pair = facts.pairs[which];
             const grid* on_grid[2] = { &train[which].input, &train[which].output };
@@ -1132,7 +1139,7 @@ private:
     // disagreement about one says nothing about the others.
     //
     // AN ACT MUST HOLD IN EVERY PAIR, or it is one example's accident.
-    static void read_the_acts(const vector<example>& train, int8_t background,
+    static void read_the_acts(const vector<example>& train,
                               const prepared_segmentation& prepared, reading& facts) {
         struct seen_act {
             int8_t color, what, value;
@@ -1168,9 +1175,10 @@ private:
                     note(piece.color, fired_rule::move_down,   (int8_t)(edge.row - piece.summary.y0), edge.from);
                     note(piece.color, fired_rule::move_across, (int8_t)(edge.col - piece.summary.x0), edge.from);
                 }
+                // A color that became empty was deleted, which no recolor says.
                 if (!edge.exact)
                     for (int8_t was = 0; was < COLOR_COUNT; ++was)
-                        if (edge.color_map.changes(was))
+                        if (edge.color_map.changes(was) && is_color(edge.color_map[was]))
                             note(was, fired_rule::recolor, edge.color_map[was], edge.from);
             }
             if (which == 0) { acts_in_every_pair = here; continue; }
@@ -1229,7 +1237,7 @@ private:
         // EVERY CHANGE IS WRITTEN DOWN BEFORE ANY ACT IS SAID, cell by cell, so
         // an act accounts for what it says by claiming those cells, and whatever
         // no rule claims is what the reading has no word for.
-        write_down_what_changed(train, background, prepared, facts);
+        write_down_what_changed(train, prepared, facts);
 
         // WHAT THE ACTS SAY OF ONE PIECE. An act accounts only for the pieces it
         // picks, so one said move says nothing of a piece that went somewhere
@@ -1322,9 +1330,10 @@ private:
     // anything says it yet: each cell waits on the word for its change, a rule
     // that says the change claims it when it is said, and what none claims is
     // what the reading has no word for. A cell waits on each word once.
-    static void write_down_what_changed(const vector<example>& train, int8_t background,
+    static void write_down_what_changed(const vector<example>& train,
                                         const prepared_segmentation& prepared, reading& facts) {
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
+            const int8_t background = prepared.pairs[which].background;
             if (!prepared.pairs[which].read) continue;
             auto& pair = facts.pairs[which];
             // Both grids and their pieces, by side: [true] is the input's.
@@ -1480,7 +1489,7 @@ private:
 };
 
 // Entry point used by infer(); the result owns the correspondence machinery.
-inline correspondence_election select_segmentation(const vector<example>& train, int8_t background) {
+inline correspondence_election select_segmentation(const vector<example>& train, background_source background) {
     return correspondence_election::infer(train, background);
 }
 

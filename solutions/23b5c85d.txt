@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] SelectAll Trim SelectAll InvertSelection SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Origin Split[1] Withhold CurrentObjects SelectAll Trim Underlay
+
+Puzzle:       23b5c85d
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

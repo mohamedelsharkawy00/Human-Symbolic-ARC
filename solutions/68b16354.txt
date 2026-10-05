@@ -1,0 +1,6 @@
+Input SelectAll FlipVertical Union
+
+Puzzle:       68b16354
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

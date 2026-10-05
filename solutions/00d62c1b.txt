@@ -1,9 +1,6 @@
-Input SelectAll Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap[3] Withhold CurrentObjects SelectAll ShapeToInteriorColorMap Union
+Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim InteriorColor[4] Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       00d62c1b
 Train:        Solved
-Test:         Failed
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        16
-Best Score:   5004.0000
-Max Depth:    16
+Test:         Solved
+Found by:     inference, no search

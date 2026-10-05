@@ -1,1 +1,6 @@
-Colors SelectAll SortBySize[1] SnapToAnchors Union
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SnapToAnchors Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       0e206a2e
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

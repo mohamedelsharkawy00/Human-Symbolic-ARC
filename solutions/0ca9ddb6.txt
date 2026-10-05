@@ -1,1 +1,6 @@
-Input Split[1] SelectAll Union Input Split[1] SelectColor[1] InvertSelection DeleteSelection SelectAll ExtendOrthogonal[1] SelectAll Recolor[7] Union Input Split[1] SelectColor[2] InvertSelection DeleteSelection SelectAll ExtendDiagonal[1] SelectAll Recolor[4] Union
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] ExtendOrthogonal[1] Recolor[7] Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] ExtendDiagonal[1] Recolor[4] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       0ca9ddb6
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

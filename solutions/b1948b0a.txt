@@ -1,0 +1,6 @@
+Input SelectAll BidiColorMap[20] Union
+
+Puzzle:       b1948b0a
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

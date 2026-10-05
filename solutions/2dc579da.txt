@@ -1,0 +1,6 @@
+Input Panes SelectUnique Origin Union
+
+Puzzle:       2dc579da
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

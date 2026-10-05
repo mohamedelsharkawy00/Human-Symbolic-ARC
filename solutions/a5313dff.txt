@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim InteriorColor[1] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       a5313dff
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

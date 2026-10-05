@@ -1,0 +1,6 @@
+Input Panes SelectUnique Origin Union
+
+Puzzle:       88a62173
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

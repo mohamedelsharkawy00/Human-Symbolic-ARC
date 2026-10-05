@@ -1,9 +1,6 @@
-Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       045e512c
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        16
-Best Score:   6838.0000
-Max Depth:    16
+Found by:     inference, no search

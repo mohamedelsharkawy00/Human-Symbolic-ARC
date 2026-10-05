@@ -7,6 +7,7 @@
 #include "1_readings.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,8 @@ using namespace std;
 // a puzzle may change the background color between input and output.
 // Keeping the other candidates lets us try another background later.
 // These values control how we compare candidates. They were chosen to match
-// the examples in tests/background_truth.txt. Reuse them when adding rules.
+// 43 hand-checked puzzles, once kept in tests/background_truth.txt (removed
+// 2026-10-05; it is in git history).
 // Shares use a scale of 0 to 1000: 500 means 50%, and 1000 means 100%.
 
 // At least half of the measured amount.
@@ -188,7 +190,7 @@ struct background_evidence {
     // Total cells per color over the whole side
     long long global_cells[COLOR_COUNT] = {};
 
-    background_evidence() {
+    ARC_HOST_DEVICE background_evidence() {
         for (int i = 0; i < COLOR_COUNT; ++i) {
             embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
             only_windows[i] = true;
@@ -199,15 +201,16 @@ struct background_evidence {
 // Per-color background-ness prior, most-background first. The LAST tiebreak
 // only, when area/embeds/story can't separate two candidates — a prior, not a
 // verdict, and structure always overrides it.
-inline int background_rank(int color) {
-    static constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
+ARC_HOST_DEVICE inline int background_rank(int color) {
+    constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
     for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
     return COLOR_COUNT;
 }
 
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
 // which color reads as the background here.
-inline void measure_area_and_reach(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
+template <class Grid>
+ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
                                    background_evidence& evidence) {
     const int area = one_grid.width * one_grid.height;
     for (int i = 0; i < COLOR_COUNT; ++i) evidence.global_cells[i] += cells_of_color[i];
@@ -227,7 +230,7 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
         for (int dir = 0; dir < 4; ++dir) {
             int next_row = row + neighbour_row_4(dir);
             int next_col = col + neighbour_col_4(dir);
-            if (!one_grid.contains(next_row, next_col)) continue;
+            if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
             if (one_grid.data[next_row][next_col] != color) { touching[color]++; return; }
         }
     });
@@ -258,14 +261,15 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
 // object's cells, object by object, with first_cell naming where each starts.
 struct object_map {
     int16_t id[MAX_GRID_DIM][MAX_GRID_DIM];
-    vector<int> color, size, first_cell;
-    vector<char> on_border;
-    vector<pair<int8_t, int8_t>> cells;
-    int count() const { return (int)color.size(); }
+    int16_t color[MAX_GRID_DIM * MAX_GRID_DIM], size[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t first_cell[MAX_GRID_DIM * MAX_GRID_DIM], cells[MAX_GRID_DIM * MAX_GRID_DIM];
+    bool on_border[MAX_GRID_DIM * MAX_GRID_DIM];
+    int object_count = 0, cell_count = 0;
+    ARC_HOST_DEVICE int count() const { return object_count; }
 };
 
-inline object_map label_objects(const grid& one_grid) {
-    object_map objects;
+template <class Grid>
+ARC_HOST_DEVICE inline void label_objects(const Grid& one_grid, object_map& objects) {
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
     object_walk_scratch scratch;
@@ -274,19 +278,19 @@ inline object_map label_objects(const grid& one_grid) {
             const int color = one_grid.data[cell_row(cells[0])][cell_col(cells[0])];
             if (!is_color(color)) return;
             const int16_t id = (int16_t)objects.count();
-            objects.first_cell.push_back((int)objects.cells.size());
+            objects.first_cell[id] = (int16_t)objects.cell_count;
             for (int i = 0; i < count; ++i) {
                 const int row = cell_row(cells[i]), col = cell_col(cells[i]);
                 objects.id[row][col] = id;
-                objects.cells.push_back({ (int8_t)row, (int8_t)col });
+                objects.cells[objects.cell_count++] = cells[i];
             }
-            objects.color.push_back(color);
-            objects.size.push_back(count);
-            objects.on_border.push_back(summary.x0 == 0 || summary.y0 == 0 ||
+            objects.color[id] = (int16_t)color;
+            objects.size[id] = (int16_t)count;
+            objects.on_border[id] = summary.x0 == 0 || summary.y0 == 0 ||
                 summary.x0 + summary.w == one_grid.width ||
-                summary.y0 + summary.h == one_grid.height);
+                summary.y0 + summary.h == one_grid.height;
+            ++objects.object_count;
         });
-    return objects;
 }
 
 // STAGE 2 — each figure votes for the color it sits in, weighted by its own
@@ -294,9 +298,11 @@ inline object_map label_objects(const grid& one_grid) {
 // object; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
-inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
+template <class Grid>
+ARC_HOST_DEVICE inline void measure_embedding(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               background_evidence& evidence) {
-    const object_map objects = label_objects(one_grid);
+    object_map objects;
+    label_objects(one_grid, objects);
     int figure_area = 0, embedded_area[COLOR_COUNT] = {};
     int objects_of_color[COLOR_COUNT] = {}, backdrop_objects_of_color[COLOR_COUNT] = {};
 
@@ -304,8 +310,9 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
     // One vote box per object, indexed by the object's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
     // boxes this object touched, so clearing costs what was used, not all of them.
-    vector<int> votes(objects.count(), 0);
-    vector<int> voted;
+    int16_t votes[MAX_GRID_DIM * MAX_GRID_DIM] = {};
+    int16_t voted[MAX_GRID_DIM * MAX_GRID_DIM];
+    int voted_count = 0;
     for (int this_object = 0; this_object < objects.count(); ++this_object) {
         objects_of_color[objects.color[this_object]]++;
         if (objects.on_border[this_object]) {
@@ -321,26 +328,28 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
         // votes for the object it belongs to; a majority makes this a figure
         // sitting in that object.
         int contour_votes_total = 0;
-        voted.clear();
+        voted_count = 0;
         for (int nth = 0; nth < objects.size[this_object]; ++nth) {
-            int row = objects.cells[objects.first_cell[this_object] + nth].first;
-            int col = objects.cells[objects.first_cell[this_object] + nth].second;
+            int row = cell_row(objects.cells[objects.first_cell[this_object] + nth]);
+            int col = cell_col(objects.cells[objects.first_cell[this_object] + nth]);
             for (int dir = 0; dir < 4; ++dir) {
                 int next_row = row + neighbour_row_4(dir);
                 int next_col = col + neighbour_col_4(dir);
-                if (!one_grid.contains(next_row, next_col)) continue;
+                if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
                 if (!outside[next_row][next_col]) continue;
                 int owner_object = objects.id[next_row][next_col];
                 if (owner_object < 0) continue;
-                if (votes[owner_object] == 0) voted.push_back(owner_object);
+                if (votes[owner_object] == 0) voted[voted_count++] = (int16_t)owner_object;
                 votes[owner_object]++;
                 contour_votes_total++;
             }
         }
         int best_owner = -1, best_votes = 0;
-        for (int owner : voted)
+        for (int i = 0; i < voted_count; ++i) {
+            const int owner = voted[i];
             if (votes[owner] > best_votes) { best_votes = votes[owner]; best_owner = owner; }
-        for (int owner : voted) votes[owner] = 0;
+        }
+        for (int i = 0; i < voted_count; ++i) votes[voted[i]] = 0;
         bool is_figure = best_owner >= 0 && best_votes * 2 > contour_votes_total;
         if (!is_figure) { backdrop_objects_of_color[objects.color[this_object]]++; continue; }
         figure_area += objects.size[this_object];
@@ -366,7 +375,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
 // STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The
 // coverer is the global area leader; if it is solid, no color may claim
 // underneath.
-inline void close_underneath(background_evidence& evidence) {
+ARC_HOST_DEVICE inline void close_underneath(background_evidence& evidence) {
     int coverer = -1;
     for (int i = 0; i < COLOR_COUNT; ++i)
         if (evidence.global_cells[i] > 0 &&
@@ -381,7 +390,8 @@ inline void close_underneath(background_evidence& evidence) {
 // punched-through and embeds are graded votes.
 // KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
-inline void score_candidates(vector<background_election::hypothesis>& ranked,
+template <class Candidates>
+ARC_HOST_DEVICE inline void score_candidates(Candidates& ranked,
                              const background_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
@@ -414,8 +424,9 @@ inline void score_candidates(vector<background_election::hypothesis>& ranked,
 
 // STAGE 5 — best background first. The top score elects IF it clears BG_FLOOR,
 // else the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
-inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
-    stable_sort(ranked.begin(), ranked.end(), [&](const auto& left, const auto& right) {
+template <class Candidates>
+ARC_HOST_DEVICE inline void rank_candidates(Candidates& ranked) {
+    const auto before = [](const auto& left, const auto& right) {
         const bool left_electable  = (left.color >= 0 && left.score >= BG_FLOOR);
         const bool right_electable = (right.color >= 0 && right.score >= BG_FLOOR);
         if (left_electable != right_electable) return left_electable;
@@ -424,7 +435,67 @@ inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
             return background_rank(left.color) < background_rank(right.color);
         }
         return left.score > right.score;         // among electables, top score
-    });
+    };
+    // Stable insertion sort: at most eleven candidates, on either processor.
+    for (int i = 1; i < (int)ranked.size(); ++i) {
+        auto candidate = ranked[i];
+        int j = i;
+        while (j > 0 && before(candidate, ranked[j - 1])) {
+            ranked[j] = ranked[j - 1];
+            --j;
+        }
+        ranked[j] = candidate;
+    }
+}
+
+// The same candidate construction and arithmetic for pooled and local elections.
+template <class Candidates>
+ARC_HOST_DEVICE inline void finish_background_election(Candidates& ranked,
+        const background_evidence& evidence, const bool in_every[COLOR_COUNT],
+        const bool* persists = nullptr) {
+    ranked.push_back({ .color = -1, .appears_in_any_output = false });  // "none" always a candidate
+    for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
+        if (!in_every[candidate]) continue;
+        ranked.push_back({ .color = (int8_t)candidate,
+                           .embeds = evidence.embeds[candidate],
+                           .dominance = evidence.dominance[candidate],
+                           .appears_in_any_output = persists ? persists[candidate] : true,
+                           .span = evidence.span[candidate],
+                           .gaps = evidence.gaps[candidate],
+                           .underneath = evidence.only_windows[candidate] });
+    }
+
+    score_candidates(ranked, evidence, in_every);
+    rank_candidates(ranked);
+}
+
+// A local election needs no allocation and no training pairs.
+struct local_background_candidates {
+    background_election::hypothesis values[COLOR_COUNT + 1];
+    int used = 0;
+    ARC_HOST_DEVICE int size() const { return used; }
+    ARC_HOST_DEVICE auto* begin() { return values; }
+    ARC_HOST_DEVICE auto* end() { return values + used; }
+    ARC_HOST_DEVICE const auto* begin() const { return values; }
+    ARC_HOST_DEVICE const auto* end() const { return values + used; }
+    ARC_HOST_DEVICE auto& operator[](int i) { return values[i]; }
+    ARC_HOST_DEVICE void push_back(background_election::hypothesis h) { values[used++] = h; }
+};
+
+template <class Grid>
+ARC_HOST_DEVICE inline local_background_candidates elect_grid_background(const Grid& one_grid) {
+    local_background_candidates ranked;
+    if (one_grid.width <= 0 || one_grid.height <= 0) return ranked;
+    int counts[COLOR_COUNT];
+    count_colors(one_grid, counts);
+    bool present[COLOR_COUNT];
+    for (int c = 0; c < COLOR_COUNT; ++c) present[c] = counts[c] > 0;
+    background_evidence evidence;
+    measure_area_and_reach(one_grid, counts, evidence);
+    measure_embedding(one_grid, counts, evidence);
+    close_underneath(evidence);
+    finish_background_election(ranked, evidence, present);
+    return ranked;
 }
 
 // A candidate must appear in EVERY grid on the side.
@@ -460,20 +531,7 @@ inline vector<background_election::hypothesis> elect_side_background(
     }
     close_underneath(evidence);
 
-    ranked.push_back({ .color = -1, .appears_in_any_output = false });  // "none" always a candidate
-    for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
-        if (!in_every[candidate]) continue;
-        ranked.push_back({ .color = (int8_t)candidate,
-                           .embeds = evidence.embeds[candidate],
-                           .dominance = evidence.dominance[candidate],
-                           .appears_in_any_output = persists ? persists[candidate] : true,
-                           .span = evidence.span[candidate],
-                           .gaps = evidence.gaps[candidate],
-                           .underneath = evidence.only_windows[candidate] });
-    }
-
-    score_candidates(ranked, evidence, in_every);
-    rank_candidates(ranked);
+    finish_background_election(ranked, evidence, in_every, persists);
     return ranked;
 }
 
@@ -482,7 +540,8 @@ inline vector<background_election::hypothesis> elect_side_background(
 // absolutely, OR beats the runner-up DECISIVELY, OR holds the figures while
 // having a BODY rather than being a separator skeleton. This is what keeps a
 // BACKGROUNDLESS puzzle from reading as per-pair. -1 when none is confident.
-inline int8_t confident_background(const vector<background_election::hypothesis>& local) {
+template <class Candidates>
+ARC_HOST_DEVICE inline int8_t confident_background(const Candidates& local) {
     int best_dominance = 0, second_dominance = 0;
     for (const auto& candidate : local) {
         if (candidate.color < 0) continue;
@@ -504,11 +563,26 @@ inline int8_t confident_background(const vector<background_election::hypothesis>
     return -1;
 }
 
+// One side of a plan: a fixed color (including no ground), or election on the
+// input in hand, which a program spells as SelectElectedBackground.
+struct background_source {
+    int8_t color = -1;
+    bool per_grid = false;
+    background_source(int value = -1) : color((int8_t)value) {}
+    static background_source elected() { background_source s; s.per_grid = true; return s; }
+    int8_t on(const grid& input) const {
+        return per_grid ? confident_background(elect_grid_background(input)) : color;
+    }
+    bool removes_color() const { return per_grid || is_color(color); }
+    bool operator==(const background_source&) const = default;
+};
+
 // THE VETO (see input_vetoed): the global input winner is DECISIVELY beaten in
 // one pair when that pair's own ground has at least twice its area there --
 // then the global winner is a figure there, not background. Unless it still
 // HOLDS THE FIGURES there.
-inline bool vetoes(const vector<background_election::hypothesis>& local,
+template <class Candidates>
+inline bool vetoes(const Candidates& local,
                    int8_t global_background, int8_t pair_background) {
     if (global_background < 0 || pair_background < 0 || pair_background == global_background)
         return false;
@@ -553,7 +627,7 @@ inline background_election elect_background(const vector<example>& train) {
     // pair, so the input is the honest source.
     out.across_input_output.clear();
     for (const auto& ex : train) {
-        const vector<background_election::hypothesis> local = elect_side_background({ &ex.input });
+        const auto local = elect_grid_background(ex.input);
         const int8_t pair_background = confident_background(local);
         out.across_input_output.push_back(pair_background);
         if (vetoes(local, background_election::top(out.across_inputs), pair_background))
@@ -568,6 +642,70 @@ inline background_election elect_background(const vector<example>& train) {
         background_election::top(out.across_outputs))
         out.input_vetoed = false;
     return out;
+}
+
+// WHAT A PROGRAM DOES WITH THE GROUND, decided once for the whole reading:
+// keep it, a color like any other, or delete it before anything else and fill
+// it after everything else -- one color for every grid, or each input's own.
+// Nothing between those two ends knows there is a ground.
+struct ground_plan {
+    background_source deleted;  // what every sentence's input loses first
+    background_source filled;   // what the last sentence lays under the rest
+    bool keeps() const { return !deleted.removes_color(); }
+    bool operator==(const ground_plan&) const = default;
+};
+
+// The plans the election allows, in the order a tie goes. The two sides are
+// separate verdicts and how they relate is part of the rule (Background
+// Per-Side Split.md), so a plan pairs them: the input's ground deleted or kept
+// as a color, the output's filled or not -- kept, recolored, deleted,
+// introduced. One color where the inputs agree on it; keeping every color, the
+// ground a subject like any other (0520fde7, 5614dbcf's vote); an output
+// ground the inputs lack; and each input's own wherever a grid's own ground
+// differs from the puzzle's, a grid with none deleting nothing (per GRID).
+inline vector<ground_plan> ground_plans(const background_election& election) {
+    const int8_t in = election.input_elected(), out = election.output_elected();
+    vector<ground_plan> plans;
+    auto offer = [&](background_source deleted, background_source filled) {
+        const ground_plan plan{ deleted, filled };
+        if (find(plans.begin(), plans.end(), plan) == plans.end()) plans.push_back(plan);
+    };
+    // The input side leads: where the outputs abstain, the ground the inputs
+    // name comes back (kept, as most puzzles keep it). Deleting it and filling
+    // nothing is never asked: filling it back does as well wherever no cell
+    // shows it, and better wherever one does (0 of 87 puzzles chose it).
+    if (is_color(in) && is_color(out)) offer(background_source(in), background_source(out));
+    if (is_color(in)) offer(background_source(in), background_source(in));
+    offer({}, {});
+    if (!is_color(in)) offer({}, background_source(out));
+    const bool own = election.is_per_pair() ||
+        any_of(election.across_input_output.begin(), election.across_input_output.end(),
+               [&](int8_t ground) { return ground != in; });
+    if (own) {
+        offer(background_source::elected(), background_source::elected());
+        offer(background_source::elected(), background_source(out));
+    }
+    return plans;
+}
+
+// The puzzle a plan leaves to read: each input without the ground it deletes,
+// each output without what its fill lays under. Those cells are empty, and an
+// empty cell is nothing to every reader. Both colors come from the input as
+// given, since that is all a program has.
+inline vector<example> figures_only(const vector<example>& train, const ground_plan& plan) {
+    vector<example> figures = train;
+    auto empty = [](grid& one, int8_t color) {
+        if (!is_color(color)) return;
+        for (int row = 0; row < one.height; ++row)
+            for (int col = 0; col < one.width; ++col)
+                if (one.data[row][col] == color) one.data[row][col] = TRANSPARENT;
+    };
+    for (example& pair : figures) {
+        const int8_t deleted = plan.deleted.on(pair.input), filled = plan.filled.on(pair.input);
+        empty(pair.input, deleted);
+        empty(pair.output, filled);
+    }
+    return figures;
 }
 
 }  // namespace arc

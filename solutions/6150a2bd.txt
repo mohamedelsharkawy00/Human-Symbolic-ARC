@@ -1,0 +1,6 @@
+Input SelectAll TurnRight Withhold CurrentObjects SelectAll TurnRight Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       6150a2bd
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

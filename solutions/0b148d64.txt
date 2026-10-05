@@ -1,1 +1,6 @@
-Input Colors SelectAll SortBySize[1] SelectAll Trim AddColor[0] SelectAll InvertSelection SelectLargestObject[1] InvertSelection DeleteSelection SelectAll Union
+Input Colors SelectColor[0] DeleteSelection SelectSmallestObject[0] Union Output SelectAll Trim AddColor[0] Underlay
+
+Puzzle:       0b148d64
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

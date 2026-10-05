@@ -1,9 +1,6 @@
-Input SelectAll Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SlamRow[1] Underlay
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SlamRow[1] Underlay Output SelectAll AddColor[0] Underlay
+
 Puzzle:       025d127b
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        12
-Best Score:   1077.0000
-Max Depth:    12
+Found by:     inference, no search

@@ -1153,7 +1153,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
   const auto& correspondence = task.inf.correspondence;
   const int readings = (int)correspondence.readings.size();
 
-  auto& bg = task.inf.background;
+  auto& bg = task.inf.ground_election;
   auto& F = task.inf.colors;
   const int box_h = 5 * scale + pad * 2;   // a control row is a button, not a line
   // ONE ROW HEIGHT FOR THE WHOLE PANE, the control rows' own, so a list of text

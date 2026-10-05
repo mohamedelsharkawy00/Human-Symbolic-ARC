@@ -15,19 +15,27 @@
 namespace arc {
 using namespace std;
 
-// WHICH COLOR EACH COLOR BECAME: -1 for a color that was never seen. Two
-// colors may become one, so this is a table, not a swap.
+// WHICH COLOR EACH COLOR BECAME: UNSET for a color that was never seen. Two
+// colors may become one, so this is a table, not a swap. Empty is a value it
+// names too, both ways -- a cell that was empty, a color that became empty --
+// because where a plan deleted the ground, empty is what the ground reads as
+// (a ray drawn where nothing was, a figure and its ground trading places).
+// Indexed by the value itself; TRANSPARENT names the slot past the colors.
 struct recoloring {
-    int8_t to[COLOR_COUNT] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    static constexpr int8_t UNSET = -2;
+    int8_t to[COLOR_COUNT + 1] = {UNSET, UNSET, UNSET, UNSET, UNSET, UNSET, UNSET, UNSET, UNSET, UNSET, UNSET};
 
-    int8_t& operator[](int from) { return to[from]; }
-    int8_t operator[](int from) const { return to[from]; }
+    static int slot(int from) { return is_color(from) ? from : COLOR_COUNT; }
+    int8_t& operator[](int from) { return to[slot(from)]; }
+    int8_t operator[](int from) const { return to[slot(from)]; }
     bool operator==(const recoloring&) const = default;
 
-    // Seen, and became another color.
-    bool changes(int from) const { return to[from] >= 0 && to[from] != from; }
-    // What a cell of this color becomes: itself, where the table says nothing.
-    int8_t apply(int from) const { return to[from] >= 0 ? to[from] : (int8_t)from; }
+    // Seen at all: as a color, or as becoming empty.
+    bool named(int from) const { return to[slot(from)] != UNSET; }
+    // Seen, and became another value.
+    bool changes(int from) const { return named(from) && to[slot(from)] != from; }
+    // What a cell of this value becomes: itself, where the table says nothing.
+    int8_t apply(int from) const { return named(from) ? to[slot(from)] : (int8_t)from; }
 };
 
 // Whether two boxes share their top-left corner: for two objects, the same place.
@@ -445,8 +453,10 @@ private:
     // THE OBJECT AS DRAWN, or one consistent recoloring of it: every lit cell
     // lands on a color, and one color always lands on the same color. Matching a
     // footprint, the blank cells must land on background and the lit ones off it.
+    // Where the ground is empty (empty_ground: a plan deleted it), a lit cell
+    // landing on an empty cell lands on the ground, said as becoming empty.
     static bool fits_as_drawn(const placement& at, int8_t background, bool match_footprint,
-                              object_match& hit) {
+                              bool empty_ground, object_match& hit) {
         hit.color_map = {};
         hit.exact = true;
         for (int row = 0; row < at.posed.height; ++row)
@@ -458,10 +468,10 @@ private:
                     if (match_footprint && there_color != background) return false;
                     continue;
                 }
-                if (there_color == TRANSPARENT) return false;
+                if (there_color == TRANSPARENT && !empty_ground) return false;
                 if (match_footprint && there_color == background) return false;
-                if (!is_color(object_color) || !is_color(there_color)) return false;
-                if (hit.color_map[object_color] == -1) hit.color_map[object_color] = (int8_t)there_color;
+                if (!is_color(object_color) || (!is_color(there_color) && there_color != TRANSPARENT)) return false;
+                if (hit.color_map[object_color] == recoloring::UNSET) hit.color_map[object_color] = (int8_t)there_color;
                 if (hit.color_map[object_color] != there_color) return false;
                 if (object_color != there_color) hit.exact = false;
             }
@@ -501,18 +511,21 @@ private:
     // negative is exactly that: the ground and the figure swapping, which the
     // Color freedom already says. One to one, or a block of one color would
     // match every block.
-    static bool fits_as_negative(const placement& at, int8_t background, object_match& hit) {
+    // Where the ground is empty, the negative trades a figure with empty.
+    static bool fits_as_negative(const placement& at, int8_t background, bool empty_ground,
+                                 object_match& hit) {
         recoloring came_from;
         hit.color_map = {};
         hit.exact = true;
+        auto readable = [&](int value) { return is_color(value) || (empty_ground && value == TRANSPARENT); };
         for (int row = 0; row < at.posed.height; ++row)
             for (int col = 0; col < at.posed.width; ++col) {
                 if (!at.lands(row, col)) continue;
                 const int was = at.posed.data[row][col] == TRANSPARENT ? (int)background
                                                                        : at.posed.data[row][col];
                 const int now = at.under(row, col);
-                if (!is_color(was) || !is_color(now)) return false;
-                if (hit.color_map[was] == -1 && came_from[now] == -1) {
+                if (!readable(was) || !readable(now)) return false;
+                if (hit.color_map[was] == recoloring::UNSET && came_from[now] == recoloring::UNSET) {
                     hit.color_map[was] = (int8_t)now;
                     came_from[now] = (int8_t)was;
                 }
@@ -531,6 +544,15 @@ private:
         const bool fixed = fixed_row >= 0 && fixed_col >= 0;
         const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : POSE_COUNT);
 
+        // The ground is empty where a plan deleted it: the grid searched has
+        // empty cells and no ground color. A grid read whole never does.
+        bool empty_ground = background == TRANSPARENT;
+        if (empty_ground) {
+            bool any = false;
+            for (int row = 0; row < where.height && !any; ++row)
+                for (int col = 0; col < where.width && !any; ++col) any = where.data[row][col] == TRANSPARENT;
+            empty_ground = any;
+        }
         vector<grid> tried;
         for (int pose = 0; pose < pose_limit; ++pose) {
             grid posed = posed_cells(cells, pose);
@@ -566,9 +588,10 @@ private:
                     hit.outside = lit - shown;
                     // As drawn; failing that, the whole object partly hidden, or, for
                     // a block on a known ground, its negative.
-                    if (fits_as_drawn(at, background, match_footprint, hit) ||
+                    if (fits_as_drawn(at, background, match_footprint, empty_ground, hit) ||
                         (!match_footprint && fits_behind(at, background, hit)) ||
-                        (match_footprint && is_color(background) && fits_as_negative(at, background, hit)))
+                        (match_footprint && (is_color(background) || empty_ground) &&
+                         fits_as_negative(at, background, empty_ground, hit)))
                         found.hits.push_back(hit);
                 }
         }
@@ -592,11 +615,17 @@ private:
     }
 
     // Measures how common each color is to help estimate the chance of an accidental match.
-    static void color_shares(const grid& one_grid, double share[COLOR_COUNT]) {
-        int counts[COLOR_COUNT], total = 0;
+    // Out of the whole grid: an empty cell is ground a match could land on as
+    // well, so a ground already deleted still counts against chance.
+    // The last share is empty's, read like a color where the ground is empty.
+    static void color_shares(const grid& one_grid, double share[COLOR_COUNT + 1]) {
+        int counts[COLOR_COUNT];
         count_colors(one_grid, counts);
-        for (int i = 0; i < COLOR_COUNT; ++i) total += counts[i];
-        for (int i = 0; i < COLOR_COUNT; ++i) share[i] = total ? (double)counts[i] / total : 0.0;
+        const int area = one_grid.width * one_grid.height;
+        int painted = 0;
+        for (int i = 0; i < COLOR_COUNT; ++i) painted += counts[i];
+        for (int i = 0; i < COLOR_COUNT; ++i) share[i] = area > 0 ? (double)counts[i] / area : 0.0;
+        share[COLOR_COUNT] = area > 0 ? (double)(area - painted) / area : 0.0;
     }
 
     // A tiny blue object can match many places just because blue is common.
@@ -622,7 +651,8 @@ private:
         edge.stayed_put = stayed_put;
         edge.hidden = (int16_t)hit.hidden;
         edge.outside = (int16_t)hit.outside;
-        edge.recolored_to = (!hit.exact && source_color >= 0)
+        // A color that became empty was deleted, not recolored.
+        edge.recolored_to = (!hit.exact && source_color >= 0 && is_color(hit.color_map[source_color]))
                           ? hit.color_map[source_color] : (int8_t)-1;
         if (!hit.exact) edge.color_map = hit.color_map;
         return edge;
@@ -635,7 +665,7 @@ private:
             const vector<object_info>& into_info,
             const grid& into, int8_t background, bool may_hang_off,
             vector<rejection>* discarded, degrees_of_freedom allowed) {
-        double share[COLOR_COUNT];
+        double share[COLOR_COUNT + 1];
         color_shares(into, share);
 
         // Check for repeated shapes in the target grid before allowing clipped matches.
@@ -670,7 +700,7 @@ private:
                             if (!into.contains(into_row, into_col)) continue;
                             const int into_color = into.data[into_row][into_col];
                             if (hit.hidden && into_color != object_color) continue;
-                            odds *= share[hit.color_map[object_color]];
+                            odds *= share[recoloring::slot(hit.color_map[object_color])];
                         }
                     auto edge = edge_from_match(hit, (int)from_index, one_object.color, stationary);
                     const bool stands_alone = beats_chance(found_here.places, odds);

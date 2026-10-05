@@ -1,9 +1,6 @@
-Input SelectAll Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll OverlapCorner Union
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll OverlapCorner Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       03560426
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.0000
-Attempts:     0
-Nodes:        12
-Best Score:   2434.0000
-Max Depth:    12
+Found by:     inference, no search

@@ -21,6 +21,31 @@ struct object_summary {
     int16_t count = 0;       // number of cells in the object
 };
 
+// The sole drawing with no equal in the list. Compare full frames and cells,
+// including transparent cells, in local coordinates; placement does not matter.
+// Ambiguous lists (including two different objects) add no selection.
+template<class Width, class Height, class ColorAt>
+ARC_HOST_DEVICE inline int unique_drawing(int count, Width width, Height height, ColorAt color_at) {
+    if (count < 3) return -1;
+    int found = -1;
+    for (int i = 0; i < count; ++i) {
+        bool repeated = false;
+        for (int j = 0; j < count && !repeated; ++j) {
+            if (i == j || width(i) != width(j) || height(i) != height(j)) continue;
+            bool same = true;
+            for (int r = 0; r < height(i) && same; ++r)
+                for (int c = 0; c < width(i) && same; ++c)
+                    same = color_at(i, r, c) == color_at(j, r, c);
+            repeated = same;
+        }
+        if (!repeated) {
+            if (found >= 0) return -1;
+            found = i;
+        }
+    }
+    return found;
+}
+
 // Align like anchors of two spans: 0 = first cell, 1 = middle cell,
 // 2 = last cell. Even spans use the earlier of the two middle cells.
 // Copy placement shares this arithmetic between the reading and the GPU.
@@ -312,7 +337,7 @@ ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) 
     return false;
 }
 
-// Recolor's relative color sources, shared by the reading and execution.
+// Recolor and AddColor's relative color sources, shared by reading and execution.
 // Ties choose the lowest color, and an empty object stays transparent.
 template <class ColorAt>
 ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t value, ColorAt color_at) {
@@ -333,7 +358,7 @@ ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t v
 // Mark cells reachable from the border without crossing a blocked cell.
 // Space uses four-way connectivity, so it cannot leak through touching corners.
 template <class Blocked>
-inline void mark_outside(int height, int width, Blocked blocked,
+ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
                          bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
     int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
     for (int row = 0; row < height; ++row)
@@ -430,6 +455,24 @@ struct cell_box {
         if (col > col1) col1 = col;
     }
 };
+
+// Fit names its target: input frame, live output frame, or painted output
+// bounds. Reading and execution ask the same helper; empty paint has no bounds.
+template <class Canvas>
+ARC_HOST_DEVICE inline cell_box fit_frame(int mode, int input_width, int input_height,
+                                         const Canvas& canvas) {
+    if (mode == 0) return {0, 0, input_height - 1, input_width - 1};
+    if (mode == 1) return {0, 0, canvas.height - 1, canvas.width - 1};
+    cell_box box;
+    if (mode == 2)
+        for (int r = 0; r < canvas.height; ++r)
+            for (int c = 0; c < canvas.width; ++c)
+                if (is_color(canvas.data[r][c])) box.include_cell(r, c);
+    return box;
+}
+ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int target_size) {
+    return target_cell * source_size / target_size;
+}
 
 // An object's box as cell_box has it, and back again with its cell count.
 inline cell_box box_of(const object_summary& summary) {
@@ -612,8 +655,8 @@ inline int find_objects_by_color(const grid& one_grid, int background,
 // Every cell wearing a color, in reading order, with one color left out if
 // asked. Single home of the walk: the bounds are the grid's own, held to what a
 // grid can hold, so no two readings can disagree about which cells count.
-template <class See>
-inline void walk_colored_cells(const grid& one_grid, int skip, See see) {
+template <class Grid, class See>
+ARC_HOST_DEVICE inline void walk_colored_cells(const Grid& one_grid, int skip, See see) {
     for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
         for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
             const int color = one_grid.data[row][col];
@@ -624,7 +667,8 @@ inline void walk_colored_cells(const grid& one_grid, int skip, See see) {
 // How many cells of each color a grid holds. `skip` leaves one color out of the
 // tally — the background, wherever a caller wants it ignored; TRANSPARENT
 // counts all ten.
-inline void count_colors(const grid& one_grid, int counts[COLOR_COUNT],
+template <class Grid>
+ARC_HOST_DEVICE inline void count_colors(const Grid& one_grid, int counts[COLOR_COUNT],
                          int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
     walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
@@ -653,7 +697,8 @@ inline int8_t the_figure_color(const grid& one_grid, int ground) {
     return figure;
 }
 
-inline void color_boxes(const grid& one_grid, cell_box boxes[COLOR_COUNT],
+template <class Grid>
+ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
                         int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
     walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {

@@ -2,11 +2,71 @@
 
 Date: 2026-07-20
 
+## Current decision, 2026-10-03
+
+Inference is the target now; search depth no longer justifies hidden steps.
+The July 26 move of background removal and restoration into the engine is being
+reversed. Colors and Split retain every real color. Removal is ordinary
+`Colors SelectColor[c] DeleteSelection`, merged with UnionList only where a
+single object is required. Output keeps its canvas frame; Trim names a crop.
+Final fill is `Output SelectAll AddColor[c] Underlay`, with Trim before AddColor
+for a BoundingBox output. The fixed-color rewrite comes before per-grid election.
+SelectElectedBackground now elects from the current object layout, using the
+same single-grid helper as the host. It adds whole-object marks and leaves
+the stream untouched when no color is confident. Use `Colors` first to select
+a color layer, then `DeleteSelection` to remove it. It reads no training pairs
+or puzzle background field. Inference now compares the reading that
+keeps all colors with one that cuts on each input's elected ground. Removal is
+chosen only when that reading leaves fewer cells unexplained. Its replay uses
+the same source for each pair, and its final fill is explicit:
+`Input Colors SelectElectedBackground AddColor[11] Fit[1] Underlay`.
+
+Fit stretches selected objects with nearest-neighbor sampling: Fit[0] targets
+input dimensions, Fit[1] the output frame, and Fit[2] the painted output bounds
+(including their offset). Unselected objects pass through. No painted bounds
+means no selected result; it never invents a filled frame. Identity, Fixed and
+Scale restoration use Fit[1]; BoundingBox uses Fit[2], preserving the final crop.
+NotInferredYet cannot restore a frame. CPU and GPU share sizing and sampling.
+Whole-input framed readings carry their own elected fill through the prefix.
+Prefixes that discard ground (cut-out, layout, fractal) still need a faithful
+intermediate frame before they can elect ground again; those inner readings
+retain the fixed-color route, and dynamic outer cuts decline those frames.
+Not every per-grid ground needs removing and restoring. SelectUnique
+(2026-10-04) marks the one drawing with no twin, comparing frame size and every
+cell, ground included, wherever the drawings lie. The odd pane is then kept
+whole: `Input Panes SelectUnique Origin Union`. Reading and GPU share
+`unique_drawing`.
+The ground both ways (2026-10-04): a whole input is framed keeping its ground,
+or ground first -- `Input Colors <ground> DeleteSelection UnionList SelectAll`
+then the frame word, the ground filled only by the final fill. Frames that
+delete the ground hand each grid's ground down to the reading inside them, so
+nothing is elected from a grid only the host filled. The user has since asked
+whether the ground should be deleted once for the whole reading instead; see
+HANDOFF.
+The ground owned once (2026-10-05) replaced all of that. `infer` asks the
+election (3_background.hpp) for ground plans -- what is deleted first and what
+is filled last, the two sides paired: kept, recolored, deleted, introduced,
+every color kept, each input's own -- reads each plan's figures with no ground
+in any reader (`read_figures`), and keeps the plan that leaves the fewest cells
+unsaid. `say_the_plan` writes the plan's opening on every sentence that reads
+the input, and its fill once, last. No detector takes a background; an empty
+cell is nothing, and the matcher names empty like a color (a ray drawn where
+nothing was, a figure and its ground trading places). VoteDenoise reads its
+ground off the piece in hand (denoise_ground). The old reading modes, handed
+grounds and ground-first frames are gone.
+The historical session records below explain the old decisions, not the current
+execution contract.
+
 ## Graveyard — deleted ops, DO NOT rebuild (2026-07-23/24/25)
 
 Each was removed for a stated reason. If you feel the urge to add one back,
 read the reason first — the need it seemed to fill is met another way.
 
+- **InputWithoutBackground** — retired 2026-10-03. Source plus removal was
+  fused. Its explicit composition is `Input Colors SelectColor[c]
+  DeleteSelection UnionList` for an elected fixed color; a cut that follows
+  can consume the surviving layers directly, without UnionList. Per-grid
+  election is a separate next stage, not a hidden mode of these words.
 - **Clear** — wiped the canvas to empty. DELETED: 0 solutions used it, and the
   only honest need ("start the output over") never arose because combines
   control paint order. A *list*-clear would be redundant with GET (a GET already

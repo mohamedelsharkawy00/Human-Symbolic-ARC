@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim Layout[2] SelectAll ScaleDown[2] Union
+
+Puzzle:       780d0b14
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

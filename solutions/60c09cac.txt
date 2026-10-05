@@ -1,0 +1,6 @@
+Input SelectAll ScaleUp[2] Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       60c09cac
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

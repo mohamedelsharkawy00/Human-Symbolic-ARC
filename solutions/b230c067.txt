@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[1] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[2] Recolor[2] SelectAll Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       b230c067
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

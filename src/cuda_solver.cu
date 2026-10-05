@@ -286,20 +286,6 @@ __device__ gpu_object_list& gpu_exec_input(gpu_exec_context& ctx) {
     return res;
 }
 
-// InputWithoutBackground: the input with the elected ground punched out, frame
-// kept. The ground is not a figure, so the source says it once instead of every
-// beat deciding for itself.
-__device__ gpu_object_list& gpu_exec_input_without_background(gpu_exec_context& ctx) {
-    auto& res = gpu_acquire(ctx);
-    gpu_frame_to_content(res, ctx.input);
-    if (ctx.background_color < 0 || res.count == 0) return res;
-    gpu_fixed_object& obj = res.objects[0];
-    for (int r = 0; r < obj.height; ++r)
-        for (int c = 0; c < obj.width; ++c)
-            if (obj.mask[r][c] == ctx.background_color) obj.mask[r][c] = GPU_TRANSPARENT;
-    return res;
-}
-
 // Color-argument sentinel meaning "any non-transparent color" (value 10, one past
 // the 0..9 real colors). Used by MaskBy[10]/MaskOut[10] to match on the canvas
 // being painted at all, regardless of which color.
@@ -312,7 +298,15 @@ __device__ gpu_object_list& gpu_exec_output(gpu_exec_context& ctx) {
     // source now — the old Target[c] color-fill is written explicitly as
     // `Target AddColor[c]`, so Target carries no annotation.
     auto& res = gpu_acquire(ctx);
-    gpu_frame_to_content(res, ctx.output);
+    // Output is a snapshot of the WHOLE canvas, including its empty frame.
+    // Trim is the only word that reduces this frame to its painted bounds.
+    if (ctx.output.width <= 0 || ctx.output.height <= 0) return res;
+    auto& obj = res.objects[0];
+    obj.x0 = obj.y0 = 0;
+    obj.width = ctx.output.width; obj.height = ctx.output.height;
+    obj.x1 = obj.width - 1; obj.y1 = obj.height - 1;
+    obj.mask = ctx.output.data;
+    res.count = 1;
     return res;
 }
 
@@ -327,13 +321,6 @@ __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_obje
     // the stream may have grown past the input bbox (Tile/Shift/Extend...), and
     // input-sizing would silently crop those pixels before segmentation.
     gpu_paint_objects(src, GPU_MAX_GRID, GPU_MAX_GRID, temp);
-    // The ground is not a figure: erase the elected input canvas before
-    // segmenting, so no program spends nodes dropping it afterwards.
-    if (ctx.background_color >= 0)
-        for (int r = 0; r < GPU_MAX_GRID; ++r)
-            for (int c = 0; c < GPU_MAX_GRID; ++c)
-                if (temp.data[r][c] == ctx.background_color)
-                    temp.data[r][c] = GPU_TRANSPARENT;
     if (mode == 2) {
         // Split[2] = pixelize: one 1x1 object per non-transparent cell (no
         // connectivity merge). Sparse scenes only -- caps at GPU_KERNEL_MAX_OBJECTS,
@@ -355,21 +342,14 @@ __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_obje
     return res;
 }
 
-// Colors: split each source object into its color layers, minus the elected
-// input background — the ground is not a figure, so no program spends nodes
-// dropping it. Every layer keeps the SOURCE object's own bbox as-is —
-// segmentation never touches the frame (Trim is the only shrinker). A layer's
-// mask carries just its color's cells at the object's local coordinates, the
-// rest transparent.
+// Colors splits each source object into ALL its color layers, unselected.
+// Every layer keeps the source frame. Removal and trimming are separate words.
 __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count; ++i) {
         const auto& sobj = src.objects[i];
         int w = sobj.width, h = sobj.height;
         for (int color = 0; color < GPU_MAX_COLORS; ++color) {
-            // The ground is not a figure: segmentation never hands back the
-            // elected input canvas, so no program spends nodes dropping it.
-            if (color == ctx.background_color) continue;
             bool found = false;
             for (int r = 0; r < h && !found; ++r)
                 for (int c = 0; c < w; ++c)
@@ -489,6 +469,18 @@ __device__ gpu_object_list& gpu_exec_size_rank_color_map(gpu_exec_context& ctx, 
 // (largest=true -> biggest first, else smallest first). Lossless — the list is
 // unchanged, only the rank-th object's cells get selected. Keeping only it is
 // `SelectObjectBySize[r] InvertSelection DeleteSelection`, same as Filter.
+// Add a mark to the sole distinct drawing; keep every object and prior mark.
+__device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const gpu_object_list& src) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    const int found = arc::unique_drawing(src.count,
+        [&](int i) { return src.objects[i].width; },
+        [&](int i) { return src.objects[i].height; },
+        [&](int i, int r, int c) { return (int8_t)src.objects[i].mask[r][c]; });
+    if (found >= 0) res.objects[found].selected = true;
+    return res;
+}
+
 __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx, const gpu_object_list& src, int rank, bool largest) {
     auto& res = gpu_acquire(ctx);
     res = src;
@@ -637,7 +629,7 @@ __device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_
 // Panes: Partition's act with the cut already decided. Partition reads the
 // walls off a selection; the elected split read them off every training pair at
 // once, so here the boxes simply come up with the example. What is cut is
-// whatever the chain holds -- hand it InputWithoutBackground and the panes come
+// whatever the chain holds -- explicitly remove the ground first and the panes come
 // back as figures, hand it Colors and they come back a layer at a time.
 __device__ gpu_object_list& gpu_exec_panes(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
@@ -1276,6 +1268,44 @@ __device__ gpu_object_list& gpu_exec_select_color(gpu_exec_context& ctx, const g
     return res;
 }
 
+// Elect from the current layout, keeping the objects' frames (not their paint
+// bounds). Like SelectColor, selection is additive and marks whole objects.
+__device__ gpu_object_list& gpu_exec_select_elected_background(gpu_exec_context& ctx,
+                                                              const gpu_object_list& src) {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool has_frame = false;
+    for (int i = 0; i < src.count; ++i) {
+        const auto& obj = src.objects[i];
+        if (obj.width <= 0 || obj.height <= 0) continue;
+        if (!has_frame) {
+            x0 = x1 = obj.x0; y0 = y1 = obj.y0;
+            has_frame = true;
+        }
+        x0 = min(x0, (int)obj.x0); y0 = min(y0, (int)obj.y0);
+        x1 = max(x1, obj.x0 + obj.width); y1 = max(y1, obj.y0 + obj.height);
+    }
+    gpu_fixed_grid current;
+    current.clear();
+    current.width = (int16_t)max(0, min(GPU_MAX_GRID, x1 - x0));
+    current.height = (int16_t)max(0, min(GPU_MAX_GRID, y1 - y0));
+    for (int i = 0; i < src.count; ++i) {
+        const auto& obj = src.objects[i];
+        GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
+            const int row = obj.y0 + r - y0, col = obj.x0 + c - x0;
+            if (row >= 0 && row < current.height && col >= 0 && col < current.width)
+                current.data[row][col] = v;
+        }
+    }
+    const int8_t color = arc::confident_background(arc::elect_grid_background(current));
+    // No winner adds no marks, including on wholly transparent objects.
+    if (color < 0) {
+        auto& res = gpu_acquire(ctx);
+        res = src;
+        return res;
+    }
+    return gpu_exec_select_color(ctx, src, color);
+}
+
 // SelectAll: mark every object — the explicit "act on it all".
 __device__ gpu_object_list& gpu_exec_select_all(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
@@ -1852,9 +1882,13 @@ __device__ gpu_object_list& gpu_exec_add_color(gpu_exec_context& ctx, const gpu_
         auto& obj = res.objects[res.count];
         // Only what was picked gains the color; the rest ride through as they are.
         if (!obj.selected) { res.count++; continue; }
+        // Resolve once from the original object, before filling any holes.
+        // Same literal / least-common / most-common rule as Recolor.
+        const int8_t fill = gpu_obj_resolve_color(src.objects[i], color);
+        if (!arc::is_color(fill)) { res.count++; continue; }
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c)
-                if (obj.mask[r][c] == GPU_TRANSPARENT) obj.mask[r][c] = color;
+                if (obj.mask[r][c] == GPU_TRANSPARENT) obj.mask[r][c] = fill;
         res.count++;
     }
     return res;
@@ -1887,8 +1921,8 @@ __device__ gpu_object_list& gpu_exec_outline(gpu_exec_context& ctx, const gpu_ob
     return res;
 }
 
-__device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object_list& src) {
-    int gw = ctx.input.width, gh = ctx.input.height;
+__device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object_list& src, int mode) {
+    const auto target = arc::fit_frame(mode, ctx.input.width, ctx.input.height, ctx.output);
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& obj_src = src.objects[i];
@@ -1896,17 +1930,18 @@ __device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object
         // Only what was picked is stretched to the grid; the rest ride through.
         if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int sw = obj_src.width, sh = obj_src.height;
-        int nw = min((int)gw, GPU_MAX_GRID), nh = min((int)gh, GPU_MAX_GRID);
+        if (target.empty()) continue;
+        int nw = target.width(), nh = target.height();
         gpu_fixed_object obj;
         // Same object, same mark -- a fresh one would start unmarked.
         obj.selected = obj_src.selected;
-        obj.x0 = 0; obj.y0 = 0;
+        obj.x0 = (int16_t)target.col0; obj.y0 = (int16_t)target.row0;
         obj.width = (int16_t)nw; obj.height = (int16_t)nh;
-        obj.x1 = (int16_t)(nw - 1); obj.y1 = (int16_t)(nh - 1);
+        obj.x1 = (int16_t)target.col1; obj.y1 = (int16_t)target.row1;
         obj.mask.clear();
         for (int r = 0; r < nh; ++r)
             for (int c = 0; c < nw; ++c)
-                obj.mask[r][c] = obj_src.mask[r * sh / nh][c * sw / nw];
+                obj.mask[r][c] = obj_src.mask[arc::fit_source_cell(r, sh, nh)][arc::fit_source_cell(c, sw, nw)];
         res.objects[res.count++] = obj;
     }
     return res;
@@ -2041,23 +2076,13 @@ __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const g
         gpu_fixed_object obj = s;
         const int w = s.width, h = s.height;
 
-        // Background: puzzle-level detected color, else most frequent in the mask.
-        int8_t bg = ctx.background_color;
-        if (bg < 0) {
-            int freq[GPU_MAX_COLORS]; memset(freq, 0, sizeof(freq));
-            for (int r = 0; r < h; ++r)
-                for (int c = 0; c < w; ++c) {
-                    int8_t v = s.mask[r][c];
-                    if (arc::is_color(v)) ++freq[v];
-                }
-            int bn = -1;
-            for (int v = 0; v < GPU_MAX_COLORS; ++v)
-                if (freq[v] > bn) { bn = freq[v]; bg = (int8_t)v; }
-        }
+        // The ground is read off this piece alone (denoise_ground, shared with
+        // the reading): empty where a deletion upstream left it empty, else the
+        // color most of the piece wears. No puzzle-level background is read.
+        const int8_t bg = arc::denoise_ground(w, h, [&](int r, int c) { return (int8_t)s.mask[r][c]; });
 
         // A cell emptied by a background removal upstream is still the ground:
-        // read it as bg, so the op behaves the same whether the background was
-        // deleted or left in place.
+        // read it as bg, which is itself empty when the ground was deleted.
         auto ground_at = [&](int r, int c) -> int8_t {
             int8_t v = s.mask[r][c];
             return v == GPU_TRANSPARENT ? bg : v;
@@ -2608,25 +2633,12 @@ __device__ gpu_object_list& gpu_exec_mask(gpu_exec_context& ctx, const gpu_objec
 // orientation after a rotate has mutated `output`. Cases named by the host rule.
 __device__ void gpu_rule_output_dims(int8_t rt, const int16_t* rp,
                                      int in_w, int in_h, int& ow, int& oh) {
-    if (rt == arc::output_dimension_rule::Fixed) {
-        ow = min((int)rp[0], GPU_MAX_GRID);
-        oh = min((int)rp[1], GPU_MAX_GRID);
-    } else if (rt == arc::output_dimension_rule::Scale) {
-        ow = min((int)(in_w * rp[2] / rp[3]), GPU_MAX_GRID);
-        oh = min((int)(in_h * rp[4] / rp[5]), GPU_MAX_GRID);
-    } else if (rt == arc::output_dimension_rule::BoundingBox) {
-        // max grid now, cropped after the program runs
-        ow = GPU_MAX_GRID;
-        oh = GPU_MAX_GRID;
-    } else if (rt == arc::output_dimension_rule::NotInferredYet) {
-        // nobody filled the rule in; 0x0 makes every score wrong on purpose,
-        // so a missing inference shows up instead of passing as Identity
-        ow = 0;
-        oh = 0;
-    } else {                             // Identity: same as input
-        ow = min(in_w, GPU_MAX_GRID);
-        oh = min(in_h, GPU_MAX_GRID);
-    }
+    arc::output_dimension_rule rule;
+    rule.Chosen = (decltype(rule.Chosen))rt;
+    rule.width = rp[0]; rule.height = rp[1];
+    rule.width_numerator = rp[2]; rule.width_denominator = rp[3];
+    rule.height_numerator = rp[4]; rule.height_denominator = rp[5];
+    rule.canvas_size_for(in_w, in_h, ow, oh);
 }
 
 // Warp-parallel rotate ops. Each does two transposes — the object stream and the
@@ -2998,8 +3010,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
         // by itself — one Normalize per chain instead of one per fetch.
         if ((ctx.orientation_flipped & 8) && i > 0) {
             node_type prev = ops[i - 1].type;
-            if (prev == node_type::Input || prev == node_type::Seeds ||
-                prev == node_type::InputWithoutBackground) {
+            if (prev == node_type::Input || prev == node_type::Seeds) {
                 if (lane == 0) gpu_exec_canonical(ctx, true);
                 __syncwarp();
             }
@@ -3100,12 +3111,11 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             gpu_object_list* result = nullptr;
             switch (type) {
             case node_type::Input:          result = &gpu_exec_input(ctx); break;
-            case node_type::InputWithoutBackground:
-                                result = &gpu_exec_input_without_background(ctx); break;
             case node_type::Output:         result = &gpu_exec_output(ctx); break;
             case node_type::Split:          result = last ? &gpu_exec_split(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Colors:         result = last ? &gpu_exec_colors(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectMostCommonColor: result = last ? &gpu_exec_select_most_common_color(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::SelectUnique: result = last ? &gpu_exec_select_unique(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectLargestObject:  result = last ? &gpu_exec_select_object_by_size(ctx, *last, value, true) : &gpu_acquire(ctx); break;
             case node_type::SelectSmallestObject: result = last ? &gpu_exec_select_object_by_size(ctx, *last, value, false) : &gpu_acquire(ctx); break;
             case node_type::SortBySize:  result = last ? &gpu_exec_sort_by_size(ctx, *last, value == 0 ? 1 : 0) : &gpu_acquire(ctx); break;
@@ -3130,6 +3140,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::MirrorAround:   result = last ? &gpu_exec_mirror_around(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectColor:    result = last ? &gpu_exec_select_color(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SelectElectedBackground: result = last ? &gpu_exec_select_elected_background(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectAll:      result = last ? &gpu_exec_select_all(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::InvertSelection: result = last ? &gpu_exec_invert_selection(ctx, *last) : &gpu_acquire(ctx); break;
             // DeleteSelection handled in the warp-parallel branch above; reaching
@@ -3142,7 +3153,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SlamRow:        result = last ? &gpu_exec_slam(ctx, *last, true, value) : &gpu_acquire(ctx); break;
             case node_type::SlamColumn:     result = last ? &gpu_exec_slam(ctx, *last, false, value) : &gpu_acquire(ctx); break;
             case node_type::AddColor:       result = last ? &gpu_exec_add_color(ctx, *last, value) : &gpu_acquire(ctx); break;
-            case node_type::Fit:            result = last ? &gpu_exec_fit(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::Fit:            result = last ? &gpu_exec_fit(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Skew:           result = last ? &gpu_exec_skew(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Trim:           result = last ? &gpu_exec_trim(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::DiagTile:       result = last ? &gpu_exec_diag_tile(ctx, *last, value) : &gpu_acquire(ctx); break;
@@ -3191,7 +3202,9 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             // about which of its objects are picked keeps it. Selectors are
             // excluded by role (marking IS their work), and the two ops that
             // clear do so for reasons of their own.
-            if (result && last && result != last && is_act_op(type) && !clears_the_marks(type)) {
+            // Fit carries marks itself, even when an empty target drops every picked object.
+            if (result && last && result != last && is_act_op(type) &&
+                type != node_type::Fit && !clears_the_marks(type)) {
                 bool came_in_picked = false, went_out_picked = false;
                 for (int i = 0; i < last->count; ++i)
                     came_in_picked |= last->objects[i].selected;
@@ -3241,8 +3254,6 @@ struct gpu_example_template {
     uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
     int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
     int8_t   shape_color_count;
-    int8_t background_color;
-    int8_t output_background_color;
     int8_t distance_maps[GPU_MAX_COLORS][GPU_MAX_GRID][GPU_MAX_GRID];
     gpu_packed_mask target_grid;
     int8_t target_dims[2];  // w, h
@@ -3421,8 +3432,6 @@ static void build_example_templates(const cuda_dsl_example_data& ex, int count,
         memcpy(tmpl.shape_color_keys, ex.shape_color_keys, sizeof(tmpl.shape_color_keys));
         memcpy(tmpl.shape_color_vals, ex.shape_color_vals, sizeof(tmpl.shape_color_vals));
         tmpl.shape_color_count = ex.shape_color_count;
-        tmpl.background_color = ex.background_color;
-        tmpl.output_background_color = ex.output_background_color;
 
         memcpy(tmpl.target_objs,
                ex.target_objs + ei * GPU_MAX_TARGET_OBJECTS,
@@ -3537,8 +3546,6 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
                 ctx.shape_color_vals[i] = tmpl.shape_color_vals[i];
             }
             ctx.shape_color_count = tmpl.shape_color_count;
-            ctx.background_color = tmpl.background_color;
-            ctx.output_background_color = tmpl.output_background_color;
             // Where this example's panes lie, for the Panes act.
             ctx.pane_count = tmpl.pane_count;
             for (int i = 0; i < GPU_MAX_PANES; ++i)
@@ -3632,25 +3639,6 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
                 ctx.output.width = (int16_t)new_w;
                 ctx.output.height = (int16_t)new_h;
             }
-        }
-    }
-    __syncwarp();
-
-    // The closing frame: whatever the program never painted is the canvas the
-    // output figures sit on. Applied here, after the crop, so transparency still
-    // means "nothing here" for every op that ran. No elected canvas -> untouched.
-    if (ctx.output_background_color >= 0) {
-        // ONE PACKED BYTE per lane (2 same-row cells, 30 per row so a byte never
-        // crosses a row) rather than one cell: a lane-striped cell write would
-        // read-modify-write a byte its neighbour lane also owns.
-        for (int b = lane; b < (int)sizeof(ctx.output.data.bytes); b += 32) {
-            const int idx = b << 1;
-            const int r = idx / GPU_MAX_GRID, c = idx - r * GPU_MAX_GRID;  // c even
-            if (r >= ctx.output.height) continue;
-            for (int t = 0; t < 2; ++t)
-                if (c + t < ctx.output.width &&
-                    ctx.output.data[r][c + t] == GPU_TRANSPARENT)
-                    ctx.output.data[r][c + t] = ctx.output_background_color;
         }
     }
     __syncwarp();
@@ -4049,8 +4037,6 @@ __global__ void dsl_pieces_kernel(gpu_exec_context* __restrict__ contexts,
     if (lane == 0) {
         ctx.pool_head = 0;
         ctx.orientation_flipped = 0;
-        ctx.background_color = background;
-        ctx.output_background_color = background;
         ctx.output.width = ctx.input.width;
         ctx.output.height = ctx.input.height;
         // Nothing is being painted, so the size rule is "same as the input".
@@ -4059,10 +4045,16 @@ __global__ void dsl_pieces_kernel(gpu_exec_context* __restrict__ contexts,
     }
     __syncwarp();
 
-    gpu_flat_op prog[2];
-    prog[0].type = node_type::Input;  prog[0].value = 0;
-    prog[1].type = op;                prog[1].value = variant;
-    gpu_object_list& list = gpu_eval_program_warp(ctx, prog, 2, lane);
+    gpu_flat_op prog[6];
+    int count = 0;
+    prog[count++] = {node_type::Input, 0};
+    if (arc::is_color(background) && (op == node_type::Colors || op == node_type::Split)) {
+        prog[count++] = {node_type::Colors, 0};
+        prog[count++] = {node_type::SelectColor, background};
+        prog[count++] = {node_type::DeleteSelection, 0};
+        if (op == node_type::Split) prog[count++] = {op, variant};
+    } else prog[count++] = {op, variant};
+    gpu_object_list& list = gpu_eval_program_warp(ctx, prog, count, lane);
 
     if (lane != 0) return;
     dsl_pieces& o = out[idx];

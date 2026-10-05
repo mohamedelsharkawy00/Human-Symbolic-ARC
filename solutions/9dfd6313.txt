@@ -1,0 +1,6 @@
+Input SelectAll TurnRight Withhold CurrentObjects SelectAll FlipHorizontal Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       9dfd6313
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

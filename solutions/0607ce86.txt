@@ -1,1 +1,6 @@
-Colors UnionList SelectAll VoteDenoise Underlay
+Input SelectAll VoteDenoise Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       0607ce86
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal[11] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       623ea044
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

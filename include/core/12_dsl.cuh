@@ -291,18 +291,13 @@ struct gpu_exec_context {
     gpu_object_list seed_objs;
     // WHERE THIS EXAMPLE'S PANES LIE, as top/left/width/height. Geometry, not
     // cells: Panes clips whatever the chain holds to these boxes, so what counts
-    // as figure stays the caller's word (InputWithoutBackground, Colors, ...)
+    // as figure stays the caller's words (Colors, SelectColor, DeleteSelection)
     // rather than something this op decides on everyone's behalf.
     int8_t pane_boxes[GPU_MAX_PANES][4];
     int8_t pane_count;
     // puzzle-level: train output colors ranked by total pixel count (desc); count below
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
-    // puzzle-level: dominant across-inputs color (inference background_color); -1 = unknown
-    int8_t background_color = -1;
-    // puzzle-level: the canvas the OUTPUT figures sit on; the kernel starts the
-    // canvas in this color, so no program has to paint it back. -1 = none elected
-    int8_t output_background_color = -1;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level broadcast).
     uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
     int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
@@ -368,10 +363,6 @@ struct cuda_dsl_example_data {
     uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS] = {};
     int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS] = {};
     int8_t   shape_color_count = 0;
-    // puzzle-level: dominant across-inputs color (inference background_color); -1 = unknown
-    int8_t background_color = -1;
-    // puzzle-level: the canvas the OUTPUT figures sit on. -1 = none elected
-    int8_t output_background_color = -1;
     int8_t rule_type = 0;
     int16_t rule_params[6] = {};
     // Per-example target CC summaries, precomputed host-side.

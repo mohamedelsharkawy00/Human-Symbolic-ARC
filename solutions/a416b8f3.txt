@@ -1,0 +1,6 @@
+Input SelectAll Tile[0] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       a416b8f3
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

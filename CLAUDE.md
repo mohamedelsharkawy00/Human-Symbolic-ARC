@@ -12,7 +12,7 @@ write inference readouts, or omit the IDs for all training puzzles.
 Use `python3 scripts/readouts.py` as described in AGENTS.md to compare readouts.
 
 This CPU target does not execute emitted programs or measure prediction accuracy.
-Full scoring and CopyTo still run on the local Windows CUDA build or a GPU runner.
+Full scoring still runs on the local Windows CUDA build or a GPU runner.
 Report unrun checks plainly; do not claim that readouts prove a score.
 
 Kaggle preparation and the private smoke run are documented in README.md.

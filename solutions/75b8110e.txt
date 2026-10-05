@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Union Input Colors SelectColor[0] DeleteSelection SelectColor[6] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor[0] DeleteSelection SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor[0] DeleteSelection SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Panes SelectAll Origin Recolor[0] Underlay
+
+Puzzle:       75b8110e
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

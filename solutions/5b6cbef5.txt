@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Fractal Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       5b6cbef5
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

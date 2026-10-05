@@ -30,6 +30,6 @@ It currently recognizes a unique largest source figure. The primitive accepts
 arbitrary selections, including multiple source figures. CPU and GPU share the
 anchor arithmetic; the rule spells ordinary DSL operations.
 
-Build `arc_copy_to_tests` explicitly and run it from the repository root for the
-GPU contract and inference-transfer checks. `arc_said 363442ee` checks the learned
-program against the puzzle's training and held-out outputs.
+`arc_said 363442ee` checks the learned program against the puzzle's training
+and held-out outputs. (The CopyTo checks, `arc_copy_to_tests`, were removed on
+2026-10-05; they are in git history.)

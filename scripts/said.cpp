@@ -4,13 +4,12 @@
 //
 // This is the guard on say_the_reading. A program it spells that draws the
 // wrong thing shows up here as "WRONG" and nowhere else, so run it after
-// touching the emitter and compare the tail against tests/pane_program_truth.txt.
+// touching the emitter.
 //
 // EVERY PUZZLE THE READING SPEAKS FOR, not only the ones with panes. The count
 // was gated on pane_split while the pane emitter was the new thing, and that
 // gate hid every other branch of say_the_reading from the only tool that runs
-// what it says. The panes are still tallied apart, so the pane truth file stays
-// comparable to the run that wrote it.
+// what it says. The panes are still tallied apart.
 //
 //   arc_said [task-id] one puzzle or every puzzle, then a tally on stderr
 #include "16_solver_beam.hpp"

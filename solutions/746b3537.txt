@@ -1,0 +1,6 @@
+Input Colors Split[1] SelectAll Trim Layout[2] SelectAll ScaleDown[2] Union
+
+Puzzle:       746b3537
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

@@ -1,1 +1,6 @@
-Colors SelectAll SortBySize[1] SelectAll Trim SelectAll ScaleUp[2] AddColor[0] Union
+Input Colors SelectColor[0] DeleteSelection SelectAll SortBySize[1] SelectAll Trim SelectAll ScaleUp[2] AddColor[0] Union Output SelectAll Trim AddColor[0] Underlay
+
+Puzzle:       f25fbde4
+Train:        Solved
+Test:         Solved
+Found by:     manual, migrated to explicit background steps

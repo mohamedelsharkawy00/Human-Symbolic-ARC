@@ -46,6 +46,18 @@ inline string spell(const string& op, int value) {
     return op + "[" + to_string(value) + "]";
 }
 
+// A color layer is an object before it is picked or deleted. These are
+// compositions, not executor modes: every program carries the actual color.
+// Only a plan says them (say_the_plan); the reading reads figures.
+inline string color_layers(background_source background) {
+    if (background.per_grid) return "Colors SelectElectedBackground DeleteSelection";
+    return "Colors" + (is_color(background.color)
+        ? " " + spell("SelectColor", background.color) + " DeleteSelection" : string());
+}
+inline string foreground_input(background_source background) {
+    return background.removes_color() ? "Input " + color_layers(background) + " UnionList" : "Input";
+}
+
 // The pick for one color's pieces alone. Picks add to what is already marked,
 // so it starts from none picked.
 inline string pick_only_color(int color) {
@@ -95,17 +107,19 @@ struct said_reading {
     // Cells of the pairs these sentences leave unexplained. A rule that speaks
     // holds over every cell, so only the cut's own line leaves any.
     int left_unexplained = 0;
+    bool background_filled = false;
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
-// the same-color flag: Split[1] keeps colors separate; Split[0] joins them.
-inline const char* word_for_segmentation(segmentation_methods segmentation) {
+// the same-color flag: Split[1] keeps colors separate; Split[0] joins them. A cut
+// names no ground: the reading reads figures, and the plan's opening deleted it.
+inline string word_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
-        case segmentation_methods::connected_monochrome:   return "Split[1]";
-        case segmentation_methods::connected_multicolor:   return "Split[0]";
+        case segmentation_methods::connected_monochrome:   return spell("Split", 1);
+        case segmentation_methods::connected_multicolor:   return spell("Split", 0);
         case segmentation_methods::all_cells_of_one_color: return "Colors";
         case segmentation_methods::minimal_repeating_set:  return "Pattern";
-        default:                                          return nullptr;
+        default:                                          return {};
     }
 }
 
@@ -127,6 +141,11 @@ inline vector<string> words_for_pose(int pose) {
 // A CELL-LEVEL COLOR MAP AS WORDS: nothing when no color changes, one
 // BidiColorMap when two colors trade places, nullopt when it is anything else.
 inline optional<string> word_for_color_map(const recoloring& map) {
+    // A swap with empty is a figure and its ground trading places, which no
+    // color word says.
+    if (map.named(TRANSPARENT)) return nullopt;
+    for (int c = 0; c < COLOR_COUNT; ++c)
+        if (map[c] == TRANSPARENT) return nullopt;
     int first = -1, second = -1;
     for (int c = 0; c < COLOR_COUNT; ++c)
         if (map.changes(c)) { first = c; second = map[c]; break; }
@@ -162,6 +181,47 @@ inline the_mark mark_after(const string& words) {
         else if (op == node_type::Bridge && mark == the_mark::all) mark = the_mark::some;
     });
     return mark;
+}
+
+// Remove only steps whose redundancy follows from the written words. A cut
+// clears marks, so SelectAll immediately before it is unused. Once a color
+// was explicitly deleted, frame/selection operations cannot bring it back.
+// An unrecognised act forgets that fact rather than guessing about its paint.
+inline string without_redundant_steps(const string& words, int background) {
+    vector<string> tokens;
+    each_program_word(words, [&](std::string_view word, node_type) { tokens.emplace_back(word); });
+    string result;
+    bool ground_absent = false;
+    auto append = [&](const string& word) {
+        if (!result.empty()) result += ' ';
+        result += word;
+    };
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const string& word = tokens[i];
+        if (word == "SelectAll" && i + 1 < tokens.size() &&
+            (tokens[i + 1] == "Colors" || tokens[i + 1].starts_with("Split["))) continue;
+        if (is_color(background) && word == "Colors" && i + 2 < tokens.size() &&
+            tokens[i + 1] == spell("SelectColor", background) && tokens[i + 2] == "DeleteSelection") {
+            // A following Split consumes the painted cells, not the color layers.
+            if (!(ground_absent && i + 3 < tokens.size() && tokens[i + 3].starts_with("Split[")))
+                append(word);
+            if (!ground_absent) { append(tokens[i + 1]); append(tokens[i + 2]); }
+            ground_absent = true;
+            i += 2;
+            continue;
+        }
+        const node_type op = operation_named(word);
+        const bool preserves_colors = is_select_op(op) ||
+            op == node_type::DeleteSelection || op == node_type::Colors || op == node_type::Split ||
+            op == node_type::Trim || op == node_type::Origin || op == node_type::Panes ||
+            op == node_type::UnionList || op == node_type::IntersectionList ||
+            op == node_type::Layout || op == node_type::CurrentObjects || is_combine_op(op);
+        if (op == node_type::AddColor) {
+            if (word == spell("AddColor", background)) ground_absent = false;
+        } else if (!preserves_colors) ground_absent = false;
+        append(word);
+    }
+    return result;
 }
 
 // ONE SENTENCE, CLOSED, AND THE PICK A PAINT NEEDS SAID HERE AND NOWHERE ELSE.
@@ -341,21 +401,20 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         grow.push_back({"SelectAll", spell("ScaleUp", grown)});
         carve.push_back({"SelectAll", "Fractal"});
         say_beats(said, "Input", grow, "Union");
-        say_beats(said, "InputWithoutBackground", carve, "Difference", /*afresh=*/true);
+        say_beats(said, string("Input"), carve, "Difference", /*afresh=*/true);
         return true;
     }
 
     string source = "Input";
     vector<beat> beats;
     if (some_are_ground) {
-        // The ground is punched out before stamping, so no map may repaint it.
-        const int ground = inf.background.input_elected();
+        // The blocks with no copy are empty: the plan's opening deleted the
+        // ground before stamping, and its fill lays it back last.
         const int pose = cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
-        if (pose < 0 || !is_color(ground) || blocks.color_map.changes(ground)) {
+        if (pose < 0) {
             said.no_word_for.push_back("which blocks hold a copy of the input");
             return false;
         }
-        source = "InputWithoutBackground";
         beats = opening;
         say_pose(beats, "SelectAll", pose);
         beats.push_back({"SelectAll", "Fractal"});
@@ -462,17 +521,22 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     // "8 where no pane has anything, 0 everywhere else" reads equally as NOR
     // painting 8 and as OR painting 0 -- and only the first is a program, since
     // painting the ground is not the same as leaving it there.
+    // WHERE A PLAN DELETED THE GROUND the table leaves those cells empty, and
+    // empty is the ground: nothing paints it, the plan fills it last. What each
+    // pattern lays is a color, nothing, or a pane copied -- never confused.
+    constexpr int copies = -2;
+    auto laid = [&](int m) -> int {
+        return says[m].leaves_empty ? TRANSPARENT : says[m].paint >= 0 ? says[m].paint : copies;
+    };
     int8_t grounds[COLOR_COUNT + 2];
     int ground_count = 0;
-    auto offer = [&](int8_t color) {
-        if (color < 0 || ground_count > COLOR_COUNT) return;
+    auto offer = [&](int color) {
+        if ((!is_color(color) && color != TRANSPARENT) || ground_count > COLOR_COUNT) return;
         for (int g = 0; g < ground_count; ++g) if (grounds[g] == color) return;
-        grounds[ground_count++] = color;
+        grounds[ground_count++] = (int8_t)color;
     };
-    offer(inf.background.output_elected());
-    offer(inf.background.input_elected());
     for (int m = 0; m < patterns; ++m) {
-        if (says[m].said()) offer(says[m].paint);
+        if (says[m].said()) offer(laid(m));
     }
     if (ground_count == 0) return false;
 
@@ -485,7 +549,7 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         if (alone[p] < 0) one_color_each = false;
     }
 
-    const string head = "InputWithoutBackground Panes" + (turn.empty() ? " SelectAll" : turn) + " Origin";
+    const string head = (string("Input") + " Panes") + (turn.empty() ? " SelectAll" : turn) + " Origin";
     for (int g = 0; g < ground_count; ++g) {
         const int8_t ground = grounds[g];
         // Every pattern that paints must paint the same color for the four
@@ -493,16 +557,16 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         int8_t lit_color = -1;
         bool one_lit_color = true;
         for (int m = 0; m < patterns; ++m) {
-            if (!says[m].said() || says[m].paint == ground) continue;
-            if (says[m].paint < 0) { one_lit_color = false; break; }
-            if (lit_color < 0) lit_color = says[m].paint;
-            else if (lit_color != says[m].paint) { one_lit_color = false; break; }
+            if (!says[m].said() || laid(m) == ground) continue;
+            if (laid(m) < 0) { one_lit_color = false; break; }
+            if (lit_color < 0) lit_color = (int8_t)laid(m);
+            else if (lit_color != laid(m)) { one_lit_color = false; break; }
         }
         if (!one_lit_color || lit_color < 0) continue;
         auto shape_holds = [&](auto predicate) {
             for (int m = 0; m < patterns; ++m) {
                 if (!says[m].said()) continue;
-                if (predicate(m) != (says[m].paint != ground)) return false;
+                if (predicate(m) != (laid(m) != ground)) return false;
             }
             return true;
         };
@@ -523,7 +587,7 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         }
         if (shape_holds([&](int m) { return m == 0; })) {
             // What the panes do NOT cover: fill the box, then keep only the fill.
-            say_closed(said, head + " UnionList " + spell("AddColor", lit_color) + " Colors " +
+            say_closed(said, head + " UnionList " + spell("AddColor", lit_color) + (" " + string("Colors") + " ") +
                              spell("SelectColor", lit_color) + " InvertSelection DeleteSelection", "Union");
             return true;
         }
@@ -532,15 +596,22 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     // AN ORDER, when the panes do not agree and one of them always wins. Read
     // off the table: whoever takes the pattern where every pane is still in wins
     // first, then the same question again without it.
-    const int8_t ground = says[0].paint;
+    const int ground = laid(0);
+    const bool ground_known = is_color(ground) || ground == TRANSPARENT;
     // The ground is laid last, under everything already painted, since the
-    // canvas starts empty when the outputs elect no ground.
-    const string lay_ground = "Input Panes SelectAll Origin " + spell("Recolor", ground);
+    // canvas starts empty when the outputs elect no ground. Left empty, it is
+    // the plan's to fill, and nothing here lays it. Panes cut after a plan
+    // deleted the ground have empty cells, filled before they are recolored.
+    auto lay_ground = [&] {
+        if (!is_color(ground)) return;
+        const string fill = inf.plan.deleted.removes_color() ? spell("AddColor", ground) + " " : string();
+        say_closed(said, "Input Panes SelectAll Origin " + fill + spell("Recolor", ground), "Underlay");
+    };
     // THE PANES LAID DOWN AS THEY COME, when what wins is simply the first pane
     // that has anything. Nothing has to be named, so this says the panes whose
     // colors are not one apiece too -- including the ones that never overlap,
     // where there is no order to get wrong.
-    if (ground >= 0) {
+    if (ground_known) {
         bool list_order = true;
         for (int m = 1; m < patterns && list_order; ++m) {
             if (!says[m].said()) continue;
@@ -551,11 +622,11 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         }
         if (list_order) {
             say_closed(said, head, "Underlay");
-            say_closed(said, lay_ground, "Underlay");
+            lay_ground();
             return true;
         }
     }
-    if (one_color_each && ground >= 0) {
+    if (one_color_each && ground_known) {
         int order[8], count = 0, left = patterns - 1;
         while (left) {
             if (!says[left].said()) break;
@@ -572,17 +643,17 @@ inline bool say_panes(const inference& inf, said_reading& said) {
             bool every = true;
             for (int m = 0; m < patterns && every; ++m) {
                 if (!says[m].said()) continue;
-                int8_t wins = ground;
+                int wins = ground;
                 for (int i = 0; i < panes; ++i)
                     if (m >> order[i] & 1) { wins = alone[order[i]]; break; }
-                every = says[m].paint == wins;
+                every = laid(m) == wins;
             }
             if (every) {
                 for (int i = 0; i < panes; ++i)
-                    say_closed(said, "Input Colors " + spell("SelectColor", alone[order[i]]) +
+                    say_closed(said, ("Input " + string("Colors") + " ") + spell("SelectColor", alone[order[i]]) +
                                      " InvertSelection DeleteSelection Panes SelectAll Origin",
                                i == 0 ? "Union" : "Underlay");
-                say_closed(said, lay_ground, "Underlay");
+                lay_ground();
                 return true;
             }
         }
@@ -600,8 +671,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     const auto& pick = inf.pane_pick;
     if (!split.holds() || !pick.holds()) return false;
     if (pick.fitted && (pick.way == pane_pick_rule::Emptiest || pick.way == pane_pick_rule::Fullest)) {
-        const int ground = inf.background.input_elected();
-        if (!is_color(ground)) return false;
+        // The plan deleted the ground first and fills it last.
         // The walls are laid back by their color, so a wall whose color each
         // grid says for itself has no word to lay it back with.
         if (!is_color(split.color)) {
@@ -612,16 +682,23 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         // Restore it after painting; the selected pane keeps its full frame.
         const string selector = pick.way == pane_pick_rule::Emptiest
                               ? "SelectSmallestObject[0]" : "SelectLargestObject[0]";
-        say_closed(said, "InputWithoutBackground Panes " + selector +
-            " InvertSelection DeleteSelection SelectAll Fit", "Union");
-        say_closed(said, "Input Colors " + spell("SelectColor", split.color) +
+        say_closed(said, (string("Input") + " Panes ") + selector +
+            " InvertSelection DeleteSelection SelectAll Fit[0]", "Union");
+        say_closed(said, ("Input " + string("Colors") + " ") + spell("SelectColor", split.color) +
             " InvertSelection DeleteSelection", "Union");
-        say_closed(said, "Input SelectAll " + spell("Recolor", ground), "Underlay");
         return true;
     }
     if (pick.fitted) {
         said.no_word_for.push_back("the chosen pane enlarged behind the walls");
         return false;
+    }
+    if (pick.way == pane_pick_rule::OddOneOut) {
+        // Keep every cell of the pane, including its background. Panes clears
+        // marks; the selector names exactly one complete drawing, then Origin
+        // moves only that pane. No crop-to-ink or background restoration.
+        said.sentences.push_back("Input Panes SelectUnique Origin Union");
+        said.background_filled = true;  // The selected pane supplies its full frame.
+        return true;
     }
     if (pick.way != pane_pick_rule::AtIndex) {
         said.no_word_for.push_back(
@@ -673,8 +750,8 @@ inline bool say_corner_crop(const inference& inf, said_reading& said) {
 inline bool say_edge_slide(const inference& inf, said_reading& said) {
     const auto& slide = inf.edge_slide;
     if (!slide.holds()) return false;
-    const char* cut = word_for_segmentation(slide.segmentation);
-    if (!cut) return false;
+    const string cut = word_for_segmentation(slide.segmentation);
+    if (cut.empty()) return false;
     const string pieces = string("Input ") + cut;
     const string push = spell("MoveToEdge", slide.way);
     if (!is_color(slide.color)) {
@@ -694,7 +771,7 @@ inline bool say_edge_slide(const inference& inf, said_reading& said) {
 // Layout[0] takes the cell from the drawings, so no size is written here.
 inline bool say_pane_gather(const inference& inf, said_reading& said) {
     if (!inf.pane_split.holds() || !inf.pane_gather.holds()) return false;
-    say_closed(said, "InputWithoutBackground Panes " + spell("Layout", 0), "Union");
+    say_closed(said, (string("Input") + " Panes ") + spell("Layout", 0), "Union");
     return true;
 }
 
@@ -705,7 +782,7 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
     if (!rule.holds()) return false;
 
     for (const auto& branch : rule.branches) {
-        string layer = "Input Colors " + spell("SelectSmallestObject", branch.rank) +
+        string layer = ("Input " + string("Colors") + " ") + spell("SelectSmallestObject", branch.rank) +
                        " InvertSelection DeleteSelection SelectAll Trim";
         if (branch.fill_interior) layer += " InteriorColor[-1]";
         layer += " Split[1] SelectAll Trim";
@@ -727,8 +804,8 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
 inline bool say_mark_lattice(const inference& inf, said_reading& said) {
     const auto& rule = inf.mark_lattice;
     if (!rule.holds()) return false;
-    const char* cut = word_for_segmentation(rule.segmentation);
-    if (!cut) return false;
+    const string cut = word_for_segmentation(rule.segmentation);
+    if (cut.empty()) return false;
     string words = string("Input ") + cut + " SelectAll Trim";
     if (rule.portrait) words += " NormalizeOrientation[0]";
     words += " TileX[1] Tile[3]";
@@ -741,7 +818,7 @@ inline bool say_ranked_layout(const inference& inf, said_reading& said) {
     const auto& rule = inf.ranked_layout;
     if (!rule.holds()) return false;
 
-    string words = "Input Colors";
+    string words = ("Input " + string("Colors"));
     for (int rank = 0; rank < rule.discarded_colors; ++rank)
         words += " SelectMostCommonColor DeleteSelection";
     words += " " + spell("Split", rule.split_mode) + " SelectAll Trim " +
@@ -786,8 +863,8 @@ inline bool say_periodic_denoise(const inference& inf, said_reading& said) {
 // whole hand said out loud, since the bars come back unmarked (mark_after).
 inline bool say_bridge(const inference& inf, said_reading& said) {
     if (!inf.bridge.holds()) return false;
-    const char* cut = word_for_segmentation(inf.bridge.segmentation);
-    if (!cut) return false;
+    const string cut = word_for_segmentation(inf.bridge.segmentation);
+    if (cut.empty()) return false;
     say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
                                {"SelectAll", "Bridge"} }, "Underlay");
     return true;
@@ -796,7 +873,7 @@ inline bool say_bridge(const inference& inf, said_reading& said) {
 // Every hollow filled with the one color the rule read.
 inline bool say_interior_fill(const inference& inf, said_reading& said) {
     if (!inf.interior_fill.holds()) return false;
-    say_closed(said, "InputWithoutBackground SelectAll Split[0] SelectAll Trim " +
+    say_closed(said, ("Input " + spell("Split", 0) + " SelectAll Trim ") +
                spell("InteriorColor", inf.interior_fill.color), "Union");
     return true;
 }
@@ -806,7 +883,7 @@ inline bool say_interior_fill(const inference& inf, said_reading& said) {
 inline bool say_interior_spread(const inference& inf, said_reading& said) {
     if (!inf.interior_spread.holds()) return false;
     say_closed(said, "Input", "Union");
-    const string pieces = "InputWithoutBackground SelectAll Split[0] SelectAll";
+    const string pieces = ("Input " + spell("Split", 0) + " SelectAll");
     say_closed(said, pieces + " Recolor[10]", "Union");
     say_closed(said, pieces + " Outline", "Union");
     return true;
@@ -815,12 +892,12 @@ inline bool say_interior_spread(const inference& inf, said_reading& said) {
 // Each piece recolored by how many holes it has.
 inline bool say_hole_colors(const inference& inf, said_reading& said) {
     if (!inf.hole_colors.holds()) return false;
-    vector<beat> recolors = { {"SelectAll", "Split[1]"} };
+    vector<beat> recolors = { {"SelectAll", spell("Split", 1)} };
     for (int holes = 0; holes < hole_color_rule::key_count; ++holes)
         if (is_color(inf.hole_colors.colors[holes]))
             recolors.push_back({"SelectAll InvertSelection " + spell("SelectObjectsWithHoles", holes),
                                 spell("Recolor", inf.hole_colors.colors[holes])});
-    say_beats(said, "InputWithoutBackground", recolors, "Union");
+    say_beats(said, "Input", recolors, "Union");
     return true;
 }
 
@@ -828,9 +905,10 @@ inline bool say_hole_colors(const inference& inf, said_reading& said) {
 inline bool say_copy_to(const inference& inf, said_reading& said) {
     if (!inf.copy_to.holds()) return false;
     say_closed(said, "Input", "Union");
-    const string pieces = string("InputWithoutBackground ") +
-        (inf.copy_to.panes ? "Panes " : "") +
-        "Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] ";
+    const string pieces = (inf.copy_to.panes
+        ? string("Input") + " Panes Split[0]"
+        : "Input " + spell("Split", 0)) +
+        " SelectAll Trim InvertSelection SelectLargestObject[0] ";
     said.sentences.push_back(closed_on_the_pick(pieces + spell("CopyTo", inf.copy_to.anchor), "Union"));
     return true;
 }
@@ -839,7 +917,7 @@ inline bool say_copy_to(const inference& inf, said_reading& said) {
 // sentence only picks that color and paints it where it lies.
 inline bool say_rarest_color(const inference& inf, said_reading& said) {
     if (!inf.rarest_color.holds()) return false;
-    said.sentences.push_back(closed_on_the_pick("Input Colors SelectSmallestObject[0]", "Union"));
+    said.sentences.push_back(closed_on_the_pick(("Input " + string("Colors") + " SelectSmallestObject[0]"), "Union"));
     return true;
 }
 
@@ -873,7 +951,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
             // A color layer can hold several disconnected pieces; the rank
             // belongs to each piece, not their combined color.
             if (inf.correspondence.segmentation == segmentation_methods::all_cells_of_one_color)
-                beats.push_back({"SelectAll", "Split[0]"});
+                beats.push_back({"SelectAll", spell("Split", 0)});
             // SizeRankColorMap reads list order, so say the sort too.
             beats.push_back({"SelectAll", "SortBySize[0]"});
             beats.push_back({"SelectAll", "SizeRankColorMap"});
@@ -937,20 +1015,23 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
 // Origin), or the whole input scaled up, scaled down or tiled -- and the line's
 // own cut carves that. False for a line that opens any other way.
 inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& said) {
+    // Where a plan deleted the ground, its opening makes the input the figures
+    // alone, so every frame acts on them.
+    const string whole = "Input SelectAll";
     string framed;
     switch (frame.kind) {
-    case piece_frame_rule::scaled_up:   framed = "Input SelectAll " + spell("ScaleUp", frame.factor); break;
-    case piece_frame_rule::scaled_down: framed = "Input SelectAll " + spell("ScaleDown", frame.factor); break;
-    case piece_frame_rule::tiled:       framed = "Input SelectAll " + spell("Tile", 0); break;
-    case piece_frame_rule::fractal:     framed = "InputWithoutBackground SelectAll Fractal"; break;
-    case piece_frame_rule::repeat_unit: framed = "Input SelectAll Pattern"; break;
+    case piece_frame_rule::scaled_up:   framed = whole + " " + spell("ScaleUp", frame.factor); break;
+    case piece_frame_rule::scaled_down: framed = whole + " " + spell("ScaleDown", frame.factor); break;
+    case piece_frame_rule::tiled:       framed = whole + " " + spell("Tile", 0); break;
+    case piece_frame_rule::fractal:     framed = whole + " Fractal"; break;
+    case piece_frame_rule::repeat_unit: framed = whole + " Pattern"; break;
     case piece_frame_rule::posed:
-        framed = "Input SelectAll";
+        framed = whole;
         for (const string& word : words_for_pose(frame.factor)) framed += " " + word;
         break;
     default: {
-        const char* cut = word_for_segmentation(frame.cut);
-        if (!cut) return false;
+        const string cut = word_for_segmentation(frame.cut);
+        if (cut.empty()) return false;
         // Every piece needs no pick, and nothing to delete.
         const bool every = frame.how < 0 && frame.colors == (uint16_t)((1u << COLOR_COUNT) - 1);
         framed = string("Input SelectAll ") + cut + " SelectAll Trim " +
@@ -1015,13 +1096,13 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     auto say = [&](const string& act) { beats.push_back({"SelectAll", act}); };
     // The segmentation methods that explained just as much. Said as openings of their own so a
     // search can try each, rather than trusting the order they were declared in.
-    vector<const char*> tied;
+    vector<string> tied;
     auto spoken = [&]() {
         say_beats(said, "Input", beats, combine);
         // A tied opening closes the way the chosen one did, so the rest of the
         // line still follows it.
         const string close = beats.size() > 1 ? "Withhold" : combine;
-        for (const char* segmentation : tied) {
+        for (const string& segmentation : tied) {
             string opening = closed_with(string("Input SelectAll ") + segmentation, close);
             bool already = !said.sentences.empty() && said.sentences.front() == opening;
             for (const string& seen : said.other_openings) already = already || seen == opening;
@@ -1030,7 +1111,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         return true;
     };
 
-    if (const char* segmentation = word_for_segmentation(facts.segmentation)) {
+    if (const string segmentation = word_for_segmentation(facts.segmentation); !segmentation.empty()) {
         say(segmentation);
         // Correspondence measured every piece in the box its cells make, and Split
         // and Colors hand pieces back in the frame they were given (only Trim
@@ -1043,7 +1124,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
 
     for (int8_t cell : facts.tied_with_chosen) {
         if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
-        if (const char* segmentation = word_for_segmentation(facts.readings[cell].segmentation))
+        if (const string segmentation = word_for_segmentation(facts.readings[cell].segmentation); !segmentation.empty())
             tied.push_back(segmentation);
     }
 
@@ -1121,7 +1202,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         beats.push_back({"SelectAll InvertSelection SelectLargestObject[0]", "DeleteSelection"});
         say(spell("Recolor", worn));
         spoken();
-        say_closed(said, "InputWithoutBackground", "Union");
+        say_closed(said, "Input", "Union");
         return true;
     }
 
@@ -1161,6 +1242,48 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     return true;
 }
 
+// Fill is part of the chosen explanation, including a reading through a frame.
+// The Fit target is spelled, never inferred by the op from a hidden size mode.
+inline void restore_background(said_reading& said, background_source ground,
+                               const output_dimension_rule& size) {
+    if (said.sentences.empty() || said.background_filled || !ground.removes_color()) return;
+    int fit = 1;
+    switch (size.Chosen) {
+    case output_dimension_rule::Identity:
+    case output_dimension_rule::Fixed:
+    case output_dimension_rule::Scale: break;
+    case output_dimension_rule::BoundingBox: fit = 2; break;
+    case output_dimension_rule::NotInferredYet:
+    default:
+        said.no_word_for.push_back("the output frame has not been inferred");
+        return;
+    }
+    if (ground.per_grid)
+        said.sentences.push_back("Input Colors SelectElectedBackground AddColor[11] " +
+                                 spell("Fit", fit) + " Underlay");
+    else
+        said.sentences.push_back("Output SelectAll " + string(fit == 2 ? "Trim " : "") +
+                                 spell("AddColor", ground.color) + " Underlay");
+    said.background_filled = true;
+}
+
+// THE PLAN, SAID ONCE (background_reading::central). The reading read figures
+// with no ground, so every sentence that opens on the input opens instead on
+// its figures -- the ground deleted, the rest one piece in the input's own
+// frame, as figures_only left it -- and the fill is the last sentence, after
+// any crop. Nothing between the two says a ground.
+inline void say_the_plan(said_reading& said, const ground_plan& plan, const output_dimension_rule& size) {
+    if (plan.deleted.removes_color()) {
+        const string figures = foreground_input(plan.deleted);
+        auto open_on_figures = [&](string& sentence) {
+            if (sentence == "Input" || sentence.rfind("Input ", 0) == 0) sentence = figures + sentence.substr(5);
+        };
+        for (string& sentence : said.sentences) open_on_figures(sentence);
+        for (string& opening : said.other_openings) open_on_figures(opening);
+    }
+    restore_background(said, plan.filled, size);
+}
+
 // ONE CHOICE AMONG EVERY EXPLANATION ON THE LIST. Each rule that stands alone is
 // an explanation of the pairs, and so is the elected cut's own line. All of them
 // are asked and priced alike -- complete first, meaning no cell left unexplained
@@ -1172,6 +1295,8 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
 inline said_reading say_the_reading(const inference& inf) {
     vector<said_reading> spoke;
     vector<string> missing;
+    // Every explanation shares the plan, so its opening and fill are said once,
+    // after the choice, and price none of them apart.
     auto heard = [&](bool it_spoke, said_reading& one) {
         if (it_spoke) spoke.push_back(std::move(one));
         else missing.insert(missing.end(), one.no_word_for.begin(), one.no_word_for.end());
@@ -1190,7 +1315,8 @@ inline said_reading say_the_reading(const inference& inf) {
     // piece cut out and moved to the corner -- instead.
     if (inf.framed) {
         said_reading framed;
-        heard(say_the_cut(*inf.framed, framed) && frame_the_sentences(inf.frame, framed), framed);
+        bool spoke_frame = say_the_cut(*inf.framed, framed);
+        heard(spoke_frame && frame_the_sentences(inf.frame, framed), framed);
     }
     auto price = [](const said_reading& one) {
         int ops = 0;
@@ -1204,6 +1330,10 @@ inline said_reading say_the_reading(const inference& inf) {
         if (!cheapest || price(one) < price(*cheapest)) cheapest = &one;
     said_reading said = cheapest ? *cheapest : said_reading{};
     said.no_word_for.insert(said.no_word_for.begin(), missing.begin(), missing.end());
+    say_the_plan(said, inf.plan, inf.size);
+    const int ground = inf.plan.deleted.color;
+    for (string& sentence : said.sentences) sentence = without_redundant_steps(sentence, ground);
+    for (string& opening : said.other_openings) opening = without_redundant_steps(opening, ground);
     return said;
 }
 

@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] SelectColor[4] AlignTo[0] SelectAll Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       1caeab9d
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

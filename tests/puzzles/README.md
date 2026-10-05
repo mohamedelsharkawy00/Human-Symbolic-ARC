@@ -13,8 +13,8 @@ Toggle CUS off and on to reload files (enable another dataset first if needed).
   amplify interior blue contour votes until they outnumber exterior black votes.
 - `connectivity_control_30`: sealed corners; 4-way and 8-way floods agree.
 
-Both are 30x30; their output recolors blue interiors yellow. Regenerate and
-verify their standalone flood checks with `python tests/connectivity_stress.py`.
+Both are 30x30; their output recolors blue interiors yellow. The script that
+made them, `tests/connectivity_stress.py`, was removed in 1c1c272.
 
 Movement examples
 -----------------

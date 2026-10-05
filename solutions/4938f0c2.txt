@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] MirrorAround[23] SelectAll Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       4938f0c2
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

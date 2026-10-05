@@ -1,9 +1,6 @@
-Input SelectAll MoveToEdge[3] Union
+Input SelectAll MoveToEdge[3] Union Output SelectAll AddColor[0] Underlay
+
 Puzzle:       5bd6f4ac
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.1049
-Attempts:     0
-Nodes:        4
-Best Score:   2449.5000
-Max Depth:    4
+Found by:     inference, no search

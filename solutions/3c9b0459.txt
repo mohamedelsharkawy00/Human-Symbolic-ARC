@@ -1,0 +1,6 @@
+Input SelectAll TurnRight Withhold CurrentObjects SelectAll TurnRight Union
+
+Puzzle:       3c9b0459
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

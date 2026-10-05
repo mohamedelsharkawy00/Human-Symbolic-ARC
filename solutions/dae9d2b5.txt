@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectAll Origin UnionList Recolor[6] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       dae9d2b5
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

@@ -1,10 +1,6 @@
-Input Split[2] Bridge SelectAll Underlay
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge SelectAll Underlay Output SelectAll AddColor[0] Underlay
 
 Puzzle:       070dd51e
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.1444
-Attempts:     77824
-Nodes:        3
-Best Score:   5234.0000
-Max Depth:    3
+Found by:     inference, no search

@@ -40,19 +40,41 @@ struct output_dimension_rule {
     // The canvas this rule gives one input before anything is painted on it.
     // False under BoundingBox, where only the drawing says, and when the size
     // would not fit a grid at all.
-    bool size_for(const grid& input, int& out_width, int& out_height) const {
+    ARC_HOST_DEVICE bool size_for(int input_width, int input_height,
+                                  int& out_width, int& out_height) const {
+        out_width = out_height = 0;
+        long long w = 0, h = 0;
         switch (Chosen) {
-        case Identity: out_width = input.width; out_height = input.height; break;
-        case Fixed:    out_width = width;       out_height = height;       break;
+        case Identity: w = input_width; h = input_height; break;
+        case Fixed: w = width; h = height; break;
         case Scale:
-            if (width_denominator <= 0 || height_denominator <= 0) return false;
-            out_width = input.width * width_numerator / width_denominator;
-            out_height = input.height * height_numerator / height_denominator;
+            if (width_denominator <= 0 || height_denominator <= 0 ||
+                width_numerator <= 0 || height_numerator <= 0) return false;
+            w = (long long)input_width * width_numerator / width_denominator;
+            h = (long long)input_height * height_numerator / height_denominator;
             break;
+        case BoundingBox:
+        case NotInferredYet:
         default: return false;
         }
-        return out_width > 0 && out_height > 0 &&
-               out_width <= MAX_GRID_DIM && out_height <= MAX_GRID_DIM;
+        if (w <= 0 || h <= 0 || w > MAX_GRID_DIM || h > MAX_GRID_DIM) return false;
+        out_width = (int)w; out_height = (int)h;
+        return true;
+    }
+    bool size_for(const grid& input, int& out_width, int& out_height) const {
+        return size_for(input.width, input.height, out_width, out_height);
+    }
+
+    // The working frame is shared by host replay and execution. BoundingBox
+    // alone gets the full workspace; its final bounds come from painted cells.
+    // Invalid or unknown rules give no frame, never an implicit Identity.
+    ARC_HOST_DEVICE bool canvas_size_for(int input_width, int input_height,
+                                         int& out_width, int& out_height) const {
+        if (Chosen == BoundingBox) {
+            out_width = out_height = MAX_GRID_DIM;
+            return true;
+        }
+        return size_for(input_width, input_height, out_width, out_height);
     }
 
     // Picks how output size is decided, first match wins

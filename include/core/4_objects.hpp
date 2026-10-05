@@ -157,11 +157,39 @@ ARC_HOST_DEVICE inline int tiled_source(int at, int start, int period, int size)
 // Rows/columns whose cells match their residue-class majority <70% are
 // outside the pattern and become background. Inside, each cell becomes the
 // most common value among in-pattern cells whole periods away on both axes;
-// ties keep the cell. `ground_at(r, c)` reads a cell and must return a color --
-// a hole is read as the ground, which is what makes the ground the evidence it
-// is (notes/4 - To Do/VoteDenoise Needs The Background.md). `put(r, c, v)`
+// ties keep the cell. `ground_at(r, c)` reads a cell, a hole read as the ground,
+// which is what makes the ground the evidence it is (notes/4 - To Do/VoteDenoise
+// Needs The Background.md); a ground deleted upstream is empty, and empty is a
+// value that votes like a color (vote_slot). `put(r, c, v)`
 // writes the result somewhere else. False, and nothing written, when neither
 // axis repeats.
+// THE GROUND THE VOTE READS BY, chosen from the piece in hand and nothing
+// else: empty, where the ground was deleted upstream and left the piece with
+// empty cells; otherwise the color most of it wears, the lowest on a tie. No
+// puzzle-level background is consulted, by the op or by the reading.
+template <typename At>
+ARC_HOST_DEVICE inline int8_t denoise_ground(int w, int h, At at) {
+    int counts[COLOR_COUNT] = {};
+    for (int r = 0; r < h; ++r)
+        for (int c = 0; c < w; ++c) {
+            const int8_t v = at(r, c);
+            if (!is_color(v)) return (int8_t)TRANSPARENT;
+            ++counts[v];
+        }
+    int8_t best = (int8_t)TRANSPARENT;
+    int most = -1;
+    for (int v = 0; v < COLOR_COUNT; ++v)
+        if (counts[v] > most) { most = counts[v]; best = (int8_t)v; }
+    return best;
+}
+
+// An empty value votes in a slot of its own, past the ten colors, and comes
+// back out empty: a ground deleted upstream is evidence like any other.
+ARC_HOST_DEVICE inline int vote_slot(int8_t v) { return is_color(v) ? (int)v : COLOR_COUNT; }
+ARC_HOST_DEVICE inline int8_t slot_value(int slot) {
+    return slot == COLOR_COUNT ? (int8_t)TRANSPARENT : (int8_t)slot;
+}
+
 template <typename At, typename Put>
 ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At ground_at, Put put) {
     // Period per axis (0 = no repeat found).
@@ -208,12 +236,12 @@ ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At groun
         for (int line = 0; line < lines; ++line) {
             int agree = 0;
             for (int cell = 0; cell < length; ++cell) {
-                int counts[COLOR_COUNT] = {};
+                int counts[COLOR_COUNT + 1] = {};
                 int8_t most_common = bg;
                 int most = 0;
                 for (int source = line % period; source < lines; source += period) {
                     const int8_t color = at(source, cell);
-                    if (++counts[color] > most) { most = counts[color]; most_common = color; }
+                    if (++counts[vote_slot(color)] > most) { most = counts[vote_slot(color)]; most_common = color; }
                 }
                 if (at(line, cell) == most_common) ++agree;
             }
@@ -226,17 +254,17 @@ ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At groun
     for (int r = 0; r < h; ++r)
         for (int c = 0; c < w; ++c) {
             if (!row_in[r] || !col_in[c]) { put(r, c, bg); continue; }
-            int counts[COLOR_COUNT] = {};
+            int counts[COLOR_COUNT + 1] = {};
             for (int sr = (py > 0 ? r % py : r); sr < h; sr += (py > 0 ? py : h))
                 for (int sc = (px > 0 ? c % px : c); sc < w; sc += (px > 0 ? px : w)) {
                     if (!row_in[sr] || !col_in[sc]) continue;
-                    ++counts[ground_at(sr, sc)];
+                    ++counts[vote_slot(ground_at(sr, sc))];
                 }
             int8_t own = ground_at(r, c);
             int8_t best_v = own;
-            int best_n = counts[own];
-            for (int v = 0; v < COLOR_COUNT; ++v)
-                if (counts[v] > best_n) { best_n = counts[v]; best_v = (int8_t)v; }
+            int best_n = counts[vote_slot(own)];
+            for (int slot = 0; slot <= COLOR_COUNT; ++slot)
+                if (counts[slot] > best_n) { best_n = counts[slot]; best_v = slot_value(slot); }
             put(r, c, best_v);
         }
     return true;

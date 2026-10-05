@@ -1,0 +1,6 @@
+Input SelectAll TurnLeft Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       ed36ccf7
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

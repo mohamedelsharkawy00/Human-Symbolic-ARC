@@ -1,10 +1,6 @@
-Input Split[0] SizeRankColorMap SelectAll Underlay
+Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll SizeRankColorMap Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       08ed6ac7
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.1359
-Attempts:     94208
-Nodes:        3
-Best Score:   1919.0000
-Max Depth:    3
+Found by:     inference, no search

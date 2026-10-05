@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll TileY[3] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       8eb1be9a
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

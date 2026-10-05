@@ -1,1 +1,6 @@
-Colors SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split SelectAll Trim Layout[7] SelectAll ScaleDown[7] Union
+Input Colors SelectColor[0] DeleteSelection SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split[0] SelectAll Trim Layout[2] SelectAll ScaleDown[2] Union
+
+Puzzle:       0a1d4ef5
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

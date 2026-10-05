@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColumn[0] TileX[1] MaskBy[10] Union Output SelectAll AddColor[0] Underlay
+
+Puzzle:       c9f8e694
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search
