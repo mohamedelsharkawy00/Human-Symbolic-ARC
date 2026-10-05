@@ -9,6 +9,25 @@
 - DRY: the replays (`*_holds`, 7_infer.hpp) repeat the same pair loops,
   picked-piece handling and change checks. About 20 of them each make their
   pieces ready (partner_pieces); see "STILL OPEN" in the next section.
+- MERGE THE SCORE AND THE READOUTS (the user: "confusing and inconsistent,
+  both need merging and consistency"). Today they are two tools, built and
+  run two different ways, that read all 1000 puzzles the same way twice:
+  - arc_said (scripts/said.cpp), the score: built by the normal build, run
+    by hand (`out\x64-Release\arc_said.exe > said.txt`, or `<id>` for one),
+    no .bat of its own. Needs the GPU: runs the programs on the pairs and
+    the test. Prints id, SOLVED or WRONG, program, and a tally on stderr.
+  - arc_probe (scripts/probe.cpp), the readouts: left out of the normal
+    build; `scripts\probe.bat <label>` builds and runs it. No GPU, runs no
+    program. Writes out\probe\<label>\logs\inference\<id>.txt and
+    summary.txt. The Linux cloud sessions build only this one
+    (scripts/cloud_setup.py), as they have no GPU.
+  - scripts/readouts.py reads both: `solved` takes two said files,
+    `explained` two labels and two said files, `missing` one of each.
+  - Wanted: one run that scores and writes the readouts, built and run one
+    way, its outputs in one place, the readout written by one owner. A
+    GPU-free build that writes only the readouts must stay (the cloud).
+    Agree the details with the user first: the name, the one command, where
+    the outputs go. Then update AGENTS.md "Build and check" and CLAUDE.md.
 
 ## Speed of the dataset run: profiled, matching, parallel (2026-10-05)
 - User paused feature work to address dataset run time and code repetition.
