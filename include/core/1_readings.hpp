@@ -935,4 +935,94 @@ ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, int count, BoxOf
     return partners == 1 ? found : -1;
 }
 
+// WHETHER THE PIECE `mine` WOULD FIT INTO `partner`: turned or mirrored any of
+// the eight ways and set down anywhere, it fills one of the partner's gaps
+// whole, paints no cell the partner paints, and whatever it has over hangs out
+// past the partner's box on the side the gap opens to. A GAP, for now: a run of
+// the cells in the partner's box the partner leaves empty, joined side to side,
+// that meets the edge of that box on one side alone -- a side the piece lies
+// past. Nothing moves: this is the question WouldFit asks, and moving a piece
+// into its gap would be the same question answered with the place. The pieces
+// are read through the two questions each_partner asks.
+template <class BoxOf, class Painted>
+ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, BoxOf box_of, Painted painted) {
+    const cell_box own = box_of(mine), box = box_of(partner);
+    if (own.empty() || box.empty()) return false;
+    constexpr uint8_t top = 1, bottom = 2, left = 4, right = 8;
+    const uint8_t past = (uint8_t)((own.row1 < box.row0 ? top : 0) | (own.row0 > box.row1 ? bottom : 0) |
+                                   (own.col1 < box.col0 ? left : 0) | (own.col0 > box.col1 ? right : 0));
+    if (!past) return false;
+    int cells = 0;
+    for (int row = own.row0; row <= own.row1; ++row)
+        for (int col = own.col0; col <= own.col1; ++col) cells += painted(mine, row, col) ? 1 : 0;
+    const int tall = box.height(), wide = box.width();
+    // Each empty cell of the box: 0 not walked yet, 1 walked, 2 in the run walked now.
+    uint8_t seen[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    int16_t run[MAX_GRID_DIM * MAX_GRID_DIM];
+    // Whether the piece, some way round, fills whole the run of `count` cells
+    // starting at `first`, hanging out past `side` with whatever it has over.
+    auto fills = [&](int first, int count, uint8_t side) {
+        const int anchor_row = box.row0 + first / MAX_GRID_DIM, anchor_col = box.col0 + first % MAX_GRID_DIM;
+        for (int pose = 0; pose < POSE_COUNT; ++pose) {
+            const int high = (pose & 1) ? own.width() : own.height(), broad = (pose & 1) ? own.height() : own.width();
+            auto at = [&](int row, int col) {
+                const auto [from_row, from_col] = pose_source(pose, own.width(), own.height(), row, col);
+                return (bool)painted(mine, own.row0 + from_row, own.col0 + from_col);
+            };
+            // The run's first cell is filled by one of the piece's cells: each in turn.
+            for (int lands_row = 0; lands_row < high; ++lands_row)
+                for (int lands_col = 0; lands_col < broad; ++lands_col) {
+                    if (!at(lands_row, lands_col)) continue;
+                    const int down = anchor_row - lands_row, across = anchor_col - lands_col;
+                    int covered = 0;
+                    bool sits = true;
+                    for (int row = 0; row < high && sits; ++row)
+                        for (int col = 0; col < broad && sits; ++col) {
+                            if (!at(row, col)) continue;
+                            const int on_row = row + down, on_col = col + across;
+                            if (painted(partner, on_row, on_col)) { sits = false; break; }
+                            if (on_row >= box.row0 && on_row <= box.row1 && on_col >= box.col0 && on_col <= box.col1) {
+                                if (seen[on_row - box.row0][on_col - box.col0] == 2) ++covered;
+                                else sits = false;
+                            } else {
+                                sits = side == top ? on_row < box.row0 : side == bottom ? on_row > box.row1
+                                     : side == left ? on_col < box.col0 : on_col > box.col1;
+                            }
+                        }
+                    if (sits && covered == count) return true;
+                }
+        }
+        return false;
+    };
+    for (int start_row = 0; start_row < tall; ++start_row)
+        for (int start_col = 0; start_col < wide; ++start_col) {
+            if (seen[start_row][start_col] || painted(partner, box.row0 + start_row, box.col0 + start_col)) continue;
+            // Walk the run from its first cell in reading order, noting the box's sides it meets.
+            int count = 0;
+            uint8_t meets = 0;
+            seen[start_row][start_col] = 2;
+            run[count++] = (int16_t)(start_row * MAX_GRID_DIM + start_col);
+            for (int next = 0; next < count; ++next) {
+                const int row = run[next] / MAX_GRID_DIM, col = run[next] % MAX_GRID_DIM;
+                if (row == 0) meets |= top;
+                if (row == tall - 1) meets |= bottom;
+                if (col == 0) meets |= left;
+                if (col == wide - 1) meets |= right;
+                const int steps[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+                for (const auto& step : steps) {
+                    const int to_row = row + step[0], to_col = col + step[1];
+                    if (to_row < 0 || to_col < 0 || to_row >= tall || to_col >= wide || seen[to_row][to_col] ||
+                        painted(partner, box.row0 + to_row, box.col0 + to_col))
+                        continue;
+                    seen[to_row][to_col] = 2;
+                    run[count++] = (int16_t)(to_row * MAX_GRID_DIM + to_col);
+                }
+            }
+            const bool one_side = meets == top || meets == bottom || meets == left || meets == right;
+            if (one_side && (meets & past) && count <= cells && fills(run[0], count, meets)) return true;
+            for (int i = 0; i < count; ++i) seen[run[i] / MAX_GRID_DIM][run[i] % MAX_GRID_DIM] = 1;
+        }
+    return false;
+}
+
 }  // namespace arc

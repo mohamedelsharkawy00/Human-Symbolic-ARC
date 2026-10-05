@@ -75,25 +75,28 @@ inline string pick_colors(uint16_t colors) {
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, every color but that one -- when `how` names one,
-// else by its colors.
-inline string pick_words(uint16_t colors, int8_t how, int8_t value) {
+// else by its colors; then, when `fits` names a partner way, WouldFit keeps the
+// ones that would fit into a gap of their partner.
+inline string pick_words(uint16_t colors, int8_t how, int8_t value, int8_t fits = -1) {
     using fired_rule = correspondence_election::fired_rule;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor",
                                                  "SelectMostCommonColor InvertSelection" };
     static_assert(size(selectors) == (size_t)fired_rule::pick_kinds);
+    const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
     // SelectMostCommonColor takes no value: which color it picks is the list's to say.
     if (how == fired_rule::most_common || how == fired_rule::not_most_common)
-        return string("SelectAll InvertSelection ") + selectors[how];
-    if (how >= 0) return "SelectAll InvertSelection " + spell(selectors[how], value);
-    return pick_colors(colors);
+        return string("SelectAll InvertSelection ") + selectors[how] + kept;
+    if (how >= 0) return "SelectAll InvertSelection " + spell(selectors[how], value) + kept;
+    return pick_colors(colors) + kept;
 }
 
 // THE PIECES A RULE PICKS, as words, picked from none: by its pick of holes or of
 // size, by its colors, by its one color -- or every piece.
 inline string pick_of(const correspondence_election::fired_rule& rule) {
-    if (rule.pick_by >= 0 || rule.picks) return pick_words(rule.picks, rule.pick_by, rule.pick_value);
+    if (rule.pick_by >= 0 || rule.picks)
+        return pick_words(rule.picks, rule.pick_by, rule.pick_value, rule.pick_fits);
     return rule.color < 0 ? string("SelectAll") : pick_only_color(rule.color);
 }
 
@@ -170,6 +173,11 @@ inline the_mark mark_after(const string& words) {
         else if (op == node_type::InvertSelection)
             mark = mark == the_mark::all ? the_mark::none
                  : mark == the_mark::none ? the_mark::all : the_mark::some;
+        // WouldFit only drops marks, and with every piece picked no partner is
+        // left to fit into, so it drops them all.
+        else if (op == node_type::WouldFit) {
+            if (mark == the_mark::all) mark = the_mark::none;
+        }
         else if (is_select_op(op)) {
             if (mark != the_mark::all) mark = the_mark::some;
         }
@@ -866,7 +874,7 @@ inline bool say_bridge(const inference& inf, said_reading& said) {
     const string cut = word_for_segmentation(inf.bridge.segmentation);
     if (cut.empty()) return false;
     say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
-                               {"SelectAll", "Bridge"} }, "Underlay");
+                               {"SelectAll", spell("Bridge", inf.bridge.way)} }, "Underlay");
     return true;
 }
 
@@ -991,7 +999,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
         case said_as::bridged: {
             // Bridge reads every piece and hands the bars back unmarked, so the
             // inversion picks the bars alone, to paint them and to paint over.
-            string act = "Bridge InvertSelection";
+            string act = spell("Bridge", rule.value) + " InvertSelection";
             if (rule.paint >= 0) act += " " + spell("Recolor", rule.paint);
             drawn = { "SelectAll", act };
             paint = "Underlay";
@@ -1078,10 +1086,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     if (facts.chosen_pairs().empty()) return false;
     const auto& read = facts.readings[facts.chosen];
     said.left_unexplained = read.unclaimed();
-    // Pieces that do not redraw the output where they lie, with nothing on the
-    // line to say what else happened.
-    if (!inf.pieces_redraw && read.line.empty())
-        said.no_word_for.push_back("what happened to the pieces the reading matched");
+    if (pieces_go_unsaid(inf)) said.no_word_for.push_back("what happened to the pieces the reading matched");
 
     // A piece that sits on what is already there is laid under it, not over.
     const bool some_sit_on = ranges::any_of(facts.chosen_pairs(), [](const auto& pair) {

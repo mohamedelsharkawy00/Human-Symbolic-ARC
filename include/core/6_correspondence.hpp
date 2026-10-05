@@ -255,6 +255,9 @@ struct correspondence_election {
         enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
                                   not_most_common, pick_kinds };
         int8_t pick_by = -1, pick_value = 0;
+        // WHICH OF THOSE IT KEEPS: only the ones that would fit into a gap of
+        // their partner, the partner way WouldFit numbers; -1 keeps them all.
+        int8_t pick_fits = -1;
         // What the language has no word for, when this fired and cannot be said.
         string no_word_for;
     };
@@ -350,6 +353,20 @@ struct correspondence_election {
     }
     // Indices of other segmentations whose best readings tie with the winner.
     vector<int8_t> tied_with_chosen;
+    // THE CUTS IN THE ORDER THE MATCHING RANKS THEM: each competing way of
+    // seeing objects' best reading, the plainest first, beside the others whose
+    // matching ties with it. Which one is said is the words' to decide
+    // (read_figures): the matching only orders them and breaks a tie. And the
+    // cells each one's words left unsaid, -1 for one never read.
+    vector<int8_t> ranked;
+    vector<vector<int8_t>> ties_of_ranked;
+    vector<int> left_by_rank;
+    // Reads on the cut ranked `rank`, with the ties its matching has.
+    void choose(size_t rank) {
+        chosen = ranked[rank];
+        segmentation = readings[chosen].segmentation;
+        tied_with_chosen = ties_of_ranked[rank];
+    }
     // Read the winner directly, without keeping a second copy of its evidence.
     // A default election has no readings yet.
     const vector<pair_info>& chosen_pairs() const {
@@ -495,16 +512,28 @@ struct correspondence_election {
             if (one.objects_used != other.objects_used) return one.objects_used < other.objects_used ? -1 : 1;
             return 0;
         };
-        size_t elected = 0;
-        for (size_t i = 1; i < best_of_method.size(); ++i)
-            if (order(facts.readings[best_of_method[i]], facts.readings[best_of_method[elected]]) < 0)
-                elected = i;
-
-        facts.chosen = (int8_t)best_of_method[elected];
-        facts.segmentation = facts.readings[facts.chosen].segmentation;
-        for (size_t i = 0; i < best_of_method.size(); ++i)
-            if (i != elected && order(facts.readings[best_of_method[i]], facts.readings[facts.chosen]) == 0)
-                facts.tied_with_chosen.push_back((int8_t)best_of_method[i]);
+        // Ranked one at a time, each the first of the rest that none beats, so
+        // the first is the one a single election would have chosen.
+        vector<int> unranked = best_of_method;
+        while (!unranked.empty()) {
+            size_t first = 0;
+            for (size_t i = 1; i < unranked.size(); ++i)
+                if (order(facts.readings[unranked[i]], facts.readings[unranked[first]]) < 0) first = i;
+            facts.ranked.push_back((int8_t)unranked[first]);
+            unranked.erase(unranked.begin() + (ptrdiff_t)first);
+        }
+        // A cut the program cannot hold is no candidate at all while one it can
+        // hold is: whatever its words say is said of pieces the program never has.
+        if (ranges::any_of(facts.ranked, [&](int8_t one) { return holds_in_a_list(facts.readings[one]); }))
+            erase_if(facts.ranked, [&](int8_t one) { return !holds_in_a_list(facts.readings[one]); });
+        for (const int8_t one : facts.ranked) {
+            vector<int8_t> ties;
+            for (const int other : best_of_method)
+                if (other != one && order(facts.readings[other], facts.readings[one]) == 0)
+                    ties.push_back((int8_t)other);
+            facts.ties_of_ranked.push_back(std::move(ties));
+        }
+        if (!facts.ranked.empty()) facts.choose(0);
         return facts;
     }
 
@@ -1421,6 +1450,26 @@ private:
                             if (happened[i]) wait(words[i], from_input, row, col, piece, from_input ? now : was);
                     });
                 }
+            }
+
+            // A LANDING FOUND FROM THE OUTPUT SIDE THAT NAMES NO INPUT PIECE --
+            // partly hidden, hanging off the grid, or fitting two -- still says
+            // what is drawn there came from somewhere else. Found elsewhere or
+            // turned, its cells wait on the word for that as surely: 18286ef8's 9,
+            // found one step up and to the left and partly hidden, was otherwise
+            // said by nothing, and the line drew it nowhere.
+            for (const auto& link : pair.edges) {
+                if (link.from_input || !link.same_shape || pair.input_piece_of(link) >= 0) continue;
+                const object_info* source = pair.source_of(link);
+                if (!source || link.from < 0 || (size_t)link.from >= pieces[false]->size()) continue;
+                const auto [down, across] = object_matching::move_of(link, *source);
+                const bool copied = facts.allowed.translate && (down != 0 || across != 0);
+                const bool turned = facts.allowed.pose && link.pose != 0;
+                if (!copied && !turned) continue;
+                (*pieces[false])[link.from].each_cell([&](int row, int col, int8_t color) {
+                    if (copied) wait(missing::where_it_was_copied, false, row, col, -1, color);
+                    if (turned) wait(missing::how_it_turned, false, row, col, -1, color);
+                });
             }
 
             // A CELL THAT CAME OUT IN ANOTHER COLOR, read from either grid. Where

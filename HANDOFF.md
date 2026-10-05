@@ -1,5 +1,76 @@
 # Handoff, 2026-10-05
 
+## IN PROGRESS: one measure for every choice, and WouldFit (2026-10-05)
+Pushed as a checkpoint at the user's request. NOT yet a good change by the
+AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
+
+- Numbers (out/fixes-said.txt, out/probe/fixes/): 163 right, 3 wrong, lost 0
+  against out/speed-said.txt (152 right). Gained 11: 1acc24af, 4258a5f9,
+  62ab2642, a61f2674, a699fb00, b60334d2, ce22a75a, d037b0a7, d13f3404,
+  ded97339, f45f5ca7. Reworded, still solved: 06df4c85, 070dd51e, 140c817e,
+  22eb0ac0, 4f537728, 5614dbcf, aabf363d, b230c067, c7d4e6ad. Wrong:
+  11852cab, 5582e5ca, c35c1b4c (also the 2 "explained but unsolved").
+  A full score takes 887 s (was 344 s): unsolved puzzles read every cut.
+  Tests left: only tests/puzzles (the user removed the rest, see below).
+- WouldFit[how] (new op, select role, 8 partner ways): of the picked pieces,
+  only those that would fill a gap of their one partner among the unpicked
+  stay picked; nothing moves. would_fit in 1_readings.hpp is the one helper
+  (GPU op and replay). A gap, "for now" (the user: not general): a run of the
+  partner's empty box cells meeting the box edge on one side only, the side
+  the piece lies past; any of the 8 poses; leftover cells hang past that
+  side. Asked by the recolor-a-pick word with the colors an unsaid recolor
+  starts from (picks_to_ask's fit_colors), only where the fit keeps one piece
+  and drops one in every pair. 1acc24af: SelectColor[5] WouldFit[0]
+  Recolor[2]. Agreed later: FitInto, the real Tetris move, when a puzzle
+  needs it (same helper answered with the place).
+- ONE MEASURE FOR EVERY CHOICE (the user found two yardsticks: plans judged
+  by the words, cuts by the matching). says_the_most (7_infer.hpp) is the one
+  owner: candidates read in order, the fewest cells unsaid kept, a tie to
+  the earlier, stop at 0. Plans: in infer. Cuts: in read_figures, just above
+  the first word that reads the cut (read_the_cut); words that read no cut
+  are asked once, above it. The election only RANKS cuts (ranked,
+  ties_of_ranked, choose); a cut the program cannot hold (more than 32 pieces
+  an input) is no candidate while one is (4f537728). Readout: "[cuts]" line.
+  Not done: the freedoms inside a cut are still chosen by the matching (same
+  inconsistency, one level down); do it if the data asks.
+- Made honest along the way (each surfaced by the new choice):
+  - cells_left_unsaid counts every cell where the pieces go unsaid whole
+    (no word, pieces do not redraw) -- pieces_go_unsaid, shared with the
+    speller's "no word for what happened" (ba1aa698).
+  - write_down_what_changed: an output-side landing that names no input
+    piece (partly hidden, off the grid) and is found elsewhere or turned now
+    waits on a word (18286ef8's moved 9 had been "explained" by nothing).
+  - A swap paints both its colors: a second swap of either is not said
+    (9565186b's chain of swaps undid itself).
+  - Picks by size are asked nearest an end first (largest, smallest, 2nd
+    largest, ...): a tie goes to the plainer name (62ab2642: "smallest", not
+    "9th largest").
+  - Bridge[way] (0..5): rows+columns, rows, columns, to the nearest; the
+    same to every one. Way 0 is the old Bridge. Asked narrowest first
+    (bridge_ways_narrowest_first), so bars are said no wider than the pairs
+    show them (a699fb00: Bridge[1]; ded97339: Bridge[3]).
+- TO DO, in order (agreed analysis; the user stopped before the fixes):
+  1. 5582e5ca: "every color but the most common takes its color" is
+     sayable now (SelectMostCommonColor InvertSelection ColorFrom[0]: fits,
+     test right, checked by hand). The reading never asks it: the matching
+     reads "the 9 grew over the others", not "the others turned 9". Fix
+     proposed: a cell that changes color in place also lets the color words
+     claim it, however the matching read it.
+  2. c35c1b4c: the plan "delete each input's own, fill 0" keeps black in the
+     inputs and empties it in the outputs, so black pieces look removed and
+     "remove the 3rd largest color" claims cells that never changed. Fix
+     proposed: a plan's fill color is ground on both sides (inputs lose it
+     too, and say_the_plan deletes it first). The mirror word was right.
+  3. 11852cab: needs copies turned around the middle (quarter turns), a new
+     way for MirrorAround; mirroring fit the training pairs by coincidence.
+  4. Speed: read the cuts (and plans) in parallel; 887 s vs 344 s.
+  5. Then: re-export solutions/ (many programs reworded since the export);
+     9565186b is sayable as "every color but the most common, Recolor[5]"
+     but not found; 18286ef8 ("the 9 steps toward the 6") lacks a word.
+- Evidence: out/wouldfit-said.txt (WouldFit alone: no change),
+  out/cutchoice-said.txt and out/cutchoice2-said.txt (the choice before the
+  fixes: 159 and 160 right, 6 wrong), out/fixes-said.txt, out/probe/fixes/.
+
 ## Completed: the ground owned once (central background, 2026-10-05)
 - Agreed with the user: detectors see only objects. Ground cells are EMPTY
   (-1, nothing); empty is not a ground. Only the plan knows the background
@@ -271,18 +342,22 @@
   The 35 pane reference programs in tests/pane_program_truth.txt were refreshed.
 
 ## Where it stands
-- Training: 152 fit, 152 right, 0 wrong. No reading explains every cell and
-  is still unsolved. Checks: the score (arc_said) and the readouts; no test
-  programs remain.
-- Current baseline (`out\` is not in git): `out/speed-said.txt` and
-  `out/probe/cleanup/`. Before the central background: `out/duality-said.txt`
-  and `out/probe/duality/`. Before the explicit-background rewrite:
-  `out/solutions-export/said.txt` and `out/probe/kaggle-after/`.
-- What blocks the unsolved (`readouts.py missing cleanup out/speed-said.txt`,
-  named / the only word missing): a recolor 419 / 141; where each copy was
-  drawn 318 / 44; where each piece went 203 / 38; the cells drawn on the
-  ground 185 / 88; how each piece turned 171 / 14; how a piece changed its
-  shape 109 / 12.
+- Training: 166 fit, 163 right, 3 wrong (11852cab, 5582e5ca, c35c1b4c; see
+  the IN PROGRESS section). Checks: the score (arc_said) and the readouts; no
+  test programs remain.
+- Current run (`out\` is not in git): `out/fixes-said.txt` and
+  `out/probe/fixes/`. Last good baseline (152 right, 0 wrong):
+  `out/speed-said.txt` and `out/probe/cleanup/`. Before the central
+  background: `out/duality-said.txt` and `out/probe/duality/`. Before the
+  explicit-background rewrite: `out/solutions-export/said.txt` and
+  `out/probe/kaggle-after/`.
+- What blocks the unsolved (`readouts.py missing fixes out/fixes-said.txt`,
+  named / the only word missing): where each copy was drawn 438 / 64; a
+  recolor 398 / 118; where each piece went 228 / 44; how each piece turned
+  216 / 19; the cells drawn on the ground 149 / 93; how a piece changed its
+  shape 115 / 10. (More pieces now wait on a word since partly hidden
+  landings are written down, so these are not comparable one to one with the
+  152-right baseline: a recolor 419 / 141, copies 318 / 44, ground 185 / 88.)
 - Before October 3: TileX and TileY unlocked, the repeat counted from the piece; a pick
   of every color but the most common; a paint laid over a piece explains the
   cells it covers; choosing the cut prefers one with at most 32 pieces per input
@@ -446,12 +521,14 @@ frame fills ground in the middle; the central-background proposal above may
 replace that plumbing.
 Update 2026-10-05: the central background replaced it. Each input's own
 ground is now a plan like any other, and the 52 unsolved per-pair puzzles
-lack other words (above), so recolors are the natural next stage. Not yet
-agreed with the user.
+lack other words (above), so recolors are the next stage: agreed and started
+(1acc24af with WouldFit; see the IN PROGRESS section at the top).
 
 ## After that
-- Recolors: 141 unsolved puzzles lack only a recolor word. Most take the color
-  from another piece (a key, a marker, a partner), so they are compositions of
-  existing words (ColorFrom's partners, picks, frames), not one-property rules.
-- Cells drawn on the ground: 88 unsolved puzzles lack only that.
+- Recolors (the current stage, started with WouldFit): 118 unsolved puzzles
+  lack only a recolor word. Most take the color from another piece (a key, a
+  marker, a partner), so they are compositions of existing words
+  (ColorFrom's partners, picks, frames), not one-property rules. Work one
+  example puzzle at a time with the user (1acc24af was the first).
+- Cells drawn on the ground: 93 unsolved puzzles lack only that.
 - `python scripts\readouts.py missing <label> <said>` gives the current list.

@@ -53,14 +53,20 @@ language lacks.
 - `include/core`, numbered in reading order. Inference lives in
   `3_background.hpp` (background election and the ground plan: the one owner
   of the background), `6_correspondence.hpp` (readings, fired rules, the line,
-  missing words, choosing the cut), `7_infer.hpp` (replays `*_holds`, picks,
-  frames, `carry_the_hand`, `finish_the_line`, `read_figures`, `infer`),
+  missing words, ranking the cuts), `7_infer.hpp` (replays `*_holds`, picks,
+  frames, `carry_the_hand`, `finish_the_line`, `says_the_most`,
+  `read_figures`, `read_the_cut`, `infer`),
   `9_sentences.hpp` (the line spelled as programs, `say_the_plan`) and
   `10_log.hpp` (readouts).
 - The background: `infer` asks the election for plans (delete what first,
   fill what last), reads each plan's figures with `read_figures` (no detector
   sees a background; empty cells are nothing), keeps the plan that explains
   most, and `say_the_plan` writes its delete and fill once.
+- Every choice the reading makes (the ground plan, the cut) has one owner,
+  `says_the_most`: each candidate is read to the end of its words, in the
+  order given, and the one leaving the fewest cells unsaid is kept; the order
+  only breaks a tie, and once one leaves none no later one is read. Each
+  choice is made just above the first word that reads it.
 - `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the words the
   reading cannot say yet and how to unlock one.
 - `src/cuda_solver.cu`: the GPU ops.

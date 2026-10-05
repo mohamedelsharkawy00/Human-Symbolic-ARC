@@ -134,7 +134,6 @@ enum class inferred_amount { none, some, all };
   X(SizeRankColorMap            , 0                 , 0                        , map      , all , false, false) \
   X(Pattern                     , 0                 , 0                        , generate , none, true , false) \
   X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false, false) \
-  X(Bridge                      , 0                 , 0                        , generate , none, false, false) \
   X(Partition                   , 0                 , 0                        , generate , none, true , true ) \
   X(RestoreOrientation          , 0                 , 0                        , translate, none, false, false) \
   X(ShapeColorMap               , 0                 , 0                        , map      , all , false, false) \
@@ -157,11 +156,17 @@ enum class inferred_amount { none, some, all };
   X(SlamRow                     , -1                , 1                        , translate, none, true , false) \
   X(Tile                        , 0                 , 3                        , generate , none, false, false) \
   X(SelectObjectsWithHoles      , 0                 , 4                        , select   , none, false, false) \
+  /* How a bridge reaches (bridge_bars): rows and columns, rows, or columns, */ \
+  /* to the nearest piece, then the same three to every one.                 */ \
+  X(Bridge                      , 0                 , 5                        , generate , none, false, false) \
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
   /* Each picked piece wears its partner's color, as partner_by numbers them. */ \
   X(ColorFrom                   , 0                 , 7                        , map      , none, true , false) \
+  /* Of the picked pieces, only those that would fit into a gap of their      */ \
+  /* partner stay picked (would_fit, 1_readings.hpp). A pick, so it selects. */ \
+  X(WouldFit                    , 0                 , 7                        , select   , none, true , false) \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
   /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \

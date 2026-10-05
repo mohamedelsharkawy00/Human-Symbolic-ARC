@@ -502,14 +502,15 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
-// The pieces handed back as they came, then one bar per gap. Which pieces pair
-// up and where each bar lies is 7_infer.hpp's bridge_bars, which the reading
-// replays too; this only lays the bars into the list. They are born unmarked.
-__device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src) {
+// Bridge[way]: the pieces handed back as they came, then one bar per gap. Which
+// pieces pair up, the way they reach, and where each bar lies is 7_infer.hpp's
+// bridge_bars, which the reading replays too; this only lays the bars into the
+// list. They are born unmarked.
+__device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t way) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
         res.objects[res.count++] = src.objects[i];
-    arc::bridge_bars(src.count,
+    arc::bridge_bars(way, src.count,
         [&](int which) {
             const auto& piece = src.objects[which];
             return arc::cell_box{ piece.y0, piece.x0, piece.y1, piece.x1 };
@@ -1151,6 +1152,27 @@ __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c)
                 if (obj.mask[r][c] != GPU_TRANSPARENT) obj.mask[r][c] = (int8_t)color;
+    }
+    return res;
+}
+
+// WouldFit[how]: of the picked objects, only those that would fit into a gap of
+// their one partner among the objects not picked stay picked -- the partner by
+// `how`, as partner_of (1_readings.hpp) finds it, and the fit as would_fit asks
+// it, turned or mirrored any way: the walk inference replays, so the two cannot
+// disagree. Every partner is read off the marks as they came in. Nothing moves
+// and nothing is painted; an object with no partner, or several, is not picked.
+__device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i) {
+        if (!src.objects[i].selected) continue;
+        const int partner = view.partner((arc::partner_by)how, i);
+        res.objects[i].selected = partner >= 0 &&
+            arc::would_fit(i, partner, [&](int j) { return view.box(j); },
+                           [&](int j, int row, int col) { return view.painted(j, row, col); });
     }
     return res;
 }
@@ -3120,7 +3142,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SelectSmallestObject: result = last ? &gpu_exec_select_object_by_size(ctx, *last, value, false) : &gpu_acquire(ctx); break;
             case node_type::SortBySize:  result = last ? &gpu_exec_sort_by_size(ctx, *last, value == 0 ? 1 : 0) : &gpu_acquire(ctx); break;
             case node_type::SizeRankColorMap: result = last ? &gpu_exec_size_rank_color_map(ctx, *last) : &gpu_acquire(ctx); break;
-            case node_type::Bridge:         result = last ? &gpu_exec_bridge(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::Bridge:         result = last ? &gpu_exec_bridge(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Partition:      result = last ? &gpu_exec_partition(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::Panes:          result = last ? &gpu_exec_panes(ctx, *last) : &gpu_acquire(ctx); break;
             // Union handled in the warp-parallel branch above; here means !has_current_objects.
@@ -3136,6 +3158,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Recolor:        result = &gpu_acquire(ctx); break;
             case node_type::BidiColorMap:   result = last ? &gpu_exec_bidi_color_map(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::ColorFrom:      result = last ? &gpu_exec_color_from(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::WouldFit:       result = last ? &gpu_exec_would_fit(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::AlignTo:        result = last ? &gpu_exec_align_to(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::MirrorAround:   result = last ? &gpu_exec_mirror_around(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;

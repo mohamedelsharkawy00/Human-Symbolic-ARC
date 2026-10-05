@@ -215,6 +215,18 @@ inline void report_correspondence_readings(ostream& report, const correspondence
         report << "   " << reading_title(reading);
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
+    // The cuts the words weighed, in the matching's order: the one said is
+    // starred, beside the cells each one's words left unsaid (- never read).
+    report << "  [cuts]";
+    for (size_t rank = 0; rank < correspondence.ranked.size(); ++rank) {
+        const int8_t cut = correspondence.ranked[rank];
+        const int left = rank < correspondence.left_by_rank.size() ? correspondence.left_by_rank[rank] : -1;
+        report << "  |" << (cut == correspondence.chosen ? "*" : " ") << "reading " << (int)cut << " "
+               << segmentation_names[(int)correspondence.readings[cut].segmentation] << " ";
+        if (left < 0) report << "-";
+        else report << left << " unsaid";
+    }
+    report << "\n";
 }
 
 // WHAT EACH WAY OF SEEING OBJECTS WAS TAKEN TO SAY, a rule a line, a rule that
@@ -292,7 +304,7 @@ inline void report_project_on_seeds(ostream& report, const project_on_seeds_rule
 // Whether the gaps between pieces of one colour were filled, and under which cut.
 inline void report_bridge(ostream& report, const bridge_rule& bridge) {
     report << "[bridge] holds " << bridge.holds();
-    if (bridge.holds()) report << "  " << segmentation_names[(int)bridge.segmentation];
+    if (bridge.holds()) report << "  " << segmentation_names[(int)bridge.segmentation] << "  way " << (int)bridge.way;
     report << "\n\n";
 }
 
