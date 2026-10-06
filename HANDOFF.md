@@ -11,8 +11,10 @@ This file holds only what is current; past stages are in git history
   were, not solved now: the manual 05a7bcf2, 10fcaaa3, 32597951, f25fbde4,
   and 44d8ac46 (an old inferred one that no longer fits). solutions/shelf/
   holds puzzles outside training.
-- A full score takes about 35 s on a cool laptop, 70-80 s on a hot one, so
-  compare times back to back. scripts\profile.bat profiles arc_said (VTune,
+- A full score has taken 34 to 82 s on the same code: the laptop's clock
+  moves with heat, so one run's seconds say little. Compare two builds by
+  interleaving them (old, new, old, new) and taking each one's fastest run.
+  The current build has not been timed that way yet. scripts\profile.bat profiles arc_said (VTune,
   attached after CUDA starts).
 - What blocks the unsolved (`readouts.py missing order3 out/order3-said.txt`,
   named / the only word missing): copies 435 / 59, a recolor 397 / 122, where
