@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge[1] InvertSelection Recolor[2] Underlay Output SelectAll AddColor[0] Underlay
+
+Puzzle:       a699fb00
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

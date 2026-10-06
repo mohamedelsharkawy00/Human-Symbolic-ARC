@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim InteriorColor[2] Union Output SelectAll AddColor[3] Underlay
+Input Colors SelectColor[0] SelectColor[3] DeleteSelection UnionList Split[0] SelectAll Trim InteriorColor[2] Union Output SelectAll AddColor[3] Underlay
 
 Puzzle:       7b6016b9
 Train:        Solved

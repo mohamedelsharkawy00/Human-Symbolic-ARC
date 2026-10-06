@@ -566,8 +566,15 @@ inline void log_inference(const string& id, const inference& inf,
         return ground.per_grid ? string("each input's own")
              : is_color(ground.color) ? to_string((int)ground.color) : string("none");
     };
+    // What the inputs lose: the ground deleted, and what the fill takes off them as well.
+    auto deletes = [&](const ground_plan& plan) {
+        const background_source also = plan.filled_on_input();
+        if (!also.removes_color() || also == plan.deleted) return side(plan.deleted);
+        if (!plan.deleted.removes_color()) return side(also);
+        return side(plan.deleted) + " and " + side(also);
+    };
     for (const ground_plan& plan : ground_plans(inf.ground_election))
-        report << "  |" << (plan == inf.plan ? "*" : " ") << "delete " << side(plan.deleted)
+        report << "  |" << (plan == inf.plan ? "*" : " ") << "delete " << deletes(plan)
                << ", fill " << side(plan.filled);
     report << "\n\n";
     report_pane_split(report, inf.pane_split);

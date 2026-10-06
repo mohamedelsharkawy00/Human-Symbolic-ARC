@@ -201,7 +201,10 @@ enum class inferred_amount { none, some, all };
   X(BidiColorMap                , 0                 , arc::COLOR_PAIR_COUNT - 1, map      , none, true , false) \
   /* The move IS the number of cells, so the whole grid is sayable in one. */    \
   X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
-  X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false)
+  X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
+  /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
+  /* each way partner_by finds one and then by each color (move_toward).      */ \
+  X(MoveToward                  , 0                 , 53                       , translate, none, true , false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,
@@ -265,6 +268,15 @@ inline constexpr bool clears_the_marks(node_type t) {
 inline constexpr bool modifies_canvas(node_type t) {
     return t == node_type::Union || t == node_type::Underlay ||
            t == node_type::Intersection || t == node_type::Difference;
+}
+
+// THE POSE EACH TURN OR FLIP SETS ITS PIECE IN, numbered as 1_readings.hpp
+// numbers the eight: the op reads every cell through pose_source with it, and
+// a replay through posed_place, its inverse, so the two cannot turn a piece
+// differently. 0 for an op that turns nothing.
+inline constexpr int pose_of(node_type t) {
+    return t == node_type::TurnRight ? 3 : t == node_type::TurnLeft ? 5
+         : t == node_type::FlipHorizontal ? 4 : t == node_type::FlipVertical ? 2 : 0;
 }
 
 // --- Generation roles (the sentence: GET SELECT ACT COMBINE) --------------

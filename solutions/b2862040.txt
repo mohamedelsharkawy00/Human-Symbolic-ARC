@@ -1,4 +1,4 @@
-Input Colors SelectColor[9] DeleteSelection Split[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[0] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[1] Recolor[8] SelectAll Union Output SelectAll AddColor[9] Underlay
+Input Colors SelectColor[9] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[0] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[1] Recolor[8] SelectAll Union Output SelectAll AddColor[9] Underlay
 
 Puzzle:       b2862040
 Train:        Solved

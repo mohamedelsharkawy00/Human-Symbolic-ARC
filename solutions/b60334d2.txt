@@ -1,0 +1,6 @@
+Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] Recolor[0] SelectAll Union Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] ExtendOrthogonal[1] Recolor[1] Union Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] ExtendDiagonal[1] Union
+
+Puzzle:       b60334d2
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

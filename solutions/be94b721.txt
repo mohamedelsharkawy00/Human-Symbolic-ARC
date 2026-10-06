@@ -1,0 +1,6 @@
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Trim SelectAll InvertSelection SelectLargestObject[0] InvertSelection DeleteSelection SelectAll Origin Split[1] Withhold CurrentObjects SelectAll Trim Underlay Output SelectAll Trim AddColor[0] Underlay
+
+Puzzle:       be94b721
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

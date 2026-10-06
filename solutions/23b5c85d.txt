@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Split[1] SelectAll Trim SelectAll InvertSelection SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Origin Split[1] Withhold CurrentObjects SelectAll Trim Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectSmallestObject[0] Union Output SelectAll Trim AddColor[0] Underlay
 
 Puzzle:       23b5c85d
 Train:        Solved

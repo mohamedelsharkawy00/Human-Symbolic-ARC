@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Fit[0] Union Input Colors SelectColor[0] DeleteSelection SelectColor[5] InvertSelection DeleteSelection SelectAll Union Input SelectAll Recolor[0] Underlay Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Fit[0] Union Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectColor[5] InvertSelection DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       09629e4f
 Train:        Solved

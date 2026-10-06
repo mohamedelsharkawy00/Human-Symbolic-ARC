@@ -1,14 +1,23 @@
 # Handoff, 2026-10-06
 
-## Next session: fix puzzles, then DRY code (the user's plan)
-- The speed stage is done (next section): a full score takes about 30 s and
-  the readouts 32 s, and nothing the reading says changed. Check a change
-  the same way: programs, readouts and summary identical, or say what moved.
-- Puzzles: the TO DO list under "IN PROGRESS" below, items 1-3 and 5. The 3
-  wrong ones (5582e5ca, c35c1b4c, 11852cab) make that stage not yet good.
-- DRY: the replays (`*_holds`, 7_infer.hpp) repeat the same pair loops,
-  picked-piece handling and change checks. About 20 of them each make their
-  pieces ready (partner_pieces); see "STILL OPEN" in the next section.
+## Next session (state on 2026-10-06, pushed to main at the user's request)
+- 170 right, 0 wrong (out/order3-said.txt, out/probe/order3/). The 3 wrong
+  puzzles are fixed, and 7 gained today; how, step by step, is in the to-do
+  list of the "one measure" section below (items 1-3, 5).
+- A full score takes about 35 s on a cool laptop and 70-80 s on a hot one;
+  compare times back to back. Check a change the same way as always:
+  programs, readouts and summary identical, or say what moved.
+- Left, in the user's order:
+  1. DRY: the rest of the replays (`*_holds`, 7_infer.hpp) onto templates,
+     as paint_holds (rays, trails, copies, repeats, the turned figure) and
+     slides_hold (align, step, edge, shift, toward) now are: about 15 left
+     (color from a partner, picked recolor, removal, mirror, outline, fills,
+     boxes, bridges, size rank...). Also "STILL OPEN" in the speed section:
+     whether replay_facts keeps the pieces it made ready.
+  2. Merge the score and the readouts (below); needs the user's decisions.
+  3. 18286ef8, parked (the user agreed): sayable, but not found without
+     three more changes to shared rules (item 5 of the to-do below).
+  4. Speed: read the cuts and plans in parallel (low priority now).
 - MERGE THE SCORE AND THE READOUTS (the user: "confusing and inconsistent,
   both need merging and consistency"). Today they are two tools, built and
   run two different ways, that read all 1000 puzzles the same way twice:
@@ -36,10 +45,10 @@
   in the user's order: puzzles read in parallel (done), and only then the
   replay pieces (partner_pieces, below): the nothing-kept way done, the rest
   waits on the user's decisions.
-- Now: arc_said about 30 s cool (less since the replay pieces), arc_probe
-  32 s for all 1000 puzzles; 163 right, 3 wrong; every program and readout
-  as before all this. More threads than the CPU has did not help (20: 26 s,
-  40: 27 s), and a hot laptop runs the same thing in 75 s.
+- Then (2026-10-05): arc_said about 30 s cool (less since the replay
+  pieces), arc_probe 32 s for all 1000 puzzles; 163 right, 3 wrong; every
+  program and readout as before all this. More threads than the CPU has did
+  not help (20: 26 s, 40: 27 s), and a hot laptop runs the same thing in 75 s.
 - scripts/profile.bat now builds RelWithDebInfo and profiles arc_said, then
   exports function, source-line, thread and call-stack reports. Each run has
   its own profiling/output/cpu-<timestamp>/ folder (ignored by git).
@@ -122,11 +131,12 @@
   wipes them, so nothing stale can be read. The user asked whether keeping
   them beats remaking them (here: big work, a few KB), and chose the
   nothing-kept way first.
-- The existing 3 wrong cases below remain unresolved.
+- The 3 wrong cases of that day were fixed on 2026-10-06 (next section).
 
-## IN PROGRESS: one measure for every choice, and WouldFit (2026-10-05)
-Pushed as a checkpoint at the user's request. NOT yet a good change by the
-AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
+## Completed: one measure for every choice, WouldFit, and the fixes after (2026-10-05/06)
+Pushed as a checkpoint at the user's request with 3 wrong (was 0). The
+to-do items 1-3 below fixed all three on 2026-10-06, and item 5 went on to
+9565186b, MoveToward and the most-first line: 170 right, 0 wrong.
 
 - Numbers (out/fixes-said.txt, out/probe/fixes/): 163 right, 3 wrong, lost 0
   against out/speed-said.txt (152 right). Gained 11: 1acc24af, 4258a5f9,
@@ -174,25 +184,147 @@ AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
     (bridge_ways_narrowest_first), so bars are said no wider than the pairs
     show them (a699fb00: Bridge[1]; ded97339: Bridge[3]).
 - TO DO, in order (agreed analysis; the user stopped before the fixes):
-  1. 5582e5ca: "every color but the most common takes its color" is
-     sayable now (SelectMostCommonColor InvertSelection ColorFrom[0]: fits,
-     test right, checked by hand). The reading never asks it: the matching
-     reads "the 9 grew over the others", not "the others turned 9". Fix
-     proposed: a cell that changes color in place also lets the color words
-     claim it, however the matching read it.
-  2. c35c1b4c: the plan "delete each input's own, fill 0" keeps black in the
-     inputs and empties it in the outputs, so black pieces look removed and
-     "remove the 3rd largest color" claims cells that never changed. Fix
-     proposed: a plan's fill color is ground on both sides (inputs lose it
-     too, and say_the_plan deletes it first). The mirror word was right.
-  3. 11852cab: needs copies turned around the middle (quarter turns), a new
-     way for MirrorAround; mirroring fit the training pairs by coincidence.
+  1. DONE 2026-10-06. 5582e5ca was read as "the 9 grew over the others", so
+     no cell waited on a recolor and no color word was asked. Now said as
+     "every color but the most common takes the color of the nearest
+     piece" (SelectMostCommonColor InvertSelection ColorFrom[0]), test
+     right. Two changes in write_down_what_changed (6_correspondence.hpp):
+     - The agreed fix: a left-over cell whose place the other grid shows in
+       another color notes that color (`in_place`), and a recolor answers
+       to it however the matching read it (left_over_cell::answers_to): the
+       colors the recolor words are asked with (starts_from) and the cells
+       ColorFrom and a picked Recolor claim. Swaps, acts, size rank and the
+       shape table still claim only cells that wait on a recolor.
+     - Beyond the agreed fix (tell the user): Sits On now writes "how a
+       piece changed its shape" only on cells the other grid does not show
+       in the same color at the same place; a cell that stayed is no
+       change. Without it the unchanged 9s were left over, CopyTo and TileX
+       claimed them, and the test stayed wrong (out/inplace-said.txt).
+     Numbers: 164 right, 2 wrong, gained 5582e5ca, lost 0; explained but
+     unsolved 2 -> 1 (5582e5ca, now solved), none new. Every other program
+     identical; readouts of solved puzzles differ only in counts. 70
+     unsolved readings say more, 1 says less (45737921: two ColorFrom picks
+     tie at 48 cells, and "largest" is asked before "most common color").
+     Score 32 s, readouts 34 s. Evidence: out/inplace3-said.txt and
+     out/probe/inplace3/.
+  2. DONE 2026-10-06. c35c1b4c: the plan "delete each input's own, fill 0"
+     kept black in the inputs and emptied it in the outputs, so black pieces
+     looked removed and "remove the 3rd largest" claimed cells that never
+     changed. Now a plan's fill color is ground on the inputs too (deleted
+     first) where every input lies over its output
+     (ground_plan::fill_is_ground_too, from the election's `overlays`; one
+     owner for figures_only, foreground_input and the readout). The
+     plan "keep everything" now says the most and the mirror alone is said:
+     test right. Not on size changes: there the fill color can be a figure
+     the rule reads (1b2d62fb's 0s, read through its panes); the fix on
+     every puzzle lost 1b2d62fb (out/fillground-said.txt). Numbers: 165
+     right, 1 wrong, gained c35c1b4c, lost 0; explained but unsolved 1 -> 1,
+     none new. 7b6016b9 reworded (also deletes its 3, which its inputs lack).
+     Readouts now print what a plan deletes ("delete each input's own and
+     0, fill 0"). Evidence: out/fillground2-said.txt, out/probe/fillground2/.
+     Seen on the way, not fixed: under the plan "delete 0, fill 0" the
+     mirror word is never asked, because Shape Picks Fill (a spurious 1-cell
+     table) is said first and carry_the_hand cannot carry the hand through a
+     learned table.
+  3. DONE 2026-10-06. 11852cab: mirroring fit training only because every
+     cell to copy sat on a diagonal; the test's 4 sits straight above the
+     middle. The user: quarter turns are not mirroring, and TurnRight and
+     TurnLeft already exist. So no new op: a new word, "the whole figure
+     drawn again turned in its own box" (said_as::turned_copy), spelled
+     `CurrentObjects SelectAll UnionList Trim TurnRight Union` (and
+     TurnRight TurnRight, TurnLeft), a paint said after the line, asked
+     only of a still line. It claims the figure where it lies as well as
+     its copies (the matching read the figure turned). Every piece only: a
+     part turned in its own box fit 2546ccf6 and 52df9849 by accident, both
+     wrong on test (out/turned-said.txt). Now said in the 8-connected
+     multicolor cut, which the matching ranks first, so MirrorAround is
+     never reached.
+     - DRY (the user: templates, not copies): paint_holds (7_infer.hpp)
+       is the one replay of a paint laid over what is down; rays, trails,
+       copies onto pieces, repeats and the turned figure each say only what
+       they draw. fired_rule::paints_after_the_line owns the list of paint
+       words the line's `changes` and `moves_cells` read. The GPU's
+       TurnRight/TurnLeft/FlipHorizontal/FlipVertical read through
+       pose_source (pose_of in 8_vocabulary.hpp), as the replays do.
+     Numbers: 167 right, 0 wrong, gained 11852cab and e729b7be (the whole
+     figure, a half turn), lost 0; explained but unsolved 1 -> 0. Only 3
+     readouts changed, all by the new word (5c2c9af4 still unsolved); every
+     other program and readout identical, so the refactor moved nothing.
+     Evidence: out/turned2-said.txt, out/probe/turned2/.
   4. Speed: read the cuts (and plans) in parallel; 887 s vs 344 s. Since
      then matching went 1188 s -> 321 s and the puzzles are read in
      parallel: 30 s (the speed section above).
-  5. Then: re-export solutions/ (many programs reworded since the export);
-     9565186b is sayable as "every color but the most common, Recolor[5]"
-     but not found; 18286ef8 ("the 9 steps toward the 6") lacks a word.
+  5. Re-export DONE 2026-10-06: every solved puzzle's program from
+     out/turned2-said.txt written to solutions/<id>.txt (167: 47 unchanged,
+     103 reworded, 16 new, and 11852cab's hand-written program -- the same
+     three TurnRight copies -- replaced by the inferred one; it stays in git
+     history). Left as they were, not solved now: 05a7bcf2, 10fcaaa3,
+     32597951, f25fbde4 (manual) and 44d8ac46 (an old inferred one that no
+     longer fits).
+     9565186b DONE 2026-10-06: the act "8 becomes 5" opened the line and left
+     the first pair nothing for "every color but the most common becomes 5"
+     to change. Now read_the_cut asks says_the_most whether to say the acts
+     or leave them unsaid (leave_the_acts_unsaid) and let the words alone say
+     every change; a tie keeps the acts, and a line that says everything is
+     never read the second way. pieces_redraw moved above it (it reads only
+     the cut). Said now: SelectMostCommonColor InvertSelection Recolor[5].
+     Surfaced and fixed: the trail paint (ExtendTo) hands back the body with
+     its trail, so its replay now requires the output to show the body where
+     it lies (66e6c45b's words-alone line removed a piece whose trail drew it
+     back, and was "explained" while its program drew otherwise).
+     Numbers: 168 right, 0 wrong, gained 9565186b, lost 0; explained but
+     unsolved 0 -> 0. 21f83797 reworded (dropped a TileX it no longer
+     needs), still right. 10 unsolved readings say more, 6 say less (their
+     trails were over-claiming). Readouts 35 s. Evidence: out/acts2-said.txt,
+     out/probe/acts2/; solutions/ synced.
+     MoveToward DONE 2026-10-06 (agreed: the general form of "steps
+     toward", kept DRY). MoveToward[value] (new op, last in the table):
+     value / PARTNER_KINDS is how far -- one step, its own size, until it
+     touches -- and value % PARTNER_KINDS the partner: each partner_by way,
+     then each color (the one unpicked piece holding it). One owner of the
+     arithmetic, move_toward in 1_readings.hpp (heading_toward: the compass
+     sector between the boxes' middles, integer test against tan 22.5),
+     called by the GPU op and the replay. DRY on the way: the five move
+     replays share slides_hold (align, step, edge, shift, toward); AlignTo
+     and MoveToward share goes_level/goes_toward on partner_pieces, read by
+     the replay and carry_the_hand; the search's partner-op gating is one
+     table (14_puzzle_loader.hpp). Asked last among the moves, so it wins
+     only where it says more. Numbers: 170 right, 0 wrong, gained dc433765
+     ("the 3 moves one step toward the nearest piece") and a48eeaf7 ("the
+     5s move toward the nearest piece until they touch"), lost 0; explained
+     but unsolved 0 -> 0; every other program identical. Evidence:
+     out/toward-said.txt, out/probe/toward/; solutions/ synced.
+     18286ef8 is sayable now (checked with arc_spell: fits, test right):
+     `... SelectColor[9] MoveToward[14] Withhold CurrentObjects SelectAll
+     InvertSelection SelectColor[6] Recolor[9] SelectAll Union` + the 5s'
+     box filled (AddColor[5] Underlay). The reading does not find it.
+     Tried first on their own, with the user's go, and reverted (no gain):
+     moves answering to cells changed in place (answers_to), and slides_show
+     letting the cell a piece leaves show anything but the piece itself.
+     Still not found then, because of the line's order: in the words-alone
+     line ColorFrom ("the 9 takes the color of the piece around it") is asked
+     before the moves, claims the 9's cell and recolors the 9 away, so no
+     move of the 9 is left to weigh. Both were applied again below, with the
+     most-first line.
+     Agreed and done after that (2026-10-06): (1) THE MOST FIRST in
+     finish_the_line: each kind (color from a partner, move, mirror, outline,
+     recolor of a pick, removal) offers its best on the hand the line leaves,
+     the biggest offer is said (a tie in that order), then all are asked
+     again; each kind says at most 8 words, as the old 8 rounds allowed.
+     Without that cap a noisy puzzle grew a 120-word line, overflowing the
+     int8_t rule index (a reading lists at most 127 rules): access
+     violations in arc_said/arc_probe, seen only with puzzles in parallel.
+     (2) moves answer to cells changed in place (answers_to), and (3) the
+     cell a moved piece leaves may show anything but the piece itself.
+     Numbers: 170 right, 0 wrong, gained 0, lost 0, explained but unsolved
+     0 -> 0; a61f2674 and b230c067 reworded, still right; 16 unsolved
+     readings say more, 6 less. Evidence: out/order3-said.txt,
+     out/probe/order3/. A slow run then (82 s) was on a hot laptop.
+     18286ef8 is still not found; it needs three more things: the move must
+     claim the input cell its landing covers (now it ties ColorFrom's "the
+     9 takes the 5 around it" at 6 cells, and the tie goes to ColorFrom);
+     "6 becomes 9" is only an act, said before any move, so the 9 is gone
+     first; and the 5-box fill behind the 9 is asked only of a still line.
 - Evidence: out/wouldfit-said.txt (WouldFit alone: no change),
   out/cutchoice-said.txt and out/cutchoice2-said.txt (the choice before the
   fixes: 159 and 160 right, 6 wrong), out/fixes-said.txt, out/probe/fixes/.
@@ -253,7 +385,8 @@ AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
   solved (as before); the 52 unsolved name a recolor 28 times, where each
   copy was drawn 24, where each piece went 19.
 - Open, not agreed:
-  - solutions/ is not re-exported: 47 saved programs are unchanged, 103 are
+  - (Re-exported 2026-10-06, see the "one measure" to-do item 5.) solutions/
+    was not re-exported: 47 saved programs are unchanged, 103 are
     now said in other words, 54d9e175 and be94b721 have no file. Files for
     05a7bcf2, 10fcaaa3, 11852cab, 32597951, f25fbde4 (manual) and 44d8ac46
     are not inferred now.
@@ -468,22 +601,20 @@ AGENTS.md rule: 3 wrong (was 0). Finish the to-do list below first.
   The 35 pane reference programs in tests/pane_program_truth.txt were refreshed.
 
 ## Where it stands
-- Training: 166 fit, 163 right, 3 wrong (11852cab, 5582e5ca, c35c1b4c; see
-  the IN PROGRESS section). Checks: the score (arc_said) and the readouts; no
-  test programs remain.
-- Current run (`out\` is not in git): `out/fixes-said.txt` and
-  `out/probe/fixes/`. Last good baseline (152 right, 0 wrong):
+- Training: 170 fit, 170 right, 0 wrong. Checks: the score (arc_said) and
+  the readouts; no test programs remain.
+- Current run (`out\` is not in git): `out/order3-said.txt` and
+  `out/probe/order3/` (before 2026-10-06: `out/handed-said.txt` and
+  `out/probe/handed/`). Last good baseline (152 right, 0 wrong):
   `out/speed-said.txt` and `out/probe/cleanup/`. Before the central
   background: `out/duality-said.txt` and `out/probe/duality/`. Before the
   explicit-background rewrite: `out/solutions-export/said.txt` and
   `out/probe/kaggle-after/`.
-- What blocks the unsolved (`readouts.py missing fixes out/fixes-said.txt`,
-  named / the only word missing): where each copy was drawn 438 / 64; a
-  recolor 398 / 118; where each piece went 228 / 44; how each piece turned
-  216 / 19; the cells drawn on the ground 149 / 93; how a piece changed its
-  shape 115 / 10. (More pieces now wait on a word since partly hidden
-  landings are written down, so these are not comparable one to one with the
-  152-right baseline: a recolor 419 / 141, copies 318 / 44, ground 185 / 88.)
+- What blocks the unsolved (`readouts.py missing order3 out/order3-said.txt`,
+  named / the only word missing): where each copy was drawn 435 / 59; a
+  recolor 397 / 122; where each piece went 225 / 42; how each piece turned
+  215 / 14; the cells drawn on the ground 147 / 89; how a piece changed its
+  shape 115 / 10.
 - Before October 3: TileX and TileY unlocked, the repeat counted from the piece; a pick
   of every color but the most common; a paint laid over a piece explains the
   cells it covers; choosing the cut prefers one with at most 32 pieces per input
@@ -648,7 +779,7 @@ replace that plumbing.
 Update 2026-10-05: the central background replaced it. Each input's own
 ground is now a plan like any other, and the 52 unsolved per-pair puzzles
 lack other words (above), so recolors are the next stage: agreed and started
-(1acc24af with WouldFit; see the IN PROGRESS section at the top).
+(1acc24af with WouldFit; see the "one measure" section near the top).
 
 ## After that
 - Recolors (the current stage, started with WouldFit): 118 unsolved puzzles

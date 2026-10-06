@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim InteriorColor[1] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Trim InteriorColor[1] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       a5313dff
 Train:        Solved

@@ -63,7 +63,8 @@ language lacks.
   fill what last), reads each plan's figures with `read_figures` (no detector
   sees a background; empty cells are nothing), keeps the plan that explains
   most, and `say_the_plan` writes its delete and fill once.
-- Every choice the reading makes (the ground plan, the cut) has one owner,
+- Every choice the reading makes (the ground plan, the cut, whether the
+  line opens with the matching's acts or the words say every change) has one owner,
   `says_the_most`: each candidate is read to the end of its words, in the
   order given, and the one leaving the fewest cells unsaid is kept; the order
   only breaks a tie, and once one leaves none no later one is read. Each

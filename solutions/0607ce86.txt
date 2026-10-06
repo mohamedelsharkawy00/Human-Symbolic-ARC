@@ -1,4 +1,4 @@
-Input SelectAll VoteDenoise Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll VoteDenoise Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       0607ce86
 Train:        Solved

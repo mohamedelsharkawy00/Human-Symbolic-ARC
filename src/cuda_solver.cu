@@ -1123,6 +1123,18 @@ struct gpu_partner_view {
                                [&](int j, int row, int col) { return painted(j, row, col); },
                                [&](int j) { return (bool)list.objects[j].selected; });
     }
+    // Whether object i holds a cell of `color`.
+    __device__ bool holds(int i, int color) const {
+        GPU_DEV_FOR_EACH_PIXEL(list.objects[i], r, c, v) { (void)r; (void)c; if (v == color) return true; }
+        return false;
+    }
+    // Object i's one partner of `kind` (partner_of_kind) among the objects not picked, or -1.
+    __device__ int partner_of_kind(int kind, int i) const {
+        return arc::partner_of_kind(kind, i, list.count, [&](int j) { return box(j); },
+                                    [&](int j, int row, int col) { return painted(j, row, col); },
+                                    [&](int j) { return (bool)list.objects[j].selected; },
+                                    [&](int j, int color) { return holds(j, color); });
+    }
     // The color object i takes from its partners by `how`, or -1.
     __device__ int color_from(arc::partner_by how, int i) const {
         return arc::partner_color(how, i, list.count, [&](int j) { return box(j); },
@@ -1200,6 +1212,33 @@ __device__ gpu_object_list& gpu_exec_align_to(gpu_exec_context& ctx, const gpu_o
         auto& obj = res.objects[i];
         if (columns) { const int16_t by = (int16_t)(there.col0 - own.col0); obj.x0 += by; obj.x1 += by; }
         else         { const int16_t by = (int16_t)(there.row0 - own.row0); obj.y0 += by; obj.y1 += by; }
+    }
+    return res;
+}
+
+// MoveToward[value]: each picked object moves toward its one partner among the
+// objects not picked -- of the kind value % PARTNER_KINDS names, each way
+// partner_by finds one and then each color (partner_of_kind) -- by what value /
+// PARTNER_KINDS names: one step, its own size, or until it touches the partner
+// (move_toward, 1_readings.hpp), the move inference replays. Partners are never
+// picked, so none of them moves while the others read them. An object with no
+// partner, or several, stays where it is.
+__device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
+    auto& res = gpu_acquire(ctx);
+    res = src;
+    if (value < 0 || value >= (int)arc::toward_by::count * arc::PARTNER_KINDS) return res;
+    const auto far = (arc::toward_by)(value / arc::PARTNER_KINDS);
+    const int kind = value % arc::PARTNER_KINDS;
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i) {
+        if (!src.objects[i].selected) continue;
+        const int partner = view.partner_of_kind(kind, i);
+        if (partner < 0) continue;
+        const arc::heading_step by = arc::move_toward(far, i, partner, view.box(i), view.box(partner),
+            [&](int j, int row, int col) { return view.painted(j, row, col); }, ctx.output.width, ctx.output.height);
+        auto& obj = res.objects[i];
+        obj.x0 += (int16_t)by.across; obj.x1 += (int16_t)by.across;
+        obj.y0 += (int16_t)by.down;   obj.y1 += (int16_t)by.down;
     }
     return res;
 }
@@ -1778,16 +1817,10 @@ __device__ void gpu_exec_transform_warp(gpu_exec_context& ctx, node_type type, i
             nw = min((int)(is_turn ? sobj.height : sobj.width), GPU_MAX_GRID);
             nh = min((int)(is_turn ? sobj.width : sobj.height), GPU_MAX_GRID);
         },
-        // Dest cell (dr, dc) pulls from its source cell via the inverse map.
+        // Dest cell (dr, dc) pulls from its source cell via the inverse map:
+        // pose_source, the one the reading's replays turn a piece through.
         [&](const gpu_fixed_object& sobj, int dr, int dc) {
-            const int w = sobj.width, h = sobj.height;
-            int sr, sc;
-            switch (type) {
-            case node_type::TurnRight:      sr = h - 1 - dc; sc = dr;         break;
-            case node_type::TurnLeft:       sr = dc;         sc = w - 1 - dr; break;
-            case node_type::FlipHorizontal: sr = dr;         sc = w - 1 - dc; break;
-            default:                        sr = h - 1 - dr; sc = dc;         break;  // FlipVertical
-            }
+            const auto [sr, sc] = arc::pose_source(pose_of(type), sobj.width, sobj.height, dr, dc);
             return (int8_t)sobj.mask[sr][sc];
         });
 }
@@ -3160,6 +3193,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::ColorFrom:      result = last ? &gpu_exec_color_from(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::WouldFit:       result = last ? &gpu_exec_would_fit(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::AlignTo:        result = last ? &gpu_exec_align_to(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::MoveToward:     result = last ? &gpu_exec_move_toward(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::MirrorAround:   result = last ? &gpu_exec_mirror_around(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectColor:    result = last ? &gpu_exec_select_color(ctx, *last, value) : &gpu_acquire(ctx); break;

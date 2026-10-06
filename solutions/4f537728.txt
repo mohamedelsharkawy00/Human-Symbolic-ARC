@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[1] TileX[3] Union Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[1] TileY[3] Union Output SelectAll AddColor[0] Underlay
+Input Colors Withhold CurrentObjects SelectAll Trim Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] TileX[3] Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] TileY[3] Union
 
 Puzzle:       4f537728
 Train:        Solved

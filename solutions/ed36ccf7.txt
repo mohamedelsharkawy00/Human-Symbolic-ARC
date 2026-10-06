@@ -1,4 +1,4 @@
-Input SelectAll TurnLeft Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll TurnLeft Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       ed36ccf7
 Train:        Solved

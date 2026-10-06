@@ -935,6 +935,78 @@ ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, int count, BoxOf
     return partners == 1 ? found : -1;
 }
 
+// A PARTNER OF ANY KIND: the ways partner_by finds one by how two pieces sit,
+// then, past those, by color -- the one piece holding a cell of color `kind -
+// partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
+// Asked among the pieces not picked, as partner_of asks; `holds(j, color)` says
+// whether piece j holds a cell of that color. -1 when there is none, or several.
+constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
+template <class BoxOf, class Painted, class Picked, class Holds>
+ARC_HOST_DEVICE inline int partner_of_kind(int kind, int mine, int count, BoxOf box_of, Painted painted,
+                                           Picked picked, Holds holds) {
+    if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, count, box_of, painted, picked);
+    int found = -1;
+    for (int other = 0; other < count; ++other) {
+        if (other == mine || picked(other) || !holds(other, kind - (int)partner_by::count)) continue;
+        if (found >= 0) return -1;
+        found = other;
+    }
+    return found;
+}
+
+// THE WAY FROM ONE BOX TOWARD ANOTHER: the one of the eight headings whose
+// compass sector the line between their middles points into, each sector 45
+// degrees wide, its edges 22.5 degrees off the axes. A line steeper than that
+// off the rows goes up or down, and one flatter than that off the columns goes
+// across; tan 22.5 is sqrt 2 - 1, irrational, so with whole cells no line lies
+// on an edge, and the test needs no fractions. -1 when the middles coincide.
+ARC_HOST_DEVICE inline int heading_toward(const cell_box& from, const cell_box& to) {
+    // Twice the middles' distance, so a middle between two cells is whole.
+    const int down = (to.row0 + to.row1) - (from.row0 + from.row1);
+    const int across = (to.col0 + to.col1) - (from.col0 + from.col1);
+    const int tall = down < 0 ? -down : down, wide = across < 0 ? -across : across;
+    const int reach = (tall + wide) * (tall + wide);
+    const int vertical = reach > 2 * wide * wide ? (down > 0 ? 1 : -1) : 0;
+    const int horizontal = reach > 2 * tall * tall ? (across > 0 ? 1 : -1) : 0;
+    if (vertical == 0 && horizontal == 0) return -1;
+    for (int way = 0; way < heading::count; ++way)
+        if (step_of(way).down == vertical && step_of(way).across == horizontal) return way;
+    return -1;
+}
+
+// HOW FAR MoveToward GOES toward its partner: one step, its own size, or until
+// it touches the partner.
+enum class toward_by : int8_t { a_step, its_size, touching, count };
+
+// WHERE MoveToward MOVES A PIECE: that way toward its partner (heading_toward,
+// between their boxes), by `far` -- one step; its own height or width each way
+// it goes; or step by step until a cell of it touches a cell of the partner, at
+// a side or a corner, as partner_by::touching asks, on a canvas `width` by
+// `height`. A piece that touches already, or that would leave the canvas first,
+// stays. Hands back how far down and across; the kernel and the reading's replay
+// both take the move from here.
+template <class Painted>
+ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int partner, const cell_box& own,
+                                                const cell_box& target, Painted painted, int width, int height) {
+    const int way = heading_toward(own, target);
+    if (way < 0 || own.empty()) return { 0, 0 };
+    const heading_step step = step_of(way);
+    if (far == toward_by::a_step) return step;
+    if (far == toward_by::its_size) return { step.down * own.height(), step.across * own.width() };
+    for (int steps = 0;; ++steps) {
+        const int down = steps * step.down, across = steps * step.across;
+        if (own.row0 + down < 0 || own.row1 + down >= height || own.col0 + across < 0 || own.col1 + across >= width)
+            return { 0, 0 };
+        for (int row = own.row0; row <= own.row1; ++row)
+            for (int col = own.col0; col <= own.col1; ++col) {
+                if (!painted(mine, row, col)) continue;
+                for (int near_row = -1; near_row <= 1; ++near_row)
+                    for (int near_col = -1; near_col <= 1; ++near_col)
+                        if (painted(partner, row + down + near_row, col + across + near_col)) return { down, across };
+            }
+    }
+}
+
 // WHETHER THE PIECE `mine` WOULD FIT INTO `partner`: turned or mirrored any of
 // the eight ways and set down anywhere, it fills one of the partner's gaps
 // whole, paints no cell the partner paints, and whatever it has over hangs out

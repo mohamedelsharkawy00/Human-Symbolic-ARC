@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] ExtendOrthogonal[1] Recolor[1] Union Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] ExtendDiagonal[1] Recolor[1] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] ExtendOrthogonal[1] Recolor[1] Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[2] ExtendDiagonal[1] Recolor[1] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       dc1df850
 Train:        Solved

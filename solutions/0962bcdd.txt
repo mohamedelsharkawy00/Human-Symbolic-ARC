@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection SelectSmallestObject[1] InvertSelection DeleteSelection SelectAll Trim InteriorColor[-1] Split[1] SelectAll Trim ExtendOrthogonal[2] Union Input Colors SelectColor[0] DeleteSelection SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal[2] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectSmallestObject[1] InvertSelection DeleteSelection SelectAll Trim InteriorColor[-1] Split[1] SelectAll Trim ExtendOrthogonal[2] Union Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal[2] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       0962bcdd
 Train:        Solved

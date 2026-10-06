@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectColumn[0] InvertSelection FlipHorizontal SelectAll Origin Underlay Input Panes SelectAll Origin Recolor[0] Underlay Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectColumn[0] InvertSelection FlipHorizontal SelectAll Origin Underlay Output SelectAll AddColor[0] Underlay
 
 Puzzle:       e3497940
 Train:        Solved

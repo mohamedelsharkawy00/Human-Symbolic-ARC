@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] DeleteSelection Withhold CurrentObjects SelectAll Recolor[2] Union Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] DeleteSelection Withhold CurrentObjects SelectAll Recolor[2] Union Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       0b17323b
 Train:        Solved

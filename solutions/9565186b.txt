@@ -1,0 +1,6 @@
+Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor InvertSelection Recolor[5] SelectAll Union
+
+Puzzle:       9565186b
+Train:        Solved
+Test:         Solved
+Found by:     inference, no search

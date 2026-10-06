@@ -1,4 +1,4 @@
-Input SelectAll ScaleUp[3] Union Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Fractal Difference Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll ScaleUp[3] Union Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Fractal Difference Output SelectAll AddColor[0] Underlay
 
 Puzzle:       0692e18c
 Train:        Solved

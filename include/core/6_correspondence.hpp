@@ -48,7 +48,10 @@ struct correspondence_election {
     // when no one piece is, having shown `other` on the other grid -- what an
     // input cell became, what an output cell was. `piece` is its object on its
     // own grid, -1 for a cell no piece holds, and `claimed_by` the fired rule
-    // that accounts for it after all, -1 while nothing does.
+    // that accounts for it after all, -1 while nothing does. `in_place` is the
+    // color the other grid shows at this very place when that is another color
+    // -- the cell was recolored where it lies, however the matching read it --
+    // and -1 otherwise.
     struct left_over_cell {
         bool from_input = true;
         int8_t row = 0, col = 0;
@@ -59,7 +62,17 @@ struct correspondence_election {
         int8_t waits = -1;
         int16_t about = -1;
         int8_t other = -1;
+        int8_t in_place = -1;
         bool waits_for(missing word) const { return waits == (int8_t)word; }
+        // WHETHER THE WORD FOR `word` CAN SAY THIS CELL: the one it waits on, and
+        // a recolor or a move wherever its place came out in another color,
+        // however the matching read it -- 5582e5ca's 9 read as grown over the
+        // others, where every other color turned 9; 18286ef8's 9 read as
+        // recolored where it stood, where it stepped toward the 6.
+        bool answers_to(missing word) const {
+            return waits_for(word) ||
+                   ((word == missing::a_recolor || word == missing::where_it_went) && in_place >= 0);
+        }
     };
     using enum object_matching::refusal_reason;
     static constexpr auto& refusal_names = object_matching::refusal_names;
@@ -222,7 +235,9 @@ struct correspondence_election {
         // numbers, grown a trail that way, their boxes filled in `paint`,
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
         // repeated down their columns for `value` past 32 and otherwise along
-        // their rows, every `value` % 32 cells -- or a swap
+        // their rows, every `value` % 32 cells, or folded into one figure and
+        // drawn again turned in its box by pose `value`, or moved toward their
+        // partner as MoveToward's `value` says (move_toward) -- or a swap
         // of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
@@ -233,7 +248,17 @@ struct correspondence_election {
                                 shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
-                                own_sentences } as = unsaid;
+                                turned_copy, move_toward, own_sentences } as = unsaid;
+        // WHETHER IT IS A PAINT SAID AFTER THE LINE: it draws off the pieces the
+        // cut hands over -- rays, bars, filled hollows, trails, filled boxes,
+        // copies, repeats, turned copies -- and moves, turns or recolors none.
+        bool paints_after_the_line() const {
+            switch (as) {
+                case extend_rays: case bridged: case filled: case trailed: case boxed:
+                case copied_onto: case tiled_along: case turned_copy: return true;
+                default: return false;
+            }
+        }
         int8_t color = -1, value = 0;
         // The colors whose pieces it picks, a bit each, when it picks by more
         // than the one `color`.
@@ -1500,17 +1525,31 @@ private:
             }
 
             // A PIECE THAT ONLY SITS ON ITS LANDING changed its shape, and
-            // nothing says how: both pieces, whole.
+            // nothing says how: both pieces, every cell but those the other grid
+            // shows in the same color at the same place, which stayed as they
+            // were and are no change at all (5582e5ca's 9s, where every other
+            // color around them turned 9).
             for (const auto& link : pair.edges) {
                 if (link.same_shape) continue;
                 const int piece = pair.input_piece_of(link);
                 for (const bool side : { link.from_input, !link.from_input }) {
                     const int index = side == link.from_input ? link.from : link.to;
                     if (index < 0 || (size_t)index >= pieces[side]->size()) continue;
-                    (*pieces[side])[index].each_cell([&](int row, int col, int8_t) {
+                    const grid& other = *grids[!side];
+                    (*pieces[side])[index].each_cell([&](int row, int col, int8_t color) {
+                        if (other.contains(row, col) && other.data[row][col] == color) return;
                         wait(missing::how_it_changed_shape, side, row, col, piece, -1); });
                 }
             }
+
+            // A CELL RECOLORED WHERE IT LIES, however the matching read it: the
+            // other grid shows another color at its very place. Noted on every
+            // cell left over there, so a recolor said of that place can claim it.
+            if (grids[false]->same_size(*grids[true]))
+                for (auto& cell : pair.left_over) {
+                    const int8_t there = (int8_t)grids[!cell.from_input]->data[cell.row][cell.col];
+                    if (is_color(there) && there != background && there != cell.color) cell.in_place = there;
+                }
         }
     }
 

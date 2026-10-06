@@ -254,24 +254,22 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
         (!learned || claimed != shape_color_map_rule::body_recolor);
     task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =
         (!learned || claimed != shape_color_map_rule::interior_fill);
-    // A color taken from a partner is only ever the partner inference read off
-    // the pairs; anywhere else the op would paint by a relation nothing bore out.
+    // A word read off a partner is only ever the partner inference read off the
+    // pairs; anywhere else the op would act by a relation nothing bore out. Each
+    // such op is open only where the line says its word.
     using said_as = correspondence_election::fired_rule::said_as;
-    bool colored_by_partner = false, placed_by_partner = false, mirrored_by_partner = false,
-         fitted_to_partner = false;
-    if (const auto& election = inf.correspondence; !election.readings.empty()) {
+    const auto& election = inf.correspondence;
+    auto line_says = [&](auto said) {
+        if (election.readings.empty()) return false;
         const auto& read = election.readings[election.chosen];
-        for (const int8_t which : read.line) {
-            colored_by_partner = colored_by_partner || read.fired[which].as == said_as::color_from;
-            placed_by_partner = placed_by_partner || read.fired[which].as == said_as::align_to;
-            mirrored_by_partner = mirrored_by_partner || read.fired[which].as == said_as::mirror_around;
-            fitted_to_partner = fitted_to_partner || read.fired[which].pick_fits >= 0;
-        }
-    }
-    task.dead_ops[(int)node_type::ColorFrom] = !colored_by_partner;
-    task.dead_ops[(int)node_type::AlignTo] = !placed_by_partner;
-    task.dead_ops[(int)node_type::MirrorAround] = !mirrored_by_partner;
-    task.dead_ops[(int)node_type::WouldFit] = !fitted_to_partner;
+        return ranges::any_of(read.line, [&](int8_t which) { return said(read.fired[which]); });
+    };
+    const std::pair<node_type, said_as> by_partner[] = {
+        { node_type::ColorFrom, said_as::color_from }, { node_type::AlignTo, said_as::align_to },
+        { node_type::MirrorAround, said_as::mirror_around }, { node_type::MoveToward, said_as::move_toward } };
+    for (const auto& [op, as] : by_partner)
+        task.dead_ops[(int)op] = !line_says([&](const auto& rule) { return rule.as == as; });
+    task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick_fits >= 0; });
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one

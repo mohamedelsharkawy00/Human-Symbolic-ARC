@@ -94,6 +94,9 @@ struct background_election {
     vector<hypothesis> across_inputs;          // input grids only
     vector<hypothesis> across_outputs;         // output grids only
     vector<hypothesis> across_inputs_outputs;  // all grids pooled
+    // Whether every input lies over its output cell for cell (pairs_overlay),
+    // which decides whether a plan's fill is ground on the inputs too.
+    bool overlays = false;
     static int8_t top(const vector<hypothesis>& ranked) {
         return ranked.empty() ? (int8_t)-1 : ranked[0].color;
     }
@@ -620,6 +623,7 @@ inline background_election elect_background(const vector<example>& train) {
     out.across_inputs         = elect_side_background(inputs,  persists);
     out.across_outputs        = elect_side_background(outputs);
     out.across_inputs_outputs = elect_side_background(both,    persists);
+    out.overlays              = pairs_overlay(train);
 
     // Per pair: elect over that pair's INPUT alone. NOT input+output pooled —
     // the transformation can flood the output with a new color, so pooling ties
@@ -651,7 +655,17 @@ inline background_election elect_background(const vector<example>& train) {
 struct ground_plan {
     background_source deleted;  // what every sentence's input loses first
     background_source filled;   // what the last sentence lays under the rest
-    bool keeps() const { return !deleted.removes_color(); }
+    // WHETHER THE INPUTS LOSE WHAT THE FILL LAYS UNDER, first, as well. Where
+    // every input lies over its output, that color is ground on the input as
+    // much as on the output: kept there, its cells that stay where they are
+    // read as pieces removed (c35c1b4c's black). Where the output is a canvas
+    // of its own, cells of that color can be figures the rule reads (1b2d62fb's
+    // 0s, read through its panes).
+    bool fill_is_ground_too = false;
+    // What the fill takes off the inputs as well: none where they keep it.
+    background_source filled_on_input() const { return fill_is_ground_too ? filled : background_source{}; }
+    // Whether the inputs lose nothing.
+    bool keeps() const { return !deleted.removes_color() && !filled_on_input().removes_color(); }
     bool operator==(const ground_plan&) const = default;
 };
 
@@ -667,7 +681,7 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
     const int8_t in = election.input_elected(), out = election.output_elected();
     vector<ground_plan> plans;
     auto offer = [&](background_source deleted, background_source filled) {
-        const ground_plan plan{ deleted, filled };
+        const ground_plan plan{ deleted, filled, election.overlays };
         if (find(plans.begin(), plans.end(), plan) == plans.end()) plans.push_back(plan);
     };
     // The input side leads: where the outputs abstain, the ground the inputs
@@ -689,9 +703,10 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
 }
 
 // The puzzle a plan leaves to read: each input without the ground it deletes,
-// each output without what its fill lays under. Those cells are empty, and an
-// empty cell is nothing to every reader. Both colors come from the input as
-// given, since that is all a program has.
+// and without what the fill lays under where that is ground on it too; each
+// output without what its fill lays under. Those cells are empty, and an empty
+// cell is nothing to every reader. Both colors come from the input as given,
+// since that is all a program has.
 inline vector<example> figures_only(const vector<example>& train, const ground_plan& plan) {
     vector<example> figures = train;
     auto empty = [](grid& one, int8_t color) {
@@ -703,6 +718,7 @@ inline vector<example> figures_only(const vector<example>& train, const ground_p
     for (example& pair : figures) {
         const int8_t deleted = plan.deleted.on(pair.input), filled = plan.filled.on(pair.input);
         empty(pair.input, deleted);
+        empty(pair.input, plan.filled_on_input().on(pair.input));
         empty(pair.output, filled);
     }
     return figures;

@@ -1,4 +1,4 @@
-Input SelectAll Union Input Colors SelectColor[0] DeleteSelection Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] CopyTo[4] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] CopyTo[4] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       88a10436
 Train:        Solved

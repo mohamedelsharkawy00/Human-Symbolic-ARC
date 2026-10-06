@@ -1,4 +1,4 @@
-Input SelectAll Pattern Withhold CurrentObjects SelectAll BidiColorMap[9] Withhold CurrentObjects SelectAll Tile[0] Union Output SelectAll AddColor[0] Underlay
+Input SelectAll Pattern Withhold CurrentObjects SelectAll BidiColorMap[9] Withhold CurrentObjects SelectAll Tile[0] Union
 
 Puzzle:       017c7c7b
 Train:        Solved

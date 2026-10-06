@@ -1,6 +1,6 @@
-Input SelectAll Union Input Colors SelectColor[0] DeleteSelection SelectAll SortBySize[1] UnionList SelectAll Trim SelectAll TurnRight Union CurrentObjects TurnRight Union CurrentObjects TurnRight Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll UnionList Trim TurnRight Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll UnionList Trim TurnRight TurnRight Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll UnionList Trim TurnLeft Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       11852cab
 Train:        Solved
 Test:         Solved
-Found by:     manual, migrated to explicit background steps
+Found by:     inference, no search

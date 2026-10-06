@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll DiagTile[0] Union
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll DiagTile[0] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       05269061
 Train:        Solved

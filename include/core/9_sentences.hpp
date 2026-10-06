@@ -48,14 +48,18 @@ inline string spell(const string& op, int value) {
 
 // A color layer is an object before it is picked or deleted. These are
 // compositions, not executor modes: every program carries the actual color.
-// Only a plan says them (say_the_plan); the reading reads figures.
-inline string color_layers(background_source background) {
-    if (background.per_grid) return "Colors SelectElectedBackground DeleteSelection";
-    return "Colors" + (is_color(background.color)
-        ? " " + spell("SelectColor", background.color) + " DeleteSelection" : string());
-}
-inline string foreground_input(background_source background) {
-    return background.removes_color() ? "Input " + color_layers(background) + " UnionList" : "Input";
+// Only a plan says them (say_the_plan); the reading reads figures. The input a
+// plan's sentences open on, as figures_only leaves it: without the ground it
+// deletes and what its fill takes off the inputs as well, the rest one piece in
+// the input's own frame.
+inline string foreground_input(const ground_plan& plan) {
+    auto mark = [](background_source side) {
+        return side.per_grid ? string(" SelectElectedBackground")
+             : is_color(side.color) ? " " + spell("SelectColor", side.color) : string();
+    };
+    const background_source filled = plan.filled_on_input();
+    const string marks = mark(plan.deleted) + (filled == plan.deleted ? string() : mark(filled));
+    return marks.empty() ? "Input" : "Input Colors" + marks + " DeleteSelection UnionList";
 }
 
 // The pick for one color's pieces alone. Picks add to what is already marked,
@@ -128,6 +132,9 @@ inline string word_for_segmentation(segmentation_methods segmentation) {
 
 // ONE OF THE EIGHT WAYS ROUND (1_readings.hpp), said in turns and mirrors.
 // Every one of the eight is sayable, four of them in one word.
+static_assert(pose_of(node_type::TurnRight) == 3 && pose_of(node_type::TurnLeft) == 5 &&
+              pose_of(node_type::FlipHorizontal) == 4 && pose_of(node_type::FlipVertical) == 2,
+              "each pose said in one word is the pose that op sets its piece in");
 inline vector<string> words_for_pose(int pose) {
     switch (pose & 7) {
         case 1:  return { "TurnRight", "FlipHorizontal" };
@@ -612,7 +619,7 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     // deleted the ground have empty cells, filled before they are recolored.
     auto lay_ground = [&] {
         if (!is_color(ground)) return;
-        const string fill = inf.plan.deleted.removes_color() ? spell("AddColor", ground) + " " : string();
+        const string fill = !inf.plan.keeps() ? spell("AddColor", ground) + " " : string();
         say_closed(said, "Input Panes SelectAll Origin " + fill + spell("Recolor", ground), "Underlay");
     };
     // THE PANES LAID DOWN AS THEY COME, when what wins is simply the first pane
@@ -944,6 +951,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::recolor:     beats.push_back({pick, spell("Recolor", rule.value)}); break;
         case said_as::color_from:  beats.push_back({pick, spell("ColorFrom", rule.value)}); break;
         case said_as::align_to:    beats.push_back({pick, spell("AlignTo", rule.value)}); break;
+        case said_as::move_toward: beats.push_back({pick, spell("MoveToward", rule.value)}); break;
         case said_as::mirror_around: beats.push_back({pick, spell("MirrorAround", rule.value)}); break;
         case said_as::outlined:    beats.push_back({pick, "Outline"}); break;
         case said_as::recolor_picked: beats.push_back({pick, spell("Recolor", rule.value)}); break;
@@ -981,8 +989,9 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 
 // WHAT A RULE DRAWS OFF THE PIECES, as the one beat of a sentence said after the
 // line: the pieces picked and the word that draws -- rays, bars, filled hollows,
-// trails, filled boxes, copies, repeats -- and whether what it draws goes over what is
-// already down or under it. False for a rule that draws nothing after the line.
+// trails, filled boxes, copies, repeats, turned copies -- and whether what it draws
+// goes over what is already down or under it. False for a rule that draws nothing
+// after the line.
 inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint) {
     using said_as = correspondence_election::fired_rule::said_as;
     const string pick = pick_of(rule);
@@ -1013,6 +1022,15 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             drawn = { pick, spell(rule.value >= 32 ? "TileY" : "TileX", rule.value % 32) + onto_words(rule) };
             paint = laid_paint(rule);
             return true;
+        case said_as::turned_copy: {
+            // The picked pieces folded into one figure, its box fitted, turned
+            // in that box; only the turned figure is marked, so only it lands.
+            string act = "UnionList Trim";
+            for (const string& word : words_for_pose(rule.value)) act += " " + word;
+            drawn = { pick, act };
+            paint = "Union";
+            return true;
+        }
         default:                   return false;
     }
 }
@@ -1278,8 +1296,8 @@ inline void restore_background(said_reading& said, background_source ground,
 // frame, as figures_only left it -- and the fill is the last sentence, after
 // any crop. Nothing between the two says a ground.
 inline void say_the_plan(said_reading& said, const ground_plan& plan, const output_dimension_rule& size) {
-    if (plan.deleted.removes_color()) {
-        const string figures = foreground_input(plan.deleted);
+    if (!plan.keeps()) {
+        const string figures = foreground_input(plan);
         auto open_on_figures = [&](string& sentence) {
             if (sentence == "Input" || sentence.rfind("Input ", 0) == 0) sentence = figures + sentence.substr(5);
         };
