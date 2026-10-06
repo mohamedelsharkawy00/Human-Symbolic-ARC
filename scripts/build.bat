@@ -2,13 +2,18 @@
 setlocal
 cd /d "%~dp0.."
 
-:: Single source of truth for building ARC. Callable by the profiling scripts.
+:: Single source of truth for building ARC. Callable by the profiling scripts
+:: and scripts\probe.bat.
 ::   %1  preset    - CMake preset name (default: x64-Release)
 ::   %2  NOLAUNCH  - if set to NOLAUNCH, build only; do not start ARC.exe
 ::                   (profilers launch the binary under their own collector)
+::   %3  target    - build only this target (probe.bat's arc_probe is left
+::                   out of the default build)
 set "PRESET=%~1"
 if not defined PRESET set "PRESET=x64-Release"
 set "NOLAUNCH=%~2"
+set "ONLY_TARGET="
+if not "%~3"=="" set "ONLY_TARGET=--target %~3"
 
 :: Clear the screen only for standalone dev builds; when a profiling script
 :: calls us with NOLAUNCH we must preserve its progress output.
@@ -91,7 +96,7 @@ if not exist "out\%PRESET%" (
     cmake --preset %PRESET%
 )
 
-cmake --build --preset %PRESET% -- -v
+cmake --build --preset %PRESET% %ONLY_TARGET% -- -v
 if errorlevel 1 (
     set "BUILD_STATUS=1"
     exit /b 1

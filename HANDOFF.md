@@ -38,7 +38,7 @@ This file holds only what is current; past stages are in git history
    readouts, built and run one way, outputs in one place, the readout written
    by one owner; a GPU-free readout-only build must stay. Agree the name, the
    one command and where outputs go with the user first, then update
-   AGENTS.md and CLAUDE.md.
+   AGENTS.md.
 3. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell (fits,
    test right): `SelectColor[9] MoveToward[14]`, then `SelectColor[6]
    Recolor[9]`, then the 5s' box `AddColor[5] Underlay`. Not found; it needs

@@ -115,8 +115,8 @@ out/cloud/arc_probe out/probe/cloud 00576224
 
 Omit the puzzle ID to write all training readouts. This target uses neither CUDA
 nor Vulkan. It supports work on the reading and program emission; it does not
-run the emitted programs or replace GPU score and CopyTo checks. `CLAUDE.md`
-loads the repository's existing rules for Claude.
+run the emitted programs or replace GPU score and CopyTo checks. `AGENTS.md`
+holds the rules for agents.
 
 Configure the command in Claude's [cloud environment setup script](https://code.claude.com/docs/en/cloud-environments#setup-scripts).
 

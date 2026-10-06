@@ -31,7 +31,7 @@ language lacks.
 - After every change, give the numbers: right, wrong, gained, lost.
 
 ## Build and check
-- Build: `scripts\build.bat x64-Release NOLAUNCH`
+- Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
 - Score: `out\x64-Release\arc_said.exe > said.txt` prints a line per puzzle
   whose program fits the training pairs (id, SOLVED or WRONG, program) and a
   tally on stderr. `arc_said <id>` runs one puzzle. A full run reads a
@@ -49,6 +49,17 @@ language lacks.
   grow), `missing` (which missing words block the unsolved puzzles).
 - A change is good when no solved puzzle is lost, the wrong count does not go
   up, and no new "explained but unsolved" appears.
+
+## Linux cloud
+No GPU there. Run from the repo root.
+- Setup: `python3 scripts/cloud_setup.py` builds `out/cloud/arc_probe` with a
+  C++20 compiler (no CUDA, no Vulkan) and fetches the puzzles only when they
+  are missing; `--build-only` skips that when they come another way.
+- Readouts: `out/cloud/arc_probe out/probe/<label> [id...]`; no ids reads every
+  training puzzle. Compare runs with `python3 scripts/readouts.py` as above.
+- No score: nothing there runs the programs. Right and wrong come from the
+  Windows CUDA build or a GPU runner. Say plainly which checks did not run,
+  and never claim readouts prove a score.
 
 ## Where things are
 - `include/core`, numbered in reading order. Inference lives in
@@ -72,6 +83,7 @@ language lacks.
 - `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the words the
   reading cannot say yet and how to unlock one.
 - `src/cuda_solver.cu`: the GPU ops.
+- `README.md`: Kaggle preparation and the private smoke run.
 
 ## Now
-Read `HANDOFF.md`: where things stand and the next problem.
+Read `HANDOFF.md` before working: where things stand and the next problem.
