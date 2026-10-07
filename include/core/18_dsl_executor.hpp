@@ -39,7 +39,7 @@ namespace arc {
 		memcpy(data.distance_maps + ei * GPU_MAX_COLORS * GPU_GRID_CELLS,
 		       init_ctx->distance_maps, GPU_MAX_COLORS * GPU_GRID_CELLS);
 
-		data.seed_lists[ei] = to_gpu_object_list(init_ctx->seed_objs);
+		to_gpu_object_list(init_ctx->seed_objs, data.seed_lists[ei]);
 
 		// WHERE THIS EXAMPLE'S PANES LIE. Geometry only: Panes is an act and
 		// clips whatever the chain holds, so nothing here decides what counts as
@@ -78,14 +78,16 @@ namespace arc {
 		if (program.count <= 0)
 			return true;
 
-		// Build a single-example upload for this example
-		static thread_local cuda_dsl_example_data ex_data;
-		ex_data.count = 1;
-		fill_example_slot(ex_data, 0, ex, p);
-		fill_puzzle_level(ex_data, p);
+		// Build a single-example upload for this example. On the heap, made once a
+		// thread: an upload holds a list as long as a grid has cells for every
+		// example it can carry, far past what a thread's own storage should hold.
+		static thread_local auto ex_data = std::make_unique<cuda_dsl_example_data>();
+		ex_data->count = 1;
+		fill_example_slot(*ex_data, 0, ex, p);
+		fill_puzzle_level(*ex_data, p);
 
 		// Upload into the scratch slot — isolated from the main cache used by beam search.
-		cuda_dsl_upload_scratch_example(ex_data);
+		cuda_dsl_upload_scratch_example(*ex_data);
 
 		// Build a 1-job batch
 		static thread_local cuda_dsl_exec_batch batch;

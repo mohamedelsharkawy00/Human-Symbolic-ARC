@@ -17,12 +17,14 @@ using namespace std;
 
 // The grid can be divided into objects in several ways.
 // Dividing a grid into objects is called segmentation.
-// Connected objects use 8-way connectivity: edges or corners.
+// Connected objects use 8-way connectivity: edges or corners -- save one cut,
+// read after every other (6_correspondence.hpp), that joins one color's cells
+// by edges alone.
 // Surrounding space and holes use 4-way connectivity: edges only.
 // Segmentation methods are compared by how well they explain the training pairs.
 enum class segmentation_methods : int8_t {
     connected_monochrome, connected_multicolor, all_cells_of_one_color,
-    minimal_repeating_set, smallest_of_two_grids,
+    minimal_repeating_set, smallest_of_two_grids, four_connected_monochrome,
     // How many real methods there are, so a loop can run over them.
     count,
     // Nothing has been chosen yet. It shares count's value so that loops
@@ -41,6 +43,7 @@ inline constexpr const char* const segmentation_names[] = {
     "All Cells Of One Color",
     "Minimal Repeating Set Of Cells",
     "Smallest Of The Two Grids",
+    "4-Connected Monochrome Cells",
     "Not Chosen Yet"  // segmentation_methods::unset
 };
 
@@ -50,7 +53,8 @@ inline constexpr const char* const segmentation_names[] = {
 inline constexpr bool boxed_by_its_cells(segmentation_methods segmentation) {
     return segmentation == segmentation_methods::connected_monochrome ||
            segmentation == segmentation_methods::connected_multicolor ||
-           segmentation == segmentation_methods::all_cells_of_one_color;
+           segmentation == segmentation_methods::all_cells_of_one_color ||
+           segmentation == segmentation_methods::four_connected_monochrome;
 }
 
 // An election nobody filled in must not pass for a real reading: unset is
@@ -63,9 +67,10 @@ static_assert(!boxed_by_its_cells(segmentation_methods::unset),
 // an object has to be one color is a question of its OWN, asked apart from
 // what counts as joined: the one walk in 1_readings.hpp answers both.
 inline constexpr grouping grouping_of(segmentation_methods segmentation) {
-    return segmentation == segmentation_methods::connected_multicolor   ? grouping::touching_any_color :
-           segmentation == segmentation_methods::all_cells_of_one_color ? grouping::all_of_one_color :
-                                                                          grouping::touching_same_color;
+    return segmentation == segmentation_methods::connected_multicolor      ? grouping::touching_any_color :
+           segmentation == segmentation_methods::all_cells_of_one_color    ? grouping::all_of_one_color :
+           segmentation == segmentation_methods::four_connected_monochrome ? grouping::touching_sides_same_color :
+                                                                             grouping::touching_same_color;
 }
 
 // Find the smallest repeating width and height; use the grid size if none repeats.

@@ -78,22 +78,25 @@ inline string pick_colors(uint16_t colors) {
 }
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
-// the color most cells wear, every color but that one -- when `how` names one,
-// else by its colors; then, when `fits` names a partner way, WouldFit keeps the
-// ones that would fit into a gap of their partner.
+// the color most cells wear, every color but that one, at least so many cells,
+// fewer -- when `how` names one, else by its colors; then, when `fits` names a
+// partner way, WouldFit keeps the ones that would fit into a gap of their
+// partner.
 inline string pick_words(uint16_t colors, int8_t how, int8_t value, int8_t fits = -1) {
     using fired_rule = correspondence_election::fired_rule;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
-                                                 "SelectMostCommonColor",
-                                                 "SelectMostCommonColor InvertSelection" };
+                                                 "SelectMostCommonColor", "SelectMostCommonColor",
+                                                 "SelectAtLeastCells", "SelectAtLeastCells" };
     static_assert(size(selectors) == (size_t)fired_rule::pick_kinds);
     const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
+    if (how < 0) return pick_colors(colors) + kept;
     // SelectMostCommonColor takes no value: which color it picks is the list's to say.
-    if (how == fired_rule::most_common || how == fired_rule::not_most_common)
-        return string("SelectAll InvertSelection ") + selectors[how] + kept;
-    if (how >= 0) return "SelectAll InvertSelection " + spell(selectors[how], value) + kept;
-    return pick_colors(colors) + kept;
+    const bool valued = how != fired_rule::most_common && how != fired_rule::not_most_common;
+    // Every piece but those another pick takes, turned round by InvertSelection.
+    const bool turned = how == fired_rule::not_most_common || how == fired_rule::fewer_cells;
+    return "SelectAll InvertSelection " + (valued ? spell(selectors[how], value) : string(selectors[how])) +
+           (turned ? " InvertSelection" : "") + kept;
 }
 
 // THE PIECES A RULE PICKS, as words, picked from none: by its pick of holes or of
@@ -118,12 +121,14 @@ struct said_reading {
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
-// the same-color flag: Split[1] keeps colors separate; Split[0] joins them. A cut
-// names no ground: the reading reads figures, and the plan's opening deleted it.
+// how fine it cuts: Split[0] joins colors; Split[1] keeps them separate; Split[3]
+// keeps them separate and joins by sides alone. A cut names no ground: the
+// reading reads figures, and the plan's opening deleted it.
 inline string word_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
-        case segmentation_methods::connected_monochrome:   return spell("Split", 1);
-        case segmentation_methods::connected_multicolor:   return spell("Split", 0);
+        case segmentation_methods::connected_monochrome:      return spell("Split", 1);
+        case segmentation_methods::connected_multicolor:      return spell("Split", 0);
+        case segmentation_methods::four_connected_monochrome: return spell("Split", 3);
         case segmentation_methods::all_cells_of_one_color: return "Colors";
         case segmentation_methods::minimal_repeating_set:  return "Pattern";
         default:                                          return {};
@@ -960,9 +965,21 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;
         case said_as::learned_table:
-            if (const char* word = word_for_learned_recolor(inf.shape_color_map))
+            // A key's shape naming the figure's color (detect_body_recolor), in
+            // three words: the key -- the smallest -- takes the color its own shape
+            // names, the figure -- the largest -- takes its nearest piece's, the
+            // key's, and the key goes.
+            if (inf.shape_color_map.claimed_by == shape_color_map_rule::body_recolor) {
+                using fired_rule = correspondence_election::fired_rule;
+                const string key = pick_words(0, fired_rule::smallest, 0);
+                beats.push_back({key, "ShapeColorMap"});
+                beats.push_back({pick_words(0, fired_rule::largest, 0), spell("ColorFrom", (int)partner_by::nearest)});
+                beats.push_back({key, "DeleteSelection"});
+            } else if (const char* word = word_for_learned_recolor(inf.shape_color_map)) {
                 beats.push_back({"SelectAll", word});
+            }
             break;
+        case said_as::shape_recolor: beats.push_back({pick, "ShapeColorMap"}); break;
         case said_as::size_rank:
             // A color layer can hold several disconnected pieces; the rank
             // belongs to each piece, not their combined color.
@@ -1067,9 +1084,25 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
                   : string(frame.merged ? "SelectAll UnionList " : "") + "SelectAll Origin");
     }
     }
+    // THE TILED FRAME CUTS BEFORE IT TILES: its copies are the input's pieces,
+    // each laid down again in every copy and never joined with a piece of the
+    // next copy, as the reading through it reads them (framed_whole). So the
+    // line's cut -- the first word after the input -- comes before Tile, which
+    // lays each piece's copies the input's size apart (Split keeps each piece in
+    // the input's frame). A line that opens with no cut tiles first.
+    auto cut_then_tile = [&](string& sentence) {
+        size_t start = 6;  // past "Input "
+        if (sentence.compare(start, 10, "SelectAll ") == 0) start += 10;
+        const size_t end = sentence.find(' ', start);
+        const string word = sentence.substr(start, end == string::npos ? string::npos : end - start);
+        if (word.rfind("Split[", 0) != 0 && word != "Colors") return false;
+        sentence.insert(end == string::npos ? sentence.size() : end, " SelectAll " + spell("Tile", 0));
+        return true;
+    };
     auto reframe = [&](string& sentence) {
         if (sentence.rfind("CurrentObjects ", 0) == 0) return true;
         if (sentence.rfind("Input ", 0) != 0) return false;
+        if (frame.kind == piece_frame_rule::tiled && cut_then_tile(sentence)) return true;
         sentence = framed + sentence.substr(5);
         return true;
     };

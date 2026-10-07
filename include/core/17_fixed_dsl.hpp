@@ -144,14 +144,13 @@ static inline void sort_objects_by_area_asc(fixed_object_list& list) {
     }
 }
 
-// Narrow fixed_object_list (CPU, 900 objs) -> gpu_object_list (GPU kernel, 64 objs).
-// Only the count changes: both sides hold their cells in the same packed bytes,
-// so the mask moves across as a plain copy.
-static inline gpu_object_list to_gpu_object_list(const fixed_object_list& src) {
-    gpu_object_list dst;
+// fixed_object_list (CPU) -> gpu_object_list (GPU kernel), both as long as a
+// grid has cells. Both sides hold their cells in the same packed bytes, so the
+// mask moves across as a plain copy -- into `dst` where it lies, since a list
+// that long is too big to hand back on the stack.
+static inline void to_gpu_object_list(const fixed_object_list& src, gpu_object_list& dst) {
     dst.count = std::min(src.count, GPU_KERNEL_MAX_OBJECTS);
     for (int i = 0; i < dst.count; ++i) dst.objects[i] = src.objects[i];
-    return dst;
 }
 
 // =====================================================================

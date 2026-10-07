@@ -172,21 +172,21 @@ struct gpu_flat_op {
 // GPU-side execution types (reduced limits for VRAM)
 // =====================================================================
 
-// Context-shrink experiment: the per-job gpu_exec_context is dominated by
-// pool[POOL_SIZE] * gpu_object_list(MAX_OBJECTS * 912B). Halving objects keeps
-// the context small for L2 reuse. MAX_OBJECTS=32 truncates scenes with >32
-// objects (ops already cap).
+// The per-job gpu_exec_context is dominated by pool[POOL_SIZE] *
+// gpu_object_list(MAX_OBJECTS * 912B): with a list as long as a grid has cells
+// (MAX_OBJECTS_IN_A_LIST), about 0.8 MB a list.
 //
 // POOL_SIZE must cover the object-lists that are LIVE AT ONCE, which is two --
 // the list an op reads and the list it writes -- not the number a program
 // acquires over its whole length, because gpu_acquire wraps (cuda_solver.cu).
 // It had to cover the whole program while that allocator clamped instead of
 // wrapping: past POOL_SIZE producing ops every op wrote the slot it was reading
-// and the scores came back quietly wrong. 64 is kept, far past the two, so an op
-// that ever held a third list is still safe; this header is GPU-only and must
-// not pull in 13_environment.hpp, so the value stays a literal.
+// and the scores came back quietly wrong. 8 is kept, four times the two and the
+// floor 18_dsl_executor.hpp asks, so an op that ever held a third list is still
+// safe; this header is GPU-only and must not pull in 13_environment.hpp, so the
+// value stays a literal.
 static constexpr int GPU_KERNEL_MAX_OBJECTS = arc::MAX_OBJECTS_IN_A_LIST;
-static constexpr int GPU_KERNEL_POOL_SIZE   = 64;
+static constexpr int GPU_KERNEL_POOL_SIZE   = 8;
 
 // `selected` is the SELECT slot at object depth: one flag per object, not per
 // cell. Selection works like Excel: nothing is selected at birth, selectors
@@ -214,15 +214,16 @@ inline ARC_HOST_DEVICE gpu_painted_box gpu_box_of_paint(const gpu_fixed_object& 
     return {box.col0, box.row0, box.width(), box.height()};
 }
 
-// The glyph's fingerprint, read off the paint. Inference learns its keys from
-// tight color boxes, so applying must hash a tight box too or a padded object
-// fingerprints a different glyph and every lookup misses. Untrimmed input is
-// therefore accepted rather than required to arrive trimmed.
+// The glyph's fingerprint, read off the paint: the learned table's key,
+// canonical_shape_hash, the same whichever way round the glyph lies. Inference
+// learns its keys from tight color boxes, so applying must hash a tight box too
+// or a padded object fingerprints a different glyph and every lookup misses.
+// Untrimmed input is therefore accepted rather than required to arrive trimmed.
 inline ARC_HOST_DEVICE uint32_t gpu_shape_hash_of_paint(const gpu_fixed_object& obj) {
     const gpu_painted_box box = gpu_box_of_paint(obj);
     if (box.width <= 0 || box.height <= 0) return 0;
-    return arc::shape_occupancy_hash(box.width, box.height, [&](int i) {
-        return obj.mask[box.y0 + i / box.width][box.x0 + i % box.width] != GPU_TRANSPARENT;
+    return arc::canonical_shape_hash(box.width, box.height, [&](int row, int col) {
+        return obj.mask[box.y0 + row][box.x0 + col] != GPU_TRANSPARENT;
     });
 }
 

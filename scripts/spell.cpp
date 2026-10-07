@@ -84,8 +84,14 @@ int main(int argc, char** argv) {
             for (size_t i = 0; i < task.test.size() && answers && i < answers->size(); ++i) {
                 grid drawn; float score = 0; bool solved = false;
                 environment::execute_tree_via_flat(tree, task.test[i], drawn, task, nodes, score, solved);
-                printf("            test %zu: %s\n", i,
-                       (drawn == (*answers)[i]) ? "RIGHT" : "wrong");
+                const bool right = drawn == (*answers)[i];
+                printf("            test %zu: %s\n", i, right ? "RIGHT" : "wrong");
+                // A program that fits every pair and still misses the test is the
+                // mistake worth seeing, so it is shown the way a pair is.
+                if (!right && programs.size() == 1) {
+                    show("drew  ", drawn);
+                    show("wanted", (*answers)[i]);
+                }
             }
         }
         environment::remove(tree);

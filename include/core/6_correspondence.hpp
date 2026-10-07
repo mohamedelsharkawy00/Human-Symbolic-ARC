@@ -237,7 +237,8 @@ struct correspondence_election {
         // repeated down their columns for `value` past 32 and otherwise along
         // their rows, every `value` % 32 cells, or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
-        // partner as MoveToward's `value` says (move_toward) -- or a swap
+        // partner as MoveToward's `value` says (move_toward), or recolored to
+        // the color its own shape names (shape_recolor) -- or a swap
         // of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
@@ -248,7 +249,7 @@ struct correspondence_election {
                                 shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
-                                turned_copy, move_toward, own_sentences } as = unsaid;
+                                turned_copy, move_toward, shape_recolor, own_sentences } as = unsaid;
         // WHETHER IT IS A PAINT SAID AFTER THE LINE: it draws off the pieces the
         // cut hands over -- rays, bars, filled hollows, trails, filled boxes,
         // copies, repeats, turned copies -- and moves, turns or recolors none.
@@ -273,12 +274,13 @@ struct correspondence_election {
         // holes, or the one `pick_value` down the order of size, largest or
         // smallest first, or the ones in the band of rows or of columns numbered
         // `pick_value`, or the ones wearing the color most cells wear, or every
-        // one but those -- the picks SelectObjectsWithHoles, SelectLargestObject,
-        // SelectSmallestObject, SelectRow, SelectColumn and SelectMostCommonColor
-        // make, the last turned round by InvertSelection. -1 when it picks by
-        // color.
+        // one but those, or the ones painting at least `pick_value` cells, or
+        // every one but those -- the picks SelectObjectsWithHoles,
+        // SelectLargestObject, SelectSmallestObject, SelectRow, SelectColumn,
+        // SelectMostCommonColor and SelectAtLeastCells make, each "but those"
+        // turned round by InvertSelection. -1 when it picks by color.
         enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
-                                  not_most_common, pick_kinds };
+                                  not_most_common, at_least_cells, fewer_cells, pick_kinds };
         int8_t pick_by = -1, pick_value = 0;
         // WHICH OF THOSE IT KEEPS: only the ones that would fit into a gap of
         // their partner, the partner way WouldFit numbers; -1 keeps them all.
@@ -455,6 +457,14 @@ struct correspondence_election {
                segmentation != segmentation_methods::unset;
     }
 
+    // TEMPORARY: HOW MANY PIECES AN INPUT MAY BE CUT INTO FOR ITS CUT TO BE READ.
+    // A speed limit and nothing else -- a program holds a piece for every cell
+    // (MAX_OBJECTS_IN_A_LIST), but reading the words of a cut of hundreds of
+    // pieces cost minutes a run (a full run took 137 s with no limit, against
+    // about a minute without those cuts). f0df5ff0's inputs cut into 81. Lift it
+    // once reading a big cut is cheap.
+    static constexpr int MOST_PIECES_READ = 128;
+
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
     static correspondence_election infer(const vector<example>& train, background_source background) {
@@ -469,6 +479,33 @@ struct correspondence_election {
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
             preparations.push_back(prepare_segmentation(train, background, (segmentation_methods)method));
+        // THE CUT BY SIDES ALONE, READ ONLY WHERE IT IS ANOTHER READING THE READING
+        // CAN READ. Where every grid cuts into the same pieces by corners, it is
+        // that reading said again; where an input cuts into more pieces than the
+        // reading reads (MOST_PIECES_READ, read_in_time below), it would not be
+        // read. Either way, matched, it would only cost.
+        auto prepared_by = [&](segmentation_methods method) {
+            return ranges::find_if(preparations, [&](const auto& one) { return one.look.segmentation == method; });
+        };
+        if (const auto sides = prepared_by(segmentation_methods::four_connected_monochrome);
+            sides != preparations.end()) {
+            const auto corners = prepared_by(segmentation_methods::connected_monochrome);
+            auto same_pieces = [](const vector<object>& one, const vector<object>& other) {
+                return ranges::equal(one, other, [](const object& a, const object& b) {
+                    return a.summary.x0 == b.summary.x0 && a.summary.y0 == b.summary.y0 &&
+                           a.summary.w == b.summary.w && a.summary.h == b.summary.h &&
+                           a.summary.count == b.summary.count; });
+            };
+            bool cuts_the_same = true, held = true;
+            for (size_t i = 0; i < sides->pairs.size(); ++i) {
+                const auto& by_sides = sides->pairs[i];
+                const auto& by_corners = corners->pairs[i];
+                cuts_the_same = cuts_the_same && same_pieces(by_sides.input_objects, by_corners.input_objects) &&
+                                same_pieces(by_sides.output_objects, by_corners.output_objects);
+                held = held && (int)by_sides.input_objects.size() <= MOST_PIECES_READ;
+            }
+            if (cuts_the_same || !held) preparations.erase(sides);
+        }
         stable_sort(preparations.begin(), preparations.end(), [](const auto& left, const auto& right) {
             if (left.look.objects_can_fit != right.look.objects_can_fit) return left.look.objects_can_fit;
             return left.look.describe_cost < right.look.describe_cost;
@@ -516,22 +553,22 @@ struct correspondence_election {
                                 + (one.made + one.gone) * half_said;
             return one.describe_cost + unsaid * spelling_out;
         };
-        // A CUT THE PROGRAM CAN HOLD: no input cut into more pieces than a list
-        // holds. The kernel drops the pieces past that, so a line read off more
-        // is said of pieces the program never has -- 4f537728's lattice, cut
-        // block by block, is 98 of them, where cut by color it is two.
-        auto holds_in_a_list = [](const reading& one) {
+        // A CUT THE READING READS IN TIME: no input cut into more pieces than
+        // MOST_PIECES_READ (TEMPORARY, see there). A program holds every piece a
+        // grid can be cut into, so this is the reading's limit, not the program's.
+        auto read_in_time = [](const reading& one) {
             return ranges::all_of(one.pairs, [](const pair_info& pair) {
-                return (int)pair.input_info.size() <= MAX_OBJECTS_IN_A_LIST;
+                return (int)pair.input_info.size() <= MOST_PIECES_READ;
             });
         };
         // Which of two readings the election prefers: negative for the first,
         // positive for the second, 0 for a tie. Using objects at all comes first,
-        // then a cut the program can hold, then the lower price, and only prices
-        // within same_price of each other are settled by using fewer objects.
+        // then a cut the reading reads in time, then the lower price, and only
+        // prices within same_price of each other are settled by using fewer
+        // objects.
         auto order = [&](const reading& one, const reading& other) {
             if ((one.objects_used > 0) != (other.objects_used > 0)) return one.objects_used > 0 ? -1 : 1;
-            if (holds_in_a_list(one) != holds_in_a_list(other)) return holds_in_a_list(one) ? -1 : 1;
+            if (read_in_time(one) != read_in_time(other)) return read_in_time(one) ? -1 : 1;
             if (abs(price_of(one) - price_of(other)) > same_price)
                 return price_of(one) < price_of(other) ? -1 : 1;
             if (one.objects_used != other.objects_used) return one.objects_used < other.objects_used ? -1 : 1;
@@ -547,10 +584,15 @@ struct correspondence_election {
             facts.ranked.push_back((int8_t)unranked[first]);
             unranked.erase(unranked.begin() + (ptrdiff_t)first);
         }
-        // A cut the program cannot hold is no candidate at all while one it can
-        // hold is: whatever its words say is said of pieces the program never has.
-        if (ranges::any_of(facts.ranked, [&](int8_t one) { return holds_in_a_list(facts.readings[one]); }))
-            erase_if(facts.ranked, [&](int8_t one) { return !holds_in_a_list(facts.readings[one]); });
+        // THE CUT BY SIDES ALONE COMES LAST. It sees the cells the cut by corners
+        // sees, only finer, so its words are said only where they say more
+        // (aedd82e4's lone cells, which touch the rest at a corner).
+        ranges::stable_partition(facts.ranked, [&](int8_t one) {
+            return facts.readings[one].segmentation != segmentation_methods::four_connected_monochrome; });
+        // A cut the reading would not read in time is no candidate at all while
+        // one it would is.
+        if (ranges::any_of(facts.ranked, [&](int8_t one) { return read_in_time(facts.readings[one]); }))
+            erase_if(facts.ranked, [&](int8_t one) { return !read_in_time(facts.readings[one]); });
         for (const int8_t one : facts.ranked) {
             vector<int8_t> ties;
             for (const int other : best_of_method)

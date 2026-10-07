@@ -370,14 +370,15 @@ inline vector<object> pieces_of(const grid& input, int8_t background,
 // Maps shapes to colors (rejected if any shape needs two different colors).
 struct shape_color_map_rule {
     static constexpr int MAX_KEYS = 16;
-    uint32_t keys[MAX_KEYS]   = {};  // FNV-1a hash of the key glyph's occupancy
-    int8_t   colors[MAX_KEYS] = {};  // color the target is repainted to
+    uint32_t keys[MAX_KEYS]   = {};  // canonical_shape_hash: a shape, whichever way round
+    int8_t   colors[MAX_KEYS] = {};  // the color that shape names
     int      count = 0;
     bool holds() const { return count > 0; }
-    // WHICH DETECTOR FILLED IT. Two of them share this storage and mean
-    // different things by it: body_recolor repaints an object, interior_fill
-    // paints the hole inside one. A consumer that cannot tell them apart is
-    // feeding one op the other's table, so the table says which it is.
+    // WHO FILLED IT. The readers share this storage and mean different things by
+    // it: body_recolor repaints a piece in the color its shape names
+    // (ShapeColorMap), interior_fill paints the hole inside one (ShapeTo-
+    // InteriorColorMap). A consumer that cannot tell them apart is feeding one
+    // op the other's table, so the table says which it is.
     enum : int8_t { claimed_by_nobody, body_recolor, interior_fill } claimed_by
         = claimed_by_nobody;
     // WHAT THE BODY RECOLOR WAS READ OFF, pair by pair: the elected reading's
@@ -390,15 +391,19 @@ struct shape_color_map_rule {
     vector<read_in_pair> read;
 
     // A SMALL KEY'S SHAPE NAMES THE COLOR THE LARGEST PIECE IS REPAINTED, AND
-    // THE KEY IS USED UP. The elected reading already says which piece kept its
-    // shape and what color it came out in, so what is asked here is only whether
-    // ShapeColorMap would repaint that piece, and what the piece it reads as the
-    // key says -- never, a second time, what was recolored. The op keys on the
-    // smallest box and repaints the largest, so each must be the only one its
-    // size, or the order the pieces arrive in would choose. Reading the key
-    // consumes it, so the reading must have it going nowhere in every pair. A
-    // target that keeps its own color is a key naming it; one pair at least has
-    // to change something.
+    // THE KEY IS USED UP (009d5c81), said in three words (9_sentences.hpp): the
+    // smallest piece takes the color its own shape names (ShapeColorMap), the
+    // largest takes the color of its nearest piece, the key (ColorFrom), and the
+    // smallest goes (DeleteSelection). The elected reading already says which
+    // piece kept its shape and what color it came out in, so what is asked here
+    // is only whether those words would repaint that piece, and what the key's
+    // shape says -- never, a second time, what was recolored. The picks take the
+    // smallest and the largest by painted cells, so each must be the only one
+    // its size, or the order the pieces arrive in would choose, and the key
+    // must be the largest one's one nearest piece. Reading the key consumes it,
+    // so the reading must have it going nowhere in every pair. A target that
+    // keeps its own color is a key naming it; one pair at least has to change
+    // something.
     static shape_color_map_rule detect_body_recolor(const vector<example>& train,
                                                     const correspondence_election& correspondence) {
         const auto& pairs = correspondence.chosen_pairs();
@@ -408,15 +413,15 @@ struct shape_color_map_rule {
         bool changed = false;
         for (size_t which = 0; which < train.size(); ++which) {
             const auto& pieces = pairs[which].input_info;
-            auto area_of = [&](int piece) { return pieces[piece].summary.w * pieces[piece].summary.h; };
+            auto cells_of = [&](int piece) { return (int)pieces[piece].summary.count; };
             int key = -1, target = -1;
             for (int piece = 0; piece < (int)pieces.size(); ++piece) {
-                if (key < 0 || area_of(piece) < area_of(key)) key = piece;
-                if (target < 0 || area_of(piece) > area_of(target)) target = piece;
+                if (key < 0 || cells_of(piece) < cells_of(key)) key = piece;
+                if (target < 0 || cells_of(piece) > cells_of(target)) target = piece;
             }
             auto alone_in_its_size = [&](int pick) {
                 for (int piece = 0; piece < (int)pieces.size(); ++piece)
-                    if (piece != pick && area_of(piece) == area_of(pick)) return false;
+                    if (piece != pick && cells_of(piece) == cells_of(pick)) return false;
                 return true;
             };
             if (key < 0 || key == target || !alone_in_its_size(key) ||
@@ -436,12 +441,22 @@ struct shape_color_map_rule {
 
             const auto cut = pieces_of(train[which].input, TRANSPARENT, correspondence.segmentation);
             if (cut.size() != pieces.size()) return {};
-            const object& glyph = cut[key];
-            const int width = glyph.summary.w;
-            const uint32_t key_shape = shape_occupancy_hash(width, glyph.summary.h, [&](int i) {
-                return glyph.cells[i / width][i % width] != TRANSPARENT;
-            });
-            if (!rule.learn(key_shape, became)) return {};
+            // The largest takes its color from its one nearest piece, as ColorFrom
+            // finds it among the pieces not picked: that must be the key.
+            vector<cell_box> boxes(cut.size());
+            for (size_t i = 0; i < cut.size(); ++i)
+                cut[i].each_cell([&](int row, int col, int8_t) { boxes[i].include_cell(row, col); });
+            const int nearest = partner_of(partner_by::nearest, target, (int)cut.size(),
+                [&](int j) { return boxes[(size_t)j]; },
+                [&](int j, int row, int col) {
+                    const object& piece = cut[(size_t)j];
+                    const int down = row - piece.summary.y0, across = col - piece.summary.x0;
+                    return down >= 0 && across >= 0 && down < piece.summary.h && across < piece.summary.w &&
+                           piece.cells[down][across] != (int8_t)TRANSPARENT;
+                },
+                [&](int j) { return j == target; });
+            if (nearest != key) return {};
+            if (!rule.learn(shape_of(cut[key]), became)) return {};
             rule.read.push_back({ (int16_t)key, (int16_t)target, became });
         }
         if (!changed) return {};
@@ -498,8 +513,8 @@ struct shape_color_map_rule {
                 }
                 if (!any_painted) return;
 
-                uint32_t object_shape =
-                    shape_occupancy_hash(width, height, [&](int i) { return occupied[i]; });
+                const uint32_t object_shape = canonical_shape_hash(width, height,
+                    [&](int row, int col) { return occupied[row * width + col]; });
                 consistent = rule.learn(object_shape, (int8_t)fill);
                 fills_something = fills_something || fill != TRANSPARENT;
             });
@@ -510,7 +525,20 @@ struct shape_color_map_rule {
         return rule;
     }
 
-private:
+    // THE TABLE'S KEY FOR A PIECE: its shape, whichever way round it lies
+    // (canonical_shape_hash, the key the ops look up).
+    static uint32_t shape_of(const object& piece) {
+        return canonical_shape_hash(piece.summary.w, piece.summary.h, [&](int row, int col) {
+            return piece.cells[row][col] != (int8_t)TRANSPARENT; });
+    }
+    // The color the table names for a piece's shape, or -1 where it names none.
+    int color_of(const object& piece) const {
+        const uint32_t shape = shape_of(piece);
+        for (int i = 0; i < count; ++i)
+            if (keys[i] == shape) return colors[i];
+        return -1;
+    }
+
     // Remembers which color goes with this shape. Returns false if the shape gets conflicting colors.
     bool learn(uint32_t shape, int8_t color) {
         for (int i = 0; i < count; ++i)
@@ -2620,9 +2648,9 @@ struct project_on_seeds_rule {
 // to every one (way / 3) -- Bridge[0] reaching both ways for the nearest.
 // `count` pieces in the op's own order: box_of_piece(i) is piece i's cell_box,
 // color_of(i) the colour the op reads off its first cell (-1 for none).
-// land(bar, colour) sees each bar in the order the op appends them, and says
-// false once the list has no room for another. gpu_exec_bridge calls it, so a
-// reading and the op cannot draw different bars.
+// land(bar, colour) sees each bar in the order the op lays them into its one
+// drawing of every bar, and may say false to stop. gpu_exec_bridge calls it, so
+// a reading and the op cannot draw different bars.
 constexpr int BRIDGE_WAYS = 6;
 template <class BoxOf, class ColorOf, class Land>
 ARC_HOST_DEVICE inline void bridge_bars(int way, int count, BoxOf box_of_piece, ColorOf color_of, Land land) {
@@ -2723,8 +2751,9 @@ struct bridge_rule {
                 const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
                     // The pieces as Split hands them over: the one walk, in its order.
                     const vector<object> pieces = pieces_as_said(pair.input, TRANSPARENT, cut);
-                    // One list is all the op is handed.
-                    if (pieces.empty() || pieces.size() > MAX_OBJECTS_IN_A_LIST) return false;
+                    // One list is all the op is handed, and the bars take one place
+                    // more in it, all of them one drawing.
+                    if (pieces.empty() || pieces.size() >= MAX_OBJECTS_IN_A_LIST) return false;
                     vector<int8_t> colors;
                     for (const object& piece : pieces) colors.push_back(piece.first_color());
                     drawn = grid(pair.output.width, pair.output.height);
@@ -2735,14 +2764,11 @@ struct bridge_rule {
                             drawn.data[row][col] = color;
                             painted[row][col] = true;
                         });
-                    // The bars share the pieces' list, so they run out where it does,
-                    // and each is laid under whatever is already drawn.
-                    int room = MAX_OBJECTS_IN_A_LIST - (int)pieces.size();
+                    // Each bar is laid under whatever is already drawn.
                     bridge_bars(way, (int)pieces.size(),
                                 [&](int which) { return box_of(pieces[which].summary); },
                                 [&](int which) { return colors[which]; },
                                 [&](const cell_box& bar, int8_t color) {
-                        if (room-- <= 0) return false;
                         for (int row = bar.row0; row <= bar.row1; ++row)
                             for (int col = bar.col0; col <= bar.col1; ++col) {
                                 if (!drawn.contains(row, col) || painted[row][col]) continue;
@@ -3335,7 +3361,8 @@ inline void list_the_rivals(inference& inf) {
 // (object_hole_count, the count SelectObjectsWithHoles makes), or the one `value`
 // down the order of painted cells, largest or smallest first, ties keeping the
 // order the pieces came in -- the insertion sort SelectLargestObject and
-// SelectSmallestObject run.
+// SelectSmallestObject run -- or every one painting at least `value` cells, or
+// fewer.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
     using rule = correspondence_election::fired_rule;
     vector<bool> picked(pieces.size(), false);
@@ -3351,6 +3378,18 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
             for (size_t i = 0; i < pieces.size(); ++i)
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
         if (how == rule::not_most_common) picked.flip();
+        return picked;
+    }
+    if (how == rule::at_least_cells || how == rule::fewer_cells) {
+        // Every piece painting at least `value` cells (paints_at_least, the count
+        // SelectAtLeastCells makes) -- or, turned round as InvertSelection turns
+        // it, every piece painting fewer.
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            const object& piece = pieces[i];
+            picked[i] = paints_at_least(piece.summary.h, piece.summary.w, [&](int row, int col) {
+                return piece.cells[row][col] != (int8_t)TRANSPARENT; }, value);
+        }
+        if (how == rule::fewer_cells) picked.flip();
         return picked;
     }
     if (how == rule::row_band || how == rule::column_band) {
@@ -3586,7 +3625,8 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
 }
 
 // Every pick a word is asked with: the colors an unsaid change starts from, when
-// there are any, then every pick by holes and by size the ops can make, then
+// there are any, then every pick by holes, size, band, the color most cells
+// wear and how many cells the ops can make, then
 // each of `fit_colors` alone kept to its pieces that would fit into a gap of
 // their partner, each partner way. Colors that change from pair to pair are
 // asked last, so a pick by holes or size that accounts for as much wins the tie
@@ -3616,13 +3656,25 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
     }
     picks.push_back({ 0, rule::most_common, 0 });
     picks.push_back({ 0, rule::not_most_common, 0 });
+    // By how many cells, at least so many or fewer, each count asked only where
+    // it splits some pair's pieces: one at least taken there and one left.
+    const auto cells = row_of(node_type::SelectAtLeastCells);
+    for (int value = cells.low; value <= cells.high; ++value) {
+        if (ranges::none_of(facts.cuts, [&](const vector<object>& cut) {
+                const vector<bool> taken = picked_pieces(cut, rule::at_least_cells, value);
+                return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
+            }))
+            continue;
+        for (const int8_t how : { (int8_t)rule::at_least_cells, (int8_t)rule::fewer_cells })
+            picks.push_back({ 0, how, (int8_t)value });
+    }
     // A fit is asked only where it is at work in every pair: it keeps one piece
     // of the color at least and drops one, or the color alone says as much.
     for (int color = 0; color < COLOR_COUNT; ++color) {
         if (!(fit_colors >> color & 1)) continue;
         const piece_pick alone{ (uint16_t)(1u << color) };
-        for (int way = 0; way < (int)partner_by::count; ++way) {
-            const piece_pick fit{ alone.colors, -1, 0, (int8_t)way };
+        for (int at = 0; at < (int)partner_by::count; ++at) {
+            const piece_pick fit{ alone.colors, -1, 0, (int8_t)asked_at(at) };
             if (ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
                     const vector<bool> kept = picked_pieces(cut, fit);
                     return ranges::find(kept, true) != kept.end() && kept != picked_pieces(cut, alone);
@@ -3797,7 +3849,7 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
                          int8_t ground_in, int8_t ground_out, grid& framed) {
     using kind = piece_frame_rule::kind_of;
     const int factor = frame.factor;
-    return draw_on_canvas(input, size, ground_out, framed, [&](grid& canvas) {
+    const bool drew = draw_on_canvas(input, size, ground_out, framed, [&](grid& canvas) {
         switch (frame.kind) {
         case kind::posed:
             for (int row = 0; row < input.height; ++row)
@@ -3860,6 +3912,14 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
         default: return false;
         }
     });
+    // A TILED INPUT IS COPIES OF THE INPUT'S PIECES, each piece cut on its own
+    // and laid down again in every copy, as its words cut the input before they
+    // tile it (frame_the_sentences): no piece joins one in the next copy.
+    if (drew && frame.kind == kind::tiled) {
+        framed.tile_width = input.width;
+        framed.tile_height = input.height;
+    }
+    return drew;
 }
 
 // THE FRAME A SIZE CHANGE IS READ THROUGH, chosen. Of every cut with a word and
@@ -4675,13 +4735,11 @@ inline bool bridge_holds(const replay_facts& facts, const vector<partner_pieces>
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
                        [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
-        if (cut.count() > MAX_OBJECTS_IN_A_LIST) return false;
-        // The bars share the pieces' list, so they run out where it does.
-        int room = MAX_OBJECTS_IN_A_LIST - cut.count();
+        // The bars take one place more in the pieces' list, all of them one drawing.
+        if (cut.count() >= MAX_OBJECTS_IN_A_LIST) return false;
         bridge_bars(way, cut.count(), [&](int i) { return cut.boxes[i]; },
                     [&](int i) { return cut.pieces[i].first_color(); },
                     [&](const cell_box& bar, int8_t color) {
-            if (room-- <= 0) return false;
             for (int row = bar.row0; row <= bar.row1; ++row)
                 for (int col = bar.col0; col <= bar.col1; ++col)
                     if (output.contains(row, col)) put(row, col, color);
@@ -4741,12 +4799,7 @@ inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map
     return paint_holds(facts, handed_pieces(facts, { every_color }), { rule::laid_under, &hand },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
         for (const object& piece : cut.pieces) {
-            const int width = piece.summary.w;
-            const uint32_t shape = shape_occupancy_hash(width, piece.summary.h, [&](int i) {
-                return piece.cells[i / width][i % width] != (int8_t)TRANSPARENT; });
-            int8_t fill = -1;
-            for (int key = 0; key < table.count; ++key)
-                if (table.keys[key] == shape) fill = table.colors[key];
+            const int8_t fill = (int8_t)table.color_of(piece);
             if (fill < 0) continue;
             bool painted = false;
             each_hollow(piece, [&](int row, int col) { put(row, col, fill); painted = true; });
@@ -5096,7 +5149,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     static constexpr const char* mirrors[] = { "left to right", "top to bottom", "all four ways" };
     static_assert(size(mirrors) == (size_t)mirror_by::count);
     static constexpr const char* pick_names[] = { "Holes", "Largest", "Smallest", "Row Band", "Column Band",
-                                                  "Most Common Color", "Not Most Common Color" };
+                                                  "Most Common Color", "Not Most Common Color",
+                                                  "Cells At Least", "Cells Fewer Than" };
     static_assert(size(pick_names) == (size_t)rule::pick_kinds);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
@@ -5229,7 +5283,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int how = 0; how < ways; ++how) {
+            for (int at = 0; at < ways; ++at) {
+                const int how = asked_at(at);
                 vector<vector<std::pair<int, int>>> recolored;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5265,7 +5320,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         int best_down = 0, best_across = 0;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int value = 0; value < 2 * ways; ++value) {
+            for (int at = 0; at < 2 * ways; ++at) {
+                const int value = at / ways * ways + asked_at(at % ways);
                 vector<vector<std::pair<int, int>>> left, landed;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5274,7 +5330,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                     continue;
                 weigh(aligned, value, pick, pieces, every_piece, -1, move_claims(left, landed));
             }
-            for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value) {
+            for (int at = 0; at <= row_of(node_type::MoveToward).high; ++at) {
+                const int value = at / PARTNER_KINDS * PARTNER_KINDS + asked_at(at % PARTNER_KINDS);
                 vector<vector<std::pair<int, int>>> left, landed;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5352,7 +5409,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int value = 0; value < (int)mirror_by::count * MIRROR_PARTNERS; ++value) {
+            for (int at = 0; at < (int)mirror_by::count * MIRROR_PARTNERS; ++at) {
+                const int value = at / MIRROR_PARTNERS * MIRROR_PARTNERS + asked_at(at % MIRROR_PARTNERS);
                 vector<vector<std::pair<int, int>>> kept, landed;
                 int copies = 0;
                 bool every_piece = false;
@@ -5429,6 +5487,64 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         return { best.said, [&, best] { carry(say(best, rule::recolor_picked, "becomes " + to_string(best.value), colors)); } };
     };
 
+    // A RECOLOR THE PIECES' OWN SHAPES DECIDE: every picked piece takes the color
+    // its shape names, the same shape whichever way round (e8593010's holes: one
+    // cell 3, two 2, three 1) -- ShapeColorMap, its table read off the pairs, one
+    // color a shape. A shape seen on one piece only is the pairs' own piece, not
+    // a rule, so every shape in the table is seen twice at least; and the puzzle
+    // has one table, so this is asked only while nothing else holds it. It
+    // accounts for the cells it recolored.
+    auto shape_word = [&]() -> offer {
+        const uint16_t from = starts_from(missing::a_recolor);
+        if (!facts.hand_known || !from || !facts.overlays || inf.shape_color_map.holds()) return {};
+        heard best;
+        shape_color_map_rule best_table;
+        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+            const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            // Each picked piece's shape, the one color it comes out in.
+            shape_color_map_rule table;
+            int seen[shape_color_map_rule::MAX_KEYS] = {};
+            bool reads = true;
+            for (size_t which = 0; which < handed.size() && reads; ++which) {
+                const grid& output = facts.train[which].output;
+                const partner_pieces& cut = handed[which];
+                for (int i = 0; i < cut.count() && reads; ++i) {
+                    if (!cut.picked[i]) continue;
+                    // -2 until a cell is read, -3 once two cells disagree.
+                    int worn = -2;
+                    cut.pieces[i].each_cell([&](int row, int col, int8_t) {
+                        const int there = output.data[row][col];
+                        worn = worn == -2 || worn == there ? there : -3;
+                    });
+                    const uint32_t shape = shape_color_map_rule::shape_of(cut.pieces[i]);
+                    reads = is_color(worn) && table.learn(shape, (int8_t)worn);
+                    for (int key = 0; key < table.count && reads; ++key) seen[key] += table.keys[key] == shape;
+                }
+            }
+            if (!reads || !table.holds() ||
+                ranges::any_of(seen, seen + table.count, [](int pieces) { return pieces < 2; }))
+                continue;
+            vector<vector<std::pair<int, int>>> recolored;
+            int pieces = 0;
+            bool every_piece = false;
+            if (!recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
+                    color = (int8_t)table.color_of(cut.pieces[i]);
+                    return color >= 0;
+                }, recolored, pieces, every_piece))
+                continue;
+            const int before = best.said;
+            weigh(best, 0, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
+                return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
+            });
+            if (best.said > before) best_table = table;
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best, best_table]() mutable {
+            best_table.claimed_by = shape_color_map_rule::body_recolor;
+            inf.shape_color_map = best_table;
+            carry(say(best, rule::shape_recolor, "takes the color its shape names", colors)); } };
+    };
+
     // A PIECE REMOVED: every piece the pick takes is gone from every pair's output
     // -- the pick, then DeleteSelection. A tie goes to every other kind first, so
     // the line uses a piece as a partner before it goes. Where the hand could not
@@ -5473,7 +5589,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     };
 
     const std::function<offer()> kinds[] = { color_from_word, move_word, mirror_word, outline_word, recolor_word,
-                                             removal_word };
+                                             shape_word, removal_word };
     constexpr int rounds = 8;
     int words[size(kinds)] = {};
     while (true) {
@@ -5522,7 +5638,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             case rule::swap_colors:
             case rule::size_rank:
             case rule::color_from:
-            case rule::recolor_picked: return false;
+            case rule::recolor_picked:
+            case rule::shape_recolor:  return false;
             default:                   return !step.paints_after_the_line();
         }
     };

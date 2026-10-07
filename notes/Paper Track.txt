@@ -1,0 +1,30 @@
+Project: ARC Prize 2026 – symbolic ARC-AGI-2 solver
+
+Approach: Non-neural, symbolic solver. Pipeline: (1) analyze input/output grids and their diffs; (2) per-operator detectors identify each DSL operator's role; (3) a combinator composes operators greedily, ranked by how much of the diff each explains. Describe it as "well-pruned search" (detector-guided, explanation-ranked), not "searchless," since reconsidering a pick after verification fails counts as search.
+
+Strategy: Target the Paper Prize, not the top-score race (leaderboard reportedly ~83%). The paper must be linked to a Kaggle code submission demonstrating the approach, but that submission doesn't need a high score. The rubric scores accuracy, universality, and progress toward 85%.
+
+Deadlines (verify on the Kaggle Rules tab, since sources conflicted):
+
+Entry/team merger: Oct 26, 2026 (third-party listing only)
+Code submissions: Nov 2, 2026; papers: Nov 8; results: Dec 4
+
+Submission constraints: Kaggle notebook, no internet during evaluation. Predict 2 outputs per test grid, scored by exact match.
+
+Immediate actions:
+
+Confirm the deadlines and rules on Kaggle, then register.
+Get a working notebook submitted, even a rough one.
+Instrument the solver for the metrics below.
+
+Experiments for the paper:
+
+Candidates explored per task vs. brute-force enumeration over the same DSL (headline result)
+Detector ablations, removing detectors one at a time to show how fast search grows
+Failure taxonomy: wrong greedy pick / missing operator / detector false positive
+Honest accuracy on the public evaluation set
+Explicit description of the backtracking behavior
+
+Related work to check: PROSE/FlashMeta witness functions (Polozov & Gulwani, 2015); the matching pursuit and boosting-on-residuals analogy for the greedy combinator.
+
+Positioning: Most top systems converge on 85% with heavy machinery; this paper shows an explicit, inspectable route with tiny search.

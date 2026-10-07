@@ -138,7 +138,8 @@ enum class inferred_amount { none, some, all };
   X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false, false) \
   X(Partition                   , 0                 , 0                        , generate , none, true , true ) \
   X(RestoreOrientation          , 0                 , 0                        , translate, none, false, false) \
-  X(ShapeColorMap               , 0                 , 0                        , map      , all , false, false) \
+  /* Each picked piece takes the color its own shape names, turned or not. */ \
+  X(ShapeColorMap               , 0                 , 0                        , map      , all , true , false) \
   X(Seeds                       , 0                 , 0                        , get      , some, false, false) \
   /* Partition cuts on the walls a selection marks; Panes cuts on the cut  */    \
   /* the split elected, which is the same act with a surer hand.           */        \
@@ -151,7 +152,8 @@ enum class inferred_amount { none, some, all };
   X(NormalizeOrientation        , 0                 , 1                        , translate, none, false, false) \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
   X(Skew                        , -1                , 1                        , translate, none, true , false) \
-  X(Split                       , 0                 , 2                        , generate , none, false, true ) \
+  /* Split[3] joins one color's cells by sides alone, the finest connected cut. */ \
+  X(Split                       , 0                 , 3                        , generate , none, false, true ) \
   /* Cells slide a step and pile at the wall, so a step past the wall says */    \
   X(SlamColumn                  , -1                , 1                        , translate, none, true , false) \
   /* nothing new: the answers run out at the object, not at the grid. */         \
@@ -206,7 +208,10 @@ enum class inferred_amount { none, some, all };
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
-  X(MoveToward                  , 0                 , 53                       , translate, none, true , false)
+  X(MoveToward                  , 0                 , 53                       , translate, none, true , false) \
+  /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
+  /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
+  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,

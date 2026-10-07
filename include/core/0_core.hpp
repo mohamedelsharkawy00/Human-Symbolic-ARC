@@ -34,6 +34,11 @@ constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 struct grid {
     int width = 0, height = 0;
     int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
+    // A GRID LAID OUT OF COPIES of one tile_width by tile_height picture, 0 by 0
+    // where it is one picture: no piece crosses from one copy into the next
+    // (each_object), as the program cuts the picture before it tiles it
+    // (10fcaaa3, framed_whole's tiled frame).
+    int tile_width = 0, tile_height = 0;
 
     // No cells at all, so there is nothing to read off it.
     bool empty() const {
@@ -64,16 +69,25 @@ struct grid {
     }
 };
 
+// The size of the copies a grid is laid out of, 0 by 0 for one picture: a
+// host grid's own (grid::tile_width); every other kind of grid is one picture.
+struct tile_size { int width = 0, height = 0; };
+template <class Grid>
+ARC_HOST_DEVICE inline tile_size tiles_of(const Grid&) { return {}; }
+ARC_HOST_DEVICE inline tile_size tiles_of(const grid& one) { return { one.tile_width, one.tile_height }; }
+
 // The ARC demonstration example.
 struct example {
     grid input, output;
 };
 
-// HOW MANY OBJECTS ONE LIST HOLDS while a program runs. The kernel's list is
+// HOW MANY OBJECTS ONE LIST HOLDS while a program runs: one for every cell of
+// the largest grid, so no cut of a grid runs out of room. The kernel's list is
 // this long, so an op handed more than this hands back this many -- and a
 // reading that says what an op will draw has to stop counting at the same
 // place, or it claims a drawing the op would not make. 12_dsl.cuh names it
-// GPU_KERNEL_MAX_OBJECTS on its own side of the fence.
-constexpr int MAX_OBJECTS_IN_A_LIST = 32;
+// GPU_KERNEL_MAX_OBJECTS on its own side of the fence. It was 32 while search
+// ran thousands of programs at once; one reading runs a handful.
+constexpr int MAX_OBJECTS_IN_A_LIST = MAX_GRID_CELLS;
 
 }  // namespace arc

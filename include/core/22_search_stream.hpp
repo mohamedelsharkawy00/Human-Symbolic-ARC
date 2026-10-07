@@ -64,7 +64,9 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
       // input-sized isn't enough when ops like Fractal/Tile produce
       // output-sized masks. Use max(input, output, every object's x1+1/y1+1)
       // so test examples (output dims = 0) and multi-scale ops both display.
-      gpu_object_list ol;
+      // On the heap: a list as long as a grid has cells is too big for the stack.
+      static thread_local auto fetched = std::make_unique<gpu_object_list>();
+      gpu_object_list& ol = *fetched;
       int work_w = 0, work_h = 0;
       if (cuda_dsl_fetch_last_object_list_scratch(0, ol, &work_w, &work_h)) {
         int n_obj = min((int)ol.count, GPU_KERNEL_MAX_OBJECTS);

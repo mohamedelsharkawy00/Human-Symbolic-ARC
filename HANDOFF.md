@@ -5,23 +5,23 @@ This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 172 right, 0 wrong (the replays made DRY and the score and
-  readouts merged, not yet committed; 170 at 32d371d). Current run:
-  out/merged/; out/base/ is 32d371d (out\ is not in git).
+- Training: 187 right, 0 wrong (not yet committed; 172 at a201ff6, out/merged/,
+  170 at 32d371d, out/base/). Current run: out/tile/ (out\ is not in git).
 - solutions/ holds the inferred program of every solved puzzle. Left as they
-  were, not solved now: the manual 05a7bcf2, 10fcaaa3, 32597951, f25fbde4,
-  and 44d8ac46 (an old inferred one that no longer fits). solutions/shelf/
-  holds puzzles outside training.
+  were: the manual 05a7bcf2, 10fcaaa3 (now inferred too), 32597951,
+  f25fbde4, and 44d8ac46 (an old inferred one that no longer fits).
+  solutions/shelf/ holds puzzles outside training.
 - A full score has taken 34 to 82 s on the same code: the laptop's clock
   moves with heat, so one run's seconds say little. Compare two builds by
   interleaving them (old, new, old, new) and taking each one's fastest run.
-  The current build has not been timed that way yet; one run of it, the
-  score and the readouts together, took 82 s. scripts\profile.bat profiles
-  arc_said (VTune, attached after CUDA starts).
-- What blocks the unsolved (`readouts.py missing merged`,
-  named / the only word missing): copies 439 / 60, a recolor 398 / 120, where
-  pieces went 227 / 43, turns 214 / 14, cells drawn on the ground 145 / 87,
-  shape changes 116 / 8.
+  Three runs back to back, before the last two changes: 43.5, 59.1 and
+  48.8 s (one run now: 57 s; 28.7 to 34.2 s before the cut by sides and lists
+  of 900; 137 s with lists of 900 and no reading limit). scripts\profile.bat
+  profiles arc_said (VTune, attached after CUDA starts).
+- What blocks the unsolved (`readouts.py missing tile`,
+  named / the only word missing): copies 436 / 59, a recolor 399 / 122, where
+  pieces went 235 / 47, turns 201 / 12, cells drawn on the ground 136 / 80,
+  shape changes 112 / 6.
 
 ## Next, in the user's order
 1. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell (fits,
@@ -34,7 +34,7 @@ This file holds only what is current; past stages are in git history
 2. Speed: read the cuts and plans of one puzzle in parallel (low priority).
 
 Smaller, open:
-- Recolors are the stage after: 120 unsolved lack only a recolor, mostly a
+- Recolors are the stage after: 117 unsolved lack only a recolor, mostly a
   color taken from another piece (compositions of ColorFrom's partners,
   picks, frames). Work one puzzle at a time with the user.
 - carry_the_hand cannot carry a learned table, so no word that needs the
@@ -78,6 +78,35 @@ Smaller, open:
   keeps it, as Underlay) or onto, on one canvas of what is down -- the cut's
   pieces and every paint said before, laid after each is said -- and in its
   own colors, one color, or its own else one. A paint is never no color.
+- The cut by sides alone (four_connected_monochrome, Split[3]) is read after
+  every other cut, only where it cuts differently from the corner cut and
+  into no more pieces than the reading reads.
+- A tiled input is copies of the input's pieces: its program cuts the input
+  before Tile (frame_the_sentences), Split keeps each piece in the frame it
+  was cut from, so Tile lays its copies the input's size apart, and the
+  reading through the frame cuts a grid laid out of copies one copy at a time
+  (grid::tile_width, each_object). 10fcaaa3: two 3s from two copies touch.
+- A list holds 900 pieces, one for every cell of the largest grid
+  (MAX_OBJECTS_IN_A_LIST): only search ran thousands of programs at once.
+  The GPU copies only the pieces in use and keeps a ring of 8 lists; host
+  uploads sit on the heap. The reading reads a cut only where no input cuts
+  into more than 128 pieces (MOST_PIECES_READ, TEMPORARY: reading hundreds of
+  pieces cost minutes); search's big batches would not fit the GPU now.
+- Partner ways are asked surest first (partner_ways_asked, 1_readings.hpp):
+  around it and inside it, then lined up in its rows or columns, then the
+  nearest, then the rest. A tie goes to the first asked.
+- Bridge hands back its bars as one drawing, a cell to the first bar that
+  crosses it, so a list never runs out of room for them.
+- ShapeColorMap: every picked piece takes the color its own shape names, a
+  shape the same turned or mirrored either way (canonical_shape_hash, the one
+  key of the learned table, shared by the ops and the reading). The table is
+  read off the pairs by the shape word in the line (each shape seen twice at
+  least) or by detect_body_recolor, whose key naming a figure's color is said
+  in three words: the key takes its shape's color, the figure the key's
+  (ColorFrom), the key goes.
+- Every word picks by cell count too: SelectAtLeastCells[n] (2..10, its
+  count paints_at_least, shared with the op), fewer through InvertSelection;
+  a count is asked only where it splits some pair's pieces.
 - Size rank and the fill by shape replay on the hand, so they are asked
   only while the hand is known (not after a word carry_the_hand cannot
   carry).

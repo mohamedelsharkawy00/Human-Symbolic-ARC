@@ -148,22 +148,26 @@ __device__ gpu_object_list& gpu_acquire_and_publish(gpu_exec_context& ctx) {
     return slot;
 }
 
-// Init helper: stripe-copy only the USED objects of a read-only source list
-// (count * sizeof(object)) into the per-job context, not all 64 slots. The
-// seeds/palette/output_colors lists are read-only references that typically
-// hold a handful of objects, so the old full 57 KB copy was mostly moving
-// unused slots. Unused dst slots stay stale but are never read (ops are bounded
-// by count). All 32 lanes cooperate; lane 0 writes the count.
+// Stripe-copy only the USED objects of a list (count * sizeof(object)), never
+// the empty room behind them, which a list as long as a grid has cells mostly
+// is. Unused dst slots stay stale but are never read (ops are bounded by
+// count). `lanes` lanes cooperate, all 32 of a warp at init; lane 0 writes the
+// count.
 __device__ inline void gpu_copy_used_objs(const gpu_object_list& src,
-                                          gpu_object_list& dst, int lane) {
+                                          gpu_object_list& dst, int lane, int lanes = 32) {
     int n = src.count;
     if (n < 0) n = 0;
     if (n > GPU_KERNEL_MAX_OBJECTS) n = GPU_KERNEL_MAX_OBJECTS;
     const int8_t* s = reinterpret_cast<const int8_t*>(src.objects);
     int8_t* d = reinterpret_cast<int8_t*>(dst.objects);
     int used = n * (int)sizeof(gpu_fixed_object);
-    for (int i = lane; i < used; i += 32) d[i] = s[i];
+    for (int i = lane; i < used; i += lanes) d[i] = s[i];
     if (lane == 0) dst.count = n;
+}
+
+// A LIST AN OP HANDS ON AS IT CAME, copied by the one lane that runs the op.
+__device__ inline void gpu_copy_list(gpu_object_list& to, const gpu_object_list& from) {
+    gpu_copy_used_objs(from, to, 0, 1);
 }
 
 // --- Paint objects to grid ---
@@ -191,32 +195,34 @@ __device__ void gpu_paint_objects(const gpu_object_list& src, int w, int h, gpu_
 struct gpu_take_object {
     gpu_object_list* out;
     const gpu_fixed_grid* g;
+    // The frame every piece keeps: the frame of what it was cut from.
+    int x0, y0, width, height;
 
     __device__ void operator()(const arc::object_summary&, const int16_t* cells, int n) const {
         if (out->count >= GPU_KERNEL_MAX_OBJECTS) return;
         gpu_fixed_object& obj = out->objects[out->count++];
-        // Keep the full grid frame; segmentation never tightens (Trim is the only
-        // shrinker). The object's cells sit at their grid position, rest transparent
-        // -- which is box-local too, the box just being the whole grid.
-        obj.x0 = 0; obj.y0 = 0;
-        obj.x1 = (int16_t)(g->width - 1); obj.y1 = (int16_t)(g->height - 1);
-        obj.width = g->width; obj.height = g->height;
+        // Keep the frame it was cut from; segmentation never tightens (Trim is
+        // the only shrinker). The object's cells sit where they lie in that
+        // frame, rest transparent.
+        obj.x0 = (int16_t)x0; obj.y0 = (int16_t)y0;
+        obj.x1 = (int16_t)(x0 + width - 1); obj.y1 = (int16_t)(y0 + height - 1);
+        obj.width = (int16_t)width; obj.height = (int16_t)height;
         obj.mask.clear();
         for (int i = 0; i < n; ++i) {
             const int r = arc::cell_row(cells[i]), c = arc::cell_col(cells[i]);
-            obj.mask[r][c] = g->data[r][c];
+            obj.mask[r - y0][c - x0] = g->data[r][c];
         }
     }
 };
 
-__device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& out, int8_t bg_color = GPU_TRANSPARENT, bool any_color = false) {
+// The pieces of `g`, each in the frame of what they were cut from (x0, y0,
+// width, height, which holds every painted cell of g).
+__device__ void gpu_segment_objects(const gpu_fixed_grid& g, gpu_object_list& out, int8_t bg_color,
+                                    arc::grouping how, int x0, int y0, int width, int height) {
     out.count = 0;
-    if (g.width <= 0 || g.height <= 0) return;
+    if (g.width <= 0 || g.height <= 0 || width <= 0 || height <= 0) return;
     arc::object_walk_scratch scratch;
-    arc::each_object(g, (int)bg_color,
-                     any_color ? arc::grouping::touching_any_color
-                               : arc::grouping::touching_same_color,
-                     scratch, gpu_take_object{ &out, &g });
+    arc::each_object(g, (int)bg_color, how, scratch, gpu_take_object{ &out, &g, x0, y0, width, height });
 }
 
 __device__ int8_t gpu_majority_vote(const gpu_packed_mask& mask, int r, int c, int factor, int oh, int ow) {
@@ -314,6 +320,8 @@ __device__ gpu_object_list& gpu_exec_seeds(gpu_exec_context& ctx) { return ctx.s
 
 // Split[depth]: segmentation depth, coarse to fine. [0] = connected object,
 // colors mixed. [1] = connected object of one color. [2] = single pixels.
+// [3], finer than [1] and coarser than [2], came last: one color's cells
+// joined by sides alone, a corner joining nothing.
 __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_object_list& src, int8_t mode) {
     auto& res = gpu_acquire(ctx);
     gpu_fixed_grid temp;
@@ -338,7 +346,25 @@ __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_obje
             }
         return res;
     }
-    gpu_segment_objects(temp, res, GPU_TRANSPARENT, mode == 0);
+    // EACH PIECE KEEPS THE FRAME OF WHAT IT WAS CUT FROM: the frame the objects
+    // it was handed span, as UnionList's one object spans it -- the whole input
+    // where the input was cut -- the way Colors' layers keep theirs. So Tile
+    // after it lays each piece's copies the input's size apart, a copy apiece
+    // (10fcaaa3: cut, then tiled, the copies never join).
+    int x0 = GPU_MAX_GRID, y0 = GPU_MAX_GRID, x1 = -1, y1 = -1;
+    for (int i = 0; i < src.count; ++i) {
+        const auto& o = src.objects[i];
+        if (o.width <= 0 || o.height <= 0) continue;
+        x0 = min(x0, (int)o.x0); y0 = min(y0, (int)o.y0);
+        x1 = max(x1, (int)o.x1); y1 = max(y1, (int)o.y1);
+    }
+    x0 = max(x0, 0); y0 = max(y0, 0);
+    x1 = min(x1, GPU_MAX_GRID - 1); y1 = min(y1, GPU_MAX_GRID - 1);
+    gpu_segment_objects(temp, res, GPU_TRANSPARENT,
+                        mode == 0 ? arc::grouping::touching_any_color
+                        : mode == 3 ? arc::grouping::touching_sides_same_color
+                                    : arc::grouping::touching_same_color,
+                        x0, y0, x1 - x0 + 1, y1 - y0 + 1);
     return res;
 }
 
@@ -381,7 +407,7 @@ __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_obj
 // `SelectMostCommonColor DeleteSelection Split[1]`.
 __device__ gpu_object_list& gpu_exec_select_most_common_color(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     int freq[GPU_MAX_COLORS];
     for (int i = 0; i < GPU_MAX_COLORS; ++i) freq[i] = 0;
     for (int i = 0; i < res.count; ++i) {
@@ -472,7 +498,7 @@ __device__ gpu_object_list& gpu_exec_size_rank_color_map(gpu_exec_context& ctx, 
 // Add a mark to the sole distinct drawing; keep every object and prior mark.
 __device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     const int found = arc::unique_drawing(src.count,
         [&](int i) { return src.objects[i].width; },
         [&](int i) { return src.objects[i].height; },
@@ -483,7 +509,7 @@ __device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const 
 
 __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx, const gpu_object_list& src, int rank, bool largest) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     if (rank < 0 || rank >= res.count) return res;
     int counts[GPU_KERNEL_MAX_OBJECTS], indices[GPU_KERNEL_MAX_OBJECTS];
     for (int i = 0; i < res.count; ++i) {
@@ -502,14 +528,26 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
-// Bridge[way]: the pieces handed back as they came, then one bar per gap. Which
-// pieces pair up, the way they reach, and where each bar lies is 7_infer.hpp's
-// bridge_bars, which the reading replays too; this only lays the bars into the
-// list. They are born unmarked.
+// Bridge[way]: the pieces handed back as they came, then every bar as one
+// drawing. Which pieces pair up, the way they reach, and where each bar lies is
+// 7_infer.hpp's bridge_bars, which the reading replays too; this only lays the
+// bars down, each cell to the first bar that crosses it. One drawing, so a list
+// that holds the pieces holds every bar too, however many gaps there are --
+// one per gap ran out of room (dbc1a6ce's test, 19 dots and 17 bars). It sits
+// in the whole grid's frame, as Split's pieces do, and is born unmarked.
 __device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t way) {
     auto& res = gpu_acquire(ctx);
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
         res.objects[res.count++] = src.objects[i];
+    if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
+    // A pooled slot keeps whatever it last held, so every field is said.
+    gpu_fixed_object& bars = res.objects[res.count];
+    bars.x0 = 0; bars.y0 = 0;
+    bars.x1 = (int16_t)(GPU_MAX_GRID - 1); bars.y1 = (int16_t)(GPU_MAX_GRID - 1);
+    bars.width = bars.height = (int16_t)GPU_MAX_GRID;
+    bars.selected = false;
+    bars.mask.clear();
+    bool drew = false;
     arc::bridge_bars(way, src.count,
         [&](int which) {
             const auto& piece = src.objects[which];
@@ -517,20 +555,15 @@ __device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_obj
         },
         [&](int which) { return gpu_obj_first_color(src.objects[which]); },
         [&](const arc::cell_box& bar, int8_t color) {
-            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return false;
-            // A pooled slot keeps whatever it last held, so every field is said.
-            gpu_fixed_object& made = res.objects[res.count++];
-            made.x0 = (int16_t)bar.col0; made.y0 = (int16_t)bar.row0;
-            made.x1 = (int16_t)bar.col1; made.y1 = (int16_t)bar.row1;
-            made.width = (int16_t)min(bar.width(), GPU_MAX_GRID);
-            made.height = (int16_t)min(bar.height(), GPU_MAX_GRID);
-            made.selected = false;
-            made.mask.clear();
-            for (int r = 0; r < made.height; ++r)
-                for (int c = 0; c < made.width; ++c)
-                    made.mask[r][c] = color;
+            for (int r = max(bar.row0, 0); r <= min(bar.row1, GPU_MAX_GRID - 1); ++r)
+                for (int c = max(bar.col0, 0); c <= min(bar.col1, GPU_MAX_GRID - 1); ++c)
+                    if (bars.mask[r][c] == GPU_TRANSPARENT) {
+                        bars.mask[r][c] = color;
+                        drew = true;
+                    }
             return true;
         });
+    if (drew) ++res.count;
     return res;
 }
 
@@ -1076,7 +1109,7 @@ __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int l
 // Colors not in the pair are untouched, so disjoint swaps compose order-free.
 __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const gpu_object_list& src, int8_t k) {
     auto& res = gpu_acquire(ctx);
-    if (k < 0 || k >= arc::COLOR_PAIR_COUNT) { res = src; return res; }
+    if (k < 0 || k >= arc::COLOR_PAIR_COUNT) { gpu_copy_list(res, src); return res; }
     const auto [a, b] = arc::color_pair::from_index(k);
 
     for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
@@ -1153,7 +1186,7 @@ struct gpu_partner_view {
 // moves and nothing is dropped.
 __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
     const gpu_partner_view view{ src };
     for (int i = 0; i < src.count; ++i) {
@@ -1176,7 +1209,7 @@ __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu
 // and nothing is painted; an object with no partner, or several, is not picked.
 __device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
     const gpu_partner_view view{ src };
     for (int i = 0; i < src.count; ++i) {
@@ -1198,7 +1231,7 @@ __device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_
 // stays where it is.
 __device__ gpu_object_list& gpu_exec_align_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     constexpr int ways = (int)arc::partner_by::count;
     if (value < 0 || value >= 2 * ways) return res;
     const bool columns = value >= ways;
@@ -1225,7 +1258,7 @@ __device__ gpu_object_list& gpu_exec_align_to(gpu_exec_context& ctx, const gpu_o
 // partner, or several, stays where it is.
 __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     if (value < 0 || value >= (int)arc::toward_by::count * arc::PARTNER_KINDS) return res;
     const auto far = (arc::toward_by)(value / arc::PARTNER_KINDS);
     const int kind = value % arc::PARTNER_KINDS;
@@ -1253,7 +1286,7 @@ __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gp
 // without picking again. An object with no partner, or several, gets no copy.
 __device__ gpu_object_list& gpu_exec_mirror_around(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     constexpr int partners = arc::MIRROR_PARTNERS;
     if (value < 0 || value >= (int)arc::mirror_by::count * partners) return res;
     const auto mirror = (arc::mirror_by)(value / partners);
@@ -1307,10 +1340,25 @@ __device__ int gpu_object_hole_count(const gpu_fixed_object& obj) {
 // select/Recolor pairs chain order-free.
 __device__ gpu_object_list& gpu_exec_select_objects_with_holes(gpu_exec_context& ctx, const gpu_object_list& src, int8_t h) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
         if (gpu_object_hole_count(obj) == (int)h) obj.selected = true;
+    }
+    return res;
+}
+
+// SelectAtLeastCells[n]: mark the objects that paint at least n cells
+// (paints_at_least, which the reading replays); the rest ride through
+// unmarked. InvertSelection after it says "fewer than n".
+__device__ gpu_object_list& gpu_exec_select_at_least_cells(gpu_exec_context& ctx, const gpu_object_list& src, int8_t n) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    for (int i = 0; i < res.count; ++i) {
+        auto& obj = res.objects[i];
+        if (arc::paints_at_least(min((int)obj.height, GPU_MAX_GRID), min((int)obj.width, GPU_MAX_GRID),
+                                 [&](int row, int col) { return obj.mask[row][col] != GPU_TRANSPARENT; }, n))
+            obj.selected = true;
     }
     return res;
 }
@@ -1319,7 +1367,7 @@ __device__ gpu_object_list& gpu_exec_select_objects_with_holes(gpu_exec_context&
 // through unmarked.
 __device__ gpu_object_list& gpu_exec_select_color(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
         for (int r = 0; r < obj.height && !obj.selected; ++r)
@@ -1361,7 +1409,7 @@ __device__ gpu_object_list& gpu_exec_select_elected_background(gpu_exec_context&
     // No winner adds no marks, including on wholly transparent objects.
     if (color < 0) {
         auto& res = gpu_acquire(ctx);
-        res = src;
+        gpu_copy_list(res, src);
         return res;
     }
     return gpu_exec_select_color(ctx, src, color);
@@ -1370,7 +1418,7 @@ __device__ gpu_object_list& gpu_exec_select_elected_background(gpu_exec_context&
 // SelectAll: mark every object — the explicit "act on it all".
 __device__ gpu_object_list& gpu_exec_select_all(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     for (int i = 0; i < res.count; ++i) res.objects[i].selected = true;
     return res;
 }
@@ -1380,75 +1428,56 @@ __device__ gpu_object_list& gpu_exec_select_all(gpu_exec_context& ctx, const gpu
 // invert(invert(big) ∪ invert(red)) by De Morgan, no extra machinery.
 __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     for (int i = 0; i < res.count; ++i)
         res.objects[i].selected = !res.objects[i].selected;
     return res;
 }
 
-// ShapeColorMap: repaint the main object to a color picked by a small glyph's
-// SHAPE, using the puzzle-level table learned host-side (shape_color_map_rule::detect_body_recolor).
-// key = smallest-bbox object, target = largest-bbox object; the target is
-// recolored to table[hash(key)] and the key, read, is used up: dropped from the
-// list as DeleteSelection drops an object, so nothing is painted where it was --
-// whatever lies under it shows, where painting it the background would cover.
-// Everything else passes through. If the table is empty (rejected by the
-// consistency gate) or the glyph's shape isn't in it, the op is a no-op and the
-// key stays. Learn and apply share one hash (shape_occupancy_hash, 12_dsl.cuh).
+// The color the puzzle-level shape table names for a piece's shape (its paint's
+// fingerprint, gpu_shape_hash_of_paint), or -1 where it names none. The one
+// lookup both shape ops make.
+__device__ inline int gpu_shape_color(const gpu_exec_context& ctx, const gpu_fixed_object& obj) {
+    const uint32_t shape = gpu_shape_hash_of_paint(obj);
+    for (int k = 0; k < ctx.shape_color_count && k < GPU_MAX_SHAPE_KEYS; ++k)
+        if (ctx.shape_color_keys[k] == shape) return ctx.shape_color_vals[k];
+    return -1;
+}
+
+// ShapeColorMap: every picked piece takes the color its own SHAPE names in the
+// puzzle-level table learned host-side -- a shape the same turned either way or
+// mirrored either way (canonical_shape_hash, the key the reading learned). A
+// shape the table names no color for leaves its piece as it was; nothing else
+// changes. A piece colored by ANOTHER's shape is said in words (009d5c81's key
+// naming the figure's color): the key takes its shape's color, the figure the
+// key's (ColorFrom), and the key goes (DeleteSelection).
 __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
-    res = src;  // pass everything through; default is no-op
-    if (ctx.shape_color_count <= 0 || src.count <= 0) return res;
-
-    // key = smallest painted box, target = largest. Measured on the paint so an
-    // untrimmed layer ranks by its glyph, the way inference learned it.
-    int key = -1, tgt = -1, ka = 1 << 30, ta = -1;
-    for (int i = 0; i < src.count; ++i) {
-        const gpu_painted_box b = gpu_box_of_paint(src.objects[i]);
-        if (b.width <= 0 || b.height <= 0) continue;
-        int a = b.width * b.height;
-        if (a < ka) { ka = a; key = i; }
-        if (a > ta) { ta = a; tgt = i; }
+    gpu_copy_list(res, src);
+    if (ctx.shape_color_count <= 0) return res;
+    for (int i = 0; i < res.count; ++i) {
+        auto& obj = res.objects[i];
+        if (!obj.selected) continue;
+        const int color = gpu_shape_color(ctx, obj);
+        if (color < 0) continue;
+        for (int r = 0; r < obj.height; ++r)
+            for (int c = 0; c < obj.width; ++c)
+                if (obj.mask[r][c] != GPU_TRANSPARENT) obj.mask[r][c] = (int8_t)color;
     }
-    if (key < 0 || tgt < 0 || key == tgt) return res;
-
-    // Fingerprint the key glyph's occupancy (shared recipe in 12_dsl.cuh).
-    uint32_t hsh = gpu_shape_hash_of_paint(src.objects[key]);
-
-    // Look up the color; miss -> no-op.
-    int8_t color = -1;
-    for (int i = 0; i < ctx.shape_color_count && i < GPU_MAX_SHAPE_KEYS; ++i)
-        if (ctx.shape_color_keys[i] == hsh) { color = ctx.shape_color_vals[i]; break; }
-    if (color < 0) return res;
-
-    // Recolor the target's painted cells.
-    auto& robj = res.objects[tgt];
-    for (int r = 0; r < robj.height; ++r)
-        for (int c = 0; c < robj.width; ++c)
-            if (robj.mask[r][c] != GPU_TRANSPARENT) robj.mask[r][c] = color;
-    // Use the key up: close the list over it.
-    for (int i = key; i + 1 < res.count; ++i) res.objects[i] = res.objects[i + 1];
-    res.count--;
     return res;
 }
 
 // ShapeToInteriorColorMap: per-object interior fill whose color is picked by the
 // object's OWN shape via the puzzle-level table (shape_color_map_rule::detect_interior_fill).
-// Sibling of ShapeColorMap, but applies per object (not single key->target) and
-// paints the enclosed interior (not the body). For each object: lane 0 hashes the
-// occupancy (shape_occupancy_hash, the same shared recipe ShapeColorMap uses), looks
-// up the color, broadcasts it; a hit floods the interior with that color, a miss
-// passes the object through unchanged. Inside-noise (a non-transparent pixel in
-// the hole, e.g. a marker) is a wall to the flood, so it keeps its color -- the
-// trailing Union re-stamping the separate marker object reproduces it either way.
+// Sibling of ShapeColorMap, but paints the enclosed interior (not the body). For
+// each object: lane 0 looks its shape's color up (gpu_shape_color, the lookup
+// ShapeColorMap makes) and broadcasts it; a hit floods the interior with that
+// color, a miss passes the object through unchanged. Inside-noise (a
+// non-transparent pixel in the hole, e.g. a marker) is a wall to the flood, so
+// it keeps its color -- the trailing Union re-stamping the separate marker
+// object reproduces it either way.
 __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx, int lane) {
-    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
-        // Fingerprint the object's occupancy (shared recipe in 12_dsl.cuh).
-        const uint32_t hsh = gpu_shape_hash_of_paint(obj);
-        for (int k = 0; k < ctx.shape_color_count && k < GPU_MAX_SHAPE_KEYS; ++k)
-            if (ctx.shape_color_keys[k] == hsh) return (int)ctx.shape_color_vals[k];
-        return -1;
-    });
+    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) { return gpu_shape_color(ctx, obj); });
 }
 
 // OverlapCorner: lay the objects out as a diagonal corner-chain. Objects are
@@ -1476,7 +1505,7 @@ __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx,
 __device__ gpu_object_list& gpu_exec_overlap_corner(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     int n = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
-    if (n <= 0) { res = src; return res; }
+    if (n <= 0) { gpu_copy_list(res, src); return res; }
 
     // Chain order = bbox (x0, y0) ascending. Selection sort, n <= 32.
     int order[GPU_KERNEL_MAX_OBJECTS];
@@ -1681,7 +1710,7 @@ __device__ static int gpu_layout_bands(const gpu_object_list& src, int n, bool r
 __device__ gpu_object_list& gpu_exec_select_band(gpu_exec_context& ctx, const gpu_object_list& src,
                                                  int8_t which, bool rows) {
     auto& res = gpu_acquire(ctx);
-    res = src;
+    gpu_copy_list(res, src);
     int n = min((int)res.count, GPU_KERNEL_MAX_OBJECTS);
     if (n <= 0) return res;
     int8_t band_of[GPU_KERNEL_MAX_OBJECTS];
@@ -2910,7 +2939,7 @@ __device__ gpu_object_list& gpu_exec_copy_to(gpu_exec_context& ctx, const gpu_ob
     auto& res = gpu_acquire(ctx);
     int picked = 0;
     for (int i = 0; i < src.count; ++i) picked += src.objects[i].selected;
-    if (!picked) { res = src; return res; }
+    if (!picked) { gpu_copy_list(res, src); return res; }
     // Do not silently publish only a prefix of a Cartesian product.
     if (picked * (src.count - picked) > GPU_KERNEL_MAX_OBJECTS) return res;
     for (int i = 0; i < src.count; ++i) {
@@ -3196,6 +3225,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::MoveToward:     result = last ? &gpu_exec_move_toward(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::MirrorAround:   result = last ? &gpu_exec_mirror_around(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectObjectsWithHoles: result = last ? &gpu_exec_select_objects_with_holes(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SelectAtLeastCells: result = last ? &gpu_exec_select_at_least_cells(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectColor:    result = last ? &gpu_exec_select_color(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectElectedBackground: result = last ? &gpu_exec_select_elected_background(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectAll:      result = last ? &gpu_exec_select_all(ctx, *last) : &gpu_acquire(ctx); break;
@@ -3465,7 +3495,10 @@ static void ensure_exec_capacity(int job_count, int slot) {
 // Build host-side templates from cuda_dsl_example_data. Shared by main + scratch paths.
 static void build_example_templates(const cuda_dsl_example_data& ex, int count,
                                     std::vector<gpu_example_template>& h_templates) {
-    h_templates.assign(count, gpu_example_template{});
+    // Made where they lie: one template holds a list as long as a grid has
+    // cells, too big to stand on the stack as the value assign would copy.
+    h_templates.clear();
+    h_templates.resize(count);
     for (int ei = 0; ei < count; ++ei) {
         auto& tmpl = h_templates[ei];
 

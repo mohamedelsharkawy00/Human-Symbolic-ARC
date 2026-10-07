@@ -1579,9 +1579,11 @@ namespace arc {
       // it has finished reading before we overwrite; its results were already
       // written by the kernel, so the later wait+process of this slot stays valid.
       if (slot_pending[wait_slot]) cuda_dsl_wait_for_exec(wait_slot);
-      static thread_local cuda_dsl_example_data example_data;
-      build_example_upload(example_data, p, active_example_count);
-      cuda_dsl_upload_examples(example_data);
+      // On the heap: an upload holds a list as long as a grid has cells for
+      // every example it can carry.
+      static thread_local auto example_data = std::make_unique<cuda_dsl_example_data>();
+      build_example_upload(*example_data, p, active_example_count);
+      cuda_dsl_upload_examples(*example_data);
     }
 
     // Launch the current batch FIRST so the GPU starts immediately, then do

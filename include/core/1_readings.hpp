@@ -249,7 +249,7 @@ struct object {
 #pragma warning(pop)
 #endif
 
-// What counts as one object. The walk answers all three the same way, so no
+// What counts as one object. The walk answers all four the same way, so no
 // two readings can disagree about which cells belong together.
 enum class grouping : int8_t {
     // Cells that touch, all of them the same color. The usual object.
@@ -258,6 +258,9 @@ enum class grouping : int8_t {
     touching_any_color,
     // Every cell of a color at once, touching or not. One object per color.
     all_of_one_color,
+    // Cells that share a side, all of them the same color: the usual object cut
+    // finer, a corner joining nothing (aedd82e4's lone cells).
+    touching_sides_same_color,
 };
 
 // Caller-owned so host and device can lend memory they already hold.
@@ -268,7 +271,8 @@ struct object_walk_scratch {
     int16_t cells[MAX_GRID_CELLS];
 };
 
-// Grouping of cells into an object is 8 way, "is this one object?".
+// Grouping of cells into an object is 8 way, "is this one object?" -- save
+// the one finer cut that asks it of sides alone (touching_sides_same_color).
 //
 // Worked out rather than written down, because a constexpr array lives in
 // host memory and device code cannot index one -- and the walk below runs on
@@ -377,6 +381,17 @@ ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
             queue_col[seeded++] = (int16_t)col;
         }
     walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
+}
+
+// WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
+// many cells of its `height` by `width` box. Counted here for the op and for
+// the reading that replays it, so the two cannot pick different pieces.
+template <class Occupied>
+ARC_HOST_DEVICE inline bool paints_at_least(int height, int width, Occupied occupied, int at_least) {
+    int cells = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) cells += occupied(row, col) ? 1 : 0;
+    return cells >= at_least;
 }
 
 // Count four-connected enclosed spaces in an occupancy mask. Shared by
@@ -583,6 +598,8 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
     // is; the touching kinds walk out from the seed cell only.
     const bool whole_color = (how == grouping::all_of_one_color);
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
+    // A grid laid out of copies (tiles_of): a group never leaves its seed's copy.
+    const tile_size tiles = tiles_of(one_grid);
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
     for (int r = 0; r < MAX_GRID_DIM; ++r)
         for (int c = 0; c < MAX_GRID_DIM; ++c) taken[r][c] = false;
@@ -603,12 +620,16 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
             int seen = 0;
             int seeded = 1;
             cell_box box;
+            auto in_this_copy = [&](int other_row, int other_col) {
+                return (tiles.height <= 0 || other_row / tiles.height == row / tiles.height) &&
+                       (tiles.width <= 0 || other_col / tiles.width == col / tiles.width);
+            };
             // Every other cell of this color joins before the walk starts, and
             // the walk below then claims nothing, so the group is the color.
             if (whole_color)
                 for (int other_row = 0; other_row < one_grid.height; ++other_row)
                     for (int other_col = 0; other_col < one_grid.width; ++other_col) {
-                        if (taken[other_row][other_col] ||
+                        if (taken[other_row][other_col] || !in_this_copy(other_row, other_col) ||
                             one_grid.data[other_row][other_col] != color) continue;
                         taken[other_row][other_col] = true;
                         queue_row[seeded] = (int16_t)other_row;
@@ -616,21 +637,23 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
                         ++seeded;
                     }
             // One flood fill for the whole project, so no two readings can
-            // disagree about which cells belong to one group.
-            const int count = walk_out(one_grid.height, one_grid.width,
-                queue_row, queue_col, seeded,
-                [&](int next_row, int next_col) {
-                    if (whole_color || taken[next_row][next_col]) return false;
-                    const int there = one_grid.data[next_row][next_col];
-                    if (any_color ? (there < 0 || there == background)
-                                  : (there != color)) return false;
-                    taken[next_row][next_col] = true;
-                    return true;
-                },
-                [&](int seen_row, int seen_col) {
-                    found_cells[seen++] = (int16_t)cell_index(seen_row, seen_col);
-                    box.include_cell(seen_row, seen_col);
-                });
+            // disagree about which cells belong to one group: eight ways round,
+            // or four where only a side joins.
+            auto claim = [&](int next_row, int next_col) {
+                if (whole_color || taken[next_row][next_col] || !in_this_copy(next_row, next_col)) return false;
+                const int there = one_grid.data[next_row][next_col];
+                if (any_color ? (there < 0 || there == background)
+                              : (there != color)) return false;
+                taken[next_row][next_col] = true;
+                return true;
+            };
+            auto see = [&](int seen_row, int seen_col) {
+                found_cells[seen++] = (int16_t)cell_index(seen_row, seen_col);
+                box.include_cell(seen_row, seen_col);
+            };
+            const int count = how == grouping::touching_sides_same_color
+                ? walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, seeded, claim, see)
+                : walk_out<8>(one_grid.height, one_grid.width, queue_row, queue_col, seeded, claim, see);
             take(summary_of(box, count), found_cells, seen);
         }
 }
@@ -741,7 +764,7 @@ ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int 
 }
 
 // How big a grid reads once posed. Only the trade changes the size.
-inline std::pair<int, int> posed_size(int pose, int width, int height) {
+ARC_HOST_DEVICE inline std::pair<int, int> posed_size(int pose, int width, int height) {
     return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
 }
 
@@ -794,20 +817,24 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 }
 
 // Canonical (orientationless, positionless) shape identity: the smallest
-// shape_occupancy_hash over the eight ways round, done by index arithmetic —
-// no pose grids are built. Equal shapes have equal hashes; collisions are possible.
-// occupied(row, col) reads the original shape without copying its storage.
+// shape_occupancy_hash over the eight ways round -- turned either way, mirrored
+// either way -- done by index arithmetic, no pose grids built. Equal shapes have
+// equal hashes; collisions are possible. occupied(row, col) reads the original
+// shape without copying its storage. THE KEY OF THE LEARNED SHAPE TABLE: the
+// reading learns it and the ops that read the table look it up, both here, so
+// a shape the pairs showed one way round is the same shape the test shows
+// another (e8593010's L, turned).
 template <typename OccupancyAt>
-inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied) {
+ARC_HOST_DEVICE inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied) {
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, width, height);
-        uint32_t hash = arc::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
+        const uint32_t hash = arc::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
             const auto [row, col] = pose_source(pose, width, height, i / posed_width,
                                                 i % posed_width);
             return occupied(row, col);
         });
-        best = min(best, hash);
+        if (hash < best) best = hash;
     }
     return best;
 }
@@ -817,10 +844,29 @@ inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied
 // whose box holds it or that its box holds, one it touches, or one of its very
 // shape, as it lies or turned any of the eight ways round. The rule that reads
 // it off the pairs and the op that does it both ask here, so the two cannot
-// disagree about which piece is the partner. Numbered in the order they are
-// asked.
+// disagree about which piece is the partner. Numbered as the ops number them.
 enum class partner_by : int8_t { nearest, same_row, same_column, around_it, inside_it, touching,
                                  same_shape, same_shape_turned, count };
+
+// THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
+// much is broken in: the surer a way names one partner, the sooner. The piece
+// around it or inside it first -- one box holds another -- then the piece
+// lined up with it, in its rows or its columns, which a second piece in the
+// same band leaves without one (18419cfa's test shape, under two frames), then
+// the nearest, which ties as soon as two stand as far (ddf7fa4f's test block,
+// between two dots), then the rest as numbered.
+inline constexpr partner_by partner_ways_asked[] = {
+    partner_by::around_it, partner_by::inside_it, partner_by::same_row, partner_by::same_column,
+    partner_by::nearest, partner_by::touching, partner_by::same_shape, partner_by::same_shape_turned };
+static_assert(sizeof(partner_ways_asked) / sizeof(partner_ways_asked[0]) == (size_t)partner_by::count,
+              "every partner way is asked once");
+
+// The `at`-th asked of a list that numbers the partner ways first and then more
+// (MoveToward's colors, MirrorAround's grid): the partner ways in the order
+// partner_ways_asked gives, the rest as numbered.
+constexpr int asked_at(int at) {
+    return at < (int)partner_by::count ? (int)partner_ways_asked[at] : at;
+}
 
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
 // or all four ways at once. The middle is a partner's, one of the partner_by
