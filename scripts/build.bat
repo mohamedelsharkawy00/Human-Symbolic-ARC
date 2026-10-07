@@ -3,12 +3,11 @@ setlocal
 cd /d "%~dp0.."
 
 :: Single source of truth for building ARC. Callable by the profiling scripts
-:: and scripts\probe.bat.
+:: and scripts\said.bat.
 ::   %1  preset    - CMake preset name (default: x64-Release)
 ::   %2  NOLAUNCH  - if set to NOLAUNCH, build only; do not start ARC.exe
 ::                   (profilers launch the binary under their own collector)
-::   %3  target    - build only this target (probe.bat's arc_probe is left
-::                   out of the default build)
+::   %3  target    - build only this target (said.bat builds arc_said alone)
 set "PRESET=%~1"
 if not defined PRESET set "PRESET=x64-Release"
 set "NOLAUNCH=%~2"

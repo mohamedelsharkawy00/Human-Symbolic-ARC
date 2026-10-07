@@ -114,19 +114,15 @@ add_executable(arc_spell "scripts/spell.cpp")
 target_link_libraries(arc_spell PRIVATE arc_gpu)
 target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# WHAT THE READING SOLVES WITHOUT SEARCHING, counted over a whole dataset. The
-# guard on say_the_reading: a sentence it spells that draws the wrong thing is
-# reported here and nowhere else. Pass a task ID to check one puzzle only.
+# WHAT THE READING SOLVES WITHOUT SEARCHING, counted over a whole dataset, and
+# every puzzle's inference readout, in one run into out/<label>. The guard on
+# say_the_reading: a sentence it spells that draws the wrong thing is reported
+# here and nowhere else. scripts\said.bat builds it and runs it, and
+# scripts\readouts.py compares two runs. Built with ARC_NO_GPU (the Linux
+# cloud), it writes the readouts alone.
 add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# EVERY READOUT, WRITTEN DOWN: infers each training puzzle and writes its
-# inference readout, running nothing on the GPU. Left out of the default build;
-# scripts\probe.bat builds it and runs it, and scripts\readouts.py reads it.
-add_executable(arc_probe EXCLUDE_FROM_ALL "scripts/probe.cpp")
-target_link_libraries(arc_probe PRIVATE arc_core)
-target_compile_definitions(arc_probe PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 # The GUI: a window onto the search, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA

@@ -1,12 +1,13 @@
-# Handoff, 2026-10-06
+# Handoff, 2026-10-07
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 170 right, 0 wrong (fd4faba). Current run: out/order3-said.txt
-  and out/probe/order3/ (out\ is not in git).
+- Training: 172 right, 0 wrong (the replays made DRY and the score and
+  readouts merged, not yet committed; 170 at 32d371d). Current run:
+  out/merged/; out/base/ is 32d371d (out\ is not in git).
 - solutions/ holds the inferred program of every solved puzzle. Left as they
   were, not solved now: the manual 05a7bcf2, 10fcaaa3, 32597951, f25fbde4,
   and 44d8ac46 (an old inferred one that no longer fits). solutions/shelf/
@@ -14,47 +15,34 @@ This file holds only what is current; past stages are in git history
 - A full score has taken 34 to 82 s on the same code: the laptop's clock
   moves with heat, so one run's seconds say little. Compare two builds by
   interleaving them (old, new, old, new) and taking each one's fastest run.
-  The current build has not been timed that way yet. scripts\profile.bat profiles arc_said (VTune,
-  attached after CUDA starts).
-- What blocks the unsolved (`readouts.py missing order3 out/order3-said.txt`,
-  named / the only word missing): copies 435 / 59, a recolor 397 / 122, where
-  pieces went 225 / 42, turns 215 / 14, cells drawn on the ground 147 / 89,
-  shape changes 115 / 10.
+  The current build has not been timed that way yet; one run of it, the
+  score and the readouts together, took 82 s. scripts\profile.bat profiles
+  arc_said (VTune, attached after CUDA starts).
+- What blocks the unsolved (`readouts.py missing merged`,
+  named / the only word missing): copies 439 / 60, a recolor 398 / 120, where
+  pieces went 227 / 43, turns 214 / 14, cells drawn on the ground 145 / 87,
+  shape changes 116 / 8.
 
 ## Next, in the user's order
-1. DRY: the rest of the replays (`*_holds`, 7_infer.hpp) onto templates, as
-   paint_holds (rays, trails, copies, repeats, the turned figure) and
-   slides_hold (align, step, edge, shift, toward) now are. About 15 left:
-   color from a partner, picked recolor, removal, mirror, outline, fills,
-   boxes, bridges, size rank. Open, the user decides: replay_facts keeps the
-   pieces it made ready and carry_the_hand (the one door that changes them)
-   wipes them, instead of every try remaking them (handed_pieces already
-   makes them once a pick for the paints).
-2. Merge the score and the readouts (the user: "confusing and inconsistent").
-   Today arc_said (scripts/said.cpp) scores: normal build, run by hand, needs
-   the GPU. arc_probe (scripts/probe.cpp) writes the readouts: built and run
-   by scripts\probe.bat, no GPU, the only one the Linux cloud builds.
-   scripts/readouts.py reads both. Wanted: one run that scores and writes the
-   readouts, built and run one way, outputs in one place, the readout written
-   by one owner; a GPU-free readout-only build must stay. Agree the name, the
-   one command and where outputs go with the user first, then update
-   AGENTS.md.
-3. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell (fits,
+1. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell (fits,
    test right): `SelectColor[9] MoveToward[14]`, then `SelectColor[6]
    Recolor[9]`, then the 5s' box `AddColor[5] Underlay`. Not found; it needs
    the move to claim the input cell its landing covers (it ties ColorFrom's
    "the 9 takes the 5 around it" at 6 cells), "6 becomes 9" sayable after the
    move (by color it is only an act, and the acts open the line), and the box
    fill asked of a line that moves pieces.
-4. Speed: read the cuts and plans of one puzzle in parallel (low priority).
+2. Speed: read the cuts and plans of one puzzle in parallel (low priority).
 
 Smaller, open:
-- Recolors are the stage after: 122 unsolved lack only a recolor, mostly a
+- Recolors are the stage after: 120 unsolved lack only a recolor, mostly a
   color taken from another piece (compositions of ColorFrom's partners,
   picks, frames). Work one puzzle at a time with the user.
-- Under the plan "delete 0, fill 0" a spurious one-cell Shape Picks Fill is
-  said before the rounds, and carry_the_hand cannot carry a learned table,
-  so no word that needs the hand is asked after it (c35c1b4c showed it).
+- carry_the_hand cannot carry a learned table, so no word that needs the
+  hand is asked after a Shape Picks Fill. The spurious tiny fills that set
+  this off are gone with the at-work rule: 20 readouts named Shape Picks
+  Fill, now 10, the real ones (6 of them solved); 6d75e8bb is solved by it.
+  The readouts show only the elected plan, so c35c1b4c's case (under "delete
+  0, fill 0") is unchecked.
 - The freedoms inside a cut are still chosen by the matching, not the words;
   do it if the data asks. FitInto (would_fit answered with the place) when a
   puzzle needs it; WouldFit's gap is "for now" (the user: not general).
@@ -77,6 +65,22 @@ Smaller, open:
   leaves may show anything but the piece itself.
 - A replay checks everything its op draws: the trail redraws its body; the
   turned figure is the whole drawing, never a part (parts fit by accident).
+- Every replay (`*_holds`, 7_infer.hpp) sits on one of three templates:
+  paint_holds (recolors through recolors_hold, mirror, rays, trails, copies,
+  repeats, the turned figure, boxes, bars, both fills), slides_hold (the
+  moves) and drops_hold (removal, outline). Each is handed the pieces its
+  pick takes, made once a pick by handed_pieces; replay_facts keeps none.
+- At work, asked the same way of every word in every pair (replay_facts):
+  at some cell it acts on, the output shows what its picked pieces did not
+  show there before. A copy laid on its own likeness is still at work
+  (4938f0c2's last pair is already whole).
+- paint_holds owns how a paint lies: over, under (first to reach a cell
+  keeps it, as Underlay) or onto, on one canvas of what is down -- the cut's
+  pieces and every paint said before, laid after each is said -- and in its
+  own colors, one color, or its own else one. A paint is never no color.
+- Size rank and the fill by shape replay on the hand, so they are asked
+  only while the hand is known (not after a word carry_the_hand cannot
+  carry).
 - MoveToward[value]: value / PARTNER_KINDS is how far (a step, its own size,
   until it touches), value % PARTNER_KINDS the partner (each partner_by way,
   then each color). move_toward (1_readings.hpp) is the GPU op's and the

@@ -11,12 +11,14 @@
 //   1. Move the op's arithmetic into a shared ARC_HOST_DEVICE helper and have the
 //      GPU op in src/cuda_solver.cu call it (snap_to_anchors and slam_cells in
 //      7_infer.hpp are the pattern), so the replay and the op cannot differ.
-//   2. Replay it in 7_infer.hpp: a *_holds check asked in finish_the_line for a
+//   2. Replay it in 7_infer.hpp: a *_holds check on one of the replay templates
+//      (paint_holds, slides_hold, drops_hold) asked in finish_the_line for a
 //      same-size word, a frame kind in choose_piece_frame for a size change, or a
 //      whole_line rule for a word that redraws every output by itself.
 //   3. Spell it in 9_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
-//   4. Check with arc_said on the training set (no solved puzzle lost, the wrong
-//      count not up) and the readouts' fully-explained-but-unsolved list.
+//   4. Check with scripts\said.bat on the training set (no solved puzzle lost,
+//      the wrong count not up) and the readouts' fully-explained-but-unsolved
+//      list.
 // Read what earlier paints left on the canvas, so they wait on composition:
 //   Output, ReadUnder, MaskOut, Intersection, Difference (only the input-blocks
 //   and pane rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy

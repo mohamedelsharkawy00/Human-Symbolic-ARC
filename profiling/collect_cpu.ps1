@@ -5,7 +5,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $runDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $scorePath = Join-Path $runDirectory 'score.txt'
-$runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_said.exe" -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
+# Run from the repo root under the label "profile": its readouts land in
+# out/profile, and what it prints is kept here beside the profile.
+$runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_said.exe" -ArgumentList 'profile' -WorkingDirectory "$PSScriptRoot/.." -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
 try {
     # Let CUDA initialize before VTune injects its sampler. The score still
     # covers every puzzle; the profile excludes startup and attachment time.

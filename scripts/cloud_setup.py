@@ -1,4 +1,4 @@
-"""Build the CPU-only inference readout tool for Linux cloud development.
+"""Build arc_said without a GPU, the readouts alone, for Linux cloud development.
 
 Run from any directory: python3 scripts/cloud_setup.py
 Use --build-only when puzzle data is supplied separately or networking is off.
@@ -23,9 +23,9 @@ def main():
     out = root / "out" / "cloud"
     out.mkdir(parents=True, exist_ok=True)
     command = compiler + [
-        "-std=c++20", "-O2", "-pthread", "-DARC_ENABLE_CUDA_PIECES=0",
+        "-std=c++20", "-O2", "-pthread", "-DARC_ENABLE_CUDA_PIECES=0", "-DARC_NO_GPU",
         "-I", str(root / "include" / "core"),
-        str(root / "scripts" / "probe.cpp"), "-o", str(out / "arc_probe"),
+        str(root / "scripts" / "said.cpp"), "-o", str(out / "arc_said"),
     ]
     print(shlex.join(command), flush=True)
     subprocess.run(command, cwd=root, check=True)
@@ -34,9 +34,10 @@ def main():
         needed = ("arc-agi_training_challenges.json", "arc-agi_training_solutions.json")
         if not all((data / name).is_file() for name in needed):
             subprocess.run([sys.executable, str(root / "scripts/fetch_data.py")], cwd=root, check=True)
-    print("CPU inference build ready. From the repo root:")
-    print("  out/cloud/arc_probe out/probe/cloud 00576224")
-    print("Readouts only; arc_said and CopyTo still require the CUDA build.")
+    print("arc_said without a GPU is ready. From the repo root:")
+    print("  out/cloud/arc_said first 00576224")
+    print("It writes out/first/logs/inference and no score; the score and the CopyTo")
+    print("checks still need the CUDA build.")
 
 
 if __name__ == "__main__":

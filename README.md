@@ -105,15 +105,16 @@ No solver rules were changed using evaluation feedback.
 
 Use `python3 scripts/cloud_setup.py` as the environment setup command, run from
 the repository root. It needs Python 3 and a C++20 compiler (`g++`, or set
-`CXX=clang++`). It builds the CPU inference tool and fetches missing puzzle data
-using the existing public-data script. For an offline build, add `--build-only`.
-The checkout must contain these setup files.
+`CXX=clang++`). It builds `arc_said` without a GPU and fetches missing puzzle
+data using the existing public-data script. For an offline build, add
+`--build-only`. The checkout must contain these setup files.
 
 ```text
-out/cloud/arc_probe out/probe/cloud 00576224
+out/cloud/arc_said first 00576224
 ```
 
-Omit the puzzle ID to write all training readouts. This target uses neither CUDA
+It writes the readouts to `out/first/logs/inference`. Omit the puzzle ID to
+write all training readouts. This target uses neither CUDA
 nor Vulkan. It supports work on the reading and program emission; it does not
 run the emitted programs or replace GPU score and CopyTo checks. `AGENTS.md`
 holds the rules for agents.

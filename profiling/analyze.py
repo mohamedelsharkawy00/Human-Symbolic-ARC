@@ -61,7 +61,7 @@ OS_KERNEL = {"ntoskrnl", "win32kfull.sys", "win32kbase.sys", "win32k.sys",
 NOISE = {"imagehlp", "dbghelp", "graphics-hook64", "apphelp",
          "wpprecorder.sys", "directxdatabasehelper", "shcore"}
 
-ARC_MODULES = {"arc", "arc_said", "arc_headless", "arc_probe"}
+ARC_MODULES = {"arc", "arc_said", "arc_headless"}
 CAT_LABELS = {
     "ARC":    "ARC",
     "MEM":    "ARC:mem",

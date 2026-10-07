@@ -32,31 +32,36 @@ language lacks.
 
 ## Build and check
 - Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
-- Score: `out\x64-Release\arc_said.exe > said.txt` prints a line per puzzle
-  whose program fits the training pairs (id, SOLVED or WRONG, program) and a
-  tally on stderr. `arc_said <id>` runs one puzzle. A full run reads a
-  puzzle on every CPU thread and takes about 30 s on the 20-thread laptop;
-  `ARC_THREADS=1` reads one at a time (the profiler does).
+- Score and readouts, one run: `scripts\said.bat <label> [id...]` builds
+  arc_said and reads every training puzzle, or the ids named, into
+  `out\<label>\`: `said.txt`, a line per puzzle whose program fits the
+  training pairs (id, SOLVED or WRONG, program); `tally.txt`, the counts, also
+  on screen; and `logs\inference\<id>.txt`, each puzzle's readout
+  (background, readings, fired rules, sentences). A label is a new name,
+  never a build folder (x64-Release, cloud); a full run writes about 225 MB,
+  so delete old labels. It reads a puzzle on every CPU thread and takes about
+  80 s on the 20-thread laptop; `ARC_THREADS=1` reads one at a time (the
+  profiler does, under the label `profile`).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
   shows what it drew beside what was wanted, pair by pair.
 - Tests: none besides the score and the readouts. `tests/puzzles` holds small
   made-up puzzles to view in the app (the CUS dataset button).
-- Readouts: `scripts\probe.bat <label> [id...]` writes the inference readout of
-  each puzzle to `out\probe\<label>\logs\inference\<id>.txt`: background,
-  readings, fired rules, sentences.
-- Compare runs with `scripts\readouts.py`: `solved` (lost and gained),
-  `explained` (readings that explain every cell yet are unsolved; must not
-  grow), `missing` (which missing words block the unsolved puzzles).
+- Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost
+  and gained), `explained <before> <after>` (readings that explain every cell
+  yet are unsolved; must not grow), `missing <label>` (which missing words
+  block the unsolved puzzles).
 - A change is good when no solved puzzle is lost, the wrong count does not go
   up, and no new "explained but unsolved" appears.
 
 ## Linux cloud
 No GPU there. Run from the repo root.
-- Setup: `python3 scripts/cloud_setup.py` builds `out/cloud/arc_probe` with a
-  C++20 compiler (no CUDA, no Vulkan) and fetches the puzzles only when they
-  are missing; `--build-only` skips that when they come another way.
-- Readouts: `out/cloud/arc_probe out/probe/<label> [id...]`; no ids reads every
-  training puzzle. Compare runs with `python3 scripts/readouts.py` as above.
+- Setup: `python3 scripts/cloud_setup.py` builds `out/cloud/arc_said` without
+  a GPU, with a C++20 compiler (no CUDA, no Vulkan), and fetches the puzzles
+  only when they are missing; `--build-only` skips that when they come another
+  way.
+- Readouts: `out/cloud/arc_said <label> [id...]` writes
+  `out/<label>/logs/inference` and no score; no ids reads every training
+  puzzle. Compare runs with `python3 scripts/readouts.py` as above.
 - No score: nothing there runs the programs. Right and wrong come from the
   Windows CUDA build or a GPU runner. Say plainly which checks did not run,
   and never claim readouts prove a score.
@@ -65,7 +70,8 @@ No GPU there. Run from the repo root.
 - `include/core`, numbered in reading order. Inference lives in
   `3_background.hpp` (background election and the ground plan: the one owner
   of the background), `6_correspondence.hpp` (readings, fired rules, the line,
-  missing words, ranking the cuts), `7_infer.hpp` (replays `*_holds`, picks,
+  missing words, ranking the cuts), `7_infer.hpp` (replays `*_holds` on three
+  templates, `paint_holds`, `slides_hold` and `drops_hold`; picks,
   frames, `carry_the_hand`, `finish_the_line`, `says_the_most`,
   `read_figures`, `read_the_cut`, `infer`),
   `9_sentences.hpp` (the line spelled as programs, `say_the_plan`) and

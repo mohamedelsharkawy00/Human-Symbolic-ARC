@@ -1,17 +1,20 @@
-"""Reads what scripts\\probe.bat writes (out\\probe\\<label>\\logs\\inference) beside
-what arc_said printed (its stdout saved to a file: id, SOLVED or WRONG, program).
+"""Reads what arc_said writes (scripts\\said.bat <label>): out\\<label>\\said.txt
+(id, SOLVED or WRONG, program) and out\\<label>\\logs\\inference\\<id>.txt.
 
-  python scripts/readouts.py explained <before-label> <after-label> <before-said> <after-said>
+  python scripts/readouts.py explained <before> <after>
       The puzzles whose elected reading explains every cell -- nothing left
       over and no word missing -- yet are not solved, before and after a
       change. A new one is a reading that claims more than its program draws.
 
-  python scripts/readouts.py missing <label> <said>
+  python scripts/readouts.py missing <label>
       Across the unsolved puzzles, each word the elected reading names as
       missing: how many puzzles name it, and how many lack only that word.
 
-  python scripts/readouts.py solved <before-said> <after-said>
+  python scripts/readouts.py solved <before> <after>
       The puzzles solved before and not after, and the other way round.
+
+A run built without a GPU (the Linux cloud) writes no said.txt: every puzzle
+counts as unsolved there.
 """
 import os
 import re
@@ -20,7 +23,7 @@ from collections import Counter
 
 
 def readouts(label):
-    folder = os.path.join('out', 'probe', label, 'logs', 'inference')
+    folder = os.path.join('out', label, 'logs', 'inference')
     for name in sorted(os.listdir(folder)):
         with open(os.path.join(folder, name), encoding='utf-8', errors='replace') as f:
             yield name[:-4], f.read()
@@ -35,7 +38,11 @@ def elected_block(readout):
     return block.group(1) if block else None
 
 
-def said(path, verdict='SOLVED'):
+def said(label, verdict='SOLVED'):
+    path = os.path.join('out', label, 'said.txt')
+    if not os.path.exists(path):
+        print('%s has no score (no %s)' % (label, path), file=sys.stderr)
+        return set()
     with open(path, encoding='utf-8-sig') as f:
         return {line.split('\t')[0] for line in f if '\t%s\t' % verdict in line}
 
@@ -50,14 +57,14 @@ def explained(label):
 
 
 def main(argv):
-    if len(argv) == 5 and argv[0] == 'explained':
-        before = explained(argv[1]) - said(argv[3])
-        after = explained(argv[2]) - said(argv[4])
+    if len(argv) == 3 and argv[0] == 'explained':
+        before = explained(argv[1]) - said(argv[1])
+        after = explained(argv[2]) - said(argv[2])
         print('explained but unsolved: before %d, after %d' % (len(before), len(after)))
         print('  new:  ', sorted(after - before))
         print('  gone: ', sorted(before - after))
-    elif len(argv) == 3 and argv[0] == 'missing':
-        solved = said(argv[2])
+    elif len(argv) == 2 and argv[0] == 'missing':
+        solved = said(argv[1])
         named, only = Counter(), Counter()
         for pid, readout in readouts(argv[1]):
             if pid in solved:
