@@ -1129,11 +1129,15 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
 }
 
 // THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
-// paint fills on the canvas, whether it paints a cell there, and whether it is
-// picked -- the questions partner_of and partner_color ask (1_readings.hpp),
-// asked as inference's partner_pieces asks them of the pieces it replays.
+// paint fills on the canvas, whether it paints a cell there, whether it is
+// picked, its color and the colors it holds -- the questions the partner
+// helpers ask (each_partner and kin, 1_readings.hpp), asked as inference's
+// partner_pieces asks them of the pieces it replays.
 struct gpu_partner_view {
     const gpu_object_list& list;
+    __device__ int count() const { return list.count; }
+    __device__ bool is_picked(int i) const { return list.objects[i].selected; }
+    __device__ int color(int i) const { return gpu_obj_first_color(list.objects[i]); }
     __device__ arc::cell_box box(int i) const {
         const gpu_fixed_object& obj = list.objects[i];
         const gpu_painted_box paint = gpu_box_of_paint(obj);
@@ -1150,31 +1154,17 @@ struct gpu_partner_view {
         return down >= 0 && across >= 0 && down < obj.height && across < obj.width &&
                obj.mask[down][across] != GPU_TRANSPARENT;
     }
-    // Object i's one partner by `how` among the objects not picked, or -1.
-    __device__ int partner(arc::partner_by how, int i) const {
-        return arc::partner_of(how, i, list.count, [&](int j) { return box(j); },
-                               [&](int j, int row, int col) { return painted(j, row, col); },
-                               [&](int j) { return (bool)list.objects[j].selected; });
-    }
     // Whether object i holds a cell of `color`.
     __device__ bool holds(int i, int color) const {
         GPU_DEV_FOR_EACH_PIXEL(list.objects[i], r, c, v) { (void)r; (void)c; if (v == color) return true; }
         return false;
     }
+    // Object i's one partner by `how` among the objects not picked, or -1.
+    __device__ int partner(arc::partner_by how, int i) const { return arc::partner_of(how, i, *this); }
     // Object i's one partner of `kind` (partner_of_kind) among the objects not picked, or -1.
-    __device__ int partner_of_kind(int kind, int i) const {
-        return arc::partner_of_kind(kind, i, list.count, [&](int j) { return box(j); },
-                                    [&](int j, int row, int col) { return painted(j, row, col); },
-                                    [&](int j) { return (bool)list.objects[j].selected; },
-                                    [&](int j, int color) { return holds(j, color); });
-    }
+    __device__ int partner_of_kind(int kind, int i) const { return arc::partner_of_kind(kind, i, *this); }
     // The color object i takes from its partners by `how`, or -1.
-    __device__ int color_from(arc::partner_by how, int i) const {
-        return arc::partner_color(how, i, list.count, [&](int j) { return box(j); },
-                                  [&](int j, int row, int col) { return painted(j, row, col); },
-                                  [&](int j) { return (int)gpu_obj_first_color(list.objects[j]); },
-                                  [&](int j) { return (bool)list.objects[j].selected; });
-    }
+    __device__ int color_from(arc::partner_by how, int i) const { return arc::partner_color(how, i, *this); }
 };
 
 // ColorFrom[how]: each picked object takes the color of its partner among the
@@ -1215,9 +1205,7 @@ __device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_
     for (int i = 0; i < src.count; ++i) {
         if (!src.objects[i].selected) continue;
         const int partner = view.partner((arc::partner_by)how, i);
-        res.objects[i].selected = partner >= 0 &&
-            arc::would_fit(i, partner, [&](int j) { return view.box(j); },
-                           [&](int j, int row, int col) { return view.painted(j, row, col); });
+        res.objects[i].selected = partner >= 0 && arc::would_fit(i, partner, view);
     }
     return res;
 }
@@ -1267,8 +1255,7 @@ __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gp
         if (!src.objects[i].selected) continue;
         const int partner = view.partner_of_kind(kind, i);
         if (partner < 0) continue;
-        const arc::heading_step by = arc::move_toward(far, i, partner, view.box(i), view.box(partner),
-            [&](int j, int row, int col) { return view.painted(j, row, col); }, ctx.output.width, ctx.output.height);
+        const arc::heading_step by = arc::move_toward(far, i, partner, view, ctx.output.width, ctx.output.height);
         auto& obj = res.objects[i];
         obj.x0 += (int16_t)by.across; obj.x1 += (int16_t)by.across;
         obj.y0 += (int16_t)by.down;   obj.y1 += (int16_t)by.down;
@@ -1855,7 +1842,7 @@ __device__ gpu_object_list& gpu_exec_shift(gpu_exec_context& ctx, const gpu_obje
         // Move only selected objects; the rest ride through in place. No
         // selection means Shift moves nothing — acts never fall back to "all".
         if (!obj.selected) { res.count++; continue; }
-        // Its own size away, the way shift_by (1_readings.hpp) numbers them.
+        // Its own size away, the way heading `dir` names (shift_by, 1_readings.hpp).
         const arc::heading_step by = arc::shift_by(dir, obj.width, obj.height);
         const int dx = by.across, dy = by.down;
         obj.x0 += (int16_t)dx; obj.y0 += (int16_t)dy;

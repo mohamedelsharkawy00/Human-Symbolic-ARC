@@ -1,4 +1,4 @@
-Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] Recolor[6] Withhold CurrentObjects SelectAll BidiColorMap[21] Withhold CurrentObjects SelectAll BidiColorMap[28] Withhold CurrentObjects SelectAll BidiColorMap[34] Withhold CurrentObjects SelectAll InvertSelection SelectColor[0] ColorFrom[4] SelectAll Union
+Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] Recolor[6] Withhold CurrentObjects SelectAll BidiColorMap[21] Withhold CurrentObjects SelectAll BidiColorMap[28] Withhold CurrentObjects SelectAll BidiColorMap[34] Withhold CurrentObjects SelectAll InvertSelection SelectColor[0] ColorFrom[1] SelectAll Union
 
 Puzzle:       54d9e175
 Train:        Solved

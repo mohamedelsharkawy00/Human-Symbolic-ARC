@@ -30,9 +30,10 @@
 // SelectUnique: marks the one drawing with no twin (unique_drawing in
 //   1_readings.hpp); only the pane pick says it, for the odd pane.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
-//   painted output bounds [2]. Pane-pick uses [0]; explicit background fill uses
-//   [1] or [2]; the filled frame uses [1] on pieces of one color, filled to
-//   their boxes. General piece-stretch readings still need a replay.
+//   painted output bounds [2] (fit_to, 1_readings.hpp). Pane-pick uses [0];
+//   explicit background fill uses [1] or [2]; the filled frame uses [1] on
+//   pieces of one color, filled to their boxes. General piece-stretch readings
+//   still need a replay.
 // NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
 //   mark-lattice rule says them.
 // SortBySize: said only as a helper where a word reads list order (size rank,

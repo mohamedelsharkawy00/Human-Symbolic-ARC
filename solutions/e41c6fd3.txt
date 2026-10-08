@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] SelectColor[2] SelectColor[3] SelectColor[4] SelectColor[6] AlignTo[0] SelectAll Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] SelectColor[2] SelectColor[3] SelectColor[4] SelectColor[6] AlignTo[4] SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       e41c6fd3
 Train:        Solved

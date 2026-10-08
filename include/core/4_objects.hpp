@@ -126,16 +126,15 @@ ARC_HOST_DEVICE inline ray_seed nearest_ray_seed(int height, int width,
     return seed;
 }
 
+// The rays run the four sides of the compass, its even ways, or the four
+// diagonals, its odd ones (heading, 1_readings.hpp).
 template <class Paint>
 ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
                                                Paint paint) {
     if (seed.row < 0) return;
-    for (int direction = 0; direction < 4; ++direction) {
-        const int dx = diagonal ? (direction < 2 ? -1 : 1)
-                                : (direction < 2 ? (direction == 0 ? -1 : 1) : 0);
-        const int dy = diagonal ? (direction % 2 == 0 ? -1 : 1)
-                                : (direction >= 2 ? (direction == 2 ? -1 : 1) : 0);
-        for (int step = 1; step <= radius; ++step) paint(dy * step, dx * step);
+    for (int way = diagonal ? 1 : 0; way < heading::count; way += 2) {
+        const heading_step step = step_of(way);
+        for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along);
     }
 }
 
@@ -324,11 +323,11 @@ struct object_segmentation {
     }
 
     // Divides a grid into objects, then sorts them by size (largest first) and position.
-    static void segment_for_correspondence(const grid& one_grid, int8_t background, segmentation_methods segmentation,
+    static void segment_for_correspondence(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
                                     int step_width = 0, int step_height = 0) {
-        segment_into_objects(one_grid, background, segmentation, info, objects, step_width, step_height);
+        segment_into_objects(one_grid, segmentation, info, objects, step_width, step_height);
         vector<int> reading_order(info.size());
         iota(reading_order.begin(), reading_order.end(), 0);
         stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
@@ -353,13 +352,12 @@ struct object_segmentation {
     // Helps choose which segmentation to use: prefer better compression.
     // Compares storing shapes and their positions with storing individual colored cells.
     // 0.5 means compression to half the size; 2 means expansion to twice the size.
-    static double describe_cost(const grid& one_grid, int8_t background,
-                                const vector<object_info>& objects) {
+    static double describe_cost(const grid& one_grid, const vector<object_info>& objects) {
         const double cell_bits = log2((double)COLOR_COUNT);
         const double place_bits =
             log2((double)max(1, one_grid.width * one_grid.height));
         int colored = 0;
-        walk_colored_cells(one_grid, background, [&](int, int, int) { ++colored; });
+        walk_colored_cells(one_grid, TRANSPARENT, [&](int, int, int) { ++colored; });
         // Nothing on the grid, so there is nothing to save and nothing to lose.
         const double plain = colored * cell_bits;
         if (plain <= 0.0) return 1.0;
@@ -379,7 +377,7 @@ struct object_segmentation {
 
     // Choose a shared block size using whichever grid compresses better.
     // Uses both training grids, so this must not supply a block to an input-only operation.
-    static pair<int, int> block_of(const grid& input, const grid& output, int8_t background,
+    static pair<int, int> block_of(const grid& input, const grid& output,
                                    segmentation_methods segmentation, int sizes_width, int sizes_height) {
         if (segmentation != segmentation_methods::minimal_repeating_set)
             return { sizes_width, sizes_height };
@@ -389,9 +387,8 @@ struct object_segmentation {
         // cheaper block is the one that found real repetition rather than noise.
         auto cost_of = [&](const grid& one_grid, pair<int, int> block) {
             vector<object_info> objects;
-            segment_for_correspondence(one_grid, background, segmentation, objects, nullptr,
-                                       block.first, block.second);
-            return describe_cost(one_grid, background, objects);
+            segment_for_correspondence(one_grid, segmentation, objects, nullptr, block.first, block.second);
+            return describe_cost(one_grid, objects);
         };
         return cost_of(output, from_output) < cost_of(input, from_input) ? from_output
                                                                         : from_input;
@@ -435,8 +432,9 @@ struct object_segmentation {
     }
 
 private:
-    // Divides a grid into objects, excluding the background if known.
-    static void segment_into_objects(const grid& one_grid, int8_t background, segmentation_methods segmentation,
+    // Divides a grid of figures into objects. It has no ground: the plan
+    // deleted it (3_background.hpp), and an empty cell is in no object.
+    static void segment_into_objects(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
                                     int step_width = 0, int step_height = 0) {
@@ -465,8 +463,8 @@ private:
                 int lit = 0;
                 for (int row = 0; row < block_height; ++row)
                     for (int col = 0; col < block_width; ++col) {
-                        int color = one_grid.data[block_top + row][block_left + col];
-                        bool is_colored = (color >= 0 && color != background);
+                        const int color = one_grid.data[block_top + row][block_left + col];
+                        const bool is_colored = is_color(color);
                         if (is_colored) piece.cells[row][col] = (int8_t)color;
                         lit += is_colored;
                     }
@@ -483,7 +481,7 @@ private:
             return;
         }
         object_walk_scratch scratch;
-        each_object(one_grid, background, grouping_of(segmentation), scratch,
+        each_object(one_grid, TRANSPARENT, grouping_of(segmentation), scratch,
                     [&](const object_summary& found, const int16_t* found_cells, int how_many) {
             if ((int)info.size() >= MAX_OBJECTS) return;
             // An object wears one color only if every cell of it does; -1 says several.

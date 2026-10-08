@@ -521,14 +521,16 @@ inline void report_one_pair(ostream& report, size_t pair_index,
     }
     static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };
     report << "  edges " << pair.edges.size() << ", "
-      << how_name[pair.verdict] << "\n";
+      << how_name[(int)pair.verdict] << "\n";
     for (const auto& edge : pair.edges) {
         report << "  " << edge_side(edge) << " [" << (int)edge.from << "] -> ";
         if (edge.to >= 0) report << '[' << (int)edge.to << ']';
         else              report << "place";
         report << " at " << (int)edge.col << ',' << (int)edge.row << edge_kind(edge);
         if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
-        if (edge.recolored_to >= 0) report << " -> " << (int)edge.recolored_to;
+        const auto* source = pair.source_of(edge);
+        const int8_t recolored = edge.recolored_to(source ? source->color : -1);
+        if (recolored >= 0) report << " -> " << (int)recolored;
         // A piece of several colors has no one color it went to, so its map is said whole.
         else if (!edge.exact) report_recoloring(report, edge.color_map);
         // Which way round it was sitting: turned, and/or mirrored
@@ -598,18 +600,19 @@ inline void log_inference(const string& id, const inference& inf,
     report << "[piece_frame] holds " << inf.frame.holds();
     static constexpr const char* frame_kinds[] = { "cut out", "scaled up", "scaled down", "tiled", "posed",
                                                    "fractal", "repeat unit", "laid out", "filled" };
+    const piece_pick& pick = inf.frame.pick;
+    const string pick_said = "  how " + to_string((int)pick.how) + (pick.but_those ? " but those" : "") +
+                             "  value " + to_string((int)pick.value);
     if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::laid_out)
-        report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
+        report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << pick.colors
                << "  cell " << (int)inf.frame.factor;
     else if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::filled)
-        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
-               << "  how " << (int)inf.frame.pick.how << "  value " << (int)inf.frame.pick.value << "  keyed "
-               << (int)inf.frame.keyed;
+        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << pick.colors
+               << pick_said << "  keyed " << (int)inf.frame.keyed;
     else if (inf.frame.holds() && inf.frame.kind != piece_frame_rule::cut_out)
         report << "  " << frame_kinds[inf.frame.kind] << "  factor " << (int)inf.frame.factor;
     else if (inf.frame.holds())
-        report << "  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
-               << "  how " << (int)inf.frame.pick.how << "  value " << (int)inf.frame.pick.value;
+        report << "  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << pick.colors << pick_said;
     report << "\n\n";
     if (inf.framed) {
         report << "[framed] the same-size puzzle read through the frame\n";

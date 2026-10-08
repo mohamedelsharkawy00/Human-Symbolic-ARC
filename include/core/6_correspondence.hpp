@@ -12,7 +12,6 @@
 // and choose the grouping and allowed changes that best explain them.
 #pragma once
 #include "5_matching.hpp"
-#include "3_background.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -25,16 +24,18 @@ namespace arc {
 using namespace std;
 
 // Which pieces a word or frame takes. A color mask picks any piece wearing
-// one of its colors; `how` instead names a pick by shape, size or place.
-// `fits` optionally keeps only pieces that fit their partner (WouldFit).
-// The empty mask picks nothing; all() picks every color, of_color() just one.
+// one of its colors; `how` instead names a pick by shape, size or place, and
+// `but_those` turns it round, every piece but the ones it names, as
+// InvertSelection says it. `fits` optionally keeps only pieces that fit their
+// partner (WouldFit). The empty mask picks nothing; all() picks every color,
+// of_color() just one.
 struct piece_pick {
     enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
-                             not_most_common, at_least_cells, fewer_cells, largest_ranks,
-                             not_largest_ranks, smallest_ranks, not_smallest_ranks, middle_row,
-                             not_middle_row, middle_column, not_middle_column, pick_kinds };
+                             at_least_cells, largest_ranks, smallest_ranks, middle_row, middle_column,
+                             pick_kinds };
     uint16_t colors = 0;
     int8_t how = -1, value = 0, fits = -1;
+    bool but_those = false;
 
     static constexpr piece_pick all() { return { (uint16_t)((1u << COLOR_COUNT) - 1) }; }
     static constexpr piece_pick of_color(int color) { return { (uint16_t)(1u << color) }; }
@@ -43,9 +44,16 @@ struct piece_pick {
     bool may_take_color(int color) const { return how >= 0 || (colors >> color & 1) != 0; }
     bool operator==(const piece_pick& other) const {
         return how == other.how && fits == other.fits &&
-               (how >= 0 ? value == other.value : colors == other.colors);
+               (how >= 0 ? value == other.value && but_those == other.but_those : colors == other.colors);
     }
 };
+
+// The colors a piece wears, a bit each: what a pick by color reads off it.
+inline uint16_t palette(const object& piece) {
+    uint16_t colors = 0;
+    piece.each_cell([&](int, int, int8_t color) { colors = (uint16_t)(colors | 1u << color); });
+    return colors;
+}
 
 // Correspondences match objects from input to output and from output to input.
 
@@ -108,8 +116,9 @@ struct correspondence_election {
         // Matches that were found and then thrown away, with why — otherwise
         // "never matched" and "matched and lost" look the same in the log.
         vector<rejection> discarded;
-        // 0 = fitted, 1 = greedy fallback, 2 = search budget exhausted.
-        int8_t verdict = 0;
+        // How the fitting decided, the weaker of the two ways it was read: it
+        // fitted, it did not and the greedy pass decided, or it gave up.
+        object_matching::fit_verdict verdict = object_matching::fit_verdict::fitted;
         // Unexplained cells on both grids and the number of matches used.
         vector<left_over_cell> left_over;
         int objects_used = 0;
@@ -128,9 +137,9 @@ struct correspondence_election {
         // Counts of exact, recolored, overlap-only, hidden, rotated/flipped, and rejected matches.
         int found_exact = 0, found_recolored = 0, sits_on = 0;
         int partly_hidden = 0, turned = 0, dropped = 0;
-        // Non-background output cells covered by color-preserving matches.
+        // Figure cells of the output covered by color-preserving matches.
         int exact_covered_cells = 0;
-        // Non-background into cells no exact edge covers — made, not carried
+        // Figure cells of the output no exact edge covers — made, not carried
         int created_cells = 0;
 
         // One side's objects: the input's, or the output's.
@@ -228,7 +237,7 @@ struct correspondence_election {
             return (int)places.size();
         }
     };
-    // Total non-background cells in all training grids, used to normalize leftover counts.
+    // Total figure cells in all training grids, used to normalize leftover counts.
     int cells = 0;
     // The selected segmentation, shared by all training pairs.
     segmentation_methods segmentation = segmentation_methods::unset;
@@ -253,9 +262,9 @@ struct correspondence_election {
         // `value` % 32 long, painted `paint`; the bars bridged between pieces of
         // one color or the hollows filled, in `paint` or their own for -1; or
         // hollowed to the outline; or the pieces a pick by holes or by size takes,
-        // recolored to `value`; or the picked pieces removed, slid to the edge
-        // the way heading `value` numbers, moved their own size the way Shift
-        // numbers, grown a trail that way, their boxes filled in `paint`,
+        // recolored to `value`; or the picked pieces removed, slid to the edge,
+        // moved their own size or grown a trail the way heading `value` names,
+        // their boxes filled in `paint`,
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
         // repeated down their columns for `value` past 32 and otherwise along
         // their rows, every `value` % 32 cells, or folded into one figure and
@@ -489,18 +498,19 @@ struct correspondence_election {
 
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
-    static correspondence_election infer(const vector<example>& train, background_source background) {
+    // The pairs are figures: the plan deleted any ground (3_background.hpp).
+    static correspondence_election infer(const vector<example>& train) {
 
         // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
         // because every reading's leftovers are a share of it.
         int facts_cells = 0;
         for (const auto& train_pair : train)
             for (const grid* one : { &train_pair.input, &train_pair.output })
-                walk_colored_cells(*one, background.on(train_pair.input), [&](int, int, int) { ++facts_cells; });
+                walk_colored_cells(*one, TRANSPARENT, [&](int, int, int) { ++facts_cells; });
 
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
-            preparations.push_back(prepare_segmentation(train, background, (segmentation_methods)method));
+            preparations.push_back(prepare_segmentation(train, (segmentation_methods)method));
         // THE CUT BY SIDES ALONE, READ ONLY WHERE IT IS ANOTHER READING THE READING
         // CAN READ. Where every grid cuts into the same pieces by corners, it is
         // that reading said again; where an input cuts into more pieces than the
@@ -638,7 +648,6 @@ private:
             vector<object> input_objects, output_objects;
             int step_width = 0, step_height = 0;
             bool read = false;
-            int8_t background = -1;
         };
         vector<prepared_pair> pairs;
     };
@@ -648,7 +657,7 @@ private:
 
     // 2. Prepare each segmentation once, before trying its permissions.
     static prepared_segmentation prepare_segmentation(const vector<example>& train,
-                                                      background_source source, segmentation_methods segmentation) {
+                                                      segmentation_methods segmentation) {
         prepared_segmentation prepared;
         prepared.look.segmentation = segmentation;
         prepared.pairs.resize(train.size());
@@ -656,9 +665,7 @@ private:
         int counted = 0;
         // Segment before matching so another matching pass can reuse the objects.
         for (size_t pair_index = 0; pair_index < train.size(); ++pair_index) {
-            const int8_t background = source.on(train[pair_index].input);
             auto& saved = prepared.pairs[pair_index];
-            saved.background = background;
             const grid& input = train[pair_index].input;
             const grid& output = train[pair_index].output;
             saved.read = !input.empty() && !output.empty();
@@ -667,13 +674,13 @@ private:
             // Use the same block size for both grids.
             const auto [smaller_width, smaller_height] =
                 object_segmentation::smaller_grid_step(train[pair_index]);
-            const auto [step_width, step_height] = object_segmentation::block_of(input, output, background,
+            const auto [step_width, step_height] = object_segmentation::block_of(input, output,
                                                             segmentation, smaller_width, smaller_height);
             vector<object>& input_objects = saved.input_objects;
             vector<object>& output_objects = saved.output_objects;
-            object_segmentation::segment_for_correspondence(input, background, segmentation, pair.input_info,
+            object_segmentation::segment_for_correspondence(input, segmentation, pair.input_info,
                                        &input_objects, step_width, step_height);
-            object_segmentation::segment_for_correspondence(output, background, segmentation, pair.output_info,
+            object_segmentation::segment_for_correspondence(output, segmentation, pair.output_info,
                                        &output_objects, step_width, step_height);
             // Group copies and choose the most typical member while their cells are available.
             const bool one_set_for_the_grid = (segmentation == segmentation_methods::minimal_repeating_set);
@@ -681,8 +688,8 @@ private:
             object_segmentation::find_copies(pair.output_info, output_objects, one_set_for_the_grid);
             // What the segmentation cost to say, on each grid. The pair is described by both.
             pair.describe_cost =
-                0.5 * (object_segmentation::describe_cost(input, background, pair.input_info) +
-                       object_segmentation::describe_cost(output, background, pair.output_info));
+                0.5 * (object_segmentation::describe_cost(input, pair.input_info) +
+                       object_segmentation::describe_cost(output, pair.output_info));
             shares += pair.describe_cost;
             ++counted;
             auto any_fits = [](const auto& objects, const grid& other) {
@@ -746,7 +753,6 @@ private:
                                const prepared_segmentation& prepared, degrees_of_freedom allowed,
                                reading& facts, size_t pair_index,
                                const what_the_pairs_agreed* agreed) {
-        const int8_t background = prepared.pairs[pair_index].background;
         const bool pattern_reading =
             facts.segmentation == segmentation_methods::minimal_repeating_set ||
             facts.segmentation == segmentation_methods::smallest_of_two_grids;
@@ -758,7 +764,7 @@ private:
         const int step_width = prepared.pairs[pair_index].step_width;
         const int step_height = prepared.pairs[pair_index].step_height;
         pair.edges.clear(); pair.discarded.clear();
-        pair.agreed_moves.clear(); pair.verdict = 0;
+        pair.agreed_moves.clear(); pair.verdict = fit_verdict::fitted;
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
         auto read_one_way = [&](bool from_input) {
@@ -772,15 +778,13 @@ private:
             fit_verdict verdict;
             if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
                 verdict = object_matching::collect_representative_edge(from_info, from_objects,
-                    into_info, into, background, step_width, step_height, edges, allowed);
+                    into_info, into, step_width, step_height, edges, allowed);
             } else if (pattern_reading) {
                 verdict = object_matching::collect_motif_edges(from_info, from_objects, into_info,
-                                              into, background, step_width, step_height,
-                                              edges, allowed);
+                                              into, step_width, step_height, edges, allowed);
             } else {
                 verdict = object_matching::collect_edges(from_info, from_objects, into_info,
-                                        into_objects, into, from_input,
-                                        background, allowed.hang_off,
+                                        into_objects, into, from_input, allowed.hang_off,
                                         edges, &discarded, allowed, agreed);
                 object_matching::sit_on_top(from_info, from_objects, into_info, into_objects, edges);
             }
@@ -788,7 +792,7 @@ private:
             for (auto& rejected : discarded) rejected.match.from_input = from_input;
             // The weaker of the two readings names the pass: a fit both ways is
             // a fit, and a giveup anywhere is still a giveup.
-            pair.verdict = max(pair.verdict, (int8_t)verdict);
+            pair.verdict = max(pair.verdict, verdict);
             pair.edges.insert(pair.edges.end(), edges.begin(), edges.end());
             pair.discarded.insert(pair.discarded.end(), discarded.begin(), discarded.end());
         };
@@ -919,7 +923,6 @@ private:
     static void summarize_pair(const vector<example>& train,
                                const prepared_segmentation& prepared,
                                reading& facts, size_t pair_index) {
-        const int8_t background = prepared.pairs[pair_index].background;
         const grid& input = train[pair_index].input;
         const grid& output = train[pair_index].output;
         auto& pair = facts.pairs[pair_index];
@@ -968,14 +971,14 @@ private:
             return source && source->has_partner;
         });
 
-        // Record the background region touched by each unmatched object on the other grid.
+        // Record the empty region touched by each unmatched object on the other grid.
         auto note_blanks = [&](vector<object_info>& info,
                                const vector<object>& objects, const grid& other) {
             if (ranges::all_of(info, [](const auto& one) {
                     return one.has_partner; })) return;
             vector<blank_patch> patches;
             int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM];
-            find_blanks(other, background, patches, patch_of);
+            find_blanks(other, patches, patch_of);
             for (size_t i = 0; i < info.size() && i < objects.size(); ++i) {
                 auto& one = info[i];
                 if (one.has_partner || one.instance_of >= 0) continue;
@@ -1044,7 +1047,7 @@ private:
             for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
             for (size_t i = 0; i < ours.size() && i < our_objects.size(); ++i)
                 our_objects[i].each_cell([&](int row, int col, int8_t) { object_at[row][col] = (int16_t)i; });
-            walk_colored_cells(one_grid, background, [&](int row, int col, int color) {
+            walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
                 if (carried[row][col]) return;
                 if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
                 // An uncovered cell is created or removed if its object has no partner.
@@ -1063,7 +1066,7 @@ private:
         // Count output cells covered by exact matches and those left uncovered.
         bool covered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
         mark_painted(forward, input_objects, output_objects, output, covered);
-        walk_colored_cells(output, background, [&](int row, int col, int) {
+        walk_colored_cells(output, TRANSPARENT, [&](int row, int col, int) {
             if (covered[row][col]) pair.exact_covered_cells++;
             else                   pair.created_cells++;
         });
@@ -1146,15 +1149,14 @@ private:
     }
 
     // Finds empty regions to help describe where objects appeared or disappeared.
-    static void find_blanks(const grid& one_grid, int8_t background,
-                            vector<blank_patch>& patches,
+    static void find_blanks(const grid& one_grid, vector<blank_patch>& patches,
                             int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
         for (int row = 0; row < MAX_GRID_DIM; ++row)
             for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
         int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
         for (int row = 0; row < one_grid.height; ++row)
             for (int col = 0; col < one_grid.width; ++col) {
-                if (one_grid.data[row][col] != background) continue;
+                if (one_grid.data[row][col] != TRANSPARENT) continue;
                 if (patch_of[row][col] >= 0) continue;
                 const int16_t mine = (int16_t)patches.size();
                 cell_box box;
@@ -1163,7 +1165,7 @@ private:
                 patch_of[row][col] = mine;
                 const int cells = walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, 1,
                     [&](int next_row, int next_col) {
-                        if (one_grid.data[next_row][next_col] != background ||
+                        if (one_grid.data[next_row][next_col] != TRANSPARENT ||
                             patch_of[next_row][next_col] >= 0) return false;
                         patch_of[next_row][next_col] = mine;
                         return true;
@@ -1203,7 +1205,6 @@ private:
         int pieces[kinds] = {}, cells[kinds] = {};
         bool fired[kinds] = {};
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
-            const int8_t background = prepared.pairs[which].background;
             if (!prepared.pairs[which].read) continue;
             const pair_info& pair = facts.pairs[which];
             const grid* on_grid[2] = { &train[which].input, &train[which].output };
@@ -1230,7 +1231,7 @@ private:
             }
             for (int kind = 0; kind < kinds; ++kind) {
                 for (int side = 0; side < 2; ++side)
-                    walk_colored_cells(*on_grid[side], background, [&](int row, int col, int) {
+                    walk_colored_cells(*on_grid[side], TRANSPARENT, [&](int row, int col, int) {
                         cells[kind] += carried[kind][side][row][col]; });
                 pieces[kind] += (int)count(named[kind].begin(), named[kind].end(), true);
             }
@@ -1315,10 +1316,7 @@ private:
         // moved that far and only once, or recolored so that all of it wears the
         // new color, since Recolor paints a piece whole.
         auto holds_a_cell_of = [&](size_t which, int piece, int color) {
-            bool found = false;
-            prepared.pairs[which].input_objects[piece].each_cell([&](int, int, int8_t cell) {
-                found = found || cell == color; });
-            return found;
+            return (palette(prepared.pairs[which].input_objects[piece]) >> color & 1) != 0;
         };
         auto said_of_every_piece = [&](const seen_act& act) {
             for (size_t which = 0; which < facts.pairs.size(); ++which) {
@@ -1454,7 +1452,6 @@ private:
     static void write_down_what_changed(const vector<example>& train,
                                         const prepared_segmentation& prepared, reading& facts) {
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
-            const int8_t background = prepared.pairs[which].background;
             if (!prepared.pairs[which].read) continue;
             auto& pair = facts.pairs[which];
             // Both grids and their pieces, by side: [true] is the input's.
@@ -1473,8 +1470,8 @@ private:
                 const grid& on = *grids[from_input];
                 if (!on.contains(row, col)) return;
                 const int8_t color = (int8_t)on.data[row][col];
-                // The ground is no cell of anything.
-                if (!is_color(color) || color == background) return;
+                // An empty cell, where the ground was, is no cell of anything.
+                if (!is_color(color)) return;
                 bool& done = written[(int)word][from_input][row][col];
                 if (done) return;
                 done = true;
@@ -1580,7 +1577,7 @@ private:
                 each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
                     if (was == now) return;
                     named = true;
-                    if (was != background)
+                    if (was != TRANSPARENT)
                         wait(missing::a_recolor, from_input, row, col, piece, from_input ? now : was);
                     else if (!from_input)
                         wait(missing::drawn_on_the_ground, false, row, col, piece, was);
@@ -1615,7 +1612,7 @@ private:
             if (grids[false]->same_size(*grids[true]))
                 for (auto& cell : pair.left_over) {
                     const int8_t there = (int8_t)grids[!cell.from_input]->data[cell.row][cell.col];
-                    if (is_color(there) && there != background && there != cell.color) cell.in_place = there;
+                    if (is_color(there) && there != cell.color) cell.in_place = there;
                 }
         }
     }
@@ -1642,10 +1639,5 @@ private:
     }
 
 };
-
-// Entry point used by infer(); the result owns the correspondence machinery.
-inline correspondence_election select_segmentation(const vector<example>& train, background_source background) {
-    return correspondence_election::infer(train, background);
-}
 
 } // namespace arc

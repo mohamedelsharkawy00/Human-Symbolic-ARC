@@ -63,22 +63,19 @@ inline string foreground_input(const ground_plan& plan) {
 }
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
-// the color most cells wear, every color but that one, at least so many cells,
-// fewer, the first so many by size, every piece but those, the ones on a row or
-// a column from the middle, every piece but those -- when `how` names one, else
-// by its colors; then, when `fits` names a partner way, WouldFit keeps the ones
-// that would fit into a gap of their partner.
+// the color most cells wear, at least so many cells, the first so many by size,
+// the ones on a row or a column from the middle -- when `how` names one, turned
+// round by InvertSelection for every piece but those, else by its colors; then,
+// when `fits` names a partner way, WouldFit keeps the ones that would fit into
+// a gap of their partner.
 inline string pick_words(const piece_pick& pick) {
     if (pick.every()) return "SelectAll";
-    const auto [colors, how, value, fits] = pick;
+    const auto [colors, how, value, fits, but_those] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
-                                                 "SelectMostCommonColor", "SelectMostCommonColor",
-                                                 "SelectAtLeastCells", "SelectAtLeastCells",
-                                                 "SelectLargestObject", "SelectLargestObject",
-                                                 "SelectSmallestObject", "SelectSmallestObject",
-                                                 "SelectRowFromMiddle", "SelectRowFromMiddle",
-                                                 "SelectColumnFromMiddle", "SelectColumnFromMiddle" };
+                                                 "SelectMostCommonColor", "SelectAtLeastCells",
+                                                 "SelectLargestObject", "SelectSmallestObject",
+                                                 "SelectRowFromMiddle", "SelectColumnFromMiddle" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
     if (how < 0) {
@@ -88,19 +85,14 @@ inline string pick_words(const piece_pick& pick) {
         return chosen + kept;
     }
     // SelectMostCommonColor takes no value: which color it picks is the list's to say.
-    const bool valued = how != piece_pick::most_common && how != piece_pick::not_most_common;
+    const bool valued = how != piece_pick::most_common;
     // The first so many by size: one selector a rank, since selectors add.
-    const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::not_largest_ranks ||
-                       how == piece_pick::smallest_ranks || how == piece_pick::not_smallest_ranks;
-    // Every piece but those another pick takes, turned round by InvertSelection.
-    const bool turned = how == piece_pick::not_most_common || how == piece_pick::fewer_cells ||
-                        how == piece_pick::not_largest_ranks || how == piece_pick::not_smallest_ranks ||
-                        how == piece_pick::not_middle_row || how == piece_pick::not_middle_column;
+    const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::smallest_ranks;
     string chosen;
     if (ranks)
         for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
     else chosen = " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
-    return "SelectAll InvertSelection" + chosen + (turned ? " InvertSelection" : "") + kept;
+    return "SelectAll InvertSelection" + chosen + (but_those ? " InvertSelection" : "") + kept;
 }
 
 struct said_reading {
@@ -698,8 +690,8 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         // Restore it after painting; the selected pane keeps its full frame.
         const string selector = pick.way == pane_pick_rule::Emptiest
                               ? "SelectSmallestObject[0]" : "SelectLargestObject[0]";
-        say_closed(said, (string("Input") + " Panes ") + selector +
-            " InvertSelection DeleteSelection SelectAll Fit[0]", "Union");
+        say_closed(said, "Input Panes " + selector + " InvertSelection DeleteSelection SelectAll " +
+            spell("Fit", (int)fit_to::input), "Union");
         say_closed(said, ("Input " + string("Colors") + " ") + spell("SelectColor", split.color) +
             " InvertSelection DeleteSelection", "Union");
         return true;
@@ -1082,7 +1074,7 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         case piece_frame_rule::laid_out: framed += spell("Layout", frame.factor); break;
         case piece_frame_rule::filled:
             framed += (frame.keyed >= 0 ? spell("ShapeColorMap", frame.keyed) + " " : string()) +
-                      spell("AddColor", 11) + " " + spell("Fit", 1);
+                      spell("AddColor", 11) + " " + spell("Fit", (int)fit_to::canvas);
             break;
         default: framed += string(frame.merged ? "UnionList SelectAll " : "") + "Origin";
         }
@@ -1307,12 +1299,12 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
 inline void restore_background(said_reading& said, background_source ground,
                                const output_dimension_rule& size) {
     if (said.sentences.empty() || said.background_filled || !ground.removes_color()) return;
-    int fit = 1;
+    fit_to fit = fit_to::canvas;
     switch (size.Chosen) {
     case output_dimension_rule::Identity:
     case output_dimension_rule::Fixed:
     case output_dimension_rule::Scale: break;
-    case output_dimension_rule::BoundingBox: fit = 2; break;
+    case output_dimension_rule::BoundingBox: fit = fit_to::painted; break;
     case output_dimension_rule::NotInferredYet:
     default:
         said.no_word_for.push_back("the output frame has not been inferred");
@@ -1320,9 +1312,9 @@ inline void restore_background(said_reading& said, background_source ground,
     }
     if (ground.per_grid)
         said.sentences.push_back("Input Colors SelectElectedBackground AddColor[11] " +
-                                 spell("Fit", fit) + " Underlay");
+                                 spell("Fit", (int)fit) + " Underlay");
     else
-        said.sentences.push_back("Output SelectAll " + string(fit == 2 ? "Trim " : "") +
+        said.sentences.push_back("Output SelectAll " + string(fit == fit_to::painted ? "Trim " : "") +
                                  spell("AddColor", ground.color) + " Underlay");
     said.background_filled = true;
 }

@@ -1,5 +1,5 @@
 InputPalette Union
-InputFiltered[4] ExtendTo[3] ReadUnder SelectColor[2] DeleteSelection Split[1] ExtendTo[3] Union
+InputFiltered[4] ExtendTo[2] ReadUnder SelectColor[2] DeleteSelection Split[1] ExtendTo[2] Union
 InputFiltered[2] MoveRow[9] MaskBy[8] Union
 InputFiltered[4] Recolor[3] Union
 InputFiltered[8] Union
@@ -10,8 +10,8 @@ Target[0] Union
 // u can do those int he solver brain before union.
 
 InputPalette Union
-InputFiltered[4] ExtendTo[3] Intersection
-Target[10] SelectColor[2] DeleteSelection Split[1] ExtendTo[3] Union
+InputFiltered[4] ExtendTo[2] Intersection
+Target[10] SelectColor[2] DeleteSelection Split[1] ExtendTo[2] Union
 InputFiltered[2] Underlay
 InputFiltered[2] MoveRow[9] MaskBy[8] Union
 InputFiltered[4] Recolor[3] Union

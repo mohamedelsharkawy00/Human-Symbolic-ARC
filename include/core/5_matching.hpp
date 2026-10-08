@@ -116,14 +116,19 @@ struct object_matching {
         int16_t hidden = 0;
         // Number of cells extending beyond the target grid's border.
         int16_t outside = 0;
-        // Target color for a recolored single-color object; -1 if not applicable.
-        int8_t recolored_to = -1;
         // Target color for each source color; -1 means that source color is absent.
         recoloring color_map;
         // Every pose that lands the object here in these colors, its own among
         // them; bit p is pose p. Said for blocks, where a symmetric copy lands
         // several ways and the rule that places the copies may need any of them.
         uint8_t ways_round = 0;
+        // The one color a piece of one color, `source_color`, came out in; -1
+        // where the match kept its colors or the piece wears several, and where it
+        // became empty, which is a deletion and not a recolor.
+        int8_t recolored_to(int source_color) const {
+            return !exact && is_color(source_color) && is_color(color_map[source_color])
+                 ? color_map[source_color] : (int8_t)-1;
+        }
     };
     // Why a match that was found did not survive.
     enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_object,
@@ -202,15 +207,13 @@ struct object_matching {
                               const vector<object>& from_objects,
                               const vector<object_info>& into_info,
                               const vector<object>& into_objects,
-                              const grid& into, bool from_input,
-                              int8_t background, bool may_hang_off,
+                              const grid& into, bool from_input, bool may_hang_off,
                               vector<edge>& edges,
                               vector<rejection>* discarded = nullptr,
                               degrees_of_freedom allowed = {},
                               const what_the_pairs_agreed* agreed = nullptr) {
         vector<edge> found =
-            gather_matches(from_info, from_objects, into_info, into,
-                           background, may_hang_off, discarded, allowed);
+            gather_matches(from_info, from_objects, into_info, into, may_hang_off, discarded, allowed);
         for (auto& edge : found) edge.from_input = from_input;
 
         // Remove conflicting matches before fitting so their alternatives can still be chosen.
@@ -277,7 +280,7 @@ struct object_matching {
     // Link only the topmost, then leftmost complete motifs.
     static fit_verdict collect_representative_edge(
             const vector<object_info>& from_info, const vector<object>& from_objects,
-            const vector<object_info>& into_info, const grid& into, int8_t background,
+            const vector<object_info>& into_info, const grid& into,
             int step_w, int step_h, vector<edge>& edges, degrees_of_freedom allowed) {
         auto first = [&](const vector<object_info>& info) {
             int best = -1;
@@ -294,7 +297,7 @@ struct object_matching {
         const auto& landing = into_info[target].summary;
         const bool stayed = same_corner(from_info[source].summary, landing);
         if (!allowed.translate && !stayed) return fit_verdict::no_fit;
-        const auto matches = find_in(from_objects[source].drawn(), into, background,
+        const auto matches = find_in(from_objects[source].drawn(), into,
                                     false, landing.y0, landing.x0, true, allowed.poses());
         const object_match* best = nullptr;
         for (const auto& hit : matches.hits) {
@@ -302,7 +305,7 @@ struct object_matching {
             if (!best || (hit.exact && !best->exact)) best = &hit;
         }
         if (!best) return fit_verdict::no_fit;
-        auto link = edge_from_match(*best, source, from_info[source].color, stayed);
+        auto link = edge_from_match(*best, source, stayed);
         link.to = (int16_t)target;
         edges.push_back(link);
         return fit_verdict::fitted;
@@ -314,7 +317,7 @@ struct object_matching {
             const vector<object_info>& from_info,
             const vector<object>& from_objects,
             const vector<object_info>& into_info,
-            const grid& into, int8_t background, int step_w, int step_h,
+            const grid& into, int step_w, int step_h,
             vector<edge>& edges, degrees_of_freedom allowed = {}) {
         if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
 
@@ -329,8 +332,7 @@ struct object_matching {
                 return false;
             const grid cells = from_objects[from_index].drawn();
             const object_matches matches =
-                find_in(cells, into, background, true,
-                        target.summary.y0, target.summary.x0, true, allowed.poses());
+                find_in(cells, into, true, target.summary.y0, target.summary.x0, true, allowed.poses());
             // Prefer a match with unchanged colors, even if it uses a later rotation or reflection.
             const object_match* best = nullptr;
             for (const object_match& hit : matches.hits) {
@@ -354,8 +356,7 @@ struct object_matching {
         };
         auto draw = [&](int from_index, int target_index, const object_match& hit, uint8_t ways) {
             const auto& target = into_info[target_index];
-            auto edge = edge_from_match(hit, from_index, from_info[from_index].color,
-                                        same_corner(from_info[from_index].summary, target.summary));
+            auto edge = edge_from_match(hit, from_index, same_corner(from_info[from_index].summary, target.summary));
             edge.to = (int16_t)target_index;
             edge.ways_round = ways;
             edges.push_back(edge);
@@ -452,11 +453,10 @@ private:
 
     // THE OBJECT AS DRAWN, or one consistent recoloring of it: every lit cell
     // lands on a color, and one color always lands on the same color. Matching a
-    // footprint, the blank cells must land on background and the lit ones off it.
-    // Where the ground is empty (empty_ground: a plan deleted it), a lit cell
-    // landing on an empty cell lands on the ground, said as becoming empty.
-    static bool fits_as_drawn(const placement& at, int8_t background, bool match_footprint,
-                              bool empty_ground, object_match& hit) {
+    // footprint, the blank cells must land on empty cells and the lit ones off
+    // them. Otherwise a lit cell landing on an empty cell lands on the ground a
+    // plan deleted, said as becoming empty.
+    static bool fits_as_drawn(const placement& at, bool match_footprint, object_match& hit) {
         hit.color_map = {};
         hit.exact = true;
         for (int row = 0; row < at.posed.height; ++row)
@@ -465,11 +465,10 @@ private:
                 const int object_color = at.posed.data[row][col];
                 const int there_color = at.under(row, col);
                 if (object_color == TRANSPARENT) {
-                    if (match_footprint && there_color != background) return false;
+                    if (match_footprint && there_color != TRANSPARENT) return false;
                     continue;
                 }
-                if (there_color == TRANSPARENT && !empty_ground) return false;
-                if (match_footprint && there_color == background) return false;
+                if (match_footprint && there_color == TRANSPARENT) return false;
                 if (!is_color(object_color) || (!is_color(there_color) && there_color != TRANSPARENT)) return false;
                 if (hit.color_map[object_color] == recoloring::UNSET) hit.color_map[object_color] = (int8_t)there_color;
                 if (hit.color_map[object_color] != there_color) return false;
@@ -491,7 +490,7 @@ private:
 
     // THE WEAKER QUESTION, asked only where the object as drawn failed: itself,
     // with the cells it is missing hidden behind other cells. Counts them.
-    static bool fits_behind(const placement& at, int8_t background, object_match& hit) {
+    static bool fits_behind(const placement& at, object_match& hit) {
         for (int i = 0; i < COLOR_COUNT; ++i) hit.color_map[i] = (int8_t)i;
         hit.exact = true;
         hit.hidden = 0;
@@ -500,7 +499,7 @@ private:
                 const int object_color = at.posed.data[row][col];
                 if (object_color == TRANSPARENT || !at.lands(row, col)) continue;
                 const int there_color = at.under(row, col);
-                if (there_color == TRANSPARENT || there_color == background) return false;
+                if (there_color == TRANSPARENT) return false;
                 hit.hidden += (object_color != there_color);
             }
         return true;
@@ -510,21 +509,16 @@ private:
     // disagree it may still be the same picture with its colors traded, and a
     // negative is exactly that: the ground and the figure swapping, which the
     // Color freedom already says. One to one, or a block of one color would
-    // match every block.
-    // Where the ground is empty, the negative trades a figure with empty.
-    static bool fits_as_negative(const placement& at, int8_t background, bool empty_ground,
-                                 object_match& hit) {
+    // match every block. The ground is empty, so the negative trades a figure
+    // with empty.
+    static bool fits_as_negative(const placement& at, object_match& hit) {
         recoloring came_from;
         hit.color_map = {};
         hit.exact = true;
-        auto readable = [&](int value) { return is_color(value) || (empty_ground && value == TRANSPARENT); };
         for (int row = 0; row < at.posed.height; ++row)
             for (int col = 0; col < at.posed.width; ++col) {
                 if (!at.lands(row, col)) continue;
-                const int was = at.posed.data[row][col] == TRANSPARENT ? (int)background
-                                                                       : at.posed.data[row][col];
-                const int now = at.under(row, col);
-                if (!readable(was) || !readable(now)) return false;
+                const int was = at.posed.data[row][col], now = at.under(row, col);
                 if (hit.color_map[was] == recoloring::UNSET && came_from[now] == recoloring::UNSET) {
                     hit.color_map[was] = (int8_t)now;
                     came_from[now] = (int8_t)was;
@@ -536,7 +530,7 @@ private:
     }
 
     // Searches for an object in another grid.
-    static object_matches find_in(const grid& cells, const grid& where, int8_t background,
+    static object_matches find_in(const grid& cells, const grid& where,
                                   bool may_hang_off, int fixed_row = -1, int fixed_col = -1,
                                   bool match_footprint = false, int max_poses = -1) {
         object_matches found;
@@ -544,15 +538,12 @@ private:
         const bool fixed = fixed_row >= 0 && fixed_col >= 0;
         const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : POSE_COUNT);
 
-        // The ground is empty where a plan deleted it: the grid searched has
-        // empty cells and no ground color. A grid read whole never does.
-        bool empty_ground = background == TRANSPARENT;
-        if (empty_ground) {
-            bool any = false;
-            for (int row = 0; row < where.height && !any; ++row)
-                for (int col = 0; col < where.width && !any; ++col) any = where.data[row][col] == TRANSPARENT;
-            empty_ground = any;
-        }
+        // Whether the grid searched has a ground at all: empty cells, where a plan
+        // deleted it. A grid read whole has none, and so no negative.
+        bool empty_ground = false;
+        for (int row = 0; row < where.height && !empty_ground; ++row)
+            for (int col = 0; col < where.width && !empty_ground; ++col)
+                empty_ground = where.data[row][col] == TRANSPARENT;
         vector<grid> tried;
         for (int pose = 0; pose < pose_limit; ++pose) {
             grid posed = posed_cells(cells, pose);
@@ -587,11 +578,10 @@ private:
                     hit.row = at_row; hit.col = at_col; hit.pose = pose;
                     hit.outside = lit - shown;
                     // As drawn; failing that, the whole object partly hidden, or, for
-                    // a block on a known ground, its negative.
-                    if (fits_as_drawn(at, background, match_footprint, empty_ground, hit) ||
-                        (!match_footprint && fits_behind(at, background, hit)) ||
-                        (match_footprint && (is_color(background) || empty_ground) &&
-                         fits_as_negative(at, background, empty_ground, hit)))
+                    // a block on a ground, its negative.
+                    if (fits_as_drawn(at, match_footprint, hit) ||
+                        (!match_footprint && fits_behind(at, hit)) ||
+                        (match_footprint && empty_ground && fits_as_negative(at, hit)))
                         found.hits.push_back(hit);
                 }
         }
@@ -599,17 +589,15 @@ private:
     }
 
     // Did any cell of the object, drawn the way the edge turned it, land on a
-    // non-background cell? Background has no shape, so every shape fits it, and
-    // a match there is no evidence.
-    static bool landed_on_non_background(const edge& edge,
-                                         const grid& posed, const grid& into,
-                                         int8_t background) {
+    // figure? The empty ground has no shape, so every shape fits it, and a match
+    // there is no evidence.
+    static bool landed_on_a_figure(const edge& edge, const grid& posed, const grid& into) {
         for (int row = 0; row < posed.height; ++row)
             for (int col = 0; col < posed.width; ++col) {
                 if (posed.data[row][col] == TRANSPARENT) continue;
                 const int into_row = edge.row + row, into_col = edge.col + col;
                 if (!into.contains(into_row, into_col)) continue;
-                if (into.data[into_row][into_col] != background) return true;
+                if (into.data[into_row][into_col] != TRANSPARENT) return true;
             }
         return false;
     }
@@ -641,8 +629,7 @@ private:
     }
 
     // Copy a search hit into a correspondence, including its color changes.
-    static edge edge_from_match(const object_match& hit, int from_index,
-                                int source_color, bool stayed_put) {
+    static edge edge_from_match(const object_match& hit, int from_index, bool stayed_put) {
         object_matching::edge edge;
         edge.from = (int16_t)from_index;
         edge.row = (int8_t)hit.row; edge.col = (int8_t)hit.col;
@@ -651,9 +638,6 @@ private:
         edge.stayed_put = stayed_put;
         edge.hidden = (int16_t)hit.hidden;
         edge.outside = (int16_t)hit.outside;
-        // A color that became empty was deleted, not recolored.
-        edge.recolored_to = (!hit.exact && source_color >= 0 && is_color(hit.color_map[source_color]))
-                          ? hit.color_map[source_color] : (int8_t)-1;
         if (!hit.exact) edge.color_map = hit.color_map;
         return edge;
     }
@@ -663,7 +647,7 @@ private:
             const vector<object_info>& from_info,
             const vector<object>& from_objects,
             const vector<object_info>& into_info,
-            const grid& into, int8_t background, bool may_hang_off,
+            const grid& into, bool may_hang_off,
             vector<rejection>* discarded, degrees_of_freedom allowed) {
         double share[COLOR_COUNT + 1];
         color_shares(into, share);
@@ -677,8 +661,8 @@ private:
         };
 
         vector<edge> found;
-        // Whether each found match lands on more than background, asked as it is
-        // found, while its source is drawn. Refused below, in the order found.
+        // Whether each found match lands on a figure, asked as it is found, while
+        // its source is drawn. Refused below, in the order found.
         vector<bool> on_figures;
 
         for (size_t from_index = 0; from_index < from_objects.size(); ++from_index) {
@@ -697,7 +681,7 @@ private:
             bool placed[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             auto keep = [&](const edge& match) {
                 if (into.contains(match.row, match.col)) placed[match.row][match.col] = true;
-                on_figures.push_back(landed_on_non_background(match, posed_for(match.pose), into, background));
+                on_figures.push_back(landed_on_a_figure(match, posed_for(match.pose), into));
                 found.push_back(match);
             };
 
@@ -721,7 +705,7 @@ private:
                             if (hit.hidden && into_color != object_color) continue;
                             odds *= share[recoloring::slot(hit.color_map[object_color])];
                         }
-                    auto edge = edge_from_match(hit, (int)from_index, one_object.color, stationary);
+                    auto edge = edge_from_match(hit, (int)from_index, stationary);
                     const bool stands_alone = beats_chance(found_here.places, odds);
                     // EXPERIMENT: every match must pass the chance test, not only the
                     // stationary, hidden, or recolored ones.
@@ -735,12 +719,12 @@ private:
 
             // Search both the original position and other positions: an object can stay and be copied.
             keep_positional(
-                find_in(cells, into, background, false,
+                find_in(cells, into, false,
                         one_object.summary.y0, one_object.summary.x0, false, allowed.poses()), true);
             // Allow clipped matches only when copies establish the shape on either grid.
             if (allowed.translate)
                 keep_positional(
-                    find_in(cells, into, background,
+                    find_in(cells, into,
                             may_hang_off && (one_object.motif >= 0 ||
                                              twins_over_there(one_object.shape)),
                             -1, -1, false, allowed.poses()), false);
@@ -766,7 +750,6 @@ private:
                 edge.row = landing.summary.y0; edge.col = landing.summary.x0;
                 edge.exact = (landing.color == one_object.color);
                 if (!allowed.recolor && !edge.exact) continue;
-                edge.recolored_to = (!edge.exact && one_object.color >= 0) ? landing.color : (int8_t)-1;
                 if (!edge.exact && is_color(one_object.color))
                     edge.color_map[one_object.color] = landing.color;
                 const bool stands_alone = beats_chance(
@@ -781,16 +764,16 @@ private:
             }
         }
         // Refused once the whole list is in one place, so the refusals keep its order.
-        vector<edge> on_non_background;
+        vector<edge> on_a_figure;
         for (size_t i = 0; i < found.size(); ++i) {
             if (on_figures[i]) {
-                on_non_background.push_back(found[i]);
+                on_a_figure.push_back(found[i]);
                 continue;
             }
             throw_away(found[i], object_matching::lost_to_chance,
                        discarded);
         }
-        return on_non_background;
+        return on_a_figure;
     }
 
     // One candidate object: the match it came from, the cells it paints, and the
@@ -802,7 +785,7 @@ private:
 
     // The objects, and which cells each of them could paint.
     struct fitting {
-        // Number of target cells, including background.
+        // Number of target cells, empty ones included.
         size_t cell_count = 0;
         // One per match, in match order; empty cells mean it shows nothing
         vector<candidate> objects;
@@ -866,7 +849,7 @@ private:
                              const vector<object>& into_objects,
                              const grid& into) {
         fitting laid_out;
-        // Index all target cells, including background where new objects may appear.
+        // Index all target cells, empty ones included, where new objects may appear.
         // Only cells reached by exact matches become required.
         laid_out.cell_count = (size_t)into.width * into.height;
         laid_out.travel.resize(found.size());

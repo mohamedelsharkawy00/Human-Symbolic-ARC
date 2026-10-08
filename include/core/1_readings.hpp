@@ -394,53 +394,30 @@ ARC_HOST_DEVICE inline bool paints_at_least(int height, int width, Occupied occu
     return cells >= at_least;
 }
 
-// Count four-connected enclosed spaces in an occupancy mask. Shared by
-// inference and SelectObjectsWithHoles so learned keys mean the same at runtime.
+// Count four-connected enclosed spaces in an occupancy mask: the runs of empty
+// cells no four-way walk in from the edge of the box reaches (mark_outside).
+// Shared by inference and SelectObjectsWithHoles so learned keys mean the same
+// at runtime.
 template <class Occupied>
-ARC_HOST_DEVICE inline int object_hole_count(int mh, int mw, Occupied occupied) {
-    if (mw <= 0 || mh <= 0) return 0;
-    // mark: 1 = wall (painted cell), 2 = outside (reached from bbox edge), 3 = counted hole.
-    uint8_t mark[MAX_GRID_DIM][MAX_GRID_DIM];
-    for (int r = 0; r < mh; ++r)
-        for (int c = 0; c < mw; ++c)
-            mark[r][c] = occupied(r, c) ? 1 : 0;
-
-    // Outside = monotonic sweeps from the bbox edge through transparent cells.
-    for (bool changed = true; changed; ) {
-        changed = false;
-        for (int r = 0; r < mh; ++r)
-            for (int c = 0; c < mw; ++c) {
-                if (mark[r][c]) continue;
-                bool edge = (r == 0 || r == mh - 1 || c == 0 || c == mw - 1);
-                bool nb = (r > 0      && mark[r - 1][c] == 2) ||
-                          (r < mh - 1 && mark[r + 1][c] == 2) ||
-                          (c > 0      && mark[r][c - 1] == 2) ||
-                          (c < mw - 1 && mark[r][c + 1] == 2);
-                if (edge || nb) { mark[r][c] = 2; changed = true; }
-            }
-    }
-
-    // Holes = remaining unmarked components; flood each with an explicit stack.
+ARC_HOST_DEVICE inline int object_hole_count(int height, int width, Occupied occupied) {
+    if (width <= 0 || height <= 0) return 0;
+    // Walked: outside, or in a hole already counted.
+    bool walked[MAX_GRID_DIM][MAX_GRID_DIM];
+    mark_outside(height, width, occupied, walked);
+    auto claim = [&](int row, int col) {
+        if (walked[row][col] || occupied(row, col)) return false;
+        walked[row][col] = true;
+        return true;
+    };
+    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
     int holes = 0;
-    int16_t stack[MAX_GRID_DIM * MAX_GRID_DIM];
-    for (int r = 0; r < mh; ++r)
-        for (int c = 0; c < mw; ++c) {
-            if (mark[r][c]) continue;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (!claim(row, col)) continue;
             ++holes;
-            mark[r][c] = 3;
-            int top = 0;
-            stack[top++] = (int16_t)(r * MAX_GRID_DIM + c);
-            while (top > 0) {
-                int p = stack[--top];
-                int pr = p / MAX_GRID_DIM, pc = p % MAX_GRID_DIM;
-                const int dr[4] = { -1, 1, 0, 0 }, dc[4] = { 0, 0, -1, 1 };
-                for (int d = 0; d < 4; ++d) {
-                    int nr = pr + dr[d], nc = pc + dc[d];
-                    if (nr < 0 || nr >= mh || nc < 0 || nc >= mw || mark[nr][nc]) continue;
-                    mark[nr][nc] = 3;
-                    stack[top++] = (int16_t)(nr * MAX_GRID_DIM + nc);
-                }
-            }
+            queue_row[0] = (int16_t)row;
+            queue_col[0] = (int16_t)col;
+            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
         }
     return holes;
 }
@@ -471,15 +448,17 @@ struct cell_box {
     }
 };
 
-// Fit names its target: input frame, live output frame, or painted output
-// bounds. Reading and execution ask the same helper; empty paint has no bounds.
+// WHAT Fit STRETCHES TO, its value: the input's frame, the canvas the output is
+// drawn on, or the box of what is painted on it -- none where nothing is.
+// Reading and execution ask the same helper.
+enum class fit_to : int8_t { input, canvas, painted, count };
 template <class Canvas>
-ARC_HOST_DEVICE inline cell_box fit_frame(int mode, int input_width, int input_height,
+ARC_HOST_DEVICE inline cell_box fit_frame(int to, int input_width, int input_height,
                                          const Canvas& canvas) {
-    if (mode == 0) return {0, 0, input_height - 1, input_width - 1};
-    if (mode == 1) return {0, 0, canvas.height - 1, canvas.width - 1};
+    if (to == (int)fit_to::input) return {0, 0, input_height - 1, input_width - 1};
+    if (to == (int)fit_to::canvas) return {0, 0, canvas.height - 1, canvas.width - 1};
     cell_box box;
-    if (mode == 2)
+    if (to == (int)fit_to::painted)
         for (int r = 0; r < canvas.height; ++r)
             for (int c = 0; c < canvas.width; ++c)
                 if (is_color(canvas.data[r][c])) box.include_cell(r, c);
@@ -539,26 +518,32 @@ ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
     return bands;
 }
 
-// THE EIGHT WAYS A PIECE CAN GO, numbered as MoveToEdge and ExtendTo take them:
-// the four sides, then the diagonals.
+// THE EIGHT WAYS A PIECE CAN GO, numbered as a compass is, clockwise from up,
+// as MoveToEdge, ExtendTo and Shift take them: the way back is four on, a
+// quarter turn two on, and the sides are the even ways.
 struct heading {
-    enum : int8_t { up, down, left, right, up_left, up_right, down_left, down_right, count };
+    enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
 };
 inline constexpr const char* const heading_names[heading::count] = {
-    "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right" };
+    "up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left" };
+
+// THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
+// much is broken in: the four sides before the diagonals, the plainer move
+// first, each clockwise from up.
+constexpr int heading_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 1; }
 
 // One step that way. A switch and not a table, so the kernel reads the same
 // steps the host does; a heading out of range goes up.
 struct heading_step { int down, across; };
 ARC_HOST_DEVICE inline heading_step step_of(int way) {
     switch (way) {
-    case heading::down:       return {  1,  0 };
-    case heading::left:       return {  0, -1 };
-    case heading::right:      return {  0,  1 };
-    case heading::up_left:    return { -1, -1 };
     case heading::up_right:   return { -1,  1 };
-    case heading::down_left:  return {  1, -1 };
+    case heading::right:      return {  0,  1 };
     case heading::down_right: return {  1,  1 };
+    case heading::down:       return {  1,  0 };
+    case heading::down_left:  return {  1, -1 };
+    case heading::left:       return {  0, -1 };
+    case heading::up_left:    return { -1, -1 };
     default:                  return { -1,  0 };
     }
 }
@@ -575,21 +560,13 @@ ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int hei
     return room_down < room_across ? room_down : room_across;
 }
 
-// WHERE SHIFT MOVES A BOX, its own size away, the ways Shift numbers them: up,
-// right, down, left, then down-right, down-left, up-right, up-left. The kernel
-// and the reading that replays it take the step from here.
+// WHERE SHIFT MOVES A BOX, its own size away: one step that way (step_of), its
+// height a step down or up and its width a step across. The kernel and the
+// reading that replays it take the move from here; a way out of range stays.
 ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
-    switch (way) {
-    case 0:  return { -height, 0 };
-    case 1:  return { 0, width };
-    case 2:  return { height, 0 };
-    case 3:  return { 0, -width };
-    case 4:  return { height, width };
-    case 5:  return { height, -width };
-    case 6:  return { -height, width };
-    case 7:  return { -height, -width };
-    default: return { 0, 0 };
-    }
+    if (way < 0 || way >= heading::count) return { 0, 0 };
+    const heading_step step = step_of(way);
+    return { step.down * height, step.across * width };
 }
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
@@ -913,38 +890,22 @@ struct shape_table {
 };
 
 // WHO A PIECE TAKES ITS COLOR FROM: another piece of the same grid, found by how
-// the two sit -- the nearest one, one sharing its rows or its columns, the one
-// whose box holds it or that its box holds, one it touches at a side or a
-// corner, one of its very shape, as it lies or turned any of the eight ways
-// round, or one it touches at a side, the four-connected touch (b7256dcd's
-// pair meets the 3 at a side and the 4 only at a corner). The rule that reads
-// it off the pairs and the op that does it both ask here, so the two cannot
-// disagree about which piece is the partner. Numbered as the ops number them.
-enum class partner_by : int8_t { nearest, same_row, same_column, around_it, inside_it, touching,
-                                 same_shape, same_shape_turned, touching_sides, count };
-
-// THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
-// much is broken in: the surer a way names one partner, the sooner. The piece
-// around it or inside it first -- one box holds another -- then the piece
-// lined up with it, in its rows or its columns, which a second piece in the
-// same band leaves without one (18419cfa's test shape, under two frames), then
-// the nearest, which ties as soon as two stand as far (ddf7fa4f's test block,
-// between two dots), then the rest as numbered -- the touch at a side before
-// the touch at a corner too, four-connected before eight until eight is needed
-// (4938f0c2's shape meets its block only at a corner).
-inline constexpr partner_by partner_ways_asked[] = {
-    partner_by::around_it, partner_by::inside_it, partner_by::same_row, partner_by::same_column,
-    partner_by::nearest, partner_by::touching_sides, partner_by::touching, partner_by::same_shape,
-    partner_by::same_shape_turned };
-static_assert(sizeof(partner_ways_asked) / sizeof(partner_ways_asked[0]) == (size_t)partner_by::count,
-              "every partner way is asked once");
-
-// The `at`-th asked of a list that numbers the partner ways first and then more
-// (MoveToward's colors, MirrorAround's grid): the partner ways in the order
-// partner_ways_asked gives, the rest as numbered.
-constexpr int asked_at(int at) {
-    return at < (int)partner_by::count ? (int)partner_ways_asked[at] : at;
-}
+// the two sit. The rule that reads it off the pairs and the op that does it
+// both ask here, so the two cannot disagree about which piece is the partner.
+// NUMBERED IN THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two
+// that say as much is broken in: the surer a way names one partner, the
+// sooner. The piece around it or inside it first -- one box holds another --
+// then the piece lined up with it, in its rows or its columns, which a second
+// piece in the same band leaves without one (18419cfa's test shape, under two
+// frames), then the nearest, which ties as soon as two stand as far (ddf7fa4f's
+// test block, between two dots), then the piece it touches at a side, the
+// four-connected touch, before the one it touches at a side or a corner,
+// four-connected before eight until eight is needed (b7256dcd's pair meets the
+// 3 at a side and the 4 only at a corner; 4938f0c2's shape meets its block only
+// at a corner), then one of its very shape, as it lies or turned any of the
+// eight ways round.
+enum class partner_by : int8_t { around_it, inside_it, same_row, same_column, nearest, touching_sides,
+                                 touching, same_shape, same_shape_turned, count };
 
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
 // or all four ways at once. The middle is a partner's, one of the partner_by
@@ -962,21 +923,22 @@ ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
     return rows + cols;
 }
 
-// Every partner the piece `mine` has by `how` among the pieces not `picked`,
+// Every partner the piece `mine` has by `how` among the pieces not picked,
 // handed to `visit(other)` -- for the nearest, only the ones no other is nearer
-// than. The pieces are read through two questions, so one walk serves a grid's
-// pieces and the op's alike: `box_of(i)`, the box its paint fills on the grid,
-// and `painted(i, row, col)`, whether it paints that cell of the grid, false
-// off it.
-template <class BoxOf, class Painted, class Picked, class Visit>
-ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, int count, BoxOf box_of,
-                                         Painted painted, Picked picked, Visit visit) {
-    const cell_box own = box_of(mine);
+// than. THE PIECES ARE ASKED, so one walk serves a grid's pieces and the op's
+// alike: `count()`; `box(i)`, the box piece i's paint fills on the grid;
+// `painted(i, row, col)`, whether it paints that cell of the grid, false off
+// it; `is_picked(i)`; and, for the color questions below, `color(i)`, the color
+// an op reads off its first cell, and `holds(i, color)`, whether it holds a
+// cell of that color.
+template <class Pieces, class Visit>
+ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit) {
+    const cell_box own = pieces.box(mine);
     if (own.empty()) return;
+    auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
     // Its paint read against another's turned by `pose`: the same cells painted.
     auto same_paint = [&](int other, const cell_box& box, int pose) {
-        const int height = (pose & 1) ? box.width() : box.height();
-        const int width = (pose & 1) ? box.height() : box.width();
+        const auto [width, height] = posed_size(pose, box.width(), box.height());
         if (height != own.height() || width != own.width()) return false;
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col) {
@@ -989,16 +951,16 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, int count, Bo
     };
     int nearest = 1 << 30;
     if (how == partner_by::nearest)
-        for (int other = 0; other < count; ++other) {
-            if (other == mine || picked(other)) continue;
-            const cell_box box = box_of(other);
+        for (int other = 0; other < pieces.count(); ++other) {
+            if (other == mine || pieces.is_picked(other)) continue;
+            const cell_box box = pieces.box(other);
             if (box.empty()) continue;
             const int gap = box_gap(own, box);
             if (gap < nearest) nearest = gap;
         }
-    for (int other = 0; other < count; ++other) {
-        if (other == mine || picked(other)) continue;
-        const cell_box box = box_of(other);
+    for (int other = 0; other < pieces.count(); ++other) {
+        if (other == mine || pieces.is_picked(other)) continue;
+        const cell_box box = pieces.box(other);
         if (box.empty()) continue;
         bool partner = false;
         switch (how) {
@@ -1033,15 +995,13 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, int count, Bo
 }
 
 // The color the piece `mine` takes from its partners: the one color every
-// partner wears, `color_of(i)` telling each one's, or -1 when it has none or
-// they disagree.
-template <class BoxOf, class Painted, class ColorOf, class Picked>
-ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, int count, BoxOf box_of,
-                                         Painted painted, ColorOf color_of, Picked picked) {
+// partner wears, or -1 when it has none or they disagree.
+template <class Pieces>
+ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, const Pieces& pieces) {
     int color = -1;
     bool clash = false;
-    each_partner(how, mine, count, box_of, painted, picked, [&](int other) {
-        const int worn = color_of(other);
+    each_partner(how, mine, pieces, [&](int other) {
+        const int worn = pieces.color(other);
         if (color < 0) color = worn;
         else if (worn != color) clash = true;
     });
@@ -1050,11 +1010,10 @@ ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, int count, Bo
 
 // The piece `mine`'s one partner, or -1 when it has none or several: a place
 // is read off one piece, never agreed among many.
-template <class BoxOf, class Painted, class Picked>
-ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, int count, BoxOf box_of,
-                                      Painted painted, Picked picked) {
+template <class Pieces>
+ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, const Pieces& pieces) {
     int found = -1, partners = 0;
-    each_partner(how, mine, count, box_of, painted, picked, [&](int other) {
+    each_partner(how, mine, pieces, [&](int other) {
         found = other;
         ++partners;
     });
@@ -1064,16 +1023,15 @@ ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, int count, BoxOf
 // A PARTNER OF ANY KIND: the ways partner_by finds one by how two pieces sit,
 // then, past those, by color -- the one piece holding a cell of color `kind -
 // partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
-// Asked among the pieces not picked, as partner_of asks; `holds(j, color)` says
-// whether piece j holds a cell of that color. -1 when there is none, or several.
+// Asked among the pieces not picked, as partner_of asks. -1 when there is
+// none, or several.
 constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
-template <class BoxOf, class Painted, class Picked, class Holds>
-ARC_HOST_DEVICE inline int partner_of_kind(int kind, int mine, int count, BoxOf box_of, Painted painted,
-                                           Picked picked, Holds holds) {
-    if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, count, box_of, painted, picked);
+template <class Pieces>
+ARC_HOST_DEVICE inline int partner_of_kind(int kind, int mine, const Pieces& pieces) {
+    if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, pieces);
     int found = -1;
-    for (int other = 0; other < count; ++other) {
-        if (other == mine || picked(other) || !holds(other, kind - (int)partner_by::count)) continue;
+    for (int other = 0; other < pieces.count(); ++other) {
+        if (other == mine || pieces.is_picked(other) || !pieces.holds(other, kind - (int)partner_by::count)) continue;
         if (found >= 0) return -1;
         found = other;
     }
@@ -1110,12 +1068,14 @@ enum class toward_by : int8_t { a_step, its_size, touching, count };
 // a side or a corner, as partner_by::touching asks, on a canvas `width` by
 // `height`. A piece that touches already, or that would leave the canvas first,
 // stays. Hands back how far down and across; the kernel and the reading's replay
-// both take the move from here.
-template <class Painted>
-ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int partner, const cell_box& own,
-                                                const cell_box& target, Painted painted, int width, int height) {
-    const int way = heading_toward(own, target);
+// both take the move from here. The pieces are asked as each_partner asks them.
+template <class Pieces>
+ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
+                                                int width, int height) {
+    const cell_box own = pieces.box(mine);
+    const int way = heading_toward(own, pieces.box(partner));
     if (way < 0 || own.empty()) return { 0, 0 };
+    auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
     const heading_step step = step_of(way);
     if (far == toward_by::a_step) return step;
     if (far == toward_by::its_size) return { step.down * own.height(), step.across * own.width() };
@@ -1141,11 +1101,12 @@ ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int par
 // that meets the edge of that box on one side alone -- a side the piece lies
 // past. Nothing moves: this is the question WouldFit asks, and moving a piece
 // into its gap would be the same question answered with the place. The pieces
-// are read through the two questions each_partner asks.
-template <class BoxOf, class Painted>
-ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, BoxOf box_of, Painted painted) {
-    const cell_box own = box_of(mine), box = box_of(partner);
+// are asked as each_partner asks them.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, const Pieces& pieces) {
+    const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
+    auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
     constexpr uint8_t top = 1, bottom = 2, left = 4, right = 8;
     const uint8_t past = (uint8_t)((own.row1 < box.row0 ? top : 0) | (own.row0 > box.row1 ? bottom : 0) |
                                    (own.col1 < box.col0 ? left : 0) | (own.col0 > box.col1 ? right : 0));
@@ -1156,13 +1117,14 @@ ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, BoxOf box_of, Paint
     const int tall = box.height(), wide = box.width();
     // Each empty cell of the box: 0 not walked yet, 1 walked, 2 in the run walked now.
     uint8_t seen[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    int16_t run[MAX_GRID_DIM * MAX_GRID_DIM];
+    int16_t run_row[MAX_GRID_CELLS], run_col[MAX_GRID_CELLS];
     // Whether the piece, some way round, fills whole the run of `count` cells
-    // starting at `first`, hanging out past `side` with whatever it has over.
-    auto fills = [&](int first, int count, uint8_t side) {
-        const int anchor_row = box.row0 + first / MAX_GRID_DIM, anchor_col = box.col0 + first % MAX_GRID_DIM;
+    // starting at (first_row, first_col), hanging out past `side` with whatever
+    // it has over.
+    auto fills = [&](int first_row, int first_col, int count, uint8_t side) {
+        const int anchor_row = box.row0 + first_row, anchor_col = box.col0 + first_col;
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
-            const int high = (pose & 1) ? own.width() : own.height(), broad = (pose & 1) ? own.height() : own.width();
+            const auto [broad, high] = posed_size(pose, own.width(), own.height());
             auto at = [&](int row, int col) {
                 const auto [from_row, from_col] = pose_source(pose, own.width(), own.height(), row, col);
                 return (bool)painted(mine, own.row0 + from_row, own.col0 + from_col);
@@ -1196,29 +1158,25 @@ ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, BoxOf box_of, Paint
         for (int start_col = 0; start_col < wide; ++start_col) {
             if (seen[start_row][start_col] || painted(partner, box.row0 + start_row, box.col0 + start_col)) continue;
             // Walk the run from its first cell in reading order, noting the box's sides it meets.
-            int count = 0;
             uint8_t meets = 0;
             seen[start_row][start_col] = 2;
-            run[count++] = (int16_t)(start_row * MAX_GRID_DIM + start_col);
-            for (int next = 0; next < count; ++next) {
-                const int row = run[next] / MAX_GRID_DIM, col = run[next] % MAX_GRID_DIM;
-                if (row == 0) meets |= top;
-                if (row == tall - 1) meets |= bottom;
-                if (col == 0) meets |= left;
-                if (col == wide - 1) meets |= right;
-                const int steps[4][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
-                for (const auto& step : steps) {
-                    const int to_row = row + step[0], to_col = col + step[1];
-                    if (to_row < 0 || to_col < 0 || to_row >= tall || to_col >= wide || seen[to_row][to_col] ||
-                        painted(partner, box.row0 + to_row, box.col0 + to_col))
-                        continue;
-                    seen[to_row][to_col] = 2;
-                    run[count++] = (int16_t)(to_row * MAX_GRID_DIM + to_col);
-                }
-            }
+            run_row[0] = (int16_t)start_row;
+            run_col[0] = (int16_t)start_col;
+            const int count = walk_out<4>(tall, wide, run_row, run_col, 1,
+                [&](int row, int col) {
+                    if (seen[row][col] || painted(partner, box.row0 + row, box.col0 + col)) return false;
+                    seen[row][col] = 2;
+                    return true;
+                },
+                [&](int row, int col) {
+                    if (row == 0) meets |= top;
+                    if (row == tall - 1) meets |= bottom;
+                    if (col == 0) meets |= left;
+                    if (col == wide - 1) meets |= right;
+                });
             const bool one_side = meets == top || meets == bottom || meets == left || meets == right;
-            if (one_side && (meets & past) && count <= cells && fills(run[0], count, meets)) return true;
-            for (int i = 0; i < count; ++i) seen[run[i] / MAX_GRID_DIM][run[i] % MAX_GRID_DIM] = 1;
+            if (one_side && (meets & past) && count <= cells && fills(start_row, start_col, count, meets)) return true;
+            for (int i = 0; i < count; ++i) seen[run_row[i]][run_col[i]] = 1;
         }
     return false;
 }

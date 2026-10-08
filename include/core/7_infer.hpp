@@ -64,7 +64,7 @@ struct color_facts {
     // in_any_input and in_any_output are safe for LITERAL pinning only, and one
     // set per side — never a global whitelist (lethal, measured).
 
-    // Collects all basic color facts that can be learned without knowing the background yet.
+    // Collects all basic color facts.
     static color_facts detect(const vector<example>& train) {
         color_facts facts;
         facts.detect_presence(train);
@@ -73,15 +73,15 @@ struct color_facts {
     }
 
     // Records colors from most-used to least-used only when every output agrees
-    // on the ranking, excluding the supplied background.
-    void detect_output_colors_by_size(const vector<example>& train, int8_t background) {
+    // on the ranking.
+    void detect_output_colors_by_size(const vector<example>& train) {
         output_colors_by_size_count = 0;
         if (train.empty()) return;
 
         // Biggest first; returns how many colors this output actually has.
         auto rank_for_output = [&](const grid& out, int8_t ranking[COLOR_COUNT]) -> int {
             int counts[COLOR_COUNT];
-            count_colors(out, counts, background);
+            count_colors(out, counts);
             // Only the first `present` entries are ever read, and each is written
             // before it is, so there is nothing to start them at.
             int order[COLOR_COUNT] = {}, present = 0;
@@ -359,13 +359,75 @@ struct hole_color_rule {
 };
 
 // Read just the pieces, in the same size-and-position order used by matching.
-inline vector<object> pieces_of(const grid& input, int8_t background,
-                                segmentation_methods segmentation) {
+inline vector<object> pieces_of(const grid& input, segmentation_methods segmentation) {
     vector<object_segmentation::object_info> info;
     vector<object> pieces;
-    object_segmentation::segment_for_correspondence(input, background, segmentation, info, &pieces);
+    object_segmentation::segment_for_correspondence(input, segmentation, info, &pieces);
     return pieces;
 }
+
+// THE PIECES A WORD IS HANDED, as the cut's word hands them over, cut once per
+// pair and read by every replay below: where each lies, and whether the word's
+// pick takes it -- the questions the partner helpers ask (each_partner and kin,
+// 1_readings.hpp), asked here as the ops ask them of their objects, so a replay
+// and the op it replays cannot find different partners or fits.
+struct partner_pieces {
+    const vector<object>& pieces;
+    vector<cell_box> boxes;
+    vector<bool> picked;
+    // The pieces of a cut, the ones `marks` names picked.
+    partner_pieces(const vector<object>& cut, vector<bool> marks)
+        : pieces(cut), boxes(cut.size()), picked(std::move(marks)) {
+        for (size_t i = 0; i < pieces.size(); ++i)
+            pieces[i].each_cell([&](int row, int col, int8_t) { boxes[i].include_cell(row, col); });
+    }
+    // The pieces of a cut, the ones `pick` takes picked (picked_pieces, below).
+    partner_pieces(const vector<object>& cut, const piece_pick& pick);
+    // What the partner helpers ask.
+    int count() const { return (int)pieces.size(); }
+    cell_box box(int i) const { return boxes[i]; }
+    bool painted(int i, int row, int col) const { return pieces[i].holds(row, col); }
+    bool is_picked(int i) const { return picked[i]; }
+    int color(int i) const { return pieces[i].first_color(); }
+    // Whether piece i holds a cell of `color`.
+    bool holds(int i, int color) const { return (palette(pieces[i]) >> color & 1) != 0; }
+    bool every_piece_picked() const { return ranges::all_of(picked, [](bool one) { return one; }); }
+    // Piece i's one partner by `how` among the pieces not picked, or -1.
+    int partner(partner_by how, int i) const { return partner_of(how, i, *this); }
+    // Whether piece i has any partner by `how` among them, one or several.
+    bool partnered(partner_by how, int i) const {
+        bool any = false;
+        each_partner(how, i, *this, [&](int) { any = true; });
+        return any;
+    }
+    // Whether piece i would fit into a gap of its one partner by `how`.
+    bool fits(partner_by how, int i) const {
+        const int other = partner(how, i);
+        return other >= 0 && would_fit(i, other, *this);
+    }
+    // Piece i's one partner of `kind` (partner_of_kind) among the pieces not picked, or -1.
+    int partner_of_kind(int kind, int i) const { return arc::partner_of_kind(kind, i, *this); }
+    // HOW FAR PIECE i GOES, as the partner moves take it (the kernel's AlignTo and
+    // MoveToward, through the same helpers), or false when it has no one partner.
+    // Level with its partner's rows -- or, with `columns`, columns:
+    bool goes_level(int i, bool columns, partner_by how, heading_step& by) const {
+        const int other = partner(how, i);
+        if (other < 0) return false;
+        by = columns ? heading_step{ 0, boxes[other].col0 - boxes[i].col0 }
+                     : heading_step{ boxes[other].row0 - boxes[i].row0, 0 };
+        return true;
+    }
+    // Toward its partner of the kind `value` % PARTNER_KINDS names, by what
+    // `value` / PARTNER_KINDS names (move_toward), on a canvas `width` by `height`:
+    bool goes_toward(int i, int value, int width, int height, heading_step& by) const {
+        const int other = partner_of_kind(value % PARTNER_KINDS, i);
+        if (other < 0) return false;
+        by = move_toward((toward_by)(value / PARTNER_KINDS), i, other, *this, width, height);
+        return true;
+    }
+    // The color piece i takes from its partners by `how`, or -1.
+    int color_from(partner_by how, int i) const { return partner_color(how, i, *this); }
+};
 
 // Maps shapes to colors (rejected if any shape needs two different colors).
 struct shape_color_map_rule : shape_table {
@@ -427,30 +489,20 @@ struct shape_color_map_rule : shape_table {
             int8_t became = -1;
             for (const auto& edge : pairs[which].edges) {
                 if (!edge.from_input || edge.from != target || !edge.same_shape) continue;
-                const int8_t worn = edge.exact ? pieces[target].color : edge.recolored_to;
+                const int8_t worn = edge.exact ? pieces[target].color : edge.recolored_to(pieces[target].color);
                 if (!is_color(worn) || (became >= 0 && became != worn)) return {};
                 became = worn;
             }
             if (became < 0) return {};
             changed = changed || became != pieces[target].color;
 
-            const auto cut = pieces_of(train[which].input, TRANSPARENT, correspondence.segmentation);
+            const auto cut = pieces_of(train[which].input, correspondence.segmentation);
             if (cut.size() != pieces.size()) return {};
             // The largest takes its color from its one nearest piece, as ColorFrom
             // finds it among the pieces not picked: that must be the key.
-            vector<cell_box> boxes(cut.size());
-            for (size_t i = 0; i < cut.size(); ++i)
-                cut[i].each_cell([&](int row, int col, int8_t) { boxes[i].include_cell(row, col); });
-            const int nearest = partner_of(partner_by::nearest, target, (int)cut.size(),
-                [&](int j) { return boxes[(size_t)j]; },
-                [&](int j, int row, int col) {
-                    const object& piece = cut[(size_t)j];
-                    const int down = row - piece.summary.y0, across = col - piece.summary.x0;
-                    return down >= 0 && across >= 0 && down < piece.summary.h && across < piece.summary.w &&
-                           piece.cells[down][across] != (int8_t)TRANSPARENT;
-                },
-                [&](int j) { return j == target; });
-            if (nearest != key) return {};
+            vector<bool> largest(cut.size(), false);
+            largest[(size_t)target] = true;
+            if (partner_pieces(cut, largest).partner(partner_by::nearest, target) != key) return {};
             if (!rule.learn(key_of(shape_key::shape, cut[key]), became)) return {};
             rule.read.push_back({ (int16_t)key, (int16_t)target, became });
         }
@@ -744,31 +796,35 @@ bool redraws_every_output(const vector<example>& train, Draw draw) {
     return true;
 }
 
+// A grid that size with nothing on it yet.
+inline grid empty_grid(int width, int height) {
+    grid made(width, height);
+    made.fill(TRANSPARENT);
+    return made;
+}
+
 // THE CANVAS A PROGRAM PAINTS ON, sized and closed as the kernel does it: the
 // size rule's box, or under BoundingBox the largest grid there is, cropped at
 // the end to what was painted. `paint` lays its cells on it, TRANSPARENT where
-// nothing is yet, or says false. What nothing painted takes the elected output
-// ground; with none elected it stays empty -- what a plan fills last, and what
-// an output with a color there refuses when the drawing is compared to it.
+// nothing is yet, or says false. What nothing painted stays empty -- what a
+// plan fills last, and what an output with a color there refuses when the
+// drawing is compared to it.
 template <class Paint>
-bool draw_on_canvas(const grid& input, const output_dimension_rule& size, int8_t ground_out,
-                    grid& drawn, Paint paint) {
+bool draw_on_canvas(const grid& input, const output_dimension_rule& size, grid& drawn, Paint paint) {
     const bool closes = size.Chosen == output_dimension_rule::BoundingBox;
     int width = MAX_GRID_DIM, height = MAX_GRID_DIM;
     if (!size.canvas_size_for(input.width, input.height, width, height)) return false;
-    grid canvas(width, height);
-    canvas.fill(TRANSPARENT);
+    grid canvas = empty_grid(width, height);
     if (!paint(canvas)) return false;
-    const cell_box kept = fit_frame(closes ? 2 : 1, input.width, input.height, canvas);
+    const cell_box kept = fit_frame((int)(closes ? fit_to::painted : fit_to::canvas), input.width, input.height, canvas);
     if (kept.empty()) return false;
     drawn = grid(kept.width(), kept.height());
     for (int r = 0; r < drawn.height; ++r)
-        for (int c = 0; c < drawn.width; ++c) {
-            const int color = canvas.data[kept.row0 + r][kept.col0 + c];
-            drawn.data[r][c] = color == TRANSPARENT && is_color(ground_out) ? ground_out : (int8_t)color;
-        }
+        for (int c = 0; c < drawn.width; ++c) drawn.data[r][c] = canvas.data[kept.row0 + r][kept.col0 + c];
     return true;
 }
+static_assert(row_of(node_type::Fit).high + 1 == (int)fit_to::count,
+              "Fit takes one value for each target it stretches to");
 
 // A REPEATING PICTURE WITH NOISE ON IT, AND THE OUTPUT IS THE PICTURE CLEAN.
 // The input is a lattice of copies that noise has scribbled over, so no cut of
@@ -829,13 +885,9 @@ struct ray_extension_rule {
     vector<branch> branches;
     bool holds() const { return !branches.empty(); }
 
-    static bool rank_colors(const grid& input, int8_t background, ranked_colors& ranked) {
-        int counts[COLOR_COUNT] = {};
-        for (int row = 0; row < input.height; ++row)
-            for (int col = 0; col < input.width; ++col) {
-                const int color = input.data[row][col];
-                if (is_color(color) && color != background) ++counts[color];
-            }
+    static bool rank_colors(const grid& input, ranked_colors& ranked) {
+        int counts[COLOR_COUNT];
+        count_colors(input, counts);
         ranked.clear();
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (counts[color]) ranked.push_back((int8_t)color);
@@ -877,8 +929,7 @@ struct ray_extension_rule {
         bool drew = false;
         each_object(layer, TRANSPARENT, grouping::touching_same_color, scratch,
                     [&](const object_summary& box, const int16_t* cells, int count) {
-            grid object(box.w, box.h);
-            object.fill(TRANSPARENT);
+            grid object = empty_grid(box.w, box.h);
             for (int i = 0; i < count; ++i) {
                 const int row = cell_row(cells[i]), col = cell_col(cells[i]);
                 object.data[row - box.y0][col - box.x0] = color;
@@ -928,7 +979,7 @@ struct ray_extension_rule {
     // that color, and may paint elsewhere only beneath an already peeled layer.
     // This one check handles every position in the compositing order.
     static bool peel(const candidate& layer, const vector<example>& train,
-                     const vector<ranked_colors>& ranked, int8_t canvas, const vector<grid>& covered,
+                     const vector<ranked_colors>& ranked, const vector<grid>& covered,
                      vector<grid>& next) {
         next = covered;
         for (size_t i = 0; i < train.size(); ++i) {
@@ -939,8 +990,8 @@ struct ray_extension_rule {
                     const bool painted = layer.ink[i].data[row][col] != TRANSPARENT;
                     const int output = train[i].output.data[row][col];
                     if (painted && output != color) return false;
-                    // Unpainted cells take the elected output background.
-                    if (color != canvas && output == color && !painted) return false;
+                    // A cell of the color the layer did not paint is one it leaves unsaid.
+                    if (output == color && !painted) return false;
                     if (painted) next[i].data[row][col] = 1;
                 }
         }
@@ -953,7 +1004,7 @@ struct ray_extension_rule {
         vector<grid> covered;
         for (size_t i = 0; i < train.size(); ++i) {
             const auto& pair = train[i];
-            if (!rank_colors(pair.input, TRANSPARENT, ranked[i]) ||
+            if (!rank_colors(pair.input, ranked[i]) ||
                 ranked[i].size() != ranked[0].size()) return {};
             for (int row = 0; row < pair.output.height; ++row)
                 for (int col = 0; col < pair.output.width; ++col) {
@@ -975,7 +1026,7 @@ struct ray_extension_rule {
                 if (used & (1u << rank)) continue;
                 for (const auto& option : options[rank]) {
                     vector<grid> next;
-                    if (!peel(option, train, ranked, TRANSPARENT, mask, next)) continue;
+                    if (!peel(option, train, ranked, mask, next)) continue;
                     found.branches.push_back(option.how);
                     if (self(self, used | (1u << rank), next)) return true;
                     found.branches.pop_back();
@@ -993,9 +1044,10 @@ struct ray_extension_rule {
 // color, how many panes -- is read off the grid; these are only the permissions,
 // the way degrees_of_freedom holds them for matching.
 struct split_freedom {
-    // A full-span line of a color that is not the background: a wall.
+    // A full-span line of one color: a wall.
     bool wall = true;
-    // A full-span line of the background: the same shape of evidence, thinner.
+    // A full-span line of empty cells, where the ground was: the same shape
+    // of evidence, thinner.
     bool blank = true;
     // No line at all, k equal parts. It fits almost any grid, so on its own it
     // says nothing and something else has to license it.
@@ -1054,6 +1106,8 @@ struct pane_split_facts : pane_cut {
             const auto [source_row, source_col] = pose_source(pose, width, height, row, col);
             return source.data[top + source_row][left + source_col];
         }
+        // Its box on the grid.
+        cell_box box() const { return { top, left, top + height - 1, left + width - 1 }; }
         // Whether the pane reads through this pose at its own size.
         bool keeps_size(int pose) const {
             return posed_size(pose, width, height) == pair<int, int>{ width, height };
@@ -1067,9 +1121,6 @@ struct pane_split_facts : pane_cut {
         }
     };
     vector<vector<pane>> pairs;
-    // The elected background, which a wall is never the color of. Kept for the
-    // grids that say their own wall's color.
-    int8_t ground = -1;
 
     bool held = false;
     bool holds() const { return held; }
@@ -1136,7 +1187,7 @@ struct pane_split_facts : pane_cut {
     }
 
     // Every way this one grid could be cut, under these permissions.
-    static void readings_of(const grid& one, int8_t background, split_freedom allowed,
+    static void readings_of(const grid& one, split_freedom allowed,
                             vector<pair<pane_cut, vector<pane>>>& found) {
         found.clear();
         vector<int> row_lines, col_lines;
@@ -1145,7 +1196,7 @@ struct pane_split_facts : pane_cut {
         // A line with nothing on it is blank, as a line of the ground is: after a
         // plan deleted the ground, that is what its lines are.
         for (int color = TRANSPARENT; color < COLOR_COUNT; ++color) {
-            const int8_t cut = color == background || color == TRANSPARENT ? Blank : Wall;
+            const int8_t cut = color == TRANSPARENT ? Blank : Wall;
             if (!(cut == Wall ? allowed.wall : allowed.blank)) continue;
             full_lines(one, color, row_lines, col_lines);
             const auto rows = spans_between(one.height, row_lines);
@@ -1204,7 +1255,7 @@ struct pane_split_facts : pane_cut {
     }
 
     // The wall's color in this grid: the one the pairs agreed on, or when they
-    // agreed only on the cut, the one color besides the ground whose full lines
+    // agreed only on the cut, the one color whose full lines
     // cut this grid the same way. -1 when none does, or several do.
     int wall_of(const grid& one) const {
         if (cut != Wall) return -1;
@@ -1213,7 +1264,6 @@ struct pane_split_facts : pane_cut {
         vector<int> row_lines, col_lines;
         vector<pane> panes;
         for (int line = 0; line < COLOR_COUNT; ++line) {
-            if (line == ground) continue;
             full_lines(one, line, row_lines, col_lines);
             const auto rows = spans_between(one.height, row_lines);
             const auto cols = spans_between(one.width, col_lines);
@@ -1243,20 +1293,20 @@ struct pane_split_facts : pane_cut {
     // are the rule, whatever color the lines are drawn in.
     static pane_split_facts detect(const vector<example>& train,
                                    split_freedom allowed = {}) {
-        pane_split_facts facts = agreed_on(train, TRANSPARENT, allowed, false);
-        if (!facts.holds()) facts = agreed_on(train, TRANSPARENT, allowed, true);
+        pane_split_facts facts = agreed_on(train, allowed, false);
+        if (!facts.holds()) facts = agreed_on(train, allowed, true);
         return facts;
     }
 
     // Reads every training input, keeps the readings they all agree on, and holds
     // only when exactly one of those survives the precedence.
-    static pane_split_facts agreed_on(const vector<example>& train, int8_t background,
-                                      split_freedom allowed, bool own_walls) {
+    static pane_split_facts agreed_on(const vector<example>& train, split_freedom allowed,
+                                      bool own_walls) {
         if (train.empty()) return {};
         vector<pair<pane_cut, vector<pane>>> found;
         vector<pane_cut> agreed;
         for (size_t i = 0; i < train.size(); ++i) {
-            readings_of(train[i].input, background, allowed, found);
+            readings_of(train[i].input, allowed, found);
             if (own_walls) without_wall_colors(found);
             // A wall is a wall whether or not the answer is a pane wide: the
             // input alone shows it, so it is admitted on its own evidence. A cut
@@ -1287,9 +1337,8 @@ struct pane_split_facts : pane_cut {
 
         const pane_cut won = agreed.front();
         pane_split_facts facts{ won };
-        facts.ground = background;
         for (const auto& train_pair : train) {
-            readings_of(train_pair.input, background, allowed, found);
+            readings_of(train_pair.input, allowed, found);
             if (own_walls) without_wall_colors(found);
             for (const auto& [named, panes] : found)
                 if (named == won) { facts.pairs.push_back(panes); break; }
@@ -1345,18 +1394,17 @@ struct pane_mask_rule {
     }
     // Which panes have something at (r, c), one bit each.
     static int mask_at(const vector<pane_split_facts::pane>& boxes, const grid& input,
-                       int r, int c, int pose, int8_t background) {
+                       int r, int c, int pose) {
         int mask = 0;
         for (int p = 0; p < (int)boxes.size(); ++p)
-            if (shown(boxes, p, input, r, c, pose) != background) mask |= 1 << p;
+            if (shown(boxes, p, input, r, c, pose) != TRANSPARENT) mask |= 1 << p;
         return mask;
     }
 
     // Reads every training pair under one pose and says what each mask means,
     // or says nothing when two cells with the same mask disagree beyond repair.
     static pane_mask_rule read_with(const vector<example>& train,
-                                    const pane_split_facts& split,
-                                    int8_t background, int pose) {
+                                    const pane_split_facts& split, int pose) {
         pane_mask_rule rule;
         if (train.size() != split.pairs.size() || split.pairs.empty()) return {};
         const int panes = (int)split.pairs.front().size();
@@ -1381,7 +1429,7 @@ struct pane_mask_rule {
                     return {};
             for (int r = 0; r < output.height; ++r)
                 for (int c = 0; c < output.width; ++c) {
-                    const int mask = mask_at(boxes, input, r, c, pose, background);
+                    const int mask = mask_at(boxes, input, r, c, pose);
                     const int now = output.data[r][c];
                     for (int p = 0; p < panes; ++p)
                         if (shown(boxes, p, input, r, c, pose) != now)
@@ -1416,8 +1464,7 @@ struct pane_mask_rule {
     // not cut this grid, or when a mask turns up that training never explained --
     // declining beats guessing, since a guess here is a wrong answer that looks
     // like a right one.
-    bool draw(const grid& input, const pane_split_facts& split, int8_t background,
-              grid& drawn) const {
+    bool draw(const grid& input, const pane_split_facts& split, grid& drawn) const {
         vector<pane_split_facts::pane> boxes;
         if (!holds() || !split.panes_of(input, boxes)) return false;
         if ((int)boxes.size() != panes) return false;
@@ -1428,7 +1475,7 @@ struct pane_mask_rule {
         drawn = grid(first.width, first.height);
         for (int r = 0; r < drawn.height; ++r)
             for (int c = 0; c < drawn.width; ++c) {
-                const answer& says = by_mask[mask_at(boxes, input, r, c, posed, background)];
+                const answer& says = by_mask[mask_at(boxes, input, r, c, posed)];
                 if (!says.said()) return false;
                 drawn.data[r][c] = says.leaves_empty ? (int8_t)TRANSPARENT
                                  : says.paint >= 0   ? says.paint
@@ -1445,9 +1492,9 @@ struct pane_mask_rule {
                                  const pane_split_facts& split) {
         if (!split.holds()) return {};
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
-            const pane_mask_rule rule = read_with(train, split, TRANSPARENT, pose);
+            const pane_mask_rule rule = read_with(train, split, pose);
             if (rule.holds() && redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                    return rule.draw(pair.input, split, TRANSPARENT, drawn);
+                    return rule.draw(pair.input, split, drawn);
                 })) return rule;
         }
         return {};
@@ -1509,11 +1556,11 @@ struct pane_pick_rule {
             }
         return seen;
     }
-    static int carried_by(const grid& one, const pane_split_facts::pane& box, int8_t background) {
+    static int carried_by(const grid& one, const pane_split_facts::pane& box) {
         int count = 0;
         for (int r = 0; r < box.height; ++r)
             for (int c = 0; c < box.width; ++c)
-                count += box.color_at(one, r, c) != background;
+                count += box.color_at(one, r, c) != TRANSPARENT;
         return count;
     }
 
@@ -1529,7 +1576,7 @@ struct pane_pick_rule {
 
     // Which pane this way names on this grid, or -1 when it names none.
     static int pick(const grid& one, const vector<pane_split_facts::pane>& boxes,
-                    int8_t background, int8_t way, int8_t which) {
+                    int8_t way, int8_t which) {
         const int count = (int)boxes.size();
         if (count < 2) return -1;
         switch (way) {
@@ -1570,7 +1617,7 @@ struct pane_pick_rule {
         }
         case Fullest: case Emptiest: {
             vector<int> carried;
-            for (const auto& box : boxes) carried.push_back(carried_by(one, box, background));
+            for (const auto& box : boxes) carried.push_back(carried_by(one, box));
             return only_extreme(carried, way == Fullest);
         }
         case MostColored: case LeastColored: {
@@ -1583,11 +1630,10 @@ struct pane_pick_rule {
     }
 
     // Hands back the named pane, or fits it behind the original wall color.
-    bool draw(const grid& input, const pane_split_facts& split, int8_t background,
-              grid& drawn) const {
+    bool draw(const grid& input, const pane_split_facts& split, grid& drawn) const {
         vector<pane_split_facts::pane> boxes;
         if (!holds() || !split.panes_of(input, boxes)) return false;
-        const int found = pick(input, boxes, background, way, which);
+        const int found = pick(input, boxes, way, which);
         if (found < 0) return false;
         const auto& source = boxes[(size_t)found];
         if (!fitted) {
@@ -1619,7 +1665,7 @@ struct pane_pick_rule {
             auto names_it = [&](int8_t way, int8_t which) {
                 const pane_pick_rule trying{ way, which, true, fitted };
                 return redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                    return trying.draw(pair.input, split, TRANSPARENT, drawn);
+                    return trying.draw(pair.input, split, drawn);
                 });
             };
             // For a miniature blueprint, occupancy is the simplest reason:
@@ -1645,6 +1691,21 @@ struct pane_pick_rule {
     }
 };
 
+// THE BANDS `count` BOXES SIT IN, of rows or of columns, as overlapping_bands
+// groups them for Layout, SelectRow and SelectColumn: each box's band into
+// `band`, and how many bands there are. `box_of(i)` is box i.
+template <class BoxOf>
+inline int bands_of(int count, bool rows, BoxOf box_of, int8_t* band) {
+    vector<int16_t> lows((size_t)count), highs((size_t)count);
+    vector<int> order((size_t)count);
+    for (int i = 0; i < count; ++i) {
+        const cell_box box = box_of(i);
+        lows[(size_t)i] = (int16_t)(rows ? box.row0 : box.col0);
+        highs[(size_t)i] = (int16_t)(rows ? box.row1 : box.col1);
+    }
+    return overlapping_bands(count, lows.data(), highs.data(), band, order.data());
+}
+
 // EVERY PANE'S DRAWING, CUT DOWN TO WHAT IT HOLDS AND GATHERED WHERE ITS PANE WAS.
 //
 // pane_mask_rule makes one drawing out of the panes and pane_pick_rule keeps
@@ -1662,8 +1723,8 @@ struct pane_gather_rule {
     // gives it -- or, under BoundingBox, on the largest canvas there is, closed on
     // what was painted, as the kernel closes it. Declines when no pane holds
     // anything, since then nothing is laid out at all.
-    static bool draw(const grid& input, const pane_split_facts& split, int8_t background,
-                     int8_t ground_out, const output_dimension_rule& size, grid& drawn) {
+    static bool draw(const grid& input, const pane_split_facts& split, const output_dimension_rule& size,
+                     grid& drawn) {
         vector<pane_split_facts::pane> boxes;
         if (!split.panes_of(input, boxes) || boxes.empty() ||
             (int)boxes.size() > MAX_OBJECTS_IN_A_LIST) return false;
@@ -1671,28 +1732,21 @@ struct pane_gather_rule {
         // What each pane holds, and the cell that holds the largest of them.
         vector<cell_box> drawings((size_t)count);
         int cell_w = 0, cell_h = 0;
-        int16_t row_lows[MAX_OBJECTS_IN_A_LIST], row_highs[MAX_OBJECTS_IN_A_LIST];
-        int16_t col_lows[MAX_OBJECTS_IN_A_LIST], col_highs[MAX_OBJECTS_IN_A_LIST];
         for (int p = 0; p < count; ++p) {
             const auto& box = boxes[(size_t)p];
             for (int r = 0; r < box.height; ++r)
                 for (int c = 0; c < box.width; ++c)
-                    if (box.color_at(input, r, c) != background) drawings[(size_t)p].include_cell(r, c);
+                    if (box.color_at(input, r, c) != TRANSPARENT) drawings[(size_t)p].include_cell(r, c);
             cell_w = max(cell_w, drawings[(size_t)p].width());
             cell_h = max(cell_h, drawings[(size_t)p].height());
-            row_lows[p] = box.top;
-            row_highs[p] = (int16_t)(box.top + box.height - 1);
-            col_lows[p] = box.left;
-            col_highs[p] = (int16_t)(box.left + box.width - 1);
         }
         if (cell_w == 0 || cell_h == 0) return false;
         // The bands come off the frames, the same grouping the kernel reads.
         int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
-        int order[MAX_OBJECTS_IN_A_LIST];
-        const int rows = overlapping_bands(count, row_lows, row_highs, row_of, order);
-        const int cols = overlapping_bands(count, col_lows, col_highs, col_of, order);
+        auto frame = [&](int p) { return boxes[(size_t)p].box(); };
+        const int rows = bands_of(count, true, frame, row_of), cols = bands_of(count, false, frame, col_of);
         const int laid_w = min(cols * cell_w, MAX_GRID_DIM), laid_h = min(rows * cell_h, MAX_GRID_DIM);
-        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+        return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
             for (int p = 0; p < count; ++p) {
                 const auto& box = boxes[(size_t)p];
                 const cell_box& drawing = drawings[(size_t)p];
@@ -1700,7 +1754,7 @@ struct pane_gather_rule {
                     for (int c = 0; c < min(cell_w, drawing.width()); ++c) {
                         const int row = row_of[p] * cell_h + r, col = col_of[p] * cell_w + c;
                         const int color = box.color_at(input, drawing.row0 + r, drawing.col0 + c);
-                        if (color == background || row >= min(laid_h, canvas.height) ||
+                        if (color == TRANSPARENT || row >= min(laid_h, canvas.height) ||
                             col >= min(laid_w, canvas.width)) continue;
                         canvas.data[row][col] = (int8_t)color;
                     }
@@ -1715,7 +1769,7 @@ struct pane_gather_rule {
         if (!split.holds()) return {};
         pane_gather_rule rule;
         rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            return draw(pair.input, split, TRANSPARENT, TRANSPARENT, size, drawn);
+            return draw(pair.input, split, size, drawn);
         });
         return rule;
     }
@@ -1861,12 +1915,11 @@ struct input_blocks_rule {
 // the word's own order, or a reading lays a later piece under an earlier one.
 // Split hands them over in the order the walk meets them. Colors walks the
 // palette rather than the grid, so its layers come in colour order.
-inline vector<object> pieces_as_said(const grid& input, int8_t background,
-                                     segmentation_methods segmentation) {
+inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation) {
     vector<object> pieces;
     if (!boxed_by_its_cells(segmentation)) return pieces;
     object_walk_scratch scratch;
-    each_object(input, background, grouping_of(segmentation), scratch,
+    each_object(input, TRANSPARENT, grouping_of(segmentation), scratch,
                 [&](const object_summary& box, const int16_t* cells, int count) {
         pieces.push_back(object::from_cells(input, box, cells, count));
     });
@@ -1922,9 +1975,8 @@ struct piece_slam_rule {
         // cell moved at all.
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
             return redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                const auto pieces = pieces_of(pair.input, TRANSPARENT, correspondence.segmentation);
-                drawn = grid(pair.output.width, pair.output.height);
-                drawn.fill(TRANSPARENT);
+                const auto pieces = pieces_of(pair.input, correspondence.segmentation);
+                drawn = empty_grid(pair.output.width, pair.output.height);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
                     bool collision = false;
@@ -2007,27 +2059,16 @@ ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
         for (int col = 0; col < width && runs < SNAP_MOST_RUNS; ++col) {
             if (at(row, col) == TRANSPARENT || label[row][col] != -1) continue;
             const int run = runs++;
-            int head = 0, tail = 0;
-            queue_row[tail] = (int16_t)row;
-            queue_col[tail] = (int16_t)col;
-            ++tail;
             label[row][col] = (int8_t)run;
-            while (head < tail) {
-                const int from_row = queue_row[head], from_col = queue_col[head];
-                ++head;
-                if (at(from_row, from_col) == body) holds_body[run] = true;
-                for (int dir = 0; dir < 8; ++dir) {
-                    const int next_row = from_row + neighbour_row_8(dir), next_col = from_col + neighbour_col_8(dir);
-                    if (next_row < 0 || next_row >= height || next_col < 0 || next_col >= width) continue;
-                    if (at(next_row, next_col) == TRANSPARENT || label[next_row][next_col] != -1) continue;
+            queue_row[0] = (int16_t)row;
+            queue_col[0] = (int16_t)col;
+            walk_out<8>(height, width, queue_row, queue_col, 1,
+                [&](int next_row, int next_col) {
+                    if (at(next_row, next_col) == TRANSPARENT || label[next_row][next_col] != -1) return false;
                     label[next_row][next_col] = (int8_t)run;
-                    if (tail < MAX_GRID_CELLS) {
-                        queue_row[tail] = (int16_t)next_row;
-                        queue_col[tail] = (int16_t)next_col;
-                        ++tail;
-                    }
-                }
-            }
+                    return true;
+                },
+                [&](int seen_row, int seen_col) { if (at(seen_row, seen_col) == body) holds_body[run] = true; });
         }
 
     // The anchors: where each lies, and a list of them by color.
@@ -2122,9 +2163,9 @@ struct snap_to_anchors_rule {
             int8_t cells[MAX_GRID_DIM][MAX_GRID_DIM];
             for (auto& row : cells)
                 for (int8_t& cell : row) cell = (int8_t)TRANSPARENT;
-            for (const object& piece : pieces_as_said(pair.input, TRANSPARENT, correspondence.segmentation))
+            for (const object& piece : pieces_as_said(pair.input, correspondence.segmentation))
                 piece.each_cell([&](int row, int col, int8_t color) { cells[row][col] = color; });
-            const bool painted = draw_on_canvas(pair.input, size, TRANSPARENT, drawn, [&](grid& canvas) {
+            const bool painted = draw_on_canvas(pair.input, size, drawn, [&](grid& canvas) {
                 int8_t label[MAX_GRID_DIM][MAX_GRID_DIM];
                 bool set_down = false;
                 snap_to_anchors(MAX_GRID_DIM, MAX_GRID_DIM, [&](int row, int col) { return (int)cells[row][col]; },
@@ -2196,7 +2237,7 @@ struct overlap_corner_rule {
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            const auto pieces = pieces_of(pair.input, TRANSPARENT, correspondence.segmentation);
+            const auto pieces = pieces_of(pair.input, correspondence.segmentation);
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
             // The chain runs left to right, ties top to bottom -- the order the
@@ -2212,8 +2253,7 @@ struct overlap_corner_rule {
             // Tied corners leave the order to the op's list, which we can't see.
             for (size_t i = 1; i < chain.size(); ++i)
                 if (same_corner(chain[i]->summary, chain[i - 1]->summary)) return false;
-            drawn = grid(pair.output.width, pair.output.height);
-            drawn.fill(TRANSPARENT);
+            drawn = empty_grid(pair.output.width, pair.output.height);
             // The head of the chain sits in the corner; each piece after it puts
             // its top-left on the last one's bottom-right and paints over it,
             // which is the paint order the closing Union gives them for free.
@@ -2284,7 +2324,7 @@ struct slide_to_touch_rule {
         int8_t colors[2] = { -1, -1 };
         for (const auto& pair : train) {
             vector<object_segmentation::object_info> info;
-            object_segmentation::segment_for_correspondence(pair.input, TRANSPARENT,
+            object_segmentation::segment_for_correspondence(pair.input,
                                                             correspondence.segmentation, info, nullptr);
             // One list is all the op is ever handed, so a grid cut into more
             // pieces than that is one the word could not draw anyway.
@@ -2307,10 +2347,9 @@ struct slide_to_touch_rule {
             return redraws_every_output(train, [&](const example& pair, grid& drawn) {
                 vector<object_segmentation::object_info> info;
                 vector<object> pieces;
-                object_segmentation::segment_for_correspondence(pair.input, TRANSPARENT,
+                object_segmentation::segment_for_correspondence(pair.input,
                                                                 correspondence.segmentation, info, &pieces);
-                drawn = grid(pair.output.width, pair.output.height);
-                drawn.fill(TRANSPARENT);
+                drawn = empty_grid(pair.output.width, pair.output.height);
                 // WHAT THE OP SEES OF THE CANVAS is the box around everything
                 // already painted, read once, before the first piece slides --
                 // so what slides is measured against the pieces that stay, and
@@ -2377,19 +2416,13 @@ struct edge_slide_rule {
     bool holds() const { return held; }
 
     // SelectColor picks a piece that carries the color anywhere.
-    bool slides(const object& piece) const {
-        if (!is_color(color)) return true;
-        for (int r = 0; r < piece.summary.h; ++r)
-            for (int c = 0; c < piece.summary.w; ++c)
-                if (piece.cells[r][c] == color) return true;
-        return false;
-    }
+    bool slides(const object& piece) const { return !is_color(color) || (palette(piece) >> color & 1) != 0; }
 
     // One input's output as the sentences paint it: what stays, where it lies,
     // then each sliding piece in the cut's own order, later over earlier.
-    bool draw(const grid& input, const vector<object>& pieces, int8_t ground_out,
-              const output_dimension_rule& size, grid& drawn) const {
-        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+    bool draw(const grid& input, const vector<object>& pieces, const output_dimension_rule& size,
+              grid& drawn) const {
+        return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
                 if (!slides(piece) && !paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0))
                     return false;
@@ -2418,16 +2451,13 @@ struct edge_slide_rule {
             vector<vector<object>> pieces;
             uint16_t colors = 0;
             for (const example& pair : train) {
-                pieces.push_back(pieces_as_said(pair.input, TRANSPARENT, cut));
-                for (const object& piece : pieces.back())
-                    for (int r = 0; r < piece.summary.h; ++r)
-                        for (int c = 0; c < piece.summary.w; ++c)
-                            if (is_color(piece.cells[r][c])) colors |= (uint16_t)(1u << piece.cells[r][c]);
+                pieces.push_back(pieces_as_said(pair.input, cut));
+                for (const object& piece : pieces.back()) colors = (uint16_t)(colors | palette(piece));
             }
             bool as_they_lie = true;
             for (size_t i = 0; i < train.size() && as_they_lie; ++i) {
                 grid drawn;
-                as_they_lie = draw_on_canvas(train[i].input, size, TRANSPARENT, drawn, [&](grid& canvas) {
+                as_they_lie = draw_on_canvas(train[i].input, size, drawn, [&](grid& canvas) {
                     for (const object& piece : pieces[i])
                         if (!paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0)) return false;
                     return true;
@@ -2436,15 +2466,15 @@ struct edge_slide_rule {
             if (as_they_lie) continue;
             for (int color = -1; color < COLOR_COUNT; ++color) {
                 if (color >= 0 && !(colors >> color & 1)) continue;
-                for (int way = 0; way < heading::count; ++way)
+                for (int at = 0; at < heading::count; ++at)
                     for (bool over : { true, false }) {
                         // With every piece sliding nothing stays to lie under.
                         if (!over && color < 0) continue;
-                        const edge_slide_rule trying{ cut, (int8_t)color, (int8_t)way, over, true };
+                        const edge_slide_rule trying{ cut, (int8_t)color, (int8_t)heading_asked(at), over, true };
                         bool every = true;
                         for (size_t i = 0; i < train.size() && every; ++i) {
                             grid drawn;
-                            every = trying.draw(train[i].input, pieces[i], TRANSPARENT, size, drawn) &&
+                            every = trying.draw(train[i].input, pieces[i], size, drawn) &&
                                     drawn == train[i].output;
                         }
                         if (every) return trying;
@@ -2468,20 +2498,19 @@ struct copy_to_rule {
     int8_t anchor = 4;
     bool holds() const { return held; }
 
-    static vector<object> pieces(const grid& input, int8_t ground,
-                                 const pane_split_facts& split, bool use_panes) {
+    static vector<object> pieces(const grid& input, const pane_split_facts& split, bool use_panes) {
         grid source = input;
         if (use_panes) {
             vector<pane_split_facts::pane> frames;
             if (!split.panes_of(input, frames) || frames.size() > MAX_OBJECTS_IN_A_LIST) return {};
             for (int r = 0; r < source.height; ++r)
-                for (int c = 0; c < source.width; ++c) source.data[r][c] = ground;
+                for (int c = 0; c < source.width; ++c) source.data[r][c] = TRANSPARENT;
             for (const auto& frame : frames)
                 for (int r = frame.top; r < frame.top + frame.height; ++r)
                     for (int c = frame.left; c < frame.left + frame.width; ++c)
                         source.data[r][c] = input.data[r][c];
         }
-        return pieces_as_said(source, ground, segmentation_methods::connected_multicolor);
+        return pieces_as_said(source, segmentation_methods::connected_multicolor);
     }
 
     static int source_index(const vector<object>& objects) {
@@ -2522,7 +2551,7 @@ struct copy_to_rule {
             vector<int> sources;
             bool readable = true;
             for (const auto& pair : train) {
-                cut.push_back(pieces(pair.input, TRANSPARENT, split, use_panes));
+                cut.push_back(pieces(pair.input, split, use_panes));
                 sources.push_back(source_index(cut.back()));
                 if (sources.back() < 0) { readable = false; break; }
             }
@@ -2548,17 +2577,13 @@ struct marker_piece {
     int8_t color = 0;
 };
 
-inline vector<marker_piece> seeds_the_op_will_see(const grid& input, int8_t never_changes) {
+inline vector<marker_piece> seeds_the_op_will_see(const grid& input) {
     vector<marker_piece> pieces;
     object_walk_scratch scratch;
-    // -1 excludes nothing: the ground is a piece here like any other, and it is
-    // dropped below for its colour, not for being the ground.
-    each_object(input, -1, grouping::touching_same_color, scratch,
+    each_object(input, TRANSPARENT, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int found) {
         if (found <= 0) return;
-        const int8_t color = (int8_t)input.data[cell_row(cells[0])][cell_col(cells[0])];
-        if (color == never_changes) return;
-        pieces.push_back({ box, color });
+        pieces.push_back({ box, (int8_t)input.data[cell_row(cells[0])][cell_col(cells[0])] });
     });
     vector<object_summary> boxes;
     for (const marker_piece& piece : pieces) boxes.push_back(piece.summary);
@@ -2614,9 +2639,8 @@ struct project_on_seeds_rule {
     // lay on this pair's canvas, and says how many stamps they laid -- none when
     // there is no template or no marker to lay one along.
     template <class Land>
-    static int stamp(const example& pair, segmentation_methods cut, int8_t input_background,
-                     Land land) {
-        const auto pieces = pieces_of(pair.input, input_background, cut);
+    static int stamp(const example& pair, segmentation_methods cut, Land land) {
+        const auto pieces = pieces_of(pair.input, cut);
         if (pieces.empty()) return 0;
         // The template is whichever piece SortBySize[0] puts first, and that
         // word ranks by cells -- not the box that picked the markers. The op
@@ -2629,7 +2653,7 @@ struct project_on_seeds_rule {
         // stamp before the list does.
         constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
         int stamped = 0;
-        for (const marker_piece& marker : seeds_the_op_will_see(pair.input, input_background))
+        for (const marker_piece& marker : seeds_the_op_will_see(pair.input))
             project_along(box_of(tpl.summary), box_of(marker.summary),
                           pair.input.width, pair.input.height, [&](int at_row, int at_col) {
                 if (stamped >= most_the_op_stamps) return false;
@@ -2658,7 +2682,7 @@ struct project_on_seeds_rule {
         // reading already says without a word this long.
         const bool in_the_markers_colors = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             drawn = pair.input;
-            return stamp(pair, cut, TRANSPARENT, [&](int row, int col, int8_t color) {
+            return stamp(pair, cut, [&](int row, int col, int8_t color) {
                 drawn.data[row][col] = color;
             }) > 0;
         });
@@ -2670,12 +2694,11 @@ struct project_on_seeds_rule {
         int8_t worn = TRANSPARENT;
         bool one_color = true;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            drawn = grid(pair.input.width, pair.input.height);
-            drawn.fill(TRANSPARENT);
+            drawn = empty_grid(pair.input.width, pair.input.height);
             walk_colored_cells(pair.input, TRANSPARENT, [&](int row, int col, int color) {
                 drawn.data[row][col] = (int8_t)color;
             });
-            const int stamped = stamp(pair, cut, TRANSPARENT, [&](int row, int col, int8_t) {
+            const int stamped = stamp(pair, cut, [&](int row, int col, int8_t) {
                 if (pair.input.data[row][col] != TRANSPARENT) return;
                 const int8_t shown = (int8_t)pair.output.data[row][col];
                 if (!is_color(worn)) worn = shown;
@@ -2800,14 +2823,13 @@ struct bridge_rule {
                 bool bridged = false;
                 const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
                     // The pieces as Split hands them over: the one walk, in its order.
-                    const vector<object> pieces = pieces_as_said(pair.input, TRANSPARENT, cut);
+                    const vector<object> pieces = pieces_as_said(pair.input, cut);
                     // One list is all the op is handed, and the bars take one place
                     // more in it, all of them one drawing.
                     if (pieces.empty() || pieces.size() >= MAX_OBJECTS_IN_A_LIST) return false;
                     vector<int8_t> colors;
                     for (const object& piece : pieces) colors.push_back(piece.first_color());
-                    drawn = grid(pair.output.width, pair.output.height);
-                    drawn.fill(TRANSPARENT);
+                    drawn = empty_grid(pair.output.width, pair.output.height);
                     bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                     for (const object& piece : pieces)
                         piece.each_cell([&](int row, int col, int8_t color) {
@@ -2900,10 +2922,9 @@ struct mark_lattice_rule {
 
     // What the words draw on one input: the cut's marks, trimmed and read the
     // way the pair is turned, each laid as its line wherever the lattice puts
-    // it, then the ground wherever no line went.
-    static bool draw(const grid& input, int8_t input_background, int8_t output_background,
-                     segmentation_methods cut, bool portrait, grid& drawn) {
-        const vector<object> marks = pieces_as_said(input, input_background, cut);
+    // it, the rest left empty.
+    static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn) {
+        const vector<object> marks = pieces_as_said(input, cut);
         // One list is all the op is handed.
         if (marks.size() > MAX_OBJECTS_IN_A_LIST) return false;
         // Read turned, the marks' rows are their columns, and the other way round.
@@ -2912,8 +2933,7 @@ struct mark_lattice_rule {
         const int period = mark_lattice_period((int)marks.size(),
                                                [&](int i) { return (int)top(marks[i]); });
         if (period <= 0) return false;
-        drawn = grid(input.width, input.height);
-        drawn.fill(output_background);
+        drawn = empty_grid(input.width, input.height);
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
         auto at = [&](int row, int col) -> int& {
@@ -2933,7 +2953,7 @@ struct mark_lattice_rule {
     static mark_lattice_rule detect(const vector<example>& train,
                                     const correspondence_election& correspondence) {
         // Lines go down on an empty canvas the size of the input, and whatever
-        // they miss is the ground the outputs elected.
+        // they miss stays empty, for the plan to fill.
         if (!pairs_overlay(train)) return {};
         vector<segmentation_methods> cuts{ correspondence.segmentation };
         for (const auto cut : { segmentation_methods::connected_monochrome,
@@ -2945,7 +2965,7 @@ struct mark_lattice_rule {
             for (const bool portrait : { false, true }) {
                 bool laid = false;
                 const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                    if (!draw(pair.input, TRANSPARENT, TRANSPARENT, cut, portrait, drawn))
+                    if (!draw(pair.input, cut, portrait, drawn))
                         return false;
                     laid = laid || drawn != pair.input;
                     return true;
@@ -3000,8 +3020,7 @@ struct interior_fill_rule {
         interior_fill_rule rule;
         bool changed = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            drawn = grid(pair.input.width, pair.input.height);
-            drawn.fill(TRANSPARENT);
+            drawn = empty_grid(pair.input.width, pair.input.height);
             object_walk_scratch scratch;
             bool consistent = true;
             int pieces = 0;
@@ -3054,32 +3073,27 @@ struct ranked_layout_rule {
     int8_t cell_size = 0;
     bool holds() const { return held; }
 
-    bool draw(const example& pair, int input_background, int output_background, grid& drawn) const {
+    bool draw(const example& pair, grid& drawn) const {
         if (!holds() || pair.input.empty() || discarded_colors < 0 || discarded_colors > COLOR_COUNT ||
             cell_size < 2 || cell_size > 10 || (split_mode != 0 && split_mode != 1)) return false;
 
-        int frequencies[COLOR_COUNT] = {};
-        for (int row = 0; row < pair.input.height; ++row)
-            for (int col = 0; col < pair.input.width; ++col) {
-                const int color = pair.input.data[row][col];
-                if (is_color(color) && color != input_background) ++frequencies[color];
-            }
+        int frequencies[COLOR_COUNT];
+        count_colors(pair.input, frequencies);
         bool removed[COLOR_COUNT] = {};
         for (int rank = 0; rank < discarded_colors; ++rank) {
             int common = -1;
             for (int color = 0; color < COLOR_COUNT; ++color) {
-                if (color == input_background || removed[color] || frequencies[color] == 0) continue;
+                if (removed[color] || frequencies[color] == 0) continue;
                 if (common < 0 || frequencies[color] > frequencies[common]) common = color;
             }
             if (common >= 0) removed[common] = true;
         }
 
-        grid remaining(pair.input.width, pair.input.height);
-        remaining.fill(TRANSPARENT);
+        grid remaining = empty_grid(pair.input.width, pair.input.height);
         for (int row = 0; row < pair.input.height; ++row)
             for (int col = 0; col < pair.input.width; ++col) {
                 const int color = pair.input.data[row][col];
-                if (is_color(color) && color != input_background && !removed[color])
+                if (is_color(color) && !removed[color])
                     remaining.data[row][col] = color;
             }
 
@@ -3094,19 +3108,10 @@ struct ranked_layout_rule {
             });
         if (pieces.empty()) return false;
 
-        int16_t row_lows[MAX_OBJECTS_IN_A_LIST], row_highs[MAX_OBJECTS_IN_A_LIST];
-        int16_t col_lows[MAX_OBJECTS_IN_A_LIST], col_highs[MAX_OBJECTS_IN_A_LIST];
-        int row_order[MAX_OBJECTS_IN_A_LIST], col_order[MAX_OBJECTS_IN_A_LIST];
         int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
-        for (int i = 0; i < (int)pieces.size(); ++i) {
-            const object_summary& box = pieces[i].summary;
-            row_lows[i] = box.y0;
-            row_highs[i] = (int16_t)(box.y0 + box.h - 1);
-            col_lows[i] = box.x0;
-            col_highs[i] = (int16_t)(box.x0 + box.w - 1);
-        }
-        const int rows = overlapping_bands((int)pieces.size(), row_lows, row_highs, row_of, row_order);
-        const int cols = overlapping_bands((int)pieces.size(), col_lows, col_highs, col_of, col_order);
+        auto piece_box = [&](int i) { return box_of(pieces[(size_t)i].summary); };
+        const int rows = bands_of((int)pieces.size(), true, piece_box, row_of);
+        const int cols = bands_of((int)pieces.size(), false, piece_box, col_of);
         const int width = min(cols * (int)cell_size, MAX_GRID_DIM);
         const int height = min(rows * (int)cell_size, MAX_GRID_DIM);
         if (width <= 0 || height <= 0) return false;
@@ -3129,8 +3134,7 @@ struct ranked_layout_rule {
 
         const int reduced_width = max((width + cell_size - 1) / cell_size, 1);
         const int reduced_height = max((height + cell_size - 1) / cell_size, 1);
-        grid painted(MAX_GRID_DIM, MAX_GRID_DIM);
-        painted.fill(TRANSPARENT);
+        grid painted = empty_grid(MAX_GRID_DIM, MAX_GRID_DIM);
         for (int row = 0; row < reduced_height; ++row)
             for (int col = 0; col < reduced_width; ++col)
                 painted.data[row][col] = majority_vote(arranged.cells, row, col, cell_size, height, width);
@@ -3145,7 +3149,7 @@ struct ranked_layout_rule {
         for (int row = 0; row < drawn.height; ++row)
             for (int col = 0; col < drawn.width; ++col) {
                 const int color = painted.data[bounds.row0 + row][bounds.col0 + col];
-                drawn.data[row][col] = color == TRANSPARENT ? output_background : color;
+                drawn.data[row][col] = color;
             }
         return true;
     }
@@ -3161,7 +3165,7 @@ struct ranked_layout_rule {
                     candidate.split_mode = (int8_t)mode;
                     candidate.cell_size = (int8_t)factor;
                     const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                        return candidate.draw(pair, TRANSPARENT, TRANSPARENT, drawn);
+                        return candidate.draw(pair, drawn);
                     });
                     if (redraws) return candidate;
                 }
@@ -3177,13 +3181,9 @@ struct rarest_color_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static bool draw(const grid& input, int input_background, int output_background, grid& drawn) {
-        int counts[COLOR_COUNT] = {};
-        for (int row = 0; row < input.height; ++row)
-            for (int col = 0; col < input.width; ++col) {
-                const int color = input.data[row][col];
-                if (is_color(color) && color != input_background) ++counts[color];
-            }
+    static bool draw(const grid& input, grid& drawn) {
+        int counts[COLOR_COUNT];
+        count_colors(input, counts);
         int rarest = -1, colors = 0;
         bool tied = false;
         for (int color = 0; color < COLOR_COUNT; ++color) {
@@ -3201,7 +3201,7 @@ struct rarest_color_rule {
         for (int row = 0; row < drawn.height; ++row)
             for (int col = 0; col < drawn.width; ++col)
                 drawn.data[row][col] = input.data[bounds.row0 + row][bounds.col0 + col] == rarest
-                                     ? (int8_t)rarest : (int8_t)output_background;
+                                     ? (int8_t)rarest : (int8_t)TRANSPARENT;
         return true;
     }
 
@@ -3209,7 +3209,7 @@ struct rarest_color_rule {
         if (train.empty() || size.Chosen != output_dimension_rule::BoundingBox) return {};
         rarest_color_rule rule;
         rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            return draw(pair.input, TRANSPARENT, TRANSPARENT, drawn);
+            return draw(pair.input, drawn);
         });
         return rule;
     }
@@ -3228,9 +3228,9 @@ struct corner_crop_rule {
     bool down = false, right = false;
     bool holds() const { return held; }
 
-    bool draw(const grid& input, int8_t ground_out, const output_dimension_rule& size, grid& drawn) const {
+    bool draw(const grid& input, const output_dimension_rule& size, grid& drawn) const {
         if (input.empty()) return false;
-        return draw_on_canvas(input, size, ground_out, drawn, [&](grid& canvas) {
+        return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
             // The input is one piece as big as itself, so its cells are its box.
             const cell_box whole{ 0, 0, input.height - 1, input.width - 1 };
             const int top = down ? steps_to_edge(whole, canvas.width, canvas.height, heading::down) : 0;
@@ -3249,7 +3249,7 @@ struct corner_crop_rule {
             for (bool right : { false, true }) {
                 const corner_crop_rule trying{ true, down, right };
                 if (redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                        return trying.draw(pair.input, TRANSPARENT, size, drawn);
+                        return trying.draw(pair.input, size, drawn);
                     })) return trying;
             }
         return {};
@@ -3414,15 +3414,13 @@ inline void list_the_rivals(inference& inf) {
 // down the order of painted cells, largest or smallest first, ties keeping the
 // order the pieces came in -- the insertion sort SelectLargestObject and
 // SelectSmallestObject run -- or the first `value` of that order, one selector
-// a rank, or every one but those, or every one painting at least `value`
-// cells, or fewer, or every one with a cell on the row or the column `value`
-// lines past the middle of all the pieces paint (line_from_middle), or every
-// one but those.
+// a rank, or every one painting at least `value` cells, or every one with a
+// cell on the row or the column `value` lines past the middle of all the
+// pieces paint (line_from_middle). A pick's but_those turns any of them round.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
     vector<bool> picked(pieces.size(), false);
-    if (how == piece_pick::middle_row || how == piece_pick::not_middle_row || how == piece_pick::middle_column ||
-        how == piece_pick::not_middle_column) {
-        const bool rows = how == piece_pick::middle_row || how == piece_pick::not_middle_row;
+    if (how == piece_pick::middle_row || how == piece_pick::middle_column) {
+        const bool rows = how == piece_pick::middle_row;
         int lo = MAX_GRID_DIM * 2, hi = -MAX_GRID_DIM * 2;
         for (const object& piece : pieces)
             piece.each_cell([&](int row, int col, int8_t) {
@@ -3432,13 +3430,11 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         const int line = line_from_middle(lo, hi, value);
         for (size_t i = 0; i < pieces.size() && line >= 0; ++i)
             pieces[i].each_cell([&](int row, int col, int8_t) { picked[i] = picked[i] || (rows ? row : col) == line; });
-        if (how == piece_pick::not_middle_row || how == piece_pick::not_middle_column) picked.flip();
         return picked;
     }
-    if (how == piece_pick::most_common || how == piece_pick::not_most_common) {
+    if (how == piece_pick::most_common) {
         // The color most of the pieces' cells wear, the lowest on a tie, and every
-        // piece wearing it -- the count SelectMostCommonColor makes -- or, turned
-        // round as InvertSelection turns it, every piece not wearing it.
+        // piece wearing it -- the count SelectMostCommonColor makes.
         int worn[COLOR_COUNT] = {};
         for (const object& piece : pieces)
             piece.each_cell([&](int, int, int8_t color) { if (is_color(color)) ++worn[color]; });
@@ -3446,19 +3442,16 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         if (worn[most] > 0)
             for (size_t i = 0; i < pieces.size(); ++i)
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
-        if (how == piece_pick::not_most_common) picked.flip();
         return picked;
     }
-    if (how == piece_pick::at_least_cells || how == piece_pick::fewer_cells) {
+    if (how == piece_pick::at_least_cells) {
         // Every piece painting at least `value` cells (paints_at_least, the count
-        // SelectAtLeastCells makes) -- or, turned round as InvertSelection turns
-        // it, every piece painting fewer.
+        // SelectAtLeastCells makes).
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
             picked[i] = paints_at_least(piece.summary.h, piece.summary.w, [&](int row, int col) {
                 return piece.cells[row][col] != (int8_t)TRANSPARENT; }, value);
         }
-        if (how == piece_pick::fewer_cells) picked.flip();
         return picked;
     }
     if (how == piece_pick::row_band || how == piece_pick::column_band) {
@@ -3466,16 +3459,9 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         // overlapping_bands groups them for SelectRow, SelectColumn and Layout.
         const int count = (int)pieces.size();
         if (count == 0) return picked;
-        const bool rows = how == piece_pick::row_band;
-        vector<int16_t> lows(count), highs(count);
         vector<int8_t> band(count);
-        vector<int> order(count);
-        for (int i = 0; i < count; ++i) {
-            const auto& box = pieces[i].summary;
-            lows[i] = (int16_t)(rows ? box.y0 : box.x0);
-            highs[i] = (int16_t)(rows ? box.y0 + box.h - 1 : box.x0 + box.w - 1);
-        }
-        overlapping_bands(count, lows.data(), highs.data(), band.data(), order.data());
+        bands_of(count, how == piece_pick::row_band, [&](int i) { return box_of(pieces[(size_t)i].summary); },
+                 band.data());
         for (int i = 0; i < count; ++i) picked[i] = band[i] == value;
         return picked;
     }
@@ -3489,7 +3475,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     }
     vector<int> order(pieces.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
-    const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks || how == piece_pick::not_largest_ranks;
+    const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks;
     stable_sort(order.begin(), order.end(), [&](int one, int other) {
         return largest ? pieces[one].summary.count > pieces[other].summary.count
                        : pieces[one].summary.count < pieces[other].summary.count;
@@ -3499,129 +3485,36 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         return picked;
     }
     for (int rank = 0; rank < value && rank < (int)order.size(); ++rank) picked[order[rank]] = true;
-    if (how == piece_pick::not_largest_ranks || how == piece_pick::not_smallest_ranks) picked.flip();
     return picked;
 }
 
-// WHERE THE PIECES LIE, read as the ops read their objects: the box each one's
-// paint fills, and whether it paints a cell of the grid -- the two questions
-// partner_of and would_fit (1_readings.hpp) ask, asked here the same way, so a
-// replay and the op it replays cannot find different partners or fits.
-struct piece_places {
-    const vector<object>& pieces;
-    vector<cell_box> boxes;
-    explicit piece_places(const vector<object>& cut) : pieces(cut), boxes(cut.size()) {
-        for (size_t i = 0; i < pieces.size(); ++i)
-            pieces[i].each_cell([&](int row, int col, int8_t) { boxes[i].include_cell(row, col); });
-    }
-    int count() const { return (int)pieces.size(); }
-    bool painted(int i, int row, int col) const {
-        const object& piece = pieces[i];
-        const int down = row - piece.summary.y0, across = col - piece.summary.x0;
-        return down >= 0 && across >= 0 && down < piece.summary.h && across < piece.summary.w &&
-               piece.cells[down][across] != (int8_t)TRANSPARENT;
-    }
-    // Piece i's one partner by `how` among the pieces `picked` leaves out, or -1.
-    int partner(partner_by how, int i, const vector<bool>& picked) const {
-        return partner_of(how, i, count(), [&](int j) { return boxes[j]; },
-                          [&](int j, int row, int col) { return painted(j, row, col); },
-                          [&](int j) { return (bool)picked[j]; });
-    }
-    // Whether piece i has any partner by `how` among them, one or several.
-    bool partnered(partner_by how, int i, const vector<bool>& picked) const {
-        bool any = false;
-        each_partner(how, i, count(), [&](int j) { return boxes[j]; },
-                     [&](int j, int row, int col) { return painted(j, row, col); },
-                     [&](int j) { return (bool)picked[j]; }, [&](int) { any = true; });
-        return any;
-    }
-    // Whether piece i would fit into a gap of that one partner.
-    bool fits(partner_by how, int i, const vector<bool>& picked) const {
-        const int other = partner(how, i, picked);
-        return other >= 0 && would_fit(i, other, [&](int j) { return boxes[j]; },
-                                       [&](int j, int row, int col) { return painted(j, row, col); });
-    }
-};
 static_assert(row_of(node_type::WouldFit).high + 1 == (int)partner_by::count,
               "WouldFit takes one value for each way partner_by finds a partner");
 
 inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick) {
     vector<bool> picked(pieces.size(), false);
-    if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
-    else
-        for (size_t i = 0; i < pieces.size(); ++i)
-            pieces[i].each_cell([&](int, int, int8_t color) {
-                picked[i] = picked[i] || ((pick.colors >> color) & 1) != 0;
-            });
+    if (pick.how >= 0) {
+        picked = picked_pieces(pieces, pick.how, pick.value);
+        // Every piece but those, as InvertSelection turns them round.
+        if (pick.but_those) picked.flip();
+    } else
+        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = (palette(pieces[i]) & pick.colors) != 0;
     if (pick.fits < 0) return picked;
     // WouldFit keeps those that would fit into a gap of their partner among the
     // pieces not picked, every partner read off the pick as it stood, as the op
     // reads its marks before it drops any.
-    const piece_places places(pieces);
-    const vector<bool> before = picked;
+    const partner_pieces places(pieces, picked);
     for (size_t i = 0; i < pieces.size(); ++i)
-        if (before[i]) picked[i] = places.fits((partner_by)pick.fits, (int)i, before);
+        if (places.picked[i]) picked[i] = places.fits((partner_by)pick.fits, (int)i);
     return picked;
 }
+
+inline partner_pieces::partner_pieces(const vector<object>& cut, const piece_pick& pick)
+    : partner_pieces(cut, picked_pieces(cut, pick)) {}
 
 static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::SelectSmallestObject).low &&
               row_of(node_type::SelectLargestObject).high == row_of(node_type::SelectSmallestObject).high,
               "the largest and the smallest are asked as far down the order");
-
-// THE PIECES A WORD IS HANDED, as the cut's word hands them over, cut once per
-// pair and read by every replay below: where each lies, and whether the word's
-// pick takes it. It asks partner_of and partner_color (1_readings.hpp) the
-// three questions the ops ask of their objects, the same way, so a replay and
-// the op it replays cannot find different partners.
-struct partner_pieces : piece_places {
-    vector<bool> picked;
-    partner_pieces(const vector<object>& cut, const piece_pick& pick)
-        : piece_places(cut), picked(picked_pieces(cut, pick)) {}
-    bool every_piece_picked() const { return ranges::all_of(picked, [](bool one) { return one; }); }
-    // Piece i's one partner by `how` among the pieces not picked, or -1.
-    int partner(partner_by how, int i) const { return piece_places::partner(how, i, picked); }
-    // Whether piece i has any partner by `how` among them.
-    bool partnered(partner_by how, int i) const { return piece_places::partnered(how, i, picked); }
-    // Whether piece i holds a cell of `color`.
-    bool holds(int i, int color) const {
-        bool found = false;
-        pieces[i].each_cell([&](int, int, int8_t cell) { found = found || cell == color; });
-        return found;
-    }
-    // Piece i's one partner of `kind` (partner_of_kind) among the pieces not picked, or -1.
-    int partner_of_kind(int kind, int i) const {
-        return arc::partner_of_kind(kind, i, count(), [&](int j) { return boxes[j]; },
-                                    [&](int j, int row, int col) { return painted(j, row, col); },
-                                    [&](int j) { return (bool)picked[j]; },
-                                    [&](int j, int color) { return holds(j, color); });
-    }
-    // HOW FAR PIECE i GOES, as the partner moves take it (the kernel's AlignTo and
-    // MoveToward, through the same helpers), or false when it has no one partner.
-    // Level with its partner's rows -- or, with `columns`, columns:
-    bool goes_level(int i, bool columns, partner_by how, heading_step& by) const {
-        const int other = partner(how, i);
-        if (other < 0) return false;
-        by = columns ? heading_step{ 0, boxes[other].col0 - boxes[i].col0 }
-                     : heading_step{ boxes[other].row0 - boxes[i].row0, 0 };
-        return true;
-    }
-    // Toward its partner of the kind `value` % PARTNER_KINDS names, by what
-    // `value` / PARTNER_KINDS names (move_toward), on a canvas `width` by `height`:
-    bool goes_toward(int i, int value, int width, int height, heading_step& by) const {
-        const int other = partner_of_kind(value % PARTNER_KINDS, i);
-        if (other < 0) return false;
-        by = move_toward((toward_by)(value / PARTNER_KINDS), i, other, boxes[i], boxes[other],
-                         [&](int j, int row, int col) { return painted(j, row, col); }, width, height);
-        return true;
-    }
-    // The color piece i takes from its partners by `how`, or -1.
-    int color_from(partner_by how, int i) const {
-        return partner_color(how, i, count(), [&](int j) { return boxes[j]; },
-                             [&](int j, int row, int col) { return painted(j, row, col); },
-                             [&](int j) { return (int)pieces[j].first_color(); },
-                             [&](int j) { return (bool)picked[j]; });
-    }
-};
 
 // Whether `cells` holds the cell at (row, col) of pair `which`.
 inline bool on_cells(const vector<vector<std::pair<int, int>>>& cells, size_t which, int row, int col) {
@@ -3645,27 +3538,19 @@ inline bool on_cells(const vector<vector<std::pair<int, int>>>& cells, size_t wh
 struct replay_facts {
     const vector<example>& train;
     vector<vector<object>> cuts;
-    vector<int8_t> grounds_out;
-    int8_t ground_out(size_t which) const { return grounds_out[which]; }
-    bool is_output_ground(int color) const {
-        return ranges::find(grounds_out, color) != grounds_out.end();
-    }
     bool overlays = true;
     // Whether `cuts` is still the hand the line leaves: false once a word on it
     // is one carry_the_hand cannot carry the pieces through.
     bool hand_known = true;
     // The pieces a named cut hands over, rather than the elected one.
-    replay_facts(const vector<example>& pairs, background_source input_ground, background_source output_ground,
-                 segmentation_methods cut)
-        : train(pairs) {
+    replay_facts(const vector<example>& pairs, segmentation_methods cut) : train(pairs) {
         for (const example& pair : train) {
-            cuts.push_back(pieces_as_said(pair.input, input_ground.on(pair.input), cut));
-            grounds_out.push_back(output_ground.on(pair.input));
+            cuts.push_back(pieces_as_said(pair.input, cut));
             overlays = overlays && pair.input.same_size(pair.output);
         }
     }
     replay_facts(const inference& inf, const vector<example>& pairs)
-        : replay_facts(pairs, {}, {}, inf.correspondence.segmentation) {}
+        : replay_facts(pairs, inf.correspondence.segmentation) {}
 };
 
 // THE PIECES A PICK TAKES, pair by pair, made ready once for a word asked many
@@ -3687,10 +3572,7 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
     uint16_t seen = 0;
     for (const auto& cut : facts.cuts) {
         uint16_t held = 0;
-        for (const object& piece : cut)
-            piece.each_cell([&](int, int, int8_t color) {
-                if ((colors >> color) & 1) held = (uint16_t)(held | 1u << color);
-            });
+        for (const object& piece : cut) held = (uint16_t)(held | (palette(piece) & colors));
         if (first) seen = held;
         else if (held != seen) return false;
         first = false;
@@ -3727,8 +3609,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (int value = 0; value < bands && value <= row_of(node_type::SelectRow).high; ++value)
             picks.push_back({ 0, how, (int8_t)value });
     }
-    picks.push_back({ 0, piece_pick::most_common, 0 });
-    picks.push_back({ 0, piece_pick::not_most_common, 0 });
+    for (const bool but_those : { false, true }) picks.push_back({ 0, piece_pick::most_common, 0, -1, but_those });
     // By how many cells, at least so many or fewer, each count asked only where
     // it splits some pair's pieces: one at least taken there and one left.
     const auto cells = row_of(node_type::SelectAtLeastCells);
@@ -3738,8 +3619,8 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                 return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
             }))
             continue;
-        for (const int8_t how : { (int8_t)piece_pick::at_least_cells, (int8_t)piece_pick::fewer_cells })
-            picks.push_back({ 0, how, (int8_t)value });
+        for (const bool but_those : { false, true })
+            picks.push_back({ 0, piece_pick::at_least_cells, (int8_t)value, -1, but_those });
     }
     // The first so many by size, largest or smallest first, and every piece but
     // those (9caf5b84: every color but the two most common becomes 7), each asked
@@ -3758,8 +3639,9 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                     return counts[(size_t)value - 1] != counts[(size_t)value];
                 }))
                 continue;
-            if (value >= 2) picks.push_back({ 0, largest ? piece_pick::largest_ranks : piece_pick::smallest_ranks, (int8_t)value });
-            picks.push_back({ 0, largest ? piece_pick::not_largest_ranks : piece_pick::not_smallest_ranks, (int8_t)value });
+            const int8_t first_so_many = largest ? piece_pick::largest_ranks : piece_pick::smallest_ranks;
+            if (value >= 2) picks.push_back({ 0, first_so_many, (int8_t)value });
+            picks.push_back({ 0, first_so_many, (int8_t)value, -1, true });
         }
     // The row or the column so many lines past the middle of all the pieces
     // paint, and every piece but those (d23f8c26 keeps its middle column), the
@@ -3784,16 +3666,15 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                 splits = splits || (some && ranges::find(taken, false) != taken.end());
             }
             if (!every || !splits) continue;
-            picks.push_back({ 0, how, (int8_t)value });
-            picks.push_back({ 0, rows ? piece_pick::not_middle_row : piece_pick::not_middle_column, (int8_t)value });
+            for (const bool but_those : { false, true }) picks.push_back({ 0, how, (int8_t)value, -1, but_those });
         }
     // A fit is asked only where it is at work in every pair: it keeps one piece
     // of the color at least and drops one, or the color alone says as much.
     for (int color = 0; color < COLOR_COUNT; ++color) {
         if (!(fit_colors >> color & 1)) continue;
         const piece_pick alone = piece_pick::of_color(color);
-        for (int at = 0; at < (int)partner_by::count; ++at) {
-            const piece_pick fit{ alone.colors, -1, 0, (int8_t)asked_at(at) };
+        for (int way = 0; way < (int)partner_by::count; ++way) {
+            const piece_pick fit{ alone.colors, -1, 0, (int8_t)way };
             if (ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
                     const vector<bool> kept = picked_pieces(cut, fit);
                     return ranges::find(kept, true) != kept.end() && kept != picked_pieces(cut, alone);
@@ -3866,7 +3747,7 @@ inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick,
 // show what it frames (shows_what_it_frames); and when a pick by size lands on a
 // tie (size_pick_ties), since the crop would be of whichever came first.
 inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, const grid& input,
-                         const output_dimension_rule& size, int8_t ground_out, grid& framed, bool& several) {
+                         const output_dimension_rule& size, grid& framed, bool& several) {
     const vector<bool> picked = picked_pieces(pieces, pick);
     cell_box box;
     int taken = 0, one = -1;
@@ -3880,14 +3761,13 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
     }
     several = taken > 1;
     if (taken == 0 || size_pick_ties(pieces, pick, one)) return false;
-    grid drawing(box.width(), box.height());
-    drawing.fill(TRANSPARENT);
+    grid drawing = empty_grid(box.width(), box.height());
     for (size_t i = 0; i < pieces.size(); ++i)
         if (picked[i])
             pieces[i].each_cell([&](int row, int col, int8_t color) {
                 drawing.data[row - box.row0][col - box.col0] = color;
             });
-    return draw_on_canvas(input, size, ground_out, framed, [&](grid& canvas) {
+    return draw_on_canvas(input, size, framed, [&](grid& canvas) {
         if (!shows_what_it_frames(drawing, canvas.height, canvas.width)) return false;
         for (int row = 0; row < drawing.height && row < canvas.height; ++row)
             for (int col = 0; col < drawing.width && col < canvas.width; ++col)
@@ -3904,7 +3784,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
 // -- where each cell shows the piece it frames, and the canvas the paper
 // (shows_what_it_frames).
 inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick, int cell, const grid& input,
-                           const output_dimension_rule& size, int8_t ground_out, grid& framed) {
+                           const output_dimension_rule& size, grid& framed) {
     const vector<bool> picked = picked_pieces(pieces, pick);
     vector<const object*> kept;
     for (size_t i = 0; i < pieces.size() && kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST; ++i)
@@ -3918,22 +3798,12 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
             cell_height = max(cell_height, (int)piece->summary.h);
         }
     if (cell_width <= 0 || cell_height <= 0) return false;
-    vector<int16_t> lows(count), highs(count);
     vector<int8_t> row_band(count), col_band(count);
-    vector<int> order(count);
-    for (int i = 0; i < count; ++i) {
-        lows[i] = kept[i]->summary.y0;
-        highs[i] = (int16_t)(kept[i]->summary.y0 + kept[i]->summary.h - 1);
-    }
-    const int rows = overlapping_bands(count, lows.data(), highs.data(), row_band.data(), order.data());
-    for (int i = 0; i < count; ++i) {
-        lows[i] = kept[i]->summary.x0;
-        highs[i] = (int16_t)(kept[i]->summary.x0 + kept[i]->summary.w - 1);
-    }
-    const int cols = overlapping_bands(count, lows.data(), highs.data(), col_band.data(), order.data());
+    auto kept_box = [&](int i) { return box_of(kept[(size_t)i]->summary); };
+    const int rows = bands_of(count, true, kept_box, row_band.data());
+    const int cols = bands_of(count, false, kept_box, col_band.data());
     const int paper_width = min(cols * cell_width, MAX_GRID_DIM), paper_height = min(rows * cell_height, MAX_GRID_DIM);
-    grid paper(paper_width, paper_height);
-    paper.fill(TRANSPARENT);
+    grid paper = empty_grid(paper_width, paper_height);
     for (int i = 0; i < count; ++i) {
         const object& piece = *kept[i];
         grid drawing(piece.summary.w, piece.summary.h);
@@ -3949,7 +3819,7 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
                     paper.data[at_row][at_col] = color;
             }
     }
-    return draw_on_canvas(input, size, ground_out, framed, [&](grid& canvas) {
+    return draw_on_canvas(input, size, framed, [&](grid& canvas) {
         if (!shows_what_it_frames(paper, canvas.height, canvas.width)) return false;
         for (int row = 0; row < paper.height && row < canvas.height; ++row)
             for (int col = 0; col < paper.width && col < canvas.width; ++col)
@@ -3983,7 +3853,7 @@ inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, i
         color = worn;
     }
     if (!is_color(color) || size_pick_ties(pieces, pick, one)) return false;
-    return draw_on_canvas(input, size, TRANSPARENT, framed, [&](grid& canvas) {
+    return draw_on_canvas(input, size, framed, [&](grid& canvas) {
         canvas.fill((int8_t)color);
         return true;
     });
@@ -4001,10 +3871,10 @@ inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, i
 // What falls off the canvas is clipped. Where a plan deleted the ground, the
 // input framed is its figures alone, and every frame acts on them as they are.
 inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const output_dimension_rule& size,
-                         int8_t ground_in, int8_t ground_out, grid& framed) {
+                         grid& framed) {
     using kind = piece_frame_rule::kind_of;
     const int factor = frame.factor;
-    const bool drew = draw_on_canvas(input, size, ground_out, framed, [&](grid& canvas) {
+    const bool drew = draw_on_canvas(input, size, framed, [&](grid& canvas) {
         switch (frame.kind) {
         case kind::posed:
             for (int row = 0; row < input.height; ++row)
@@ -4014,10 +3884,9 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
                 }
             return true;
         case kind::fractal: {
-            // A figure is what is not ground -- with no ground color, what is
-            // not empty, as a plan that deleted the ground leaves the input.
-            auto figure = [&](int row, int col) {
-                return input.data[row][col] != ground_in && input.data[row][col] != TRANSPARENT; };
+            // A figure is what is not empty, as a plan that deleted the ground
+            // leaves the input.
+            auto figure = [&](int row, int col) { return input.data[row][col] != TRANSPARENT; };
             for (int row = 0; row < canvas.height; ++row)
                 for (int col = 0; col < canvas.width; ++col)
                     if (figure(row * input.height / canvas.height, col * input.width / canvas.width) &&
@@ -4144,7 +4013,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
             wholes.push_back({ piece_frame_rule::tiled, 0, true });
         for (const piece_frame_rule& frame : wholes)
             weigh(frame, [&](size_t which, grid& framed) {
-                return framed_whole(train[which].input, frame, inf.size, TRANSPARENT, TRANSPARENT, framed);
+                return framed_whole(train[which].input, frame, inf.size, framed);
             });
     }
     // The whole input turned, where every output's sides are its input's traded;
@@ -4162,7 +4031,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
     reads.push_back({ piece_frame_rule::repeat_unit, 0, true });
     for (const piece_frame_rule& frame : reads)
         weigh(frame, [&](size_t which, grid& framed) {
-            return framed_whole(train[which].input, frame, inf.size, TRANSPARENT, TRANSPARENT, framed);
+            return framed_whole(train[which].input, frame, inf.size, framed);
         });
     static constexpr segmentation_methods frame_cuts[] = { segmentation_methods::connected_multicolor,
                                                            segmentation_methods::connected_monochrome,
@@ -4175,7 +4044,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         return picks;
     };
     for (const segmentation_methods cut : frame_cuts) {
-        const replay_facts facts(train, {}, {}, cut);
+        const replay_facts facts(train, cut);
         const vector<piece_pick> picks = picks_of(facts);
         for (const piece_pick& pick : picks) {
             piece_frame_rule frame;
@@ -4185,14 +4054,14 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
             for (size_t which = 0; which < train.size(); ++which) {
                 grid framed;
                 bool several = false;
-                if (!framed_input(facts.cuts[which], pick, train[which].input, inf.size, TRANSPARENT, framed,
+                if (!framed_input(facts.cuts[which], pick, train[which].input, inf.size, framed,
                                   several))
                     break;
                 frame.merged = frame.merged || several;
             }
             weigh(frame, [&](size_t which, grid& framed) {
                 bool several = false;
-                return framed_input(facts.cuts[which], pick, train[which].input, inf.size, TRANSPARENT, framed,
+                return framed_input(facts.cuts[which], pick, train[which].input, inf.size, framed,
                                     several);
             });
         }
@@ -4209,8 +4078,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                 frame.cut = cut;
                 frame.pick = pick;
                 weigh(frame, [&](size_t which, grid& framed) {
-                    return laid_out_input(facts.cuts[which], pick, cell, train[which].input, inf.size, TRANSPARENT,
-                                          framed);
+                    return laid_out_input(facts.cuts[which], pick, cell, train[which].input, inf.size, framed);
                 });
             }
         }
@@ -4238,7 +4106,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         vector<uint16_t> shown;
         for (const example& pair : train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
         for (const segmentation_methods cut : frame_cuts) {
-            const replay_facts facts(train, {}, {}, cut);
+            const replay_facts facts(train, cut);
             for (const piece_pick& pick : picks_of(facts))
                 for (int keyed = -1; keyed <= last_kind; ++keyed) {
                     shape_color_map_rule table;
@@ -4324,7 +4192,7 @@ struct laying {
 // the paint is laid -- under what is down, the first paint to reach a cell
 // keeps it, this one's own earlier cells too, as Underlay paints -- and laid in
 // one color, every cell is the color the output shows where the first lands --
-// a paint is never no color -- the same in every pair and not the ground. It
+// a paint is never no color -- the same in every pair. It
 // explains the drawing only if the output shows every cell that lands, and in
 // each pair the word is at work (replay_facts): one cell at least lands in a
 // color its picked pieces did not show there. Hands back that one color (-1
@@ -4372,7 +4240,7 @@ inline bool paint_holds(const replay_facts& facts, const vector<partner_pieces>&
         });
         if (!drew || !shows || !at_work) return false;
     }
-    return how.in == laying::as_drawn || (is_color(paint) && !facts.is_output_ground(paint));
+    return how.in == laying::as_drawn || is_color(paint);
 }
 
 // The color a recolor's replay names for a piece the op leaves as it is.
@@ -4455,8 +4323,7 @@ inline bool size_rank_holds(const replay_facts& facts, const color_facts& palett
             const grid& input = ranked.train[which].input;
             vector<object> split;
             for (const object& piece : ranked.cuts[which]) {
-                grid layer(input.width, input.height);
-                layer.fill(TRANSPARENT);
+                grid layer = empty_grid(input.width, input.height);
                 piece.each_cell([&](int row, int col, int8_t color) { layer.data[row][col] = color; });
                 object_walk_scratch scratch;
                 each_object(layer, -1, grouping::touching_any_color, scratch,
@@ -4482,7 +4349,7 @@ inline bool size_rank_holds(const replay_facts& facts, const color_facts& palett
                          [&](size_t which, const partner_pieces&, int i, int8_t& color) {
         const int rank = places[which][i];
         color = rank < palette.output_colors_by_size_count ? palette.output_colors_by_size[rank]
-                                                           : ranked.ground_out(which);
+                                                           : (int8_t)TRANSPARENT;
         return true;
     }, recolored, pieces, every_piece);
 }
@@ -4613,8 +4480,8 @@ inline bool to_edge_holds(const replay_facts& facts, const vector<partner_pieces
     }, left, landed, pieces_moved, every_piece);
 }
 
-// A PICKED PIECE MOVED ITS OWN SIZE, replayed: that way, the way Shift numbers
-// them (shift_by, 1_readings.hpp, the step the op takes).
+// A PICKED PIECE MOVED ITS OWN SIZE, replayed: the way heading `way` names
+// (shift_by, 1_readings.hpp, the step the op takes).
 inline bool shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way,
                         vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
                         int& pieces_moved, bool& every_piece) {
@@ -4687,7 +4554,7 @@ inline bool drops_hold(const replay_facts& facts, const vector<partner_pieces>& 
                     kept[which].push_back({ row, col });
                     return;
                 }
-                shows = shows && (there == facts.ground_out(which) || still_there(i, row, col));
+                shows = shows && (there == TRANSPARENT || still_there(i, row, col));
                 lost[which].push_back({ row, col });
                 changed = changed || there != color;
             });
@@ -5286,19 +5153,16 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // away and the reading draws an empty grid, while its own list has already
     // named the thing it cannot say: where each piece went.
     // Nor where a fired rule already accounts for every cell it would change.
-    // Nor a swap with the ground: no piece holds the ground, so on the pieces it
-    // only ever paints a color away -- a removal said as a recolor, which is said
-    // better as the removal it is, and which as a recolor wrecks every word that
-    // reads that color after it (aabf363d's marker, painted away before the shape
-    // could take its color). It accounts for every recolored cell that traded one
-    // of its two colors for the other.
+    // A swap with the ground cannot come up: the plan deleted it, so no piece
+    // wears it (aabf363d's marker was painted away by one, before the shape could
+    // take its color). It accounts for every recolored cell that traded one of
+    // its two colors for the other.
     // Nor a swap with a color a word already said paints: the swap would trade
     // back what that word laid down (9565186b: 8 recolored to 5, then 1 and 5
     // trading places turns those 5s to 1s, while each word alone claimed its
     // cells). A swap paints both its colors, so a second swap of either one
     // trades back what the first laid down (9565186b again: 1 and 5, then 2
     // and 5, turns the 5s the first laid down to 2s).
-    const int8_t ground_in = TRANSPARENT;
     auto painted_by_the_line = [&](int color) {
         return ranges::any_of(read.fired, [&](const auto& one) {
             if (one.as == rule::swap_colors) {
@@ -5312,7 +5176,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     if (read.allowed.recolor)
         for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
             if (const auto [first, second] = color_pair::from_index(variant);
-                inf.color_swaps.over_the_pieces[variant] && first != ground_in && second != ground_in &&
+                inf.color_swaps.over_the_pieces[variant] &&
                 !painted_by_the_line(first) && !painted_by_the_line(second) &&
                 !swap_already_claimed(inf, variant)) {
                 const string says = to_string(first) + " and " + to_string(second) + " trade places";
@@ -5375,18 +5239,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // tie going to the plainer: the colors before holes and size, the smaller
     // value before the larger. Where every piece of every pair is picked, it picks
     // every piece, since a test can hold a color no pair did (496994bd).
-    static constexpr const char* partners[] = { "the nearest piece", "a piece in its rows",
-        "a piece in its columns", "the piece around it", "the piece inside it", "the piece it touches",
-        "the piece of its shape", "the piece of its shape, turned", "the piece it shares a side with" };
+    static constexpr const char* partners[] = { "the piece around it", "the piece inside it",
+        "a piece in its rows", "a piece in its columns", "the nearest piece", "the piece it shares a side with",
+        "the piece it touches", "the piece of its shape", "the piece of its shape, turned" };
     static_assert(size(partners) == (size_t)partner_by::count);
     static constexpr const char* mirrors[] = { "left to right", "top to bottom", "all four ways" };
     static_assert(size(mirrors) == (size_t)mirror_by::count);
-    static constexpr const char* pick_names[] = { "Holes", "Largest", "Smallest", "Row Band", "Column Band",
-                                                  "Most Common Color", "Not Most Common Color",
-                                                  "Cells At Least", "Cells Fewer Than", "The Largest",
-                                                  "All But The Largest", "The Smallest", "All But The Smallest",
-                                                  "Row From The Middle", "Off The Row From The Middle",
-                                                  "Column From The Middle", "Off The Column From The Middle" };
+    // Each kind of pick by name, then turned round, every piece but those.
+    static constexpr const char* pick_names[][2] = { { "Holes", "" }, { "Largest", "" }, { "Smallest", "" },
+        { "Row Band", "" }, { "Column Band", "" }, { "Most Common Color", "Not Most Common Color" },
+        { "Cells At Least", "Cells Fewer Than" }, { "The Largest", "All But The Largest" },
+        { "The Smallest", "All But The Smallest" }, { "Row From The Middle", "Off The Row From The Middle" },
+        { "Column From The Middle", "Off The Column From The Middle" } };
     static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
@@ -5435,9 +5299,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     auto say = [&](const heard& best, rule::said_as as, const string& says, int8_t under) {
         string name;
         if (best.every_piece) name = "Every Piece";
-        else if (best.pick.how == piece_pick::most_common || best.pick.how == piece_pick::not_most_common)
-            name = pick_names[best.pick.how];
-        else if (best.pick.how >= 0) name = string(pick_names[best.pick.how]) + " " + to_string(best.pick.value);
+        else if (best.pick.how >= 0) {
+            name = pick_names[best.pick.how][best.pick.but_those];
+            if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
+        }
         else {
             name = "Colors";
             for (int color = 0; color < COLOR_COUNT; ++color)
@@ -5511,8 +5376,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int at = 0; at < ways; ++at) {
-                const int how = asked_at(at);
+            for (int how = 0; how < ways; ++how) {
                 vector<vector<std::pair<int, int>>> recolored;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5535,10 +5399,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // going in that order -- a move toward a partner, the newest word, after every
     // older one. It accounts for the cells each piece left and the cells it landed
     // on.
-    static constexpr const char* sizes_away[] = { "up", "right", "down", "left", "down-right", "down-left",
-                                                  "up-right", "up-left" };
-    static_assert(size(sizes_away) == (size_t)row_of(node_type::Shift).high + 1);
-    static_assert(heading::count == row_of(node_type::MoveToEdge).high + 1);
+    static_assert(heading::count == row_of(node_type::MoveToEdge).high + 1 &&
+                  heading::count == row_of(node_type::Shift).high + 1);
     static constexpr const char* how_far[] = { "one step", "its own size", "until it touches" };
     static_assert(size(how_far) == (size_t)toward_by::count);
     auto move_word = [&]() -> offer {
@@ -5548,8 +5410,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         int best_down = 0, best_across = 0;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int at = 0; at < 2 * ways; ++at) {
-                const int value = at / ways * ways + asked_at(at % ways);
+            for (int value = 0; value < 2 * ways; ++value) {
                 vector<vector<std::pair<int, int>>> left, landed;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5558,15 +5419,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                     continue;
                 weigh(aligned, value, pick, pieces, every_piece, -1, move_claims(left, landed));
             }
-            for (int at = 0; at <= row_of(node_type::MoveToward).high; ++at) {
-                const int value = at / PARTNER_KINDS * PARTNER_KINDS + asked_at(at % PARTNER_KINDS);
+            for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value) {
                 vector<vector<std::pair<int, int>>> left, landed;
                 int pieces = 0;
                 bool every_piece = false;
                 if (toward_holds(facts, handed, value, left, landed, pieces, every_piece))
                     weigh(toward, value, pick, pieces, every_piece, -1, move_claims(left, landed));
             }
-            for (int way = 0; way < heading::count; ++way) {
+            for (int at = 0; at < heading::count; ++at) {
+                const int way = heading_asked(at);
                 vector<vector<std::pair<int, int>>> left, landed;
                 int pieces = 0;
                 bool every_piece = false;
@@ -5596,7 +5457,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             else if (edged.said == most)
                 carry(say(edged, rule::to_edge, string("slides ") + heading_names[edged.value] + " to the edge", moves));
             else if (sized.said == most)
-                carry(say(sized, rule::shifted, string("moves its own size ") + sizes_away[sized.value], moves));
+                carry(say(sized, rule::shifted, string("moves its own size ") + heading_names[sized.value], moves));
             else if (stepped.said < most) {
                 const int kind = toward.value % PARTNER_KINDS;
                 carry(say(toward, rule::move_toward,
@@ -5637,8 +5498,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int at = 0; at < (int)mirror_by::count * MIRROR_PARTNERS; ++at) {
-                const int value = at / MIRROR_PARTNERS * MIRROR_PARTNERS + asked_at(at % MIRROR_PARTNERS);
+            for (int value = 0; value < (int)mirror_by::count * MIRROR_PARTNERS; ++value) {
                 vector<vector<std::pair<int, int>>> kept, landed;
                 int copies = 0;
                 bool every_piece = false;
@@ -5695,7 +5555,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             return {};
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, 0, starts_from(missing::a_recolor))) {
-            if ((pick.how == piece_pick::most_common || pick.how == piece_pick::not_most_common) &&
+            if (pick.how == piece_pick::most_common &&
                 !facts.hand_known && !read.line.empty())
                 continue;
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
@@ -5800,7 +5660,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             bool may = true;
             if (facts.hand_known)
                 may = true;
-            else if (pick.how == piece_pick::most_common || pick.how == piece_pick::not_most_common)
+            else if (pick.how == piece_pick::most_common)
                 may = read.line.empty();
             else if (pick.how >= 0)
                 may = ranges::none_of(read.line, [&](int8_t which) { return moves_a_pick(read.fired[which]); });
@@ -5853,8 +5713,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         vector<grid> drawn;
         for (size_t which = 0; which < facts.cuts.size(); ++which) {
             const grid& output = facts.train[which].output;
-            grid canvas(output.width, output.height);
-            canvas.fill(TRANSPARENT);
+            grid canvas = empty_grid(output.width, output.height);
             for (const object& piece : facts.cuts[which])
                 piece.each_cell([&](int row, int col, int8_t color) {
                     if (canvas.contains(row, col) && (!under || canvas.data[row][col] == TRANSPARENT))
@@ -6000,7 +5859,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     auto trail_paint = [&]() -> offer {
         heard best;
         for (size_t at = 0; at < draw_picks.size(); ++at)
-            for (int way = 0; way < heading::count; ++way) {
+            for (int asked = 0; asked < heading::count; ++asked) {
+                const int way = heading_asked(asked);
                 vector<vector<std::pair<int, int>>> drawn;
                 bool every_piece = false;
                 if (trail_holds(opened, handed_by_pick[at], way, drawn, every_piece))
@@ -6243,7 +6103,7 @@ inline inference read_figures(const vector<example>& train) {
     inf.colors = color_facts::detect(train);  // rule-independent
     // No reader is handed a ground color: the ground is empty where a plan
     // deleted it, and a color like any other where a plan kept it.
-    inf.colors.detect_output_colors_by_size(train, TRANSPARENT);
+    inf.colors.detect_output_colors_by_size(train);
     // The frame before the figures: whether this input is really several grids
     // side by side, walls and blank lines told apart by what is on them -- an
     // empty line is blank -- ahead of everything that would read the panes.
@@ -6286,7 +6146,7 @@ inline inference read_figures(const vector<example>& train) {
 
     // Edge level of correspondence: the figures cut up every way that competes,
     // ranked by how well the pieces match.
-    inf.correspondence = select_segmentation(train, TRANSPARENT);
+    inf.correspondence = correspondence_election::infer(train);
     // THE CUT IS CHOSEN HERE, just above the first word that reads it: each cut
     // in the matching's order is read to the end of its line, and the one whose
     // words say the most is said (says_the_most).
@@ -6356,8 +6216,8 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
     // matched where half of them are gone -- so a line with no words is held to
     // what it would draw. Asked of the cut alone, before the line is chosen.
     inf.pieces_redraw = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-        const auto pieces = pieces_as_said(pair.input, TRANSPARENT, inf.correspondence.segmentation);
-        return !pieces.empty() && draw_on_canvas(pair.input, inf.size, TRANSPARENT, drawn, [&](grid& canvas) {
+        const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation);
+        return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
                 piece.each_cell([&](int row, int col, int8_t color) {
                     if (canvas.contains(row, col)) canvas.data[row][col] = color;
@@ -6398,7 +6258,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
                            inf.frame.kind == kind::filled;
         // The framed grid is what the frame leaves of the figures: nothing is
         // filled in it, and the reading inside it is a reading of figures too.
-        const replay_facts facts(train, {}, {}, picks ? inf.frame.cut : inf.correspondence.segmentation);
+        const replay_facts facts(train, picks ? inf.frame.cut : inf.correspondence.segmentation);
         const piece_pick& pick = inf.frame.pick;
         vector<example> framed(train.size());
         bool all = true;
@@ -6409,16 +6269,16 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
             bool several = false;
             switch (inf.frame.kind) {
             case kind::laid_out:
-                all = laid_out_input(facts.cuts[which], pick, inf.frame.factor, input, inf.size, TRANSPARENT, into);
+                all = laid_out_input(facts.cuts[which], pick, inf.frame.factor, input, inf.size, into);
                 break;
             case kind::filled:
                 all = filled_input(facts.cuts[which], pick, inf.frame.keyed, inf.shape_color_map, input, inf.size,
                                    into);
                 break;
             case kind::cut_out:
-                all = framed_input(facts.cuts[which], pick, input, inf.size, TRANSPARENT, into, several);
+                all = framed_input(facts.cuts[which], pick, input, inf.size, into, several);
                 break;
-            default: all = framed_whole(input, inf.frame, inf.size, TRANSPARENT, TRANSPARENT, into);
+            default: all = framed_whole(input, inf.frame, inf.size, into);
             }
         }
         if (!all) inf.frame = {};

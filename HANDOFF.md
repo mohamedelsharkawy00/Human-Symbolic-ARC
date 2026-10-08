@@ -5,193 +5,217 @@ This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 199 right, 0 wrong (abc3f0b; 198 with the first so
-  many by size, out/ranksall/; 197 with the side touch, out/touchsides/; 196
-  with the one-pair keys, out/shownkey/; 195 with the filled frame and
-  symmetry, out/symmetry/; 188 with the table's "any other", out/pairs/; 187
-  at 7740de8, out/tile/, 172 at a201ff6, out/merged/, 170 at 32d371d,
-  out/base/). Current run: out/picks_after/ (out\ is not in git).
-- Shared picks: piece_pick in 6_correspondence owns the pick
-  description for fired rules, frames, replay and spelling. The separate
-  one-color field and field-by-field conversions are gone (53 fewer source
-  lines). Full build passed; out/picks_before/ -> out/picks_after/: 199 right,
-  0 wrong, gained 0, lost 0, explained but unsolved 0. Every program and all
-  1000 readouts are byte-for-byte unchanged.
+- Training: 199 right, 0 wrong. Current run: out/helpers/ (out\ is not in
+  git). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8, 199 at abc3f0b.
+- The last session simplified files 0-11 upstream to downstream, 226 fewer
+  source lines, every step a full build and a score: 199 right, 0 wrong,
+  every program and all 1000 readouts byte-for-byte unchanged, but where a
+  step renumbered on purpose:
+  - Directions are numbered as a compass is, clockwise from up (heading),
+    for MoveToEdge, ExtendTo and Shift alike, and asked sides first, then
+    the diagonals (heading_asked). Partner ways are numbered in the order
+    they are asked (partner_by). The stored solutions were renumbered. Four
+    unsolved readouts changed: a tie between two directions goes the new
+    asking order's way (1190bc91, 3345333e, 444801d8, a2d730bd).
+  - Fit's targets are named (fit_to). The partner helpers ask one pieces
+    object (count, box, painted, is_picked, color, holds), as partner_pieces
+    and gpu_partner_view answer them. One flood fill (walk_out) for the hole
+    count, would_fit and snap_to_anchors. No reader takes a ground: every one
+    was handed figures only. A pick turned round is piece_pick::but_those
+    (the readout's frame line says "how N but those"). palette, empty_grid
+    and bands_of replace their hand-written copies.
+  - The flood fill costs the GPU's dsl_exec_and_score_kernel_v 28,192 ->
+    29,536 bytes of stack: walk_out keeps two queues where the hand walks
+    kept one. The user said speed can wait.
 - solutions/ holds the inferred program of every solved puzzle. Left as they
   were: the manual 05a7bcf2, 10fcaaa3 (now inferred too), 32597951,
   f25fbde4, and 44d8ac46 (an old inferred one that no longer fits).
   solutions/shelf/ holds puzzles outside training.
-- A full score has taken 34 to 82 s on the same code: the laptop's clock
-  moves with heat, so one run's seconds say little. Compare two builds by
-  interleaving them (old, new, old, new) and taking each one's fastest run.
-  Three runs back to back, before the last two changes: 43.5, 59.1 and
-  48.8 s (one run with the paints asked biggest first: 77 s, not compared
-  with the old build, the user was busy; 57 s before; 28.7 to 34.2 s before
-  the cut by sides and lists of 900; 137 s with lists of 900 and no reading
-  limit). scripts\profile.bat
-  profiles arc_said (VTune, attached after CUDA starts).
-- What blocks the unsolved (`readouts.py missing everypair`,
-  named / the only word missing): copies 485 / 73, a recolor 383 / 71, turns
-  254 / 26, where pieces went 223 / 44, cells drawn on the ground 143 / 67,
-  shape changes 116 / 7. The line now counts what it draws as said, so other
-  plans and cuts are elected for many unsolved puzzles than before (a recolor
-  was the only missing word in 117).
+- A full score takes 30 to 80 s; the laptop's clock moves with heat, so
+  compare two builds by interleaving them (old, new, old, new) and taking
+  each one's fastest. `ARC_THREADS=1` reads one puzzle at a time (about 15
+  minutes), for when the user is gaming. scripts\profile.bat profiles.
+- What blocks the unsolved (`readouts.py missing <label>`, named / the only
+  word missing): copies 485 / 73, a recolor 383 / 71, turns 254 / 26, where
+  pieces went 223 / 44, cells drawn on the ground 143 / 67, shape changes
+  116 / 7.
 
-## Next, in the user's order
-1. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell (fits,
-   test right): `SelectColor[9] MoveToward[15]`, then `SelectColor[6]
-   Recolor[9]`, then the 5s' box `AddColor[5] Underlay`. Not found; it needs
-   the move to claim the input cell its landing covers (it ties ColorFrom's
-   "the 9 takes the 5 around it" at 6 cells), "6 becomes 9" sayable after the
-   move (by color it is only an act, and the acts open the line), and the box
-   fill asked of a line that moves pieces.
+## How to check a refactor
+- Full build, then `scripts\said.bat <label>`, then against the last run:
+  `cmp out\<old>\said.txt out\<new>\said.txt` and
+  `diff -rq out\<old>\logs out\<new>\logs` (byte for byte), and
+  `readouts.py solved` and `explained`. Where a change renumbers values on
+  purpose, map the old run's numbers first, then compare.
+- Where a helper the GPU runs changes, compare the build's `ptxas info` and
+  `stack frame` lines before and after.
+- Line endings are mixed in the repo: 1_readings, 4_objects, 5_matching and
+  6_correspondence are CRLF; 7_infer, 8_vocabulary, 9_sentences, 10_log,
+  cuda_solver.cu, this file and solutions/ are LF, though .gitattributes
+  says CRLF everywhere (the user's call). Keep each file's own. Git Bash's
+  `grep -c $'\r$'` counts every line: check endings with Python.
+- Delete each run once it has been compared (about 300 MB each).
+
+## Next: the simplification, upstream to downstream
+The user's order: upstream first, each change living in the file that first
+uses it, global before local. Estimates are rough.
+1. 3_background, the election (~100 lines; the user's call first: it
+   changes which plans are read). says_the_most picks the plan now, so the
+   election only proposes plans; the veto, the per-pair majority and
+   is_per_pair_raw (a copy of is_per_pair) may go.
+2. The word table (~150): one row per kind of fired_rule::said_as. In
+   6_correspondence the kind, the missing word it answers and the freedom it
+   is said under (read_the_acts, said_under); in 7_infer, its first use, the
+   op, how `value` is packed (the `+32` and `/ PARTNER_KINDS` tricks), the
+   flags paints after the line / moves / reshapes / recolors, and the names.
+   Replaces paints_after_the_line, reshapes, changes, moves_cells,
+   moves_a_pick, most of beats_of and drawn_after in 9_sentences, and the
+   name lists (partners, mirrors, how_far, lined_up, reaches, laid_words,
+   keys_named).
+3. Replays return one result (~80): a `replayed` (the cells it says, the
+   cells the pieces stood on, how many pieces, its paint, every piece
+   picked) and a `cells_by_pair` alias for the type spelled 53 times, in
+   place of the four out-arguments of about 25 `*_holds`. Careful: bar_paint
+   weighs every_piece true and pick {}, copy_paint false, the paints 0
+   pieces.
+4. One pattern for the line's 15 kinds in finish_the_line (~200): each
+   repeats gate, picks, handed pieces, values, replay, weigh, offer, say.
+   After 2 and 3.
+5. One mechanism for a rule that redraws every output by itself (~60):
+   today the rivals (own_sentences, list_the_rivals, say_rival) and the
+   whole-line rules (whole_line, and six branches in say_the_cut).
+6. The arithmetic the GPU op runs, shared (~30, an AGENTS rule broken
+   today): MirrorAround's mirror is written three times (the GPU op,
+   mirror_holds, carry_the_hand), ExtendTo's march twice (the GPU op,
+   trail_holds). Their helpers belong in 7_infer, which the GPU reads
+   through 12_dsl.cuh, as slam_cells and bridge_bars do.
+7. Measure first: old rivals that have a twin word on the line -- bridge (4
+   solved), hole colors (4), interior fill (3), rarest color (3), copy-to
+   (2), edge slide (1), rays (1), corner crop. Turn each off, score, drop it
+   where nothing is lost: up to ~750 lines over 7, 9 and 10. The other old
+   rules (corner chain, projection, DiagTile, denoise, slam, snap, lattice,
+   ranked layout, motif) each carry 1-3 puzzles with no twin.
+8. Think with the user: grid::tile_width/tile_height is state every grid
+   carries for one frame (10fcaaa3); passing the tile to each_object where
+   the frame needs it would keep the base type plain.
+9. Structure: 7_infer.hpp includes 8_vocabulary.hpp, so the numbered
+   reading order runs backwards there; 7_infer (about 6,300 lines) could be
+   split by owner (tables, the standalone rules, picks and frames, replays,
+   the line and its choices). Renumbering touches 12+, src and
+   kaggle_push.py.
+10. Stale text: "EXPERIMENT" on the chance test (5_matching gather_matches);
+    "Detect-only for now -- nothing segments per-pair" (3_background); the
+    "cannot say yet" list naming Output (8_vocabulary); "background_reading
+    ::central" (9_sentences); the log's "background -1" (report_colors
+    takes a ground no one has); short names in vote_denoise_cells.
+11. Generality: rule indices are int8_t, 127 rules, which is why each kind
+    says at most 8 words; int16_t would lift it. MOST_PIECES_READ = 128 is
+    TEMPORARY.
+12. GPU, when speed matters again: walk_out with one queue of cell numbers
+    would undo the flood fill's stack, and the queue is each_object's cell
+    list too, so its scratch loses two of three arrays. The busiest walk:
+    check speed by interleaving.
+
+## Next, from before (the user's order)
+1. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell
+   (fits, test right): `SelectColor[9] MoveToward[15]`, then
+   `SelectColor[6] Recolor[9]`, then the 5s' box `AddColor[5] Underlay`. Not
+   found; it needs the move to claim the input cell its landing covers (it
+   ties ColorFrom's "the 9 takes the 5 around it" at 6 cells), "6 becomes 9"
+   sayable after the move (by color it is only an act, and the acts open the
+   line), and the box fill asked of a line that moves pieces.
 2. Speed: read the cuts and plans of one puzzle in parallel (low priority).
 
 Smaller, open:
-- Recolors, the stage now: 71 unsolved lack only a recolor, mostly a color
-  taken from another piece (compositions of ColorFrom's partners, picks,
-  frames). Work one puzzle at a time with the user, the fewest pixels first
-  (all grids, test answers too): 25d8a9c8, 44f52bb0, 27a28665, b7256dcd,
-  9caf5b84 and d23f8c26 done; next e3fe1151 (200: a 7 cross cuts four panes,
-  and each pane's stray 7 takes the color it lacks, so all four hold the
-  same colors -- a new op, no composition says it), fc754716 (294).
-- ef26cbf6, open: "ColorFrom[0], the nearest" says it (checked in Python,
+- Recolors: 71 unsolved lack only a recolor, mostly a color taken from
+  another piece (compositions of ColorFrom's partners, picks, frames). Work
+  one puzzle at a time with the user, the fewest pixels first: next
+  e3fe1151 (a 7 cross cuts four panes, and each pane's stray 7 takes the
+  color it lacks -- a new op, no composition says it), fc754716.
+- ef26cbf6, open: "ColorFrom[4], the nearest" says it (checked in Python,
   test right) with the walls picked along with the shapes, so they are no
   shape's partner -- but every dot is as near a wall as the next, and a piece
   whose partners disagree is one ColorFrom's word refuses: let through, it
-  made d23f8c26 fit and go wrong on its test (its "6 becomes 0" is a pairs'
-  coincidence).
-- Four-connected before eight until eight is needed (the user): the partners
-  ask the touch at a side before the touch at a corner. Asked of the cuts too
-  (the cut by sides read just ahead of the cut by corners), it lost
+  made d23f8c26 fit and go wrong on its test.
+- Four-connected before eight until eight is needed (the user): asked of the
+  cuts too (the cut by sides just ahead of the cut by corners), it lost
   4938f0c2, 64a7c07e and 9172f3a0, two of them wrong, so the cut by sides
   still comes last.
-- The filled frame also solved 3194b014 and 445eab21 (the largest piece's
-  color), b9b7f026 (the piece with a hole), and two that look lucky:
-  642d658d (the color layer with two holes) and d9fac9be (the third column
-  band's color).
 - carry_the_hand cannot carry a learned table, so no word that needs the
-  hand is asked after a Shape Picks Fill. The spurious tiny fills that set
-  this off are gone with the at-work rule: 20 readouts named Shape Picks
-  Fill, now 10, the real ones (6 of them solved); 6d75e8bb is solved by it.
-  The readouts show only the elected plan, so c35c1b4c's case (under "delete
-  0, fill 0") is unchecked.
+  hand is asked after a Shape Picks Fill (6d75e8bb is solved by one).
 - The freedoms inside a cut are still chosen by the matching, not the words;
   do it if the data asks. FitInto (would_fit answered with the place) when a
   puzzle needs it; WouldFit's gap is "for now" (the user: not general).
 
 ## How the reading works now (decisions to keep)
 - The ground is owned once (3_background.hpp): a plan deletes its ground
-  first and fills last; every detector sees figures and empty cells only. On
-  a same-size puzzle the fill color is ground on the inputs too
-  (fill_is_ground_too); on a size change it can be a figure the rule reads
-  (1b2d62fb's 0s).
+  first and fills last; every reader sees figures and empty cells only, and
+  none takes a ground. On a same-size puzzle the fill color is ground on the
+  inputs too (fill_is_ground_too); on a size change it can be a figure the
+  rule reads (1b2d62fb's 0s).
 - Every choice is says_the_most's: the plan, the cut, and whether the line
   opens with the matching's acts or leaves them to the words.
 - The line (finish_the_line): each kind of word offers its best on the hand
   the line leaves, the biggest offer is said, then all are asked again; each
-  kind says at most 8 words, since a reading lists at most 127 rules (int8_t
-  indices; a 120-word line crashed the run). The paints follow the line,
-  each in a sentence of its own (fired_rule::paints_after_the_line), and
-  compete the same way, the biggest first, then all asked again (e729b7be:
-  a repeat asked first took cells by coincidence ahead of the half turn that
-  draws everything). A paint is weighed only where it explains a cell in
-  every pair (91714a58's one-cell rays finished a line of coincidences).
-- What the line draws is said (Drawn By The Line, list_claims): after the
-  words, every left-over cell the hand they leave shows as the output shows
-  it is claimed, however the matching paired the pieces (d23f8c26's middle
-  column, paired with pieces the words remove). Only of a hand the words
-  carried, on pairs that lie over their outputs.
-- A recolor or a move answers to any cell changed in place, however the
-  matching read it (left_over_cell::answers_to). The cell a moved piece
-  leaves may show anything but the piece itself.
-- A replay checks everything its op draws: the trail redraws its body; the
-  turned figure is the whole drawing, never a part (parts fit by accident).
-- Every replay (`*_holds`, 7_infer.hpp) sits on one of three templates:
-  paint_holds (recolors through recolors_hold, mirror, rays, trails, copies,
-  repeats, the turned figure, boxes, bars, both fills), slides_hold (the
-  moves) and drops_hold (removal, outline). Each is handed the pieces its
-  pick takes, made once a pick by handed_pieces; replay_facts keeps none.
-- At work, asked the same way of every word in every pair (replay_facts):
-  at some cell it acts on, the output shows what its picked pieces did not
-  show there before. A copy laid on its own likeness is still at work
-  (4938f0c2's last pair is already whole).
+  kind says at most 8 words (a reading lists at most 127 rules). The paints
+  follow the line, each in a sentence of its own, and compete the same way,
+  the biggest first (e729b7be). A paint is weighed only where it explains a
+  cell in every pair (91714a58).
+- What the line draws is said (Drawn By The Line, list_claims), however the
+  matching paired the pieces (d23f8c26's middle column).
+- A recolor or a move answers to any cell changed in place
+  (left_over_cell::answers_to). The cell a moved piece leaves may show
+  anything but the piece itself.
+- A replay checks everything its op draws, with the op's own arithmetic: the
+  trail redraws its body; the turned figure is the whole drawing.
+- Every replay (`*_holds`) sits on paint_holds (recolors, mirror, rays,
+  trails, copies, repeats, the turned figure, boxes, bars, fills),
+  slides_hold (the moves) or drops_hold (removal, outline), handed the
+  pieces its pick takes (handed_pieces). At work in every pair: at some cell
+  it acts on, the output shows what its picked pieces did not show there
+  before (4938f0c2's last pair is already whole).
 - paint_holds owns how a paint lies: over, under (first to reach a cell
-  keeps it, as Underlay) or onto, on one canvas of what is down -- the cut's
-  pieces and every paint said before, laid after each is said -- and in its
+  keeps it, as Underlay) or onto, on one canvas of what is down, and in its
   own colors, one color, or its own else one. A paint is never no color.
-- The cut by sides alone (four_connected_monochrome, Split[3]) is read after
-  every other cut, only where it cuts differently from the corner cut and
-  into no more pieces than the reading reads.
-- A tiled input is copies of the input's pieces: its program cuts the input
-  before Tile (frame_the_sentences), Split keeps each piece in the frame it
-  was cut from, so Tile lays its copies the input's size apart, and the
-  reading through the frame cuts a grid laid out of copies one copy at a time
-  (grid::tile_width, each_object). 10fcaaa3: two 3s from two copies touch.
-- A list holds 900 pieces, one for every cell of the largest grid
-  (MAX_OBJECTS_IN_A_LIST): only search ran thousands of programs at once.
-  The GPU copies only the pieces in use and keeps a ring of 8 lists; host
-  uploads sit on the heap. The reading reads a cut only where no input cuts
-  into more than 128 pieces (MOST_PIECES_READ, TEMPORARY: reading hundreds of
-  pieces cost minutes); search's big batches would not fit the GPU now.
-- Partner ways are asked surest first (partner_ways_asked, 1_readings.hpp):
-  around it and inside it, then lined up in its rows or columns, then the
-  nearest, then the touch at a side (touching_sides, four-connected), then
-  the touch at a side or a corner (touching), then the rest. A tie goes to
-  the first asked. touching_sides came last in partner_by, so ColorFrom and
-  WouldFit kept their numbers; AlignTo, MirrorAround and MoveToward count
-  the ways, so their numbers moved, and the stored solutions were renumbered.
-- ColorFrom leaves a picked piece with no partner as it is, as its op does,
-  and the piece has to come out as it was (LEFT_AS_IT_IS, recolors_hold);
+- The cut by sides (four_connected_monochrome, Split[3]) is read after every
+  other cut, only where it cuts differently and into no more pieces than the
+  reading reads.
+- A tiled input is copies of the input's pieces: its program cuts before
+  Tile, and the reading cuts a grid laid out of copies one copy at a time
+  (grid::tile_width, each_object; 10fcaaa3).
+- A list holds 900 pieces (MAX_OBJECTS_IN_A_LIST); the reading reads a cut
+  only where no input cuts into more than 128 (MOST_PIECES_READ, TEMPORARY).
+- Partner ways are numbered in the order they are asked, surest first
+  (partner_by): around it, inside it, its rows, its columns, the nearest, the
+  touch at a side, the touch at a side or a corner, the same shape, turned
+  or not. Directions are numbered as a compass is, clockwise from up
+  (heading), asked sides first (heading_asked). A tie goes to the first
+  asked.
+- The partner helpers (each_partner and kin, 1_readings.hpp) ask one pieces
+  object, so the op and the replay find the same partners; move_toward and
+  would_fit too.
+- ColorFrom leaves a picked piece with no partner as it is (LEFT_AS_IT_IS);
   one whose partners disagree it refuses (d23f8c26).
-- Bridge hands back its bars as one drawing, a cell to the first bar that
-  crosses it, so a list never runs out of room for them.
-- ShapeColorMap[kind]: every picked piece takes the color its own key names
-  in the learned table: [0] its shape, the same turned or mirrored either way
-  (canonical_shape_hash), [1] its symmetry, which turns and flips leave its
-  drawing as it was, colors included (symmetry_of). shape_key_of
-  (1_readings.hpp) is the one key of reading and op, shape_table the one
-  lookup; the table also has a color for every key it does not name. The
-  table is read off the pairs by read_off (7_infer.hpp), for the line's shape
-  word and the filled frame alike: it names the keys seen in two pairs at
-  least (b230c067's twins are new in every pair), and a key seen in one pair
-  only where its color is the table's alone to say -- no other key comes out
-  in it and its input shows it nowhere (27a28665's plus, 6; ef26cbf6's and
-  b7256dcd's shapes take their markers' colors, and naming them made both
-  wrong). The keys seen in one pair and not named may all come out in one
-  color, seen in two pairs, which is then the color of every other key
-  (25d8a9c8: a full row 5, any other shape 0).
-  detect_body_recolor reads a key naming a figure's color, said in three
-  words: the key takes its shape's color, the figure the key's (ColorFrom),
-  the key goes.
-- The filled frame (piece_frame_rule::filled), asked where every output is
-  one color and the size rule gives the canvas: the pieces a pick takes,
-  each in one color -- its own, or the one its key names (ShapeColorMap) --
-  filled to its box and stretched over the canvas, AddColor[11] Fit[1] as a
-  plan lays its fill (filled_input). Asked after every other frame, its own
-  color before a table; a table only where it is at work in every pair.
-  44f52bb0: the whole picture (no ground deleted, Split[0]), 7 where no turn
-  or flip leaves it as it was, else 1.
-- Every word picks by cell count too: SelectAtLeastCells[n] (2..10, its
-  count paints_at_least, shared with the op), fewer through InvertSelection;
-  a count is asked only where it splits some pair's pieces. And by the first
-  so many by size, largest or smallest first, or every piece but those
-  (largest_ranks and kin): one SelectLargestObject or SelectSmallestObject a
-  rank, asked only where every pair's order parts there with no tie
-  (9caf5b84: every color but the two most common becomes 7). And by the row
-  or column so many lines past the middle of all the pieces paint, or every
-  piece but those (SelectRowFromMiddle, SelectColumnFromMiddle, new ops; the
-  middle by line_from_middle, none where the span has two middle lines):
-  d23f8c26 keeps its middle column, cut by sides since a diagonal 8 crosses
-  it.
-- Size rank and the fill by shape replay on the hand, so they are asked
-  only while the hand is known (not after a word carry_the_hand cannot
-  carry).
-- MoveToward[value]: value / PARTNER_KINDS is how far (a step, its own size,
-  until it touches), value % PARTNER_KINDS the partner (each partner_by way,
-  then each color). move_toward (1_readings.hpp) is the GPU op's and the
-  replay's one arithmetic; the GPU turn and flip ops read through
-  pose_source (pose_of), as the replays do.
+- Bridge hands back its bars as one drawing.
+- ShapeColorMap[kind]: each picked piece takes the color its key names --
+  [0] its shape however it turns, [1] its symmetry (shape_key_of, the one
+  key of reading and op; shape_table the one lookup, with a color for every
+  key it does not name). read_off reads the table off the pairs: keys seen
+  in two pairs, and a key seen in one only where its color is the table's
+  alone to say (27a28665; ef26cbf6 and b7256dcd went wrong otherwise); the
+  rest may share one color (25d8a9c8). detect_body_recolor says a key naming
+  a figure's color in three words.
+- The filled frame (piece_frame_rule::filled), where every output is one
+  color: the pieces a pick takes, each in its own color or its key's,
+  stretched over the canvas (AddColor[11] Fit[1]; 44f52bb0).
+- A pick (piece_pick, 6_correspondence.hpp) is by colors, or by a kind --
+  holes, size, band, the most common color, at least so many cells, the
+  first so many by size, a row or column from the middle -- and but_those
+  turns a kind round, said with InvertSelection. A count or a rank is asked
+  only where it splits some pair's pieces with no tie.
+- Size rank and the fill by shape replay on the hand, so they are asked only
+  while the hand is known.
+- MoveToward[value]: value / PARTNER_KINDS is how far, value % PARTNER_KINDS
+  the partner (each partner way, then each color).
 
 ## Kaggle and cloud
 - Only one-shot inference is tested on Kaggle (ARC_INFERENCE_ONLY=1, no
@@ -200,5 +224,4 @@ Smaller, open:
   Source upload: `python scripts/kaggle_push.py -m "..."`; smoke run with
   `--smoke`. Scoring rules and links are in README.md.
 - Linux cloud: `python3 scripts/cloud_setup.py` builds the readouts only (no
-  GPU); never run in an actual Claude cloud session. A CPU executor for
-  scoring there was judged not worth it (the user).
+  GPU); never run in an actual Claude cloud session.

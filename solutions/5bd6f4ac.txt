@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll MoveToEdge[3] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll MoveToEdge[2] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       5bd6f4ac
 Train:        Solved
