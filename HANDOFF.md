@@ -1,16 +1,22 @@
-# Handoff, 2026-10-07
+# Handoff, 2026-10-08
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 199 right, 0 wrong (not yet committed; 198 with the first so
+- Training: 199 right, 0 wrong (abc3f0b; 198 with the first so
   many by size, out/ranksall/; 197 with the side touch, out/touchsides/; 196
   with the one-pair keys, out/shownkey/; 195 with the filled frame and
   symmetry, out/symmetry/; 188 with the table's "any other", out/pairs/; 187
   at 7740de8, out/tile/, 172 at a201ff6, out/merged/, 170 at 32d371d,
-  out/base/). Current run: out/everypair/ (out\ is not in git).
+  out/base/). Current run: out/picks_after/ (out\ is not in git).
+- Shared picks: piece_pick in 6_correspondence owns the pick
+  description for fired rules, frames, replay and spelling. The separate
+  one-color field and field-by-field conversions are gone (53 fewer source
+  lines). Full build passed; out/picks_before/ -> out/picks_after/: 199 right,
+  0 wrong, gained 0, lost 0, explained but unsolved 0. Every program and all
+  1000 readouts are byte-for-byte unchanged.
 - solutions/ holds the inferred program of every solved puzzle. Left as they
   were: the manual 05a7bcf2, 10fcaaa3 (now inferred too), 32597951,
   f25fbde4, and 44d8ac46 (an old inferred one that no longer fits).

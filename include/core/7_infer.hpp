@@ -3274,9 +3274,7 @@ struct piece_frame_rule {
     // merged into one first (UnionList), so they keep their places to each other.
     bool merged = false;
     segmentation_methods cut = segmentation_methods::unset;
-    // The pick, as piece_pick holds it: its colors a bit each, or a kind of pick.
-    uint16_t colors = 0;
-    int8_t how = -1, value = 0;
+    piece_pick pick;
     // What the filled canvas's color is read off: each piece's own color, -1, or
     // the color the puzzle's table names for its key of this kind (shape_key).
     int8_t keyed = -1;
@@ -3421,11 +3419,10 @@ inline void list_the_rivals(inference& inf) {
 // lines past the middle of all the pieces paint (line_from_middle), or every
 // one but those.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
-    using rule = correspondence_election::fired_rule;
     vector<bool> picked(pieces.size(), false);
-    if (how == rule::middle_row || how == rule::not_middle_row || how == rule::middle_column ||
-        how == rule::not_middle_column) {
-        const bool rows = how == rule::middle_row || how == rule::not_middle_row;
+    if (how == piece_pick::middle_row || how == piece_pick::not_middle_row || how == piece_pick::middle_column ||
+        how == piece_pick::not_middle_column) {
+        const bool rows = how == piece_pick::middle_row || how == piece_pick::not_middle_row;
         int lo = MAX_GRID_DIM * 2, hi = -MAX_GRID_DIM * 2;
         for (const object& piece : pieces)
             piece.each_cell([&](int row, int col, int8_t) {
@@ -3435,10 +3432,10 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         const int line = line_from_middle(lo, hi, value);
         for (size_t i = 0; i < pieces.size() && line >= 0; ++i)
             pieces[i].each_cell([&](int row, int col, int8_t) { picked[i] = picked[i] || (rows ? row : col) == line; });
-        if (how == rule::not_middle_row || how == rule::not_middle_column) picked.flip();
+        if (how == piece_pick::not_middle_row || how == piece_pick::not_middle_column) picked.flip();
         return picked;
     }
-    if (how == rule::most_common || how == rule::not_most_common) {
+    if (how == piece_pick::most_common || how == piece_pick::not_most_common) {
         // The color most of the pieces' cells wear, the lowest on a tie, and every
         // piece wearing it -- the count SelectMostCommonColor makes -- or, turned
         // round as InvertSelection turns it, every piece not wearing it.
@@ -3449,10 +3446,10 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         if (worn[most] > 0)
             for (size_t i = 0; i < pieces.size(); ++i)
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
-        if (how == rule::not_most_common) picked.flip();
+        if (how == piece_pick::not_most_common) picked.flip();
         return picked;
     }
-    if (how == rule::at_least_cells || how == rule::fewer_cells) {
+    if (how == piece_pick::at_least_cells || how == piece_pick::fewer_cells) {
         // Every piece painting at least `value` cells (paints_at_least, the count
         // SelectAtLeastCells makes) -- or, turned round as InvertSelection turns
         // it, every piece painting fewer.
@@ -3461,15 +3458,15 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
             picked[i] = paints_at_least(piece.summary.h, piece.summary.w, [&](int row, int col) {
                 return piece.cells[row][col] != (int8_t)TRANSPARENT; }, value);
         }
-        if (how == rule::fewer_cells) picked.flip();
+        if (how == piece_pick::fewer_cells) picked.flip();
         return picked;
     }
-    if (how == rule::row_band || how == rule::column_band) {
+    if (how == piece_pick::row_band || how == piece_pick::column_band) {
         // The band of rows or of columns each piece's box sits in, as
         // overlapping_bands groups them for SelectRow, SelectColumn and Layout.
         const int count = (int)pieces.size();
         if (count == 0) return picked;
-        const bool rows = how == rule::row_band;
+        const bool rows = how == piece_pick::row_band;
         vector<int16_t> lows(count), highs(count);
         vector<int8_t> band(count);
         vector<int> order(count);
@@ -3482,7 +3479,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         for (int i = 0; i < count; ++i) picked[i] = band[i] == value;
         return picked;
     }
-    if (how == rule::by_holes) {
+    if (how == piece_pick::by_holes) {
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
             picked[i] = object_hole_count(piece.summary.h, piece.summary.w, [&](int row, int col) {
@@ -3492,29 +3489,19 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     }
     vector<int> order(pieces.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
-    const bool largest = how == rule::largest || how == rule::largest_ranks || how == rule::not_largest_ranks;
+    const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks || how == piece_pick::not_largest_ranks;
     stable_sort(order.begin(), order.end(), [&](int one, int other) {
         return largest ? pieces[one].summary.count > pieces[other].summary.count
                        : pieces[one].summary.count < pieces[other].summary.count;
     });
-    if (how == rule::largest || how == rule::smallest) {
+    if (how == piece_pick::largest || how == piece_pick::smallest) {
         if (value >= 0 && value < (int)order.size()) picked[order[value]] = true;
         return picked;
     }
     for (int rank = 0; rank < value && rank < (int)order.size(); ++rank) picked[order[rank]] = true;
-    if (how == rule::not_largest_ranks || how == rule::not_smallest_ranks) picked.flip();
+    if (how == piece_pick::not_largest_ranks || how == piece_pick::not_smallest_ranks) picked.flip();
     return picked;
 }
-
-// WHICH PIECES A WORD PICKS: the ones holding one of `colors`, or with `how` set,
-// the ones a pick by holes or by size takes -- and with `fits` set, only those of
-// them that would fit into a gap of their partner, the partner way WouldFit
-// numbers. One list of picks for every word, so any word can be said of any of
-// them.
-struct piece_pick {
-    uint16_t colors = 0;
-    int8_t how = -1, value = 0, fits = -1;
-};
 
 // WHERE THE PIECES LIE, read as the ops read their objects: the box each one's
 // paint fills, and whether it paints a cell of the grid -- the two questions
@@ -3719,20 +3706,19 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
 // asked last, so a pick by holes or size that accounts for as much wins the tie
 // (aabf363d's shape, a new color in its test).
 inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t colors, uint16_t fit_colors = 0) {
-    using rule = correspondence_election::fired_rule;
     vector<piece_pick> picks;
     const bool steady = colors && same_colors_every_pair(facts, colors);
     if (steady) picks.push_back({ colors });
     const auto holes = row_of(node_type::SelectObjectsWithHoles), ranks = row_of(node_type::SelectLargestObject);
-    for (int value = holes.low; value <= holes.high; ++value) picks.push_back({ 0, rule::by_holes, (int8_t)value });
+    for (int value = holes.low; value <= holes.high; ++value) picks.push_back({ 0, piece_pick::by_holes, (int8_t)value });
     // By size, the nearer an end the plainer: the largest and the smallest, then
     // the second of each, so where two take the same pieces in every pair the
     // plainer is said (62ab2642's "smallest", not "ninth largest", which only
     // the pairs' own counts made the same).
     for (int value = ranks.low; value <= ranks.high; ++value)
-        for (const int8_t how : { (int8_t)rule::largest, (int8_t)rule::smallest }) picks.push_back({ 0, how, (int8_t)value });
+        for (const int8_t how : { (int8_t)piece_pick::largest, (int8_t)piece_pick::smallest }) picks.push_back({ 0, how, (int8_t)value });
     // The bands, as many as some pair's pieces make.
-    for (const int8_t how : { (int8_t)rule::row_band, (int8_t)rule::column_band }) {
+    for (const int8_t how : { (int8_t)piece_pick::row_band, (int8_t)piece_pick::column_band }) {
         int bands = 0;
         for (const auto& cut : facts.cuts)
             for (int value = 0; value < (int)cut.size(); ++value)
@@ -3741,18 +3727,18 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (int value = 0; value < bands && value <= row_of(node_type::SelectRow).high; ++value)
             picks.push_back({ 0, how, (int8_t)value });
     }
-    picks.push_back({ 0, rule::most_common, 0 });
-    picks.push_back({ 0, rule::not_most_common, 0 });
+    picks.push_back({ 0, piece_pick::most_common, 0 });
+    picks.push_back({ 0, piece_pick::not_most_common, 0 });
     // By how many cells, at least so many or fewer, each count asked only where
     // it splits some pair's pieces: one at least taken there and one left.
     const auto cells = row_of(node_type::SelectAtLeastCells);
     for (int value = cells.low; value <= cells.high; ++value) {
         if (ranges::none_of(facts.cuts, [&](const vector<object>& cut) {
-                const vector<bool> taken = picked_pieces(cut, rule::at_least_cells, value);
+                const vector<bool> taken = picked_pieces(cut, piece_pick::at_least_cells, value);
                 return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
             }))
             continue;
-        for (const int8_t how : { (int8_t)rule::at_least_cells, (int8_t)rule::fewer_cells })
+        for (const int8_t how : { (int8_t)piece_pick::at_least_cells, (int8_t)piece_pick::fewer_cells })
             picks.push_back({ 0, how, (int8_t)value });
     }
     // The first so many by size, largest or smallest first, and every piece but
@@ -3772,8 +3758,8 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                     return counts[(size_t)value - 1] != counts[(size_t)value];
                 }))
                 continue;
-            if (value >= 2) picks.push_back({ 0, largest ? rule::largest_ranks : rule::smallest_ranks, (int8_t)value });
-            picks.push_back({ 0, largest ? rule::not_largest_ranks : rule::not_smallest_ranks, (int8_t)value });
+            if (value >= 2) picks.push_back({ 0, largest ? piece_pick::largest_ranks : piece_pick::smallest_ranks, (int8_t)value });
+            picks.push_back({ 0, largest ? piece_pick::not_largest_ranks : piece_pick::not_smallest_ranks, (int8_t)value });
         }
     // The row or the column so many lines past the middle of all the pieces
     // paint, and every piece but those (d23f8c26 keeps its middle column), the
@@ -3789,7 +3775,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (int at = 0; at <= 2 * from_middle.high; ++at) {
             // 0, -1, 1, -2, 2, ...
             const int value = (at + 1) / 2 * (at % 2 ? -1 : 1);
-            const int8_t how = rows ? rule::middle_row : rule::middle_column;
+            const int8_t how = rows ? piece_pick::middle_row : piece_pick::middle_column;
             bool every = true, splits = false;
             for (const auto& cut : facts.cuts) {
                 const vector<bool> taken = picked_pieces(cut, how, value);
@@ -3799,13 +3785,13 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             }
             if (!every || !splits) continue;
             picks.push_back({ 0, how, (int8_t)value });
-            picks.push_back({ 0, rows ? rule::not_middle_row : rule::not_middle_column, (int8_t)value });
+            picks.push_back({ 0, rows ? piece_pick::not_middle_row : piece_pick::not_middle_column, (int8_t)value });
         }
     // A fit is asked only where it is at work in every pair: it keeps one piece
     // of the color at least and drops one, or the color alone says as much.
     for (int color = 0; color < COLOR_COUNT; ++color) {
         if (!(fit_colors >> color & 1)) continue;
-        const piece_pick alone{ (uint16_t)(1u << color) };
+        const piece_pick alone = piece_pick::of_color(color);
         for (int at = 0; at < (int)partner_by::count; ++at) {
             const piece_pick fit{ alone.colors, -1, 0, (int8_t)asked_at(at) };
             if (ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
@@ -3864,8 +3850,7 @@ inline bool shows_what_it_frames(const grid& drawing, int height, int width) {
 // something else: the op breaks the tie by where the pieces lie, so what it
 // takes is the order's to say and not the rule's.
 inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick, int one) {
-    using rule = correspondence_election::fired_rule;
-    if (pick.how != rule::largest && pick.how != rule::smallest) return false;
+    if (pick.how != piece_pick::largest && pick.how != piece_pick::smallest) return false;
     for (size_t i = 0; i < pieces.size(); ++i)
         if ((int)i != one && pieces[i].summary.count == pieces[one].summary.count &&
             !same_drawing(pieces[i], pieces[one]))
@@ -4126,7 +4111,6 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
     };
     piece_frame_rule best;
     double best_share = 0;
-    constexpr uint16_t every_color = (uint16_t)((1u << COLOR_COUNT) - 1);
     auto weigh = [&](const piece_frame_rule& frame, auto framing) {
         double share = 1;
         for (size_t which = 0; which < train.size() && share > best_share; ++which) {
@@ -4185,8 +4169,8 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                                                            segmentation_methods::all_cells_of_one_color };
     // Every piece first, then each color on its own, then the picks by kind.
     auto picks_of = [&](const replay_facts& facts) {
-        vector<piece_pick> picks = { { every_color } };
-        for (int color = 0; color < COLOR_COUNT; ++color) picks.push_back({ (uint16_t)(1u << color) });
+        vector<piece_pick> picks = { piece_pick::all() };
+        for (int color = 0; color < COLOR_COUNT; ++color) picks.push_back(piece_pick::of_color(color));
         for (const piece_pick& pick : picks_to_ask(facts, 0)) picks.push_back(pick);
         return picks;
     };
@@ -4197,9 +4181,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
             piece_frame_rule frame;
             frame.held = true;
             frame.cut = cut;
-            frame.colors = pick.colors;
-            frame.how = pick.how;
-            frame.value = pick.value;
+            frame.pick = pick;
             for (size_t which = 0; which < train.size(); ++which) {
                 grid framed;
                 bool several = false;
@@ -4225,7 +4207,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                 frame.factor = (int8_t)cell;
                 frame.held = true;
                 frame.cut = cut;
-                frame.colors = pick.colors;
+                frame.pick = pick;
                 weigh(frame, [&](size_t which, grid& framed) {
                     return laid_out_input(facts.cuts[which], pick, cell, train[which].input, inf.size, TRANSPARENT,
                                           framed);
@@ -4285,9 +4267,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                     frame.kind = piece_frame_rule::filled;
                     frame.held = true;
                     frame.cut = cut;
-                    frame.colors = pick.colors;
-                    frame.how = pick.how;
-                    frame.value = pick.value;
+                    frame.pick = pick;
                     frame.keyed = (int8_t)keyed;
                     const double before = best_share;
                     weigh(frame, [&](size_t which, grid& framed) {
@@ -4497,9 +4477,8 @@ inline bool size_rank_holds(const replay_facts& facts, const color_facts& palett
         for (size_t rank = 0; rank < order.size(); ++rank) place[order[rank]] = (int)rank;
         places.push_back(std::move(place));
     }
-    constexpr uint16_t every_color = (uint16_t)((1u << COLOR_COUNT) - 1);
     bool every_piece = false;
-    return recolors_hold(ranked, handed_pieces(ranked, { every_color }),
+    return recolors_hold(ranked, handed_pieces(ranked, piece_pick::all()),
                          [&](size_t which, const partner_pieces&, int i, int8_t& color) {
         const int rank = places[which][i];
         color = rank < palette.output_colors_by_size_count ? palette.output_colors_by_size[rank]
@@ -5050,12 +5029,11 @@ inline bool fill_holds(const replay_facts& facts, const vector<partner_pieces>& 
 inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map_rule& table,
                                 vector<vector<std::pair<int, int>>>& filled, int& pieces_filled) {
     using rule = correspondence_election::fired_rule;
-    constexpr uint16_t every_color = (uint16_t)((1u << COLOR_COUNT) - 1);
     const vector<cells_down> hand = pieces_down(facts);
     pieces_filled = 0;
     int8_t paint = -1;
     bool every_piece = false;
-    return paint_holds(facts, handed_pieces(facts, { every_color }), { rule::laid_under, &hand },
+    return paint_holds(facts, handed_pieces(facts, piece_pick::all()), { rule::laid_under, &hand },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
         for (const object& piece : cut.pieces) {
             const int8_t fill = (int8_t)table.color_of(shape_key::shape, piece);
@@ -5079,11 +5057,7 @@ inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map
 // they were before the hand was carried.
 inline bool carry_the_hand(const correspondence_election::fired_rule& rule, replay_facts& facts) {
     using said = correspondence_election::fired_rule;
-    constexpr uint16_t every_color = (uint16_t)((1u << COLOR_COUNT) - 1);
-    const piece_pick pick = rule.pick_by >= 0 ? piece_pick{ 0, rule.pick_by, rule.pick_value, rule.pick_fits }
-                          : rule.picks        ? piece_pick{ rule.picks, -1, 0, rule.pick_fits }
-                          : rule.color >= 0   ? piece_pick{ (uint16_t)(1u << rule.color) }
-                                              : piece_pick{ every_color };
+    const piece_pick& pick = rule.pick;
     auto recolored = [](object& piece, int color) {
         for (int row = 0; row < piece.summary.h; ++row)
             for (int col = 0; col < piece.summary.w; ++col)
@@ -5413,7 +5387,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                                                   "All But The Largest", "The Smallest", "All But The Smallest",
                                                   "Row From The Middle", "Off The Row From The Middle",
                                                   "Column From The Middle", "Off The Column From The Middle" };
-    static_assert(size(pick_names) == (size_t)rule::pick_kinds);
+    static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
     struct heard {
@@ -5432,9 +5406,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     auto already_said = [&](rule::said_as as, const piece_pick& pick, int value) {
         return ranges::any_of(read.line, [&](int8_t which) {
             const rule& step = read.fired[which];
-            return step.as == as && step.value == value && step.pick_by == pick.how &&
-                   step.pick_fits == pick.fits &&
-                   (pick.how >= 0 ? step.pick_value == pick.value : step.picks == pick.colors);
+            return step.as == as && step.value == value && step.pick == pick;
         });
     };
     // What a paint said after the line reads: the cut opened again, as it is said.
@@ -5463,7 +5435,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     auto say = [&](const heard& best, rule::said_as as, const string& says, int8_t under) {
         string name;
         if (best.every_piece) name = "Every Piece";
-        else if (best.pick.how == rule::most_common || best.pick.how == rule::not_most_common)
+        else if (best.pick.how == piece_pick::most_common || best.pick.how == piece_pick::not_most_common)
             name = pick_names[best.pick.how];
         else if (best.pick.how >= 0) name = string(pick_names[best.pick.how]) + " " + to_string(best.pick.value);
         else {
@@ -5474,13 +5446,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!best.every_piece && best.pick.fits >= 0)
             name += string(" That Would Fit ") + partners[best.pick.fits];
         rule one = listed(name.c_str(), says.c_str(), as, (int8_t)best.value);
-        if (!best.every_piece) one.pick_fits = best.pick.fits;
-        if (!best.every_piece && best.pick.how >= 0) {
-            one.pick_by = best.pick.how;
-            one.pick_value = best.pick.value;
-        } else if (!best.every_piece) {
-            one.picks = best.pick.colors;
-        }
+        one.pick = best.every_piece ? piece_pick::all() : best.pick;
         one.pieces = best.pieces;
         one.paint = best.paint;
         return read.say_fired(std::move(one), under, best.claims);
@@ -5510,8 +5476,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         switch (step.as) {
             case rule::turn:
             case rule::move_down:
-            case rule::move_across: return step.pick_by >= 0 || step.color < 0 || step.color == color;
-            case rule::recolor:     return step.color == color || step.value == color;
+            case rule::move_across: return step.pick.may_take_color(color);
+            case rule::recolor:     return step.pick.may_take_color(color) || step.value == color;
             case rule::swap_colors: {
                 const auto [first, second] = color_pair::from_index(step.value);
                 return first == color || second == color;
@@ -5729,7 +5695,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             return {};
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, 0, starts_from(missing::a_recolor))) {
-            if ((pick.how == rule::most_common || pick.how == rule::not_most_common) &&
+            if ((pick.how == piece_pick::most_common || pick.how == piece_pick::not_most_common) &&
                 !facts.hand_known && !read.line.empty())
                 continue;
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
@@ -5834,7 +5800,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             bool may = true;
             if (facts.hand_known)
                 may = true;
-            else if (pick.how == rule::most_common || pick.how == rule::not_most_common)
+            else if (pick.how == piece_pick::most_common || pick.how == piece_pick::not_most_common)
                 may = read.line.empty();
             else if (pick.how >= 0)
                 may = ranges::none_of(read.line, [&](int8_t which) { return moves_a_pick(read.fired[which]); });
@@ -5906,7 +5872,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // The picks a draw word is asked with: each color on its own, then the picks by
     // holes, size and band.
     vector<piece_pick> draw_picks;
-    for (int color = 0; color < COLOR_COUNT; ++color) draw_picks.push_back({ (uint16_t)(1u << color) });
+    for (int color = 0; color < COLOR_COUNT; ++color) draw_picks.push_back(piece_pick::of_color(color));
     for (const piece_pick& pick : picks_to_ask(opened, 0)) draw_picks.push_back(pick);
 
     // WHAT A PAINT SAID AFTER THE LINE READS: it opens the cut again, so it reads
@@ -6109,7 +6075,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     const std::pair<int, const char*> turns[] = { { right, "a quarter turn right" },
                                                   { compose_poses(right, right), "a half turn" },
                                                   { pose_of(node_type::TurnLeft), "a quarter turn left" } };
-    const piece_pick figure{ (uint16_t)((1u << COLOR_COUNT) - 1) };
+    const piece_pick figure = piece_pick::all();
     const vector<partner_pieces> figure_handed = still ? handed_pieces(opened, figure) : vector<partner_pieces>{};
     auto turned_paint = [&]() -> offer {
         if (!still) return {};
@@ -6433,7 +6399,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
         // The framed grid is what the frame leaves of the figures: nothing is
         // filled in it, and the reading inside it is a reading of figures too.
         const replay_facts facts(train, {}, {}, picks ? inf.frame.cut : inf.correspondence.segmentation);
-        const piece_pick pick{ inf.frame.colors, inf.frame.how, inf.frame.value };
+        const piece_pick& pick = inf.frame.pick;
         vector<example> framed(train.size());
         bool all = true;
         for (size_t which = 0; which < train.size() && all; ++which) {

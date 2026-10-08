@@ -62,29 +62,15 @@ inline string foreground_input(const ground_plan& plan) {
     return marks.empty() ? "Input" : "Input Colors" + marks + " DeleteSelection UnionList";
 }
 
-// The pick for one color's pieces alone. Picks add to what is already marked,
-// so it starts from none picked.
-inline string pick_only_color(int color) {
-    return "SelectAll InvertSelection " + spell("SelectColor", color);
-}
-
-// The pieces of any of the colors in `colors`, a bit each, picked from none.
-// Selectors add, so each color is one more SelectColor.
-inline string pick_colors(uint16_t colors) {
-    string pick = "SelectAll InvertSelection";
-    for (int color = 0; color < COLOR_COUNT; ++color)
-        if (colors >> color & 1) pick += " " + spell("SelectColor", color);
-    return pick;
-}
-
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, every color but that one, at least so many cells,
 // fewer, the first so many by size, every piece but those, the ones on a row or
 // a column from the middle, every piece but those -- when `how` names one, else
 // by its colors; then, when `fits` names a partner way, WouldFit keeps the ones
 // that would fit into a gap of their partner.
-inline string pick_words(uint16_t colors, int8_t how, int8_t value, int8_t fits = -1) {
-    using fired_rule = correspondence_election::fired_rule;
+inline string pick_words(const piece_pick& pick) {
+    if (pick.every()) return "SelectAll";
+    const auto [colors, how, value, fits] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectMostCommonColor",
@@ -93,31 +79,28 @@ inline string pick_words(uint16_t colors, int8_t how, int8_t value, int8_t fits 
                                                  "SelectSmallestObject", "SelectSmallestObject",
                                                  "SelectRowFromMiddle", "SelectRowFromMiddle",
                                                  "SelectColumnFromMiddle", "SelectColumnFromMiddle" };
-    static_assert(size(selectors) == (size_t)fired_rule::pick_kinds);
+    static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
-    if (how < 0) return pick_colors(colors) + kept;
+    if (how < 0) {
+        string chosen = "SelectAll InvertSelection";
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            if (colors >> color & 1) chosen += " " + spell("SelectColor", color);
+        return chosen + kept;
+    }
     // SelectMostCommonColor takes no value: which color it picks is the list's to say.
-    const bool valued = how != fired_rule::most_common && how != fired_rule::not_most_common;
+    const bool valued = how != piece_pick::most_common && how != piece_pick::not_most_common;
     // The first so many by size: one selector a rank, since selectors add.
-    const bool ranks = how == fired_rule::largest_ranks || how == fired_rule::not_largest_ranks ||
-                       how == fired_rule::smallest_ranks || how == fired_rule::not_smallest_ranks;
+    const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::not_largest_ranks ||
+                       how == piece_pick::smallest_ranks || how == piece_pick::not_smallest_ranks;
     // Every piece but those another pick takes, turned round by InvertSelection.
-    const bool turned = how == fired_rule::not_most_common || how == fired_rule::fewer_cells ||
-                        how == fired_rule::not_largest_ranks || how == fired_rule::not_smallest_ranks ||
-                        how == fired_rule::not_middle_row || how == fired_rule::not_middle_column;
+    const bool turned = how == piece_pick::not_most_common || how == piece_pick::fewer_cells ||
+                        how == piece_pick::not_largest_ranks || how == piece_pick::not_smallest_ranks ||
+                        how == piece_pick::not_middle_row || how == piece_pick::not_middle_column;
     string chosen;
     if (ranks)
         for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
     else chosen = " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
     return "SelectAll InvertSelection" + chosen + (turned ? " InvertSelection" : "") + kept;
-}
-
-// THE PIECES A RULE PICKS, as words, picked from none: by its pick of holes or of
-// size, by its colors, by its one color -- or every piece.
-inline string pick_of(const correspondence_election::fired_rule& rule) {
-    if (rule.pick_by >= 0 || rule.picks)
-        return pick_words(rule.picks, rule.pick_by, rule.pick_value, rule.pick_fits);
-    return rule.color < 0 ? string("SelectAll") : pick_only_color(rule.color);
 }
 
 struct said_reading {
@@ -958,7 +941,7 @@ inline bool say_rarest_color(const inference& inf, said_reading& said) {
 // piece, so a line about one color picks it from none picked.
 inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, const inference& inf) {
     using said_as = correspondence_election::fired_rule::said_as;
-    const string pick = pick_of(rule);
+    const string pick = pick_words(rule.pick);
     vector<beat> beats;
     switch (rule.as) {
         case said_as::turn:
@@ -983,10 +966,9 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
             // names, the figure -- the largest -- takes its nearest piece's, the
             // key's, and the key goes.
             if (inf.shape_color_map.claimed_by == shape_color_map_rule::body_recolor) {
-                using fired_rule = correspondence_election::fired_rule;
-                const string key = pick_words(0, fired_rule::smallest, 0);
+                const string key = pick_words({ 0, piece_pick::smallest, 0 });
                 beats.push_back({key, spell("ShapeColorMap", (int)shape_key::shape)});
-                beats.push_back({pick_words(0, fired_rule::largest, 0), spell("ColorFrom", (int)partner_by::nearest)});
+                beats.push_back({pick_words({ 0, piece_pick::largest, 0 }), spell("ColorFrom", (int)partner_by::nearest)});
                 beats.push_back({key, "DeleteSelection"});
             } else if (const char* word = word_for_learned_recolor(inf.shape_color_map)) {
                 beats.push_back({"SelectAll", word});
@@ -1024,13 +1006,13 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 // after the line.
 inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint) {
     using said_as = correspondence_election::fired_rule::said_as;
-    const string pick = pick_of(rule);
+    const string pick = pick_words(rule.pick);
     switch (rule.as) {
         case said_as::extend_rays: {
             // Rays only, the pieces are already down; painted over in the rule's
             // own color unless it is the one color picked.
             string act = spell(rule.value >= 32 ? "ExtendDiagonal" : "ExtendOrthogonal", rule.value % 32);
-            if (rule.picks != (uint16_t)(1u << rule.paint)) act += " " + spell("Recolor", rule.paint);
+            if (rule.pick != piece_pick::of_color(rule.paint)) act += " " + spell("Recolor", rule.paint);
             drawn = { pick, act + onto_words(rule) };
             paint = laid_paint(rule);
             return true;
@@ -1092,9 +1074,9 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         const string cut = word_for_segmentation(frame.cut);
         if (cut.empty()) return false;
         // Every piece needs no pick, and nothing to delete.
-        const bool every = frame.how < 0 && frame.colors == (uint16_t)((1u << COLOR_COUNT) - 1);
+        const bool every = frame.pick.every();
         framed = string("Input SelectAll ") + cut + " SelectAll Trim " +
-                 (every ? string() : pick_words(frame.colors, frame.how, frame.value) +
+                 (every ? string() : pick_words(frame.pick) +
                                      " InvertSelection DeleteSelection ") + "SelectAll ";
         switch (frame.kind) {
         case piece_frame_rule::laid_out: framed += spell("Layout", frame.factor); break;
@@ -1250,9 +1232,9 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         say_beats(said, "Input", beats, "Withhold");
         said.sentences.push_back(closed_on_the_pick(
             (said.sentences.empty() ? string("Input") : string("CurrentObjects")) +
-            " " + pick_only_color(inf.slide_to_touch.stays), "Union"));
+            " " + pick_words(piece_pick::of_color(inf.slide_to_touch.stays)), "Union"));
         said.sentences.push_back(closed_on_the_pick(
-            "CurrentObjects " + pick_only_color(inf.slide_to_touch.slides) + " AlignToCanvas", "Union"));
+            "CurrentObjects " + pick_words(piece_pick::of_color(inf.slide_to_touch.slides)) + " AlignToCanvas", "Union"));
         return true;
     }
 

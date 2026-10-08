@@ -269,7 +269,7 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
         { node_type::MirrorAround, said_as::mirror_around }, { node_type::MoveToward, said_as::move_toward } };
     for (const auto& [op, as] : by_partner)
         task.dead_ops[(int)op] = !line_says([&](const auto& rule) { return rule.as == as; });
-    task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick_fits >= 0; });
+    task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick.fits >= 0; });
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one

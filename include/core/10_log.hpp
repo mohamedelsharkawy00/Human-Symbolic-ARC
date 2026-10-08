@@ -599,17 +599,17 @@ inline void log_inference(const string& id, const inference& inf,
     static constexpr const char* frame_kinds[] = { "cut out", "scaled up", "scaled down", "tiled", "posed",
                                                    "fractal", "repeat unit", "laid out", "filled" };
     if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::laid_out)
-        report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
+        report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
                << "  cell " << (int)inf.frame.factor;
     else if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::filled)
-        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
-               << "  how " << (int)inf.frame.how << "  value " << (int)inf.frame.value << "  keyed "
+        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
+               << "  how " << (int)inf.frame.pick.how << "  value " << (int)inf.frame.pick.value << "  keyed "
                << (int)inf.frame.keyed;
     else if (inf.frame.holds() && inf.frame.kind != piece_frame_rule::cut_out)
         report << "  " << frame_kinds[inf.frame.kind] << "  factor " << (int)inf.frame.factor;
     else if (inf.frame.holds())
-        report << "  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
-               << "  how " << (int)inf.frame.how << "  value " << (int)inf.frame.value;
+        report << "  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.pick.colors
+               << "  how " << (int)inf.frame.pick.how << "  value " << (int)inf.frame.pick.value;
     report << "\n\n";
     if (inf.framed) {
         report << "[framed] the same-size puzzle read through the frame\n";

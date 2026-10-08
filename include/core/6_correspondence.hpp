@@ -24,6 +24,29 @@
 namespace arc {
 using namespace std;
 
+// Which pieces a word or frame takes. A color mask picks any piece wearing
+// one of its colors; `how` instead names a pick by shape, size or place.
+// `fits` optionally keeps only pieces that fit their partner (WouldFit).
+// The empty mask picks nothing; all() picks every color, of_color() just one.
+struct piece_pick {
+    enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
+                             not_most_common, at_least_cells, fewer_cells, largest_ranks,
+                             not_largest_ranks, smallest_ranks, not_smallest_ranks, middle_row,
+                             not_middle_row, middle_column, not_middle_column, pick_kinds };
+    uint16_t colors = 0;
+    int8_t how = -1, value = 0, fits = -1;
+
+    static constexpr piece_pick all() { return { (uint16_t)((1u << COLOR_COUNT) - 1) }; }
+    static constexpr piece_pick of_color(int color) { return { (uint16_t)(1u << color) }; }
+    bool every() const { return how < 0 && colors == all().colors && fits < 0; }
+    // A pick by shape, size or place may take any color.
+    bool may_take_color(int color) const { return how >= 0 || (colors >> color & 1) != 0; }
+    bool operator==(const piece_pick& other) const {
+        return how == other.how && fits == other.fits &&
+               (how >= 0 ? value == other.value : colors == other.colors);
+    }
+};
+
 // Correspondences match objects from input to output and from output to input.
 
 // This structure collects the correspondences and summaries of the readings tried.
@@ -221,7 +244,7 @@ struct correspondence_election {
         int8_t under = -1;
         string says;
         bool stands_alone = false;
-        // HOW IT IS SAID, when it is: an act on the pieces of `color` -- turned by
+        // HOW IT IS SAID, when it is: an act on the pieces of `pick` -- turned by
         // pose `value`, moved `value` down or across, recolored to `value`,
         // painted the color of the partner partner_by `value` finds, moved level
         // with that partner's rows or columns, or drawn again mirrored around its
@@ -260,38 +283,14 @@ struct correspondence_election {
                 default: return false;
             }
         }
-        int8_t color = -1, value = 0;
-        // The colors whose pieces it picks, a bit each, when it picks by more
-        // than the one `color`.
-        uint16_t picks = 0;
+        int8_t value = 0;
+        piece_pick pick = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.
         int8_t paint = -1;
         // HOW A PAINT SAID AFTER THE LINE LIES on what is down: over it, under it
         // -- only where nothing is -- or only onto it, where something is.
         enum laid : int8_t { laid_over, laid_under, laid_onto };
         int8_t lay = laid_over;
-        // WHICH PIECES IT PICKS when not by color: the ones with `pick_value`
-        // holes, or the one `pick_value` down the order of size, largest or
-        // smallest first, or the ones in the band of rows or of columns numbered
-        // `pick_value`, or the ones wearing the color most cells wear, or every
-        // one but those, or the ones painting at least `pick_value` cells, or
-        // every one but those, or the first `pick_value` down the order of size,
-        // largest or smallest first, or every one but those, or the ones on the
-        // row or the column `pick_value` lines past the middle of all the pieces
-        // paint, or every one but those -- the picks SelectObjectsWithHoles,
-        // SelectLargestObject, SelectSmallestObject, SelectRow, SelectColumn,
-        // SelectMostCommonColor, SelectAtLeastCells, SelectRowFromMiddle and
-        // SelectColumnFromMiddle make, the first so many one SelectLargestObject
-        // or SelectSmallestObject a rank, each "but those" turned round by
-        // InvertSelection. -1 when it picks by color.
-        enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
-                                  not_most_common, at_least_cells, fewer_cells, largest_ranks,
-                                  not_largest_ranks, smallest_ranks, not_smallest_ranks, middle_row,
-                                  not_middle_row, middle_column, not_middle_column, pick_kinds };
-        int8_t pick_by = -1, pick_value = 0;
-        // WHICH OF THOSE IT KEEPS: only the ones that would fit into a gap of
-        // their partner, the partner way WouldFit numbers; -1 keeps them all.
-        int8_t pick_fits = -1;
         // What the language has no word for, when this fired and cannot be said.
         string no_word_for;
     };
@@ -1415,7 +1414,7 @@ private:
             rule.name = act.color < 0 ? string("Every Piece") : "Color " + to_string(act.color);
             rule.says = what_it_did(act);
             rule.as = (fired_rule::said_as)act.what;
-            rule.color = act.color;
+            rule.pick = act.color < 0 ? piece_pick::all() : piece_pick::of_color(act.color);
             rule.value = act.value;
             // The pieces it was seen on, each once.
             vector<std::pair<size_t, int>> counted;
