@@ -1,16 +1,11 @@
 ﻿cmake_minimum_required(VERSION 3.18)
-set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr -Wreorder -Wmissing-launch-bounds -Wdefault-stream-launch -Wext-lambda-captures-this -Xcompiler /W4" CACHE STRING "" FORCE)
-# Tried --Ofast-compile=min (nvcc 13.2) on 2026-09-09: it cut a fresh Release
-# build to well under half, almost all of it out of the CUDA compile, where both
-# cicc and ptxas came down by roughly four times. It does not go in the line
-# above as it stands: fast-compile switches device code to per-function
-# compilation, and ptxas then rejects the whole-program enable_smem_spilling
-# pragma in cuda_solver.cu ("Pragma 'enable_smem_spilling' is not allowed for
-# per-function compilation modes"). That measurement therefore came from a build
-# with the pragma commented out, so it also gives up the shared-memory spilling
-# the occupancy cap relies on. Solving looked the same speed by eye, unmeasured.
-# If it is wanted, it belongs in a separate dev preset with the pragma behind an
-# #if, never in Release.
+set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr -Wreorder -Wmissing-launch-bounds -Wdefault-stream-launch -Wext-lambda-captures-this -Xcompiler /W4 --Ofast-compile=min" CACHE STRING "" FORCE)
+# --Ofast-compile=min since 2026-10-08: the CUDA compile alone went 91 s -> 37 s.
+# max compiled in 27 s but slowed a full arc_said run from 94 s to 170 s.
+# It compiles device code function by function, so the kernel spills far more
+# and the search on the GPU may be slower (unmeasured; the search is on its way
+# out). arc_said scored the same and ran as fast. It also cost the kernel's
+# enable_smem_spilling pragma, which ptxas allows only in whole-program mode.
 project(ARC LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -27,16 +22,18 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32 WIN32_LEAN_AND_MEAN)
 # Off by choice, not by breakage: it is the only thing that checks a to_text
 # format string against its arguments, and the fmtlib false positives that
 # forced it off left with fmtlib. Run on 2026-09-05 over all 112 call sites and
-# came back clean, proven by planting a bad one and watching C6273 fire. On while
-# its remaining findings are being worked through.
-add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
+# came back clean, proven by planting a bad one and watching C6273 fire. Commented
+# out 2026-10-08: it cost about 25 s of each C++ file's 32 s.
+# add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/analyze;/analyze:stacksize$<SEMICOLON>65536;/analyze:external->")
 
 if(MSVC)
     string(REGEX REPLACE "/Ob[0-9]" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/MP>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # source and exec charset agree
-    add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2;/Oi;/Ot;/GS-;/GL;/fp:fast;/Qpar;/favor:blend>")
+    # No /GL (and so no /LTCG) since 2026-10-08: arc_said ran as fast without it,
+    # and the code generation it moves into the link made each link 6-26 s.
+    add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2;/Oi;/Ot;/GS-;/fp:fast;/Qpar;/favor:blend>")
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RelWithDebInfo>>:/O2;/Ob2;/Oi;/Ot;/Zi>")
 endif()
 
@@ -127,14 +124,19 @@ target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
 # The GUI: a window onto the search, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA
 # context: GUI code that reached for the GPU would fail to link.
+# Its code compiles apart, in arc_gui, because Ninja holds back every compile
+# of a target until the targets it depends on are built: inside ARC, gui_main.cpp
+# waited on arc_headless's whole CUDA build. Now only ARC's link waits.
+add_library(arc_gui OBJECT "src/gui_main.cpp")
+target_link_libraries(arc_gui PRIVATE arc_core)
+target_include_directories(arc_gui PRIVATE include/gui ${Vulkan_INCLUDE_DIRS})
 set(SOURCES
-    "src/gui_main.cpp"
     "${SHADERS_OUT_DIR}/vert.spv"
     "${SHADERS_OUT_DIR}/frag.spv"
     "${CMAKE_CURRENT_BINARY_DIR}/app.rc"
 )
 add_executable(ARC WIN32 ${SOURCES})
-target_link_libraries(ARC PRIVATE arc_core)
+target_link_libraries(ARC PRIVATE arc_gui)
 
 # Backup
 set(ARC_BACKUP_COMMAND Python::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/scripts/backup.py")
@@ -151,18 +153,15 @@ add_custom_command(
     COMMENT "Running backup..."
 )
 
-# Include Directories. include/core arrives with arc_core.
 # It starts arc_headless.exe, so building it builds that too.
 add_dependencies(ARC arc_headless)
-target_include_directories(ARC PRIVATE include/gui)
-target_include_directories(ARC PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Linker options. WIN32 target => /subsystem:windows (no console), but the entry
 # point is plain main(), so point the CRT at mainCRTStartup instead of WinMain.
 target_link_options(ARC PRIVATE "/ENTRY:mainCRTStartup")
-target_link_options(ARC PRIVATE "$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF>")
+target_link_options(ARC PRIVATE "$<$<CONFIG:Release>:/OPT:REF;/OPT:ICF>")
 target_link_options(ARC PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT:ICF>")
-target_link_options(arc_headless PRIVATE "$<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF>")
+target_link_options(arc_headless PRIVATE "$<$<CONFIG:Release>:/OPT:REF;/OPT:ICF>")
 target_link_options(arc_headless PRIVATE "$<$<CONFIG:RelWithDebInfo>:/DEBUG;/OPT:REF;/OPT:ICF>")
 
 # Libraries

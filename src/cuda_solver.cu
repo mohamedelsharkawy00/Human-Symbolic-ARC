@@ -3582,8 +3582,8 @@ bool cuda_dsl_examples_uploaded() {
 // full (chunk accumulation), occupancy became the bottleneck (NCU: ~78% SM idle, "too
 // few warps"). Measured A/B at TARGET_JOBS=2048: (32,12)=243k aps, (32,16)=343k,
 // (32,21)=383k (+58%), (32,24)=374k (plateau — 80 regs + 4208B smem cap blocks at ~23).
-// So (32,21) ≈ 80 regs / ~44% occupancy is the peak. Register spills land in fast
-// shared memory via enable_smem_spilling (below), which is what makes the cap a win.
+// So (32,21) ≈ 80 regs / ~44% occupancy is the peak. Those runs sent register spills
+// to shared memory with enable_smem_spilling, gone with --Ofast-compile (CMakeLists.txt).
 __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
     gpu_exec_context* __restrict__ contexts,
     const gpu_example_template* __restrict__ templates,
@@ -3599,14 +3599,6 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
     int active_examples,
     int job_count)
 {
-    // CUDA 13.0+ shared-memory register spilling: send register spills (forced by the
-    // __launch_bounds__ occupancy cap above) to on-chip shared memory instead of local/
-    // DRAM. We qualify: CUDA 13.2, whole-program compile, static smem only, launch bounds
-    // defined. Makes the occupancy cap far cheaper (spills no longer hit DRAM latency).
-#if __CUDACC_VER_MAJOR__ >= 13
-    asm volatile (".pragma \"enable_smem_spilling\";");
-#endif
-
     // Warp-cooperative: one block == one warp == one job. Most DSL ops run warp-parallel
     // in gpu_eval_program_warp; paint/crop stay on lane 0; write-back + score run on
     // all 32 lanes with a warp-shuffle reduction.

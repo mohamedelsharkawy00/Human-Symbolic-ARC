@@ -84,11 +84,14 @@ This file holds only what is current; past stages are in git history
   were: the manual 05a7bcf2, 10fcaaa3 (now inferred too), 32597951,
   f25fbde4, and 44d8ac46 (an old inferred one that no longer fits).
   solutions/shelf/ holds puzzles outside training.
-- BUILD TIME IS THE BOTTLENECK NOW (the user: speed up the build or drop the
-  GPU soon). One checked step this session took 7-10 minutes: a full build
-  3-4 minutes, most of it cuda_solver.cu, which every header in include/core
-  recompiles; then a score of 85-220 s. Even `said.bat` builds the GPU
-  library, since arc_said links it.
+- Build time cut 2026-10-08 (CMakeLists.txt says why at each flag): /analyze
+  commented out, no /GL, the GUI compiles beside the rest, and the GPU code
+  builds with --Ofast-compile=min (the smem-spilling pragma is gone; the
+  search may be slower, the user is moving off it). `said.bat` after an
+  inference edit builds in about 30-40 s (was about 175 s), a clean full build
+  in about 45 s (was 247 s). What is left is cuda_solver.cu, which every header
+  in include/core recompiles; arc_said links it. Tried and dropped:
+  --Ofast-compile=max (said ran 94 -> 170 s), --split-compile (349 s).
 - A full score takes 30 to 80 s; the laptop's clock moves with heat, so
   compare two builds by interleaving them (old, new, old, new) and taking
   each one's fastest. `ARC_THREADS=1` reads one puzzle at a time (about 15
