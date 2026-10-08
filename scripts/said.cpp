@@ -1,5 +1,6 @@
 // EVERY PUZZLE READ, SCORED AND WRITTEN DOWN, in one run. For every training
-// puzzle -- or only the ids named -- infer, write the inference readout, take
+// puzzle -- or, with ARC_DATASET=eval (as arc_headless names the sets), every
+// evaluation puzzle -- or only the ids named -- infer, write the inference readout, take
 // suggested_programs, run each on the train pairs, and where one fits them all,
 // ask it for the held-out test answer. No search anywhere. Run it from the repo
 // root, through scripts\said.bat, which builds it first:
@@ -37,6 +38,7 @@
 #include "in_parallel.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -87,7 +89,11 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
 int main(int argc, char** argv) {
     if (argc < 2) { fprintf(stderr, "arc_said <label> [id...]\n"); return 2; }
     const vector<string> only(argv + 2, argv + argc);
-    task_set set = load_task_set(DS_TRAIN);
+    // Training unless ARC_DATASET names the evaluation set.
+    const char* named = getenv("ARC_DATASET");
+    const int dataset = named ? dataset_from_name(named) : DS_TRAIN;
+    if (dataset != DS_TRAIN && dataset != DS_EVAL) { fprintf(stderr, "ARC_DATASET must be train or eval\n"); return 2; }
+    task_set set = load_task_set(dataset);
 #ifndef ARC_NO_GPU
     if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
 #endif
@@ -98,7 +104,7 @@ int main(int argc, char** argv) {
     bool found_every_id = true;
     for (const string& id : only)
         if (ranges::none_of(set.tasks, [&](const auto& entry) { return entry.id == id; })) {
-            fprintf(stderr, "no such training task: %s\n", id.c_str());
+            fprintf(stderr, "no such task: %s\n", id.c_str());
             found_every_id = false;
         }
 
@@ -124,7 +130,7 @@ int main(int argc, char** argv) {
         said_one& one = said[(size_t)which];
         puzzle task;
         if (!load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id))) return;
-        infer_into_puzzle(task, { at, (int)set.tasks.size(), DS_TRAIN }, true);
+        infer_into_puzzle(task, { at, (int)set.tasks.size(), dataset }, true);
         if (task.suggested_programs.empty()) return;
         one.spoke = true;
         one.panes = task.inf.pane_split.holds();

@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <numeric>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -378,8 +379,7 @@ struct partner_pieces {
     // The pieces of a cut, the ones `marks` names picked.
     partner_pieces(const vector<object>& cut, vector<bool> marks)
         : pieces(cut), boxes(cut.size()), picked(std::move(marks)) {
-        for (size_t i = 0; i < pieces.size(); ++i)
-            pieces[i].each_cell([&](int row, int col, int8_t) { boxes[i].include_cell(row, col); });
+        for (size_t i = 0; i < pieces.size(); ++i) boxes[i] = pieces[i].painted_box();
     }
     // The pieces of a cut, the ones `pick` takes picked (picked_pieces, below).
     partner_pieces(const vector<object>& cut, const piece_pick& pick);
@@ -801,6 +801,26 @@ inline grid empty_grid(int width, int height) {
     grid made(width, height);
     made.fill(TRANSPARENT);
     return made;
+}
+
+// Paint at an absolute grid position. Transparent cells leave the canvas alone.
+// Laid under rather than over, as Underlay lays it, a cell only fills what
+// nothing has painted yet. Unless clipping is requested, false means some paint
+// fell outside; callers must discard that partial drawing.
+inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
+                        bool over = true, bool clip = false) {
+    for (int row = 0; row < piece.summary.h; ++row)
+        for (int col = 0; col < piece.summary.w; ++col) {
+            const int color = piece.cells[row][col];
+            if (color == TRANSPARENT) continue;
+            if (!canvas.contains(row0 + row, col0 + col)) {
+                if (clip) continue;
+                return false;
+            }
+            if (over || canvas.data[row0 + row][col0 + col] == TRANSPARENT)
+                canvas.data[row0 + row][col0 + col] = color;
+        }
+    return true;
 }
 
 // THE CANVAS A PROGRAM PAINTS ON, sized and closed as the kernel does it: the
@@ -2042,13 +2062,10 @@ ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
                                             int8_t (&label)[MAX_GRID_DIM][MAX_GRID_DIM], Place place) {
     for (int row = 0; row < MAX_GRID_DIM; ++row)
         for (int col = 0; col < MAX_GRID_DIM; ++col) label[row][col] = -1;
-    int worn[COLOR_COUNT] = {};
+    color_tally worn;
     for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col)
-            if (is_color(at(row, col))) ++worn[at(row, col)];
-    int body = -1, most = 0;
-    for (int color = 0; color < COLOR_COUNT; ++color)
-        if (worn[color] > most) { most = worn[color]; body = color; }
+        for (int col = 0; col < width; ++col) worn.add(at(row, col));
+    const int body = worn.most();
     if (body < 0) return;
 
     // The runs, each walked eight ways out from the first cell the reading meets.
@@ -2107,6 +2124,8 @@ ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
         int best = 0, best_key = -1, best_row = 0, best_col = 0, best_way = 0;
         for (int key = 0; key < keys; ++key) {
             const int color = key_color[key];
+            // A key is a color; said in full where it indexes the lists by color.
+            if (color < 0 || color >= COLOR_COUNT) continue;
             for (int anchor = 0; anchor < anchors[color]; ++anchor)
                 for (int way = 0; way < 8; ++way) {
                     int met = 0;
@@ -2194,26 +2213,6 @@ struct snap_to_anchors_rule {
         return { redraws && at_work };
     }
 };
-
-// Paint at an absolute grid position. Transparent cells leave the canvas alone.
-// Laid under rather than over, as Underlay lays it, a cell only fills what
-// nothing has painted yet. Unless clipping is requested, false means some paint
-// fell outside; callers must discard that partial drawing.
-inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
-                        bool over = true, bool clip = false) {
-    for (int row = 0; row < piece.summary.h; ++row)
-        for (int col = 0; col < piece.summary.w; ++col) {
-            const int color = piece.cells[row][col];
-            if (color == TRANSPARENT) continue;
-            if (!canvas.contains(row0 + row, col0 + col)) {
-                if (clip) continue;
-                return false;
-            }
-            if (over || canvas.data[row0 + row][col0 + col] == TRANSPARENT)
-                canvas.data[row0 + row][col0 + col] = color;
-        }
-    return true;
-}
 
 // THE PIECES LAID OUT AS ONE DIAGONAL CHAIN, each hung off the bottom-right
 // corner of the one before it, overlapping it by the single cell they share.
@@ -2358,9 +2357,7 @@ struct slide_to_touch_rule {
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != stays) continue;
                     if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0, pieces[i].summary.x0)) return false;
-                    const auto& box = pieces[i].summary;
-                    target.include_cell(box.y0, box.x0);
-                    target.include_cell(box.y0 + box.h - 1, box.x0 + box.w - 1);
+                    target.include(pieces[i].summary.box());
                 }
                 // An empty canvas is nothing to touch, and the op answers that
                 // by leaving every piece exactly where it stood.
@@ -2369,7 +2366,7 @@ struct slide_to_touch_rule {
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != slides) continue;
                     anything_slid = true;
-                    const auto [down, across] = shift_to_touch(box_of(pieces[i].summary), target);
+                    const auto [down, across] = shift_to_touch(pieces[i].summary.box(), target);
                     if (!paint_piece(drawn, pieces[i], pieces[i].summary.y0 + down,
                                      pieces[i].summary.x0 + across)) return false;
                     moved = moved || down != 0 || across != 0;
@@ -2429,7 +2426,7 @@ struct edge_slide_rule {
             const heading_step step = step_of(way);
             for (const object& piece : pieces) {
                 if (!slides(piece)) continue;
-                const int steps = steps_to_edge(box_of(piece.summary), canvas.width, canvas.height, way);
+                const int steps = steps_to_edge(piece.summary.box(), canvas.width, canvas.height, way);
                 if (!paint_piece(canvas, piece, piece.summary.y0 + steps * step.down,
                                  piece.summary.x0 + steps * step.across, over)) return false;
             }
@@ -2654,7 +2651,7 @@ struct project_on_seeds_rule {
         constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
         int stamped = 0;
         for (const marker_piece& marker : seeds_the_op_will_see(pair.input))
-            project_along(box_of(tpl.summary), box_of(marker.summary),
+            project_along(tpl.summary.box(), marker.summary.box(),
                           pair.input.width, pair.input.height, [&](int at_row, int at_col) {
                 if (stamped >= most_the_op_stamps) return false;
                 // A stamp hanging over the edge is drawn as far as it fits.
@@ -2838,7 +2835,7 @@ struct bridge_rule {
                         });
                     // Each bar is laid under whatever is already drawn.
                     bridge_bars(way, (int)pieces.size(),
-                                [&](int which) { return box_of(pieces[which].summary); },
+                                [&](int which) { return pieces[which].summary.box(); },
                                 [&](int which) { return colors[which]; },
                                 [&](const cell_box& bar, int8_t color) {
                         for (int row = bar.row0; row <= bar.row1; ++row)
@@ -3109,7 +3106,7 @@ struct ranked_layout_rule {
         if (pieces.empty()) return false;
 
         int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
-        auto piece_box = [&](int i) { return box_of(pieces[(size_t)i].summary); };
+        auto piece_box = [&](int i) { return pieces[(size_t)i].summary.box(); };
         const int rows = bands_of((int)pieces.size(), true, piece_box, row_of);
         const int cols = bands_of((int)pieces.size(), false, piece_box, col_of);
         const int width = min(cols * (int)cell_size, MAX_GRID_DIM);
@@ -3435,11 +3432,10 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     if (how == piece_pick::most_common) {
         // The color most of the pieces' cells wear, the lowest on a tie, and every
         // piece wearing it -- the count SelectMostCommonColor makes.
-        int worn[COLOR_COUNT] = {};
-        for (const object& piece : pieces)
-            piece.each_cell([&](int, int, int8_t color) { if (is_color(color)) ++worn[color]; });
-        const int most = (int)(max_element(worn, worn + COLOR_COUNT) - worn);
-        if (worn[most] > 0)
+        color_tally worn;
+        for (const object& piece : pieces) piece.each_cell([&](int, int, int8_t color) { worn.add(color); });
+        const int most = worn.most();
+        if (most >= 0)
             for (size_t i = 0; i < pieces.size(); ++i)
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
         return picked;
@@ -3460,7 +3456,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         const int count = (int)pieces.size();
         if (count == 0) return picked;
         vector<int8_t> band(count);
-        bands_of(count, how == piece_pick::row_band, [&](int i) { return box_of(pieces[(size_t)i].summary); },
+        bands_of(count, how == piece_pick::row_band, [&](int i) { return pieces[(size_t)i].summary.box(); },
                  band.data());
         for (int i = 0; i < count; ++i) picked[i] = band[i] == value;
         return picked;
@@ -3516,8 +3512,11 @@ static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::Se
               row_of(node_type::SelectLargestObject).high == row_of(node_type::SelectSmallestObject).high,
               "the largest and the smallest are asked as far down the order");
 
+// THE CELLS OF EVERY PAIR, a list each, (row, col): what a replay sees.
+using cells_by_pair = vector<vector<std::pair<int, int>>>;
+
 // Whether `cells` holds the cell at (row, col) of pair `which`.
-inline bool on_cells(const vector<vector<std::pair<int, int>>>& cells, size_t which, int row, int col) {
+inline bool on_cells(const cells_by_pair& cells, size_t which, int row, int col) {
     return which < cells.size() &&
            ranges::find(cells[which], std::pair<int, int>{ row, col }) != cells[which].end();
 }
@@ -3755,9 +3754,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
         if (!picked[i]) continue;
         ++taken;
         one = (int)i;
-        const auto& at = pieces[i].summary;
-        box.include_cell(at.y0, at.x0);
-        box.include_cell(at.y0 + at.h - 1, at.x0 + at.w - 1);
+        box.include(pieces[i].summary.box());
     }
     several = taken > 1;
     if (taken == 0 || size_pick_ties(pieces, pick, one)) return false;
@@ -3799,7 +3796,7 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
         }
     if (cell_width <= 0 || cell_height <= 0) return false;
     vector<int8_t> row_band(count), col_band(count);
-    auto kept_box = [&](int i) { return box_of(kept[(size_t)i]->summary); };
+    auto kept_box = [&](int i) { return kept[(size_t)i]->summary.box(); };
     const int rows = bands_of(count, true, kept_box, row_band.data());
     const int cols = bands_of(count, false, kept_box, col_band.data());
     const int paper_width = min(cols * cell_width, MAX_GRID_DIM), paper_height = min(rows * cell_height, MAX_GRID_DIM);
@@ -4184,6 +4181,20 @@ struct laying {
     enum colors : int8_t { as_drawn, in_one, own_else_one } in = as_drawn;
 };
 
+// WHAT A REPLAY SAW, where its word holds -- every replay below hands one back,
+// or nothing where the word does not hold. The cells the word lays down on each
+// output, pair by pair: where its paint landed, where its pieces landed, what
+// they came out in or kept. The cells its picked pieces stood on that it took
+// them off or left as they were: where they slid from, what they lost, the
+// pieces a copy was drawn from. How many pieces it changed; the one color it
+// paints in, -1 for the colors it draws; and whether it picked every piece.
+struct replayed {
+    cells_by_pair drawn, left;
+    int pieces = 0;
+    int8_t paint = -1;
+    bool every_piece = true;
+};
+
 // A PAINT LAID ON WHAT IS DOWN, replayed: what every replay of a word that
 // draws asks, once. On each pair, `draw(which, cut, put)` hands every cell its
 // picked pieces paint, in the color it paints it, to `put(row, col, color)`,
@@ -4195,25 +4206,24 @@ struct laying {
 // a paint is never no color -- the same in every pair. It
 // explains the drawing only if the output shows every cell that lands, and in
 // each pair the word is at work (replay_facts): one cell at least lands in a
-// color its picked pieces did not show there. Hands back that one color (-1
-// laid in the colors drawn), the cells that landed, pair by pair, and whether
-// it picked every piece. Handed the pieces its pick takes (handed_pieces), made
-// ready once for every way the word is asked.
+// color its picked pieces did not show there. Sees that one color (-1 laid in
+// the colors drawn) and the cells that landed. Handed the pieces its pick takes
+// (handed_pieces), made ready once for every way the word is asked.
 template <class Draw>
-inline bool paint_holds(const replay_facts& facts, const vector<partner_pieces>& handed, const laying& how,
-                        Draw draw, int8_t& paint, vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
+inline optional<replayed> paint_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                      const laying& how, Draw draw) {
     using rule = correspondence_election::fired_rule;
-    if (how.in == laying::own_else_one)
-        return paint_holds(facts, handed, { how.lay, how.canvas }, draw, paint, drawn, every_piece) ||
-               paint_holds(facts, handed, { how.lay, how.canvas, laying::in_one }, draw, paint, drawn, every_piece);
-    drawn.assign(facts.train.size(), {});
-    every_piece = true;
-    paint = -1;
-    if (!facts.overlays || facts.train.empty()) return false;
+    if (how.in == laying::own_else_one) {
+        if (auto seen = paint_holds(facts, handed, { how.lay, how.canvas }, draw)) return seen;
+        return paint_holds(facts, handed, { how.lay, how.canvas, laying::in_one }, draw);
+    }
+    if (!facts.overlays || facts.train.empty()) return nullopt;
+    replayed seen;
+    seen.drawn.assign(facts.train.size(), {});
     for (size_t which = 0; which < facts.train.size(); ++which) {
         const example& pair = facts.train[which];
         const partner_pieces& cut = handed[which];
-        every_piece = every_piece && cut.every_piece_picked();
+        seen.every_piece = seen.every_piece && cut.every_piece_picked();
         cells_down down = how.canvas ? (*how.canvas)[which] : cells_down{};
         // What the picked pieces show, where they lie: drawn again as it is, a
         // cell of them is no work.
@@ -4229,18 +4239,19 @@ inline bool paint_holds(const replay_facts& facts, const vector<partner_pieces>&
             if (!lands(how.lay, down.at[row][col])) return shows;
             if (how.lay == rule::laid_under) down.at[row][col] = true;
             if (how.in == laying::in_one) {
-                if (paint < 0) paint = (int8_t)pair.output.data[row][col];
-                color = paint;
-                shows = shows && is_color(paint);
+                if (seen.paint < 0) seen.paint = (int8_t)pair.output.data[row][col];
+                color = seen.paint;
+                shows = shows && is_color(seen.paint);
             }
             shows = shows && pair.output.data[row][col] == color;
-            drawn[which].push_back({ row, col });
+            seen.drawn[which].push_back({ row, col });
             at_work = at_work || before[row][col] != color;
             return shows;
         });
-        if (!drew || !shows || !at_work) return false;
+        if (!drew || !shows || !at_work) return nullopt;
     }
-    return how.in == laying::as_drawn || is_color(paint);
+    if (how.in != laying::as_drawn && !is_color(seen.paint)) return nullopt;
+    return seen;
 }
 
 // The color a recolor's replay names for a piece the op leaves as it is.
@@ -4255,15 +4266,13 @@ constexpr int8_t LEFT_AS_IT_IS = -2;
 // (paint_holds), so a piece the word leaves as it is has to come out as it
 // was: the word picked it, and does not get to leave it to another (4f537728's
 // blocks in the marker's column, left by "takes the color of a piece in its
-// rows", came out recolored). Hands back the cells of the pieces it repainted,
-// pair by pair, how many pieces changed color, and whether it picked every
-// piece.
+// rows", came out recolored). Sees the cells of the pieces it repainted and
+// how many pieces changed color.
 template <class ColorOf>
-inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces>& handed, ColorOf color_of,
-                          vector<vector<std::pair<int, int>>>& recolored, int& pieces, bool& every_piece) {
-    pieces = 0;
-    int8_t paint = -1;
-    return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
+inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                        ColorOf color_of) {
+    int pieces = 0;
+    auto seen = paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             int8_t color = -1;
@@ -4277,7 +4286,9 @@ inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces
             pieces += changed;
         }
         return true;
-    }, paint, recolored, every_piece);
+    });
+    if (seen) seen->pieces = pieces;
+    return seen;
 }
 
 // A PIECE THAT TAKES ITS COLOR FROM ANOTHER, replayed. ColorFrom paints every
@@ -4287,36 +4298,35 @@ inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces
 // cannot say it: which color the rule means there, no pair shows (d23f8c26's
 // middle column, left by "takes the color of a piece in its columns", read as
 // a rule that kept it, and was wrong on its test).
-inline bool color_from_holds(const replay_facts& facts, const vector<partner_pieces>& handed, partner_by how,
-                             vector<vector<std::pair<int, int>>>& recolored, int& pieces, bool& every_piece) {
+inline optional<replayed> color_from_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                           partner_by how) {
     return recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
         const int worn = cut.color_from(how, i);
         color = worn >= 0 ? (int8_t)worn : LEFT_AS_IT_IS;
         return worn >= 0 || !cut.partnered(how, i);
-    }, recolored, pieces, every_piece);
+    });
 }
 static_assert(row_of(node_type::ColorFrom).high + 1 == (int)partner_by::count,
               "ColorFrom takes one value for each way partner_by finds a partner");
 
 // A RECOLOR A PICK DECIDES, replayed: every piece picked comes out wholly in
 // `color` (recolors_hold).
-inline bool picked_recolor_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int8_t color,
-                                 vector<vector<std::pair<int, int>>>& recolored, int& pieces, bool& every_piece) {
+inline optional<replayed> picked_recolor_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                               int8_t color) {
     return recolors_hold(facts, handed, [&](size_t, const partner_pieces&, int, int8_t& to) {
         to = color;
         return true;
-    }, recolored, pieces, every_piece);
+    });
 }
 
 // SIZE RANK, replayed. SizeRankColorMap takes the pieces as the line hands them
 // over -- a layer of one color split into its connected pieces first -- sorts
 // them biggest first, ties keeping that order, and paints the first the
 // output's most common color, the next the next, and the rest the ground: a
-// recolor of every piece (recolors_hold). Hands back the cells it repainted,
-// pair by pair, and how many pieces changed color.
-inline bool size_rank_holds(const replay_facts& facts, const color_facts& palette, segmentation_methods cut,
-                            vector<vector<std::pair<int, int>>>& recolored, int& pieces) {
-    if (palette.output_colors_by_size_count <= 0) return false;
+// recolor of every piece (recolors_hold).
+inline optional<replayed> size_rank_holds(const replay_facts& facts, const color_facts& palette,
+                                          segmentation_methods cut) {
+    if (palette.output_colors_by_size_count <= 0) return nullopt;
     replay_facts ranked = facts;
     if (cut == segmentation_methods::all_cells_of_one_color)
         for (size_t which = 0; which < ranked.cuts.size(); ++which) {
@@ -4324,7 +4334,7 @@ inline bool size_rank_holds(const replay_facts& facts, const color_facts& palett
             vector<object> split;
             for (const object& piece : ranked.cuts[which]) {
                 grid layer = empty_grid(input.width, input.height);
-                piece.each_cell([&](int row, int col, int8_t color) { layer.data[row][col] = color; });
+                paint_piece(layer, piece, piece.summary.y0, piece.summary.x0, true, /*clip=*/true);
                 object_walk_scratch scratch;
                 each_object(layer, -1, grouping::touching_any_color, scratch,
                             [&](const object_summary& box, const int16_t* cells, int count) {
@@ -4344,14 +4354,13 @@ inline bool size_rank_holds(const replay_facts& facts, const color_facts& palett
         for (size_t rank = 0; rank < order.size(); ++rank) place[order[rank]] = (int)rank;
         places.push_back(std::move(place));
     }
-    bool every_piece = false;
     return recolors_hold(ranked, handed_pieces(ranked, piece_pick::all()),
                          [&](size_t which, const partner_pieces&, int i, int8_t& color) {
         const int rank = places[which][i];
         color = rank < palette.output_colors_by_size_count ? palette.output_colors_by_size[rank]
                                                            : (int8_t)TRANSPARENT;
         return true;
-    }, recolored, pieces, every_piece);
+    });
 }
 
 // PICKED PIECES SLID, replayed: each by its own `down` and `across`. It explains
@@ -4395,46 +4404,42 @@ inline bool slides_show(const example& pair, const partner_pieces& cut,
 // asks, once. On each pair, `where(which, cut, i, by)` says how far picked piece
 // i goes, down and across, or false where the word cannot say; the pieces then
 // slide as slides_show reads them, and the word holds only if one piece at least
-// moved in each pair. Hands back the cells each one left and the cells it landed
-// on, pair by pair, how many pieces moved, and whether it picked every piece.
-// Handed the pieces its pick takes (handed_pieces).
+// moved in each pair. Sees the cells each one left and the cells it landed on,
+// and how many pieces moved. Handed the pieces its pick takes (handed_pieces).
 template <class Where>
-inline bool slides_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Where where,
-                        vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                        int& pieces_moved, bool& every_piece) {
-    left.assign(facts.train.size(), {});
-    landed.assign(facts.train.size(), {});
-    pieces_moved = 0;
-    every_piece = true;
-    if (!facts.overlays) return false;
+inline optional<replayed> slides_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Where where) {
+    if (!facts.overlays) return nullopt;
+    replayed seen;
+    seen.left.assign(facts.train.size(), {});
+    seen.drawn.assign(facts.train.size(), {});
     for (size_t which = 0; which < facts.train.size(); ++which) {
-        const int before = pieces_moved;
+        const int before = seen.pieces;
         const partner_pieces& cut = handed[which];
-        every_piece = every_piece && cut.every_piece_picked();
+        seen.every_piece = seen.every_piece && cut.every_piece_picked();
         vector<int> downs(cut.pieces.size(), 0), acrosses(cut.pieces.size(), 0);
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             heading_step by{ 0, 0 };
-            if (!where(which, cut, i, by)) return false;
+            if (!where(which, cut, i, by)) return nullopt;
             downs[i] = by.down;
             acrosses[i] = by.across;
         }
-        if (!slides_show(facts.train[which], cut, downs, acrosses, left[which], landed[which], pieces_moved))
-            return false;
-        if (pieces_moved == before) return false;
+        if (!slides_show(facts.train[which], cut, downs, acrosses, seen.left[which], seen.drawn[which], seen.pieces))
+            return nullopt;
+        if (seen.pieces == before) return nullopt;
     }
-    return pieces_moved > 0;
+    if (seen.pieces == 0) return nullopt;
+    return seen;
 }
 
 // A PIECE THAT MOVES LEVEL WITH ANOTHER, replayed. AlignTo slides every picked
 // piece, down or across alone, until its box starts on the row -- or with
 // `columns`, the column -- its one partner's box starts on (goes_level).
-inline bool align_holds(const replay_facts& facts, const vector<partner_pieces>& handed, bool columns, partner_by how,
-                        vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                        int& pieces_moved, bool& every_piece) {
+inline optional<replayed> align_holds(const replay_facts& facts, const vector<partner_pieces>& handed, bool columns,
+                                      partner_by how) {
     return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, heading_step& by) {
         return cut.goes_level(i, columns, how, by);
-    }, left, landed, pieces_moved, every_piece);
+    });
 }
 static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
               "AlignTo takes rows then columns, each by every way partner_by finds a partner");
@@ -4444,51 +4449,44 @@ static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
 // way partner_by finds one, then each color -- by what `value` / PARTNER_KINDS
 // names: one step, its own size, or until it touches it (goes_toward,
 // move_toward in 1_readings.hpp, the move the op makes).
-inline bool toward_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int value,
-                         vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                         int& pieces_moved, bool& every_piece) {
+inline optional<replayed> toward_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int value) {
     return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, heading_step& by) {
         const grid& output = facts.train[which].output;
         return cut.goes_toward(i, value, output.width, output.height, by);
-    }, left, landed, pieces_moved, every_piece);
+    });
 }
 static_assert(row_of(node_type::MoveToward).high + 1 == (int)toward_by::count * PARTNER_KINDS,
               "MoveToward takes each way of going toward each kind of partner");
 
 // A PICKED PIECE SLID THE SAME WAY IN EVERY PAIR, replayed: `down` and `across`,
 // the MoveColumn and MoveRow a pick by holes or by size is said with.
-inline bool move_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int down, int across,
-                       vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                       int& pieces_moved, bool& every_piece) {
+inline optional<replayed> move_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int down,
+                                     int across) {
     return slides_hold(facts, handed, [&](size_t, const partner_pieces&, int, heading_step& by) {
         by = { down, across };
         return true;
-    }, left, landed, pieces_moved, every_piece);
+    });
 }
 
 // A PICKED PIECE SLID TO THE EDGE OF THE GRID, replayed: that way, until its box
 // meets the edge (steps_to_edge, 1_readings.hpp, the walk MoveToEdge takes).
-inline bool to_edge_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way,
-                          vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                          int& pieces_moved, bool& every_piece) {
+inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
     const heading_step step = step_of(way);
     return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, heading_step& by) {
         const grid& output = facts.train[which].output;
         const int steps = steps_to_edge(cut.boxes[i], output.width, output.height, way);
         by = { steps * step.down, steps * step.across };
         return true;
-    }, left, landed, pieces_moved, every_piece);
+    });
 }
 
 // A PICKED PIECE MOVED ITS OWN SIZE, replayed: the way heading `way` names
 // (shift_by, 1_readings.hpp, the step the op takes).
-inline bool shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way,
-                        vector<vector<std::pair<int, int>>>& left, vector<vector<std::pair<int, int>>>& landed,
-                        int& pieces_moved, bool& every_piece) {
+inline optional<replayed> shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
     return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, heading_step& by) {
         by = shift_by(way, cut.boxes[i].width(), cut.boxes[i].height());
         return true;
-    }, left, landed, pieces_moved, every_piece);
+    });
 }
 
 // Where the first piece a pick takes could have gone in the first pair: every
@@ -4522,28 +4520,25 @@ inline vector<std::pair<int, int>> offsets_to_ask(const replay_facts& facts, con
 // only if every pair's output shows each kept cell in the piece's own color,
 // and each lost one bare -- the ground -- unless a piece still there covers it:
 // one not picked, or a picked one that keeps that cell. And in each pair one
-// piece at least lost a cell that now shows something else. Hands back the
-// cells the picked pieces keep and lose, pair by pair, how many pieces lost a
-// cell that shows it, and whether it picked every piece.
+// piece at least lost a cell that now shows something else. Sees the cells the
+// picked pieces keep (drawn) and lose (left), and how many pieces lost a cell
+// that shows it.
 template <class Keeps>
-inline bool drops_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Keeps keeps,
-                       vector<vector<std::pair<int, int>>>& kept, vector<vector<std::pair<int, int>>>& lost,
-                       int& pieces, bool& every_piece) {
-    kept.assign(facts.train.size(), {});
-    lost.assign(facts.train.size(), {});
-    pieces = 0;
-    every_piece = true;
-    if (!facts.overlays || facts.train.empty()) return false;
+inline optional<replayed> drops_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Keeps keeps) {
+    if (!facts.overlays || facts.train.empty()) return nullopt;
+    replayed seen;
+    seen.drawn.assign(facts.train.size(), {});
+    seen.left.assign(facts.train.size(), {});
     for (size_t which = 0; which < facts.train.size(); ++which) {
         const example& pair = facts.train[which];
         const partner_pieces& cut = handed[which];
-        every_piece = every_piece && cut.every_piece_picked();
+        seen.every_piece = seen.every_piece && cut.every_piece_picked();
         auto still_there = [&](int i, int row, int col) {
             for (int j = 0; j < cut.count(); ++j)
                 if (j != i && cut.painted(j, row, col) && (!cut.picked[j] || keeps(cut, j, row, col))) return true;
             return false;
         };
-        const int before = pieces;
+        const int before = seen.pieces;
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             bool shows = true, changed = false;
@@ -4551,105 +4546,148 @@ inline bool drops_hold(const replay_facts& facts, const vector<partner_pieces>& 
                 const int8_t there = (int8_t)pair.output.data[row][col];
                 if (keeps(cut, i, row, col)) {
                     shows = shows && there == color;
-                    kept[which].push_back({ row, col });
+                    seen.drawn[which].push_back({ row, col });
                     return;
                 }
                 shows = shows && (there == TRANSPARENT || still_there(i, row, col));
-                lost[which].push_back({ row, col });
+                seen.left[which].push_back({ row, col });
                 changed = changed || there != color;
             });
-            if (!shows) return false;
-            pieces += changed;
+            if (!shows) return nullopt;
+            seen.pieces += changed;
         }
-        if (pieces == before) return false;
+        if (seen.pieces == before) return nullopt;
     }
-    return true;
+    return seen;
 }
 
 // PICKED PIECES REMOVED, replayed. DeleteSelection takes the pieces a pick takes
-// out of the hand, so nothing paints them: they keep no cell (drops_hold).
-// Hands back the cells the removed pieces sat on, pair by pair, how many went,
-// and whether it picked every piece.
-inline bool removal_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                          vector<vector<std::pair<int, int>>>& gone, int& pieces, bool& every_piece) {
-    vector<vector<std::pair<int, int>>> kept;
-    return drops_hold(facts, handed, [](const partner_pieces&, int, int, int) { return false; },
-                      kept, gone, pieces, every_piece);
+// out of the hand, so nothing paints them: they keep no cell (drops_hold), and
+// the cells they sat on are left.
+inline optional<replayed> removal_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
+    return drops_hold(facts, handed, [](const partner_pieces&, int, int, int) { return false; });
 }
 
 // A PIECE HOLLOWED TO ITS EDGE, replayed. Outline keeps the cells of each picked
 // piece that have, among their eight neighbours, a cell that is not the piece's
 // (on_object_edge, the test the op takes), and drops the rest (drops_hold).
-inline bool outline_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                          vector<vector<std::pair<int, int>>>& kept, vector<vector<std::pair<int, int>>>& dropped,
-                          int& pieces, bool& every_piece) {
+inline optional<replayed> outline_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
     return drops_hold(facts, handed, [](const partner_pieces& cut, int i, int row, int col) {
         const object& piece = cut.pieces[i];
         return on_object_edge(row - piece.summary.y0, col - piece.summary.x0, [&](int down, int across) {
             return down >= 0 && across >= 0 && down < piece.summary.h && across < piece.summary.w &&
                    piece.cells[down][across] != (int8_t)TRANSPARENT;
         });
-    }, kept, dropped, pieces, every_piece);
+    });
+}
+
+// WHERE MirrorAround DRAWS, said once for the op and for the reading that
+// replays it. The middle a picked piece is mirrored around, twice its row and
+// column so a middle between two cells is whole: its one partner's by `how`
+// among the pieces not picked (partner_of), or past those the grid's own --
+// false for a piece with no one partner, which gets no copy.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool mirror_middle(int how, int mine, const Pieces& pieces, int width, int height,
+                                          int& row2, int& col2) {
+    row2 = height - 1;
+    col2 = width - 1;
+    if (how >= (int)partner_by::count) return true;
+    const int partner = partner_of((partner_by)how, mine, pieces);
+    if (partner < 0) return false;
+    const cell_box there = pieces.box(partner);
+    row2 = there.row0 + there.row1;
+    col2 = there.col0 + there.col1;
+    return true;
+}
+// Each copy the mirror draws, handed to `copy(down, across)`, the ways it flips:
+// across for left to right, down for top to bottom, and all four ways each
+// alone and then both.
+template <class Copy>
+ARC_HOST_DEVICE inline void each_mirror(mirror_by mirror, Copy copy) {
+    for (int way = 0; way < 3; ++way)
+        if (mirror == mirror_by::four_ways || way == (int)mirror) copy(way != 0, way != 1);
+}
+// Where a copy lies, its far side where the piece's near side was, and the pose
+// its cells are read through (pose_source): flipped top to bottom where it is
+// mirrored down, left to right where across.
+ARC_HOST_DEVICE inline cell_box mirrored_box(const cell_box& box, int row2, int col2, bool down, bool across) {
+    return { down ? row2 - box.row1 : box.row0, across ? col2 - box.col1 : box.col0,
+             down ? row2 - box.row0 : box.row1, across ? col2 - box.col0 : box.col1 };
+}
+ARC_HOST_DEVICE constexpr int mirror_pose(bool down, bool across) { return (down ? 2 : 0) | (across ? 4 : 0); }
+// One copy of a piece, mirrored so.
+inline object mirrored(const object& piece, int row2, int col2, bool down, bool across) {
+    object copy = piece.posed(mirror_pose(down, across));
+    const cell_box to = mirrored_box(piece.summary.box(), row2, col2, down, across);
+    copy.summary.y0 = (int8_t)to.row0;
+    copy.summary.x0 = (int8_t)to.col0;
+    return copy;
 }
 
 // A PIECE DRAWN AGAIN MIRRORED AROUND ANOTHER'S MIDDLE, replayed. MirrorAround
 // draws every picked piece again mirrored around the middle of its one partner
 // among the rest -- or, for the last of MIRROR_PARTNERS, around the middle of the
-// grid itself -- laid over what is down (paint_holds); a copy that falls off
-// the grid cannot be drawn, and a row mirrored end to end onto itself is no
-// work. Hands back, pair by pair, the cells the picked pieces sit
-// on and the cells their copies landed on, how many copies it drew, and whether
-// it picked every piece.
-inline bool mirror_holds(const replay_facts& facts, const vector<partner_pieces>& handed, mirror_by mirror, int how,
-                         vector<vector<std::pair<int, int>>>& kept, vector<vector<std::pair<int, int>>>& landed,
-                         int& copies, bool& every_piece) {
-    kept.assign(facts.train.size(), {});
-    copies = 0;
-    int8_t paint = -1;
-    return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
+// grid itself (mirror_middle) -- laid over what is down (paint_holds); a copy
+// that falls off the grid cannot be drawn, and a row mirrored end to end onto
+// itself is no work. Sees the cells the picked pieces sit on (left) and the
+// cells their copies landed on, and how many copies it drew.
+inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                       mirror_by mirror, int how) {
+    cells_by_pair kept(facts.train.size());
+    int copies = 0;
+    auto seen = paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& input = facts.train[which].input;
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
-            // Twice the middle's row and column, so a middle between two cells is whole.
-            int row2 = input.height - 1, col2 = input.width - 1;
-            if (how < (int)partner_by::count) {
-                const int partner = cut.partner((partner_by)how, i);
-                if (partner < 0) return false;
-                row2 = cut.boxes[partner].row0 + cut.boxes[partner].row1;
-                col2 = cut.boxes[partner].col0 + cut.boxes[partner].col1;
-            }
+            int row2 = 0, col2 = 0;
+            if (!mirror_middle(how, i, cut, input.width, input.height, row2, col2)) return false;
+            cut.pieces[i].each_cell([&](int row, int col, int8_t) { kept[which].push_back({ row, col }); });
             bool on_grid = true;
-            cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
-                kept[which].push_back({ row, col });
-                const std::pair<int, int> mirrored[] = { { row, col2 - col }, { row2 - row, col },
-                                                         { row2 - row, col2 - col } };
-                for (int way = 0; way < 3; ++way) {
-                    if (mirror != mirror_by::four_ways && way != (int)mirror) continue;
-                    const auto [to_row, to_col] = mirrored[way];
-                    if (!input.contains(to_row, to_col)) on_grid = false;
-                    else put(to_row, to_col, color);
-                }
+            each_mirror(mirror, [&](bool down, bool across) {
+                mirrored(cut.pieces[i], row2, col2, down, across).each_cell([&](int row, int col, int8_t color) {
+                    if (!input.contains(row, col)) on_grid = false;
+                    else put(row, col, color);
+                });
             });
             if (!on_grid) return false;
             copies += mirror == mirror_by::four_ways ? 3 : 1;
         }
         return true;
-    }, paint, landed, every_piece);
+    });
+    if (seen) {
+        seen->left = std::move(kept);
+        seen->pieces = copies;
+    }
+    return seen;
 }
 static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count * MIRROR_PARTNERS,
               "MirrorAround takes each way of mirroring around each partner, then the grid");
 
+// THE TRAIL ExtendTo GROWS, said once for the op and for the reading that
+// replays it: from the cell (row, col) of a piece, step by step that way to the
+// edge of a canvas `width` by `height` or to a cell another piece holds,
+// through the piece's own cells -- `own(row, col)` and `taken(row, col)` say
+// which -- and each cell passed that is not its own handed to `lay(row, col)`.
+template <class Own, class Taken, class Lay>
+ARC_HOST_DEVICE inline void march_trail(int row, int col, heading_step step, int width, int height,
+                                        Own own, Taken taken, Lay lay) {
+    for (int at_row = row + step.down, at_col = col + step.across;
+         at_row >= 0 && at_row < height && at_col >= 0 && at_col < width;
+         at_row += step.down, at_col += step.across) {
+        if (own(at_row, at_col)) continue;
+        if (taken(at_row, at_col)) break;
+        lay(at_row, at_col);
+    }
+}
+
 // A TRAIL GROWN OFF A PIECE, replayed. ExtendTo marches from every cell of each
-// picked piece that way until it meets the edge of the grid or a cell of another
-// piece, through its own body, and fills what it passes in the piece's color -- the
-// march gpu_exec_extend_to makes -- laid over what is down (paint_holds). The op
-// hands back the body with its trail, so the paint lays the body down again where
-// it lies: the output must show it there too (66e6c45b's line removed a piece
-// whose trail then drew it back).
-inline bool trail_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way,
-                        vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
+// picked piece that way (march_trail) and fills what it passes in the piece's
+// color, laid over what is down (paint_holds). The op hands back the body with
+// its trail, so the paint lays the body down again where it lies: the output
+// must show it there too (66e6c45b's line removed a piece whose trail then drew
+// it back).
+inline optional<replayed> trail_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
     const heading_step step = step_of(way);
-    int8_t paint = -1;
     return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -4660,16 +4698,14 @@ inline bool trail_holds(const replay_facts& facts, const vector<partner_pieces>&
             const int8_t color = cut.pieces[i].first_color();
             cut.pieces[i].each_cell([&](int row, int col, int8_t body) {
                 if (output.contains(row, col)) put(row, col, body);
-                for (int at_row = row + step.down, at_col = col + step.across;
-                     output.contains(at_row, at_col); at_row += step.down, at_col += step.across) {
-                    const bool own = cut.painted(i, at_row, at_col);
-                    if (occupied[at_row][at_col] && !own) break;
-                    if (!own) put(at_row, at_col, color);
-                }
+                march_trail(row, col, step, output.width, output.height,
+                            [&](int at_row, int at_col) { return cut.painted(i, at_row, at_col); },
+                            [&](int at_row, int at_col) { return occupied[at_row][at_col]; },
+                            [&](int at_row, int at_col) { put(at_row, at_col, color); });
             });
         }
         return true;
-    }, paint, drawn, every_piece);
+    });
 }
 
 // THE PICKED PIECES COPIED ONTO THE OTHERS, replayed. CopyTo draws each picked
@@ -4678,10 +4714,8 @@ inline bool trail_holds(const replay_facts& facts, const vector<partner_pieces>&
 // aligned_copy_start (1_readings.hpp), the step the op takes -- laid over what is
 // down (paint_holds), each copied cell that lands on the grid. Picking none, or
 // every piece, or more copies than a list holds, it draws nothing.
-inline bool copy_onto_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int anchor,
-                            vector<vector<std::pair<int, int>>>& drawn) {
-    bool every_piece = false;
-    int8_t paint = -1;
+inline optional<replayed> copy_onto_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                          int anchor) {
     return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         int picked = 0;
@@ -4703,7 +4737,7 @@ inline bool copy_onto_holds(const replay_facts& facts, const vector<partner_piec
             }
         }
         return true;
-    }, paint, drawn, every_piece);
+    });
 }
 
 // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, replayed. TileX lays each
@@ -4712,10 +4746,8 @@ inline bool copy_onto_holds(const replay_facts& facts, const vector<partner_piec
 // the piece stands, both ways, tiled_source (4_objects.hpp), the step the op
 // takes -- laid `lay` on what is down (paint_holds): one cell at least new in
 // each pair is, the first copy being the piece itself, a second copy in each.
-inline bool tile_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                       const vector<cells_down>& canvas, bool down, int period, int8_t lay,
-                       vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
-    int8_t paint = -1;
+inline optional<replayed> tile_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                     const vector<cells_down>& canvas, bool down, int period, int8_t lay) {
     return paint_holds(facts, handed, { lay, &canvas }, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         const int along = down ? output.height : output.width;
@@ -4735,7 +4767,7 @@ inline bool tile_holds(const replay_facts& facts, const vector<partner_pieces>& 
             }
         }
         return true;
-    }, paint, drawn, every_piece);
+    });
 }
 
 // RAYS GROWN OFF A PIECE, replayed. Extend grows rays from the cell of each
@@ -4743,10 +4775,9 @@ inline bool tile_holds(const replay_facts& facts, const vector<partner_pieces>& 
 // diagonals -- `radius` cells long, in that cell's color (nearest_ray_seed and
 // each_extended_ray, 4_objects.hpp, the walk the op takes), and the line may
 // paint them over in one color of its own: laid `lay` on what is down, in one
-// color (paint_holds). Hands back that color too.
-inline bool rays_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
-                      const vector<cells_down>& canvas, bool diagonal, int radius, int8_t lay, int8_t& paint,
-                      vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
+// color (paint_holds), which it sees too.
+inline optional<replayed> rays_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                    const vector<cells_down>& canvas, bool diagonal, int radius, int8_t lay) {
     return paint_holds(facts, handed, { lay, &canvas, laying::in_one },
                        [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
@@ -4762,7 +4793,7 @@ inline bool rays_hold(const replay_facts& facts, const vector<partner_pieces>& h
             });
         }
         return true;
-    }, paint, drawn, every_piece);
+    });
 }
 
 // THE PICKED PIECES, AS ONE FIGURE, DRAWN AGAIN TURNED in their own box,
@@ -4774,14 +4805,12 @@ inline bool rays_hold(const replay_facts& facts, const vector<partner_pieces>& h
 // wherever the turned copy does not cover it: the copy and the figure are drawn,
 // both, since the matching read the figure turned (11852cab's design, the same
 // from all four sides). Picking nothing, it draws nothing.
-inline bool turned_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int pose,
-                         vector<vector<std::pair<int, int>>>& drawn, bool& every_piece) {
-    int8_t paint = -1;
+inline optional<replayed> turned_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int pose) {
     return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         cell_box figure;
         for (int i = 0; i < cut.count(); ++i)
-            if (cut.picked[i]) cut.pieces[i].each_cell([&](int row, int col, int8_t) { figure.include_cell(row, col); });
+            if (cut.picked[i]) figure.include(cut.boxes[i]);
         if (figure.empty()) return false;
         int8_t copy[MAX_GRID_DIM][MAX_GRID_DIM];
         for (auto& row : copy) ranges::fill(row, (int8_t)TRANSPARENT);
@@ -4802,17 +4831,14 @@ inline bool turned_holds(const replay_facts& facts, const vector<partner_pieces>
             for (int col = 0; col < output.width; ++col)
                 if (copy[row][col] != (int8_t)TRANSPARENT) put(row, col, copy[row][col]);
         return true;
-    }, paint, drawn, every_piece);
+    });
 }
 
 // A PIECE'S BOX FILLED, replayed. AddColor paints every cell of each picked
 // piece's box in its one color -- laid under what is down (paint_holds), so it
-// fills only what the piece and every paint before it leave empty. Hands back
-// that color, the cells it filled, pair by pair, and whether it picked every
-// piece.
-inline bool box_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                      const vector<cells_down>& canvas, int8_t& paint,
-                      vector<vector<std::pair<int, int>>>& filled, bool& every_piece) {
+// fills only what the piece and every paint before it leave empty.
+inline optional<replayed> box_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                    const vector<cells_down>& canvas) {
     using rule = correspondence_election::fired_rule;
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::in_one },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
@@ -4823,20 +4849,17 @@ inline bool box_holds(const replay_facts& facts, const vector<partner_pieces>& h
                 for (int col = box.col0; col <= box.col1; ++col) put(row, col, (int8_t)TRANSPARENT);
         }
         return true;
-    }, paint, filled, every_piece);
+    });
 }
 
 // BARS BETWEEN PIECES OF ONE COLOR, replayed. Bridge reaches from each piece to
 // those of its own color whose middles share its row or its column, the `way`
 // it is told (bridge_bars, the walk the op takes), and fills the box between
 // two -- laid under what is down (paint_holds), so a bar only fills what nothing
-// has painted -- in the bar's own color, or all of them in one. Hands back that
-// color, -1 for the bars' own, and the cells the bars filled, pair by pair.
-inline bool bridge_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                         const vector<cells_down>& canvas, int way, int8_t& paint,
-                         vector<vector<std::pair<int, int>>>& filled) {
+// has painted -- in the bar's own color, or all of them in one.
+inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                       const vector<cells_down>& canvas, int way) {
     using rule = correspondence_election::fired_rule;
-    bool every_piece = false;
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
                        [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
@@ -4851,7 +4874,7 @@ inline bool bridge_holds(const replay_facts& facts, const vector<partner_pieces>
             return true;
         });
         return true;
-    }, paint, filled, every_piece);
+    });
 }
 
 // THE CELLS A PIECE ENCLOSES: those its own paint walls off from the edge of its
@@ -4871,11 +4894,9 @@ inline void each_hollow(const object& piece, See see) {
 // THE HOLLOWS OF A PIECE, FILLED, replayed. InteriorColor fills each picked
 // piece's hollows (each_hollow) -- laid under what is down (paint_holds), so a
 // marker sitting in a hollow keeps its own -- in each piece's own color, or all
-// of them in one. Hands back that color, -1 for each piece's own, the cells it
-// filled, pair by pair, and whether it picked every piece.
-inline bool fill_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                       const vector<cells_down>& canvas, int8_t& paint,
-                       vector<vector<std::pair<int, int>>>& filled, bool& every_piece) {
+// of them in one.
+inline optional<replayed> fill_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                     const vector<cells_down>& canvas) {
     using rule = correspondence_election::fired_rule;
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
@@ -4885,22 +4906,19 @@ inline bool fill_holds(const replay_facts& facts, const vector<partner_pieces>& 
                 each_hollow(cut.pieces[i], [&](int row, int col) { put(row, col, worn); });
             }
         return true;
-    }, paint, filled, every_piece);
+    });
 }
 
 // THE HOLLOWS, FILLED BY SHAPE, replayed. ShapeToInteriorColorMap takes the
 // pieces as the line hands them over, looks each one's shape up in the learned
 // table, and fills its hollows (each_hollow) with that color -- laid under the
 // hand, so a marker already sitting in a hollow keeps its own (paint_holds).
-// Hands back the cells it fills, pair by pair, and how many pieces it filled.
-inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map_rule& table,
-                                vector<vector<std::pair<int, int>>>& filled, int& pieces_filled) {
+// Sees the cells it fills and how many pieces it filled.
+inline optional<replayed> interior_fills_hold(const replay_facts& facts, const shape_color_map_rule& table) {
     using rule = correspondence_election::fired_rule;
     const vector<cells_down> hand = pieces_down(facts);
-    pieces_filled = 0;
-    int8_t paint = -1;
-    bool every_piece = false;
-    return paint_holds(facts, handed_pieces(facts, piece_pick::all()), { rule::laid_under, &hand },
+    int pieces_filled = 0;
+    auto seen = paint_holds(facts, handed_pieces(facts, piece_pick::all()), { rule::laid_under, &hand },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
         for (const object& piece : cut.pieces) {
             const int8_t fill = (int8_t)table.color_of(shape_key::shape, piece);
@@ -4910,7 +4928,9 @@ inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map
             pieces_filled += painted;
         }
         return true;
-    }, paint, filled, every_piece);
+    });
+    if (seen) seen->pieces = pieces_filled;
+    return seen;
 }
 
 // THE PIECES AS THE LINE LEAVES THEM. Each word on the line acts on the hand the
@@ -4925,11 +4945,7 @@ inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map
 inline bool carry_the_hand(const correspondence_election::fired_rule& rule, replay_facts& facts) {
     using said = correspondence_election::fired_rule;
     const piece_pick& pick = rule.pick;
-    auto recolored = [](object& piece, int color) {
-        for (int row = 0; row < piece.summary.h; ++row)
-            for (int col = 0; col < piece.summary.w; ++col)
-                if (piece.cells[row][col] != (int8_t)TRANSPARENT) piece.cells[row][col] = (int8_t)color;
-    };
+    auto recolored = [](object& piece, int color) { piece.repaint([&](int8_t) { return color; }); };
     auto moved = [](object& piece, int down, int across) {
         piece.summary.y0 = (int8_t)(piece.summary.y0 + down);
         piece.summary.x0 = (int8_t)(piece.summary.x0 + across);
@@ -4940,20 +4956,8 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
         const vector<bool> picked = picked_pieces(hand, pick);
         switch (rule.as) {
         case said::turn:
-            for (size_t i = 0; i < hand.size(); ++i) {
-                if (!picked[i]) continue;
-                const object was = hand[i];
-                const auto [width, height] = posed_size(rule.value, was.summary.w, was.summary.h);
-                object& posed = hand[i];
-                posed.summary.w = (int8_t)width;
-                posed.summary.h = (int8_t)height;
-                posed.cells.clear();
-                for (int row = 0; row < height; ++row)
-                    for (int col = 0; col < width; ++col) {
-                        const auto [from_row, from_col] = pose_source(rule.value, was.summary.w, was.summary.h, row, col);
-                        posed.cells[row][col] = was.cells[from_row][from_col];
-                    }
-            }
+            for (size_t i = 0; i < hand.size(); ++i)
+                if (picked[i]) hand[i] = hand[i].posed(rule.value);
             break;
         case said::move_down:
         case said::move_across:
@@ -4969,12 +4973,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
         case said::swap_colors: {
             const auto [first, second] = color_pair::from_index(rule.value);
             for (object& piece : hand)
-                for (int row = 0; row < piece.summary.h; ++row)
-                    for (int col = 0; col < piece.summary.w; ++col) {
-                        const int8_t now = piece.cells[row][col];
-                        if (now == first) piece.cells[row][col] = (int8_t)second;
-                        else if (now == second) piece.cells[row][col] = (int8_t)first;
-                    }
+                piece.repaint([&](int8_t now) { return now == first ? second : now == second ? first : now; });
             break;
         }
         case said::color_from:
@@ -5004,8 +5003,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             const heading_step step = step_of(rule.value);
             for (size_t i = 0; i < hand.size(); ++i) {
                 if (!picked[i]) continue;
-                cell_box box;
-                hand[i].each_cell([&](int row, int col, int8_t) { box.include_cell(row, col); });
+                const cell_box box = hand[i].painted_box();
                 if (rule.as == said::to_edge) {
                     const int steps = steps_to_edge(box, pair.output.width, pair.output.height, rule.value);
                     moved(hand[i], steps * step.down, steps * step.across);
@@ -5048,27 +5046,11 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             vector<object> copies;
             for (int i = 0; i < cut.count(); ++i) {
                 if (!cut.picked[i]) continue;
-                const object& piece = hand[i];
-                // Twice the middle's row and column, so a middle between two cells is whole.
-                int row2 = pair.input.height - 1, col2 = pair.input.width - 1;
-                if (how < (int)partner_by::count) {
-                    const int partner = cut.partner((partner_by)how, i);
-                    if (partner < 0) continue;
-                    row2 = cut.boxes[partner].row0 + cut.boxes[partner].row1;
-                    col2 = cut.boxes[partner].col0 + cut.boxes[partner].col1;
-                }
-                for (int way = 0; way < 3; ++way) {
-                    if (mirror != mirror_by::four_ways && way != (int)mirror) continue;
-                    const bool across = way != 1, down = way != 0;
-                    object copy = piece;
-                    for (int row = 0; row < piece.summary.h; ++row)
-                        for (int col = 0; col < piece.summary.w; ++col)
-                            copy.cells[row][col] = piece.cells[down ? piece.summary.h - 1 - row : row]
-                                                              [across ? piece.summary.w - 1 - col : col];
-                    if (across) copy.summary.x0 = (int8_t)(col2 - (piece.summary.x0 + piece.summary.w - 1));
-                    if (down) copy.summary.y0 = (int8_t)(row2 - (piece.summary.y0 + piece.summary.h - 1));
-                    copies.push_back(copy);
-                }
+                int row2 = 0, col2 = 0;
+                if (!mirror_middle(how, i, cut, pair.input.width, pair.input.height, row2, col2)) continue;
+                each_mirror(mirror, [&](bool down, bool across) {
+                    copies.push_back(mirrored(hand[i], row2, col2, down, across));
+                });
             }
             for (const object& copy : copies)
                 if (hand.size() < (size_t)MAX_OBJECTS_IN_A_LIST) hand.push_back(copy);
@@ -5247,32 +5229,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // THE HOLLOWS FILLED BY SHAPE, a step of its own: it paints space the pieces
     // enclose, not the pieces, so it is no word for a recolor. Said where a replay
     // on the hand shows every fill it paints, and it accounts for those cells.
-    vector<vector<std::pair<int, int>>> filled;
-    int pieces_filled = 0;
-    if (shapes.holds() && shapes.claimed_by == shape_color_map_rule::interior_fill && facts.hand_known &&
-        interior_fills_hold(facts, shapes, filled, pieces_filled)) {
-        rule one = listed("Shape Picks Fill", "the shape of a piece names the color inside it",
-                          rule::learned_table);
-        one.pieces = pieces_filled;
-        carry(read.say_fired(std::move(one), -1, [&](size_t which, const auto& cell) {
-            return !cell.from_input && on_cells(filled, which, cell.row, cell.col);
-        }));
-    }
+    if (shapes.holds() && shapes.claimed_by == shape_color_map_rule::interior_fill && facts.hand_known)
+        if (const auto filled = interior_fills_hold(facts, shapes)) {
+            rule one = listed("Shape Picks Fill", "the shape of a piece names the color inside it",
+                              rule::learned_table);
+            one.pieces = filled->pieces;
+            carry(read.say_fired(std::move(one), -1, [&](size_t which, const auto& cell) {
+                return !cell.from_input && on_cells(filled->drawn, which, cell.row, cell.col);
+            }));
+        }
 
     // A RECOLOR THE ACTS DID NOT SAY, said by size rank where the palette ranks
     // the same in every output. The replay on the hand showed every piece in its
     // rank's color, so it accounts for every recolored cell.
     const bool a_recolor_was_said = ranges::any_of(read.line, [&](int8_t which) {
         return read.fired[which].as == rule::recolor; });
-    vector<vector<std::pair<int, int>>> ranked;
-    int pieces_ranked = 0;
-    if (recolors && !by_shape && !a_recolor_was_said && facts.hand_known &&
-        size_rank_holds(facts, inf.colors, election.segmentation, ranked, pieces_ranked)) {
-        rule one = listed("Size Picks Color", "the colors go by size", rule::size_rank);
-        one.pieces = pieces_ranked;
-        carry(read.say_fired(std::move(one), colors,
-                             [](size_t, const auto& cell) { return cell.waits_for(missing::a_recolor); }));
-    }
+    if (recolors && !by_shape && !a_recolor_was_said && facts.hand_known)
+        if (const auto ranked = size_rank_holds(facts, inf.colors, election.segmentation)) {
+            rule one = listed("Size Picks Color", "the colors go by size", rule::size_rank);
+            one.pieces = ranked->pieces;
+            carry(read.say_fired(std::move(one), colors,
+                                 [](size_t, const auto& cell) { return cell.waits_for(missing::a_recolor); }));
+        }
 
     // THE WORDS READ OFF THE PIECES: a piece takes its color from its partner,
     // moves level with it or by one step every pair agrees on, is drawn again
@@ -5300,14 +5278,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
+    // The best a word heard: its value and pick, how many cells nothing else
+    // claims it accounts for, what its replay saw, and the cells it claims.
     struct heard {
-        int value = -1, said = 0, pieces = 0;
-        bool every_piece = false;
+        int value = -1, said = 0;
         piece_pick pick;
-        int8_t paint = -1;
+        replayed seen;
         claim claims;
-        // What a paint lays down, pair by pair, once it is said.
-        vector<vector<std::pair<int, int>>> drawn;
     };
     // Whether the line already says `as` with this pick and value. Said again of a
     // hand that changed under it, the pick takes some other piece each time --
@@ -5331,20 +5308,20 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         return found;
     };
     // Keeps `value` when it accounts for more cells nothing claims yet than the
-    // best so far, and, for a paint, the cells it lays down.
-    auto weigh = [&](heard& best, int value, const piece_pick& pick, int pieces, bool every_piece, int8_t paint,
-                     claim claims, const vector<vector<std::pair<int, int>>>& drawn = {}) {
+    // best so far, with what its replay saw.
+    auto weigh = [&](heard& best, int value, const piece_pick& pick, const replayed& seen, claim claims) {
         int said = 0;
         for (size_t which = 0; which < read.pairs.size(); ++which)
             for (const auto& cell : read.pairs[which].left_over)
                 said += cell.claimed_by < 0 && claims(which, cell);
-        if (said > best.said) best = { value, said, pieces, every_piece, pick, paint, std::move(claims), drawn };
+        if (said > best.said) best = { value, said, pick, seen, std::move(claims) };
     };
     // Says what a word heard best, under the rule whose freedom it needs, named and
     // picking by every piece, by its colors, or by its pick of holes or size.
     auto say = [&](const heard& best, rule::said_as as, const string& says, int8_t under) {
         string name;
-        if (best.every_piece) name = "Every Piece";
+        const bool every_piece = best.seen.every_piece;
+        if (every_piece) name = "Every Piece";
         else if (best.pick.how >= 0) {
             name = pick_names[best.pick.how][best.pick.but_those];
             if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
@@ -5354,22 +5331,27 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             for (int color = 0; color < COLOR_COUNT; ++color)
                 if (best.pick.colors >> color & 1) name += " " + to_string(color);
         }
-        if (!best.every_piece && best.pick.fits >= 0)
+        if (!every_piece && best.pick.fits >= 0)
             name += string(" That Would Fit ") + partners[best.pick.fits];
         rule one = listed(name.c_str(), says.c_str(), as, (int8_t)best.value);
-        one.pick = best.every_piece ? piece_pick::all() : best.pick;
-        one.pieces = best.pieces;
-        one.paint = best.paint;
+        one.pick = every_piece ? piece_pick::all() : best.pick;
+        one.pieces = best.seen.pieces;
+        one.paint = best.seen.paint;
         return read.say_fired(std::move(one), under, best.claims);
     };
     const int8_t moves = read.fired_named(degrees_of_freedom::freedom_names[0]);
     constexpr int ways = (int)partner_by::count;
     // Claims for a move: the cells the pieces left, on the input, and landed on.
-    auto move_claims = [](const vector<vector<std::pair<int, int>>>& left,
-                          const vector<vector<std::pair<int, int>>>& landed) -> claim {
-        return [left, landed](size_t which, const left_over_cell& cell) {
+    auto move_claims = [](const replayed& seen) -> claim {
+        return [left = seen.left, landed = seen.drawn](size_t which, const left_over_cell& cell) {
             return cell.answers_to(missing::where_it_went) &&
                    on_cells(cell.from_input ? left : landed, which, cell.row, cell.col);
+        };
+    };
+    // Claims for a recolor: the cells it repainted that wait on one.
+    auto recolor_claims = [](const replayed& seen) -> claim {
+        return [recolored = seen.drawn](size_t which, const left_over_cell& cell) {
+            return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
         };
     };
 
@@ -5413,15 +5395,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int how = 0; how < ways; ++how) {
-                vector<vector<std::pair<int, int>>> recolored;
-                int pieces = 0;
-                bool every_piece = false;
-                if (!color_from_holds(facts, handed, (partner_by)how, recolored, pieces, every_piece)) continue;
-                weigh(best, how, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
-                    return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
-                });
-            }
+            for (int how = 0; how < ways; ++how)
+                if (const auto seen = color_from_holds(facts, handed, (partner_by)how))
+                    weigh(best, how, pick, *seen, recolor_claims(*seen));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
@@ -5447,40 +5423,23 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         int best_down = 0, best_across = 0;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int value = 0; value < 2 * ways; ++value) {
-                vector<vector<std::pair<int, int>>> left, landed;
-                int pieces = 0;
-                bool every_piece = false;
-                if (!align_holds(facts, handed, value >= ways, (partner_by)(value % ways), left, landed, pieces,
-                                 every_piece))
-                    continue;
-                weigh(aligned, value, pick, pieces, every_piece, -1, move_claims(left, landed));
-            }
-            for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value) {
-                vector<vector<std::pair<int, int>>> left, landed;
-                int pieces = 0;
-                bool every_piece = false;
-                if (toward_holds(facts, handed, value, left, landed, pieces, every_piece))
-                    weigh(toward, value, pick, pieces, every_piece, -1, move_claims(left, landed));
-            }
+            for (int value = 0; value < 2 * ways; ++value)
+                if (const auto seen = align_holds(facts, handed, value >= ways, (partner_by)(value % ways)))
+                    weigh(aligned, value, pick, *seen, move_claims(*seen));
+            for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value)
+                if (const auto seen = toward_holds(facts, handed, value))
+                    weigh(toward, value, pick, *seen, move_claims(*seen));
             for (int at = 0; at < heading::count; ++at) {
                 const int way = heading_asked(at);
-                vector<vector<std::pair<int, int>>> left, landed;
-                int pieces = 0;
-                bool every_piece = false;
-                if (to_edge_holds(facts, handed, way, left, landed, pieces, every_piece))
-                    weigh(edged, way, pick, pieces, every_piece, -1, move_claims(left, landed));
-                if (shift_holds(facts, handed, way, left, landed, pieces, every_piece))
-                    weigh(sized, way, pick, pieces, every_piece, -1, move_claims(left, landed));
+                if (const auto seen = to_edge_holds(facts, handed, way)) weigh(edged, way, pick, *seen, move_claims(*seen));
+                if (const auto seen = shift_holds(facts, handed, way)) weigh(sized, way, pick, *seen, move_claims(*seen));
             }
             if (pick.how < 0) continue;
             for (const auto& [down, across] : offsets_to_ask(facts, handed)) {
-                vector<vector<std::pair<int, int>>> left, landed;
-                int pieces = 0;
-                bool every_piece = false;
-                if (!move_holds(facts, handed, down, across, left, landed, pieces, every_piece)) continue;
+                const auto seen = move_holds(facts, handed, down, across);
+                if (!seen) continue;
                 const int before = stepped.said;
-                weigh(stepped, 0, pick, pieces, every_piece, -1, move_claims(left, landed));
+                weigh(stepped, 0, pick, *seen, move_claims(*seen));
                 if (stepped.said > before) { best_down = down; best_across = across; }
             }
         }
@@ -5536,13 +5495,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int value = 0; value < (int)mirror_by::count * MIRROR_PARTNERS; ++value) {
-                vector<vector<std::pair<int, int>>> kept, landed;
-                int copies = 0;
-                bool every_piece = false;
-                if (!mirror_holds(facts, handed, (mirror_by)(value / MIRROR_PARTNERS), value % MIRROR_PARTNERS,
-                                  kept, landed, copies, every_piece))
-                    continue;
-                weigh(best, value, pick, copies, every_piece, -1, [kept, landed](size_t which, const left_over_cell& cell) {
+                const auto seen = mirror_holds(facts, handed, (mirror_by)(value / MIRROR_PARTNERS),
+                                               value % MIRROR_PARTNERS);
+                if (!seen) continue;
+                weigh(best, value, pick, *seen, [kept = seen->left, landed = seen->drawn](size_t which,
+                                                                                          const left_over_cell& cell) {
                     const bool mine = on_cells(kept, which, cell.row, cell.col) || on_cells(landed, which, cell.row, cell.col);
                     if (cell.waits_for(missing::where_it_was_copied) || cell.waits_for(missing::how_it_turned))
                         return mine;
@@ -5565,11 +5522,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!facts.hand_known || !from) return {};
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
-            vector<vector<std::pair<int, int>>> kept, dropped;
-            int pieces = 0;
-            bool every_piece = false;
-            if (!outline_holds(facts, handed_pieces(facts, pick), kept, dropped, pieces, every_piece)) continue;
-            weigh(best, 0, pick, pieces, every_piece, -1, [kept, dropped](size_t which, const left_over_cell& cell) {
+            const auto seen = outline_holds(facts, handed_pieces(facts, pick));
+            if (!seen) continue;
+            weigh(best, 0, pick, *seen, [kept = seen->drawn, dropped = seen->left](size_t which,
+                                                                                   const left_over_cell& cell) {
                 return (cell.waits < 0 || cell.waits_for(missing::how_it_changed_shape)) &&
                        (on_cells(kept, which, cell.row, cell.col) || on_cells(dropped, which, cell.row, cell.col));
             });
@@ -5598,15 +5554,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                 continue;
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int8_t color = 0; color < COLOR_COUNT; ++color) {
-                vector<vector<std::pair<int, int>>> recolored;
-                int pieces = 0;
-                bool every_piece = false;
-                if (already_said(rule::recolor_picked, pick, color) ||
-                    !picked_recolor_holds(facts, handed, color, recolored, pieces, every_piece))
-                    continue;
-                weigh(best, color, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
-                    return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
-                });
+                if (already_said(rule::recolor_picked, pick, color)) continue;
+                if (const auto seen = picked_recolor_holds(facts, handed, color))
+                    weigh(best, color, pick, *seen, recolor_claims(*seen));
             }
         }
         if (best.value < 0) return {};
@@ -5654,19 +5604,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                 if (!reads) continue;
                 const shape_color_map_rule table = shape_color_map_rule::read_off(seen);
                 if (!table.holds()) continue;
-                vector<vector<std::pair<int, int>>> recolored;
-                int pieces = 0;
-                bool every_piece = false;
-                if (!recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
-                        const int named = table.color_of((shape_key)kind, cut.pieces[i]);
-                        color = named >= 0 ? (int8_t)named : LEFT_AS_IT_IS;
-                        return true;
-                    }, recolored, pieces, every_piece))
-                    continue;
-                const int before = best.said;
-                weigh(best, kind, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
-                    return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
+                const auto repainted = recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i,
+                                                                        int8_t& color) {
+                    const int named = table.color_of((shape_key)kind, cut.pieces[i]);
+                    color = named >= 0 ? (int8_t)named : LEFT_AS_IT_IS;
+                    return true;
                 });
+                if (!repainted) continue;
+                const int before = best.said;
+                weigh(best, kind, pick, *repainted, recolor_claims(*repainted));
                 if (best.said > before) best_table = table;
             }
         }
@@ -5709,13 +5655,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                     may = !(pick.colors >> color & 1) ||
                           ranges::none_of(read.line, [&](int8_t which) { return changes(read.fired[which], color); });
             if (!may) continue;
-            vector<vector<std::pair<int, int>>> gone;
-            int pieces = 0;
-            bool every_piece = false;
-            if (already_said(rule::removed, pick, 0) ||
-                !removal_holds(facts, handed_pieces(facts, pick), gone, pieces, every_piece) || every_piece)
-                continue;
-            weigh(best, 0, pick, pieces, every_piece, -1, [gone](size_t which, const left_over_cell& cell) {
+            if (already_said(rule::removed, pick, 0)) continue;
+            const auto seen = removal_holds(facts, handed_pieces(facts, pick));
+            if (!seen || seen->every_piece) continue;
+            weigh(best, 0, pick, *seen, [gone = seen->left](size_t which, const left_over_cell& cell) {
                 return cell.from_input && on_cells(gone, which, cell.row, cell.col);
             });
         }
@@ -5755,10 +5698,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             const grid& output = facts.train[which].output;
             grid canvas = empty_grid(output.width, output.height);
             for (const object& piece : facts.cuts[which])
-                piece.each_cell([&](int row, int col, int8_t color) {
-                    if (canvas.contains(row, col) && (!under || canvas.data[row][col] == TRANSPARENT))
-                        canvas.data[row][col] = color;
-                });
+                paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0, !under, /*clip=*/true);
             drawn.push_back(std::move(canvas));
         }
         read.list_claims(listed("Drawn By The Line", "the words draw it as the output shows it", rule::unsaid),
@@ -5781,7 +5721,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // boxes -- it needs the line to cover what the cut's pieces cover, so nothing
     // on the line may move, reshape or remove a piece. Each accounts for the cells
     // it draws, and is asked for every pick that accounts for any.
-    auto drawn_claims = [](const vector<vector<std::pair<int, int>>>& drawn) -> claim {
+    auto drawn_claims = [](const cells_by_pair& drawn) -> claim {
         return [drawn](size_t which, const left_over_cell& cell) {
             return !cell.from_input && on_cells(drawn, which, cell.row, cell.col);
         };
@@ -5789,7 +5729,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // Laid over what is down, a paint explains what it covers as well: an input
     // cell under it came out in the paint's color, its replay saw to that, so a
     // piece under 4f537728's repeated marker needs no recolor of its own.
-    auto covered_claims = [](const vector<vector<std::pair<int, int>>>& drawn) -> claim {
+    auto covered_claims = [](const cells_by_pair& drawn) -> claim {
         return [drawn](size_t which, const left_over_cell& cell) { return on_cells(drawn, which, cell.row, cell.col); };
     };
     // Whether the line leaves every piece where the cut finds it: none of its
@@ -5805,8 +5745,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // Says a paint, and lays what it draws on the canvas.
     auto say_paint = [&](const heard& best, rule::said_as as, const string& says) {
         const int8_t said = say(best, as, says, -1);
-        for (size_t which = 0; which < best.drawn.size() && which < canvas.size(); ++which)
-            for (const auto& [row, col] : best.drawn[which])
+        for (size_t which = 0; which < best.seen.drawn.size() && which < canvas.size(); ++which)
+            for (const auto& [row, col] : best.seen.drawn[which])
                 canvas[which].at[row][col] = true;
         return said;
     };
@@ -5829,13 +5769,12 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // coincidence, what the line already did in the others: 91714a58's rays one
     // cell long, in the ground's color, three of them, finished a line of color
     // coincidences that is wrong on its test.
-    auto weigh_paint = [&](heard& best, int value, const piece_pick& pick, bool every_piece, int8_t paint,
-                           claim claims, const vector<vector<std::pair<int, int>>>& drawn) {
+    auto weigh_paint = [&](heard& best, int value, const piece_pick& pick, const replayed& seen, claim claims) {
         for (size_t which = 0; which < read.pairs.size(); ++which)
             if (ranges::none_of(read.pairs[which].left_over, [&](const left_over_cell& cell) {
                     return cell.claimed_by < 0 && claims(which, cell); }))
                 return;
-        weigh(best, value, pick, 0, every_piece, paint, std::move(claims), drawn);
+        weigh(best, value, pick, seen, std::move(claims));
     };
 
     vector<vector<partner_pieces>> handed_by_pick;
@@ -5862,24 +5801,20 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             for (const int8_t lay : lays)
                 for (const bool diagonal : { false, true })
                     for (int radius = rays.high; radius >= rays.low; --radius) {
-                        int8_t paint = -1;
-                        vector<vector<std::pair<int, int>>> drawn;
-                        bool every_piece = false;
-                        if (!rays_hold(opened, handed_by_pick[at], canvas, diagonal, radius, lay, paint, drawn,
-                                       every_piece))
-                            continue;
+                        const auto seen = rays_hold(opened, handed_by_pick[at], canvas, diagonal, radius, lay);
+                        if (!seen) continue;
                         const int before = best.said;
-                        weigh_paint(best, paint_value::packed(diagonal, radius), draw_picks[at], every_piece, paint,
-                              covered_claims(drawn), drawn);
+                        weigh_paint(best, paint_value::packed(diagonal, radius), draw_picks[at], *seen,
+                                    covered_claims(seen->drawn));
                         if (best.said > before) best_lay = lay;
                     }
         if (best.value < 0) return {};
         return { best.said, [&, best, best_lay] {
-            const bool own = best.pick.how < 0 && best.pick.colors == (uint16_t)(1u << best.paint);
+            const bool own = best.pick.how < 0 && best.pick.colors == (uint16_t)(1u << best.seen.paint);
             const int8_t said = say_paint(best, rule::extend_rays,
                 string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") + ", " +
                     to_string(paint_value::number(best.value)) + " long, in " +
-                    (own ? string("its own color") : "color " + to_string(best.paint)) + laid_words[best_lay]);
+                    (own ? string("its own color") : "color " + to_string(best.seen.paint)) + laid_words[best_lay]);
             read.fired[said].lay = best_lay; } };
     };
 
@@ -5892,10 +5827,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         for (size_t at = 0; at < draw_picks.size(); ++at)
             for (int asked = 0; asked < heading::count; ++asked) {
                 const int way = heading_asked(asked);
-                vector<vector<std::pair<int, int>>> drawn;
-                bool every_piece = false;
-                if (trail_holds(opened, handed_by_pick[at], way, drawn, every_piece))
-                    weigh_paint(best, way, draw_picks[at], every_piece, -1, covered_claims(drawn), drawn);
+                if (const auto seen = trail_holds(opened, handed_by_pick[at], way))
+                    weigh_paint(best, way, draw_picks[at], *seen, covered_claims(seen->drawn));
             }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
@@ -5911,9 +5844,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         heard best;
         for (size_t at = 0; at < draw_picks.size(); ++at)
             for (int anchor = 0; anchor < (int)size(lined_up); ++anchor) {
-                vector<vector<std::pair<int, int>>> drawn;
-                if (copy_onto_holds(opened, handed_by_pick[at], anchor, drawn))
-                    weigh_paint(best, anchor, draw_picks[at], false, -1, covered_claims(drawn), drawn);
+                if (const auto seen = copy_onto_holds(opened, handed_by_pick[at], anchor))
+                    weigh_paint(best, anchor, draw_picks[at], *seen, covered_claims(seen->drawn));
             }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
@@ -5937,13 +5869,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             for (const int8_t lay : lays)
                 for (const bool down : { false, true })
                     for (int period = tiles.low; period <= tiles.high; ++period) {
-                        vector<vector<std::pair<int, int>>> drawn;
-                        bool every_piece = false;
-                        if (!tile_holds(opened, handed_by_pick[at], canvas, down, period, lay, drawn, every_piece))
-                            continue;
+                        const auto seen = tile_holds(opened, handed_by_pick[at], canvas, down, period, lay);
+                        if (!seen) continue;
                         const int before = best.said;
-                        weigh_paint(best, paint_value::packed(down, period), draw_picks[at], every_piece, -1, covered_claims(drawn),
-                              drawn);
+                        weigh_paint(best, paint_value::packed(down, period), draw_picks[at], *seen,
+                                    covered_claims(seen->drawn));
                         if (best.said > before) best_lay = lay;
                     }
         if (best.value < 0) return {};
@@ -5972,10 +5902,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!still) return {};
         heard best;
         for (const auto& [pose, name] : turns) {
-            vector<vector<std::pair<int, int>>> drawn;
-            bool every_piece = false;
-            if (turned_holds(opened, figure_handed, pose, drawn, every_piece))
-                weigh_paint(best, pose, figure, every_piece, -1, covered_claims(drawn), drawn);
+            if (const auto seen = turned_holds(opened, figure_handed, pose))
+                weigh_paint(best, pose, figure, *seen, covered_claims(seen->drawn));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
@@ -5995,16 +5923,17 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!still) return {};
         heard best;
         for (const int way : bridge_ways_narrowest_first) {
-            int8_t paint = -1;
-            vector<vector<std::pair<int, int>>> bars;
-            if (bridge_holds(opened, bar_handed, canvas, way, paint, bars))
-                weigh_paint(best, way, {}, true, paint, drawn_claims(bars), bars);
+            auto seen = bridge_holds(opened, bar_handed, canvas, way);
+            if (!seen) continue;
+            // Bridge reads every piece, whatever is picked, so it is said of every one.
+            seen->every_piece = true;
+            weigh_paint(best, way, {}, *seen, drawn_claims(seen->drawn));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
             say_paint(best, rule::bridged,
                 string("bars filled between pieces of one color, reaching ") + reaches[best.value] + ", in " +
-                    (best.paint < 0 ? string("their own color") : "color " + to_string(best.paint)));
+                    (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
         } };
     };
 
@@ -6013,17 +5942,14 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!still) return {};
         heard best;
         for (size_t at = 0; at < draw_picks.size(); ++at) {
-            int8_t paint = -1;
-            vector<vector<std::pair<int, int>>> hollows;
-            bool every_piece = false;
-            if (fill_holds(opened, handed_by_pick[at], canvas, paint, hollows, every_piece))
-                weigh_paint(best, 0, draw_picks[at], every_piece, paint, drawn_claims(hollows), hollows);
+            if (const auto seen = fill_holds(opened, handed_by_pick[at], canvas))
+                weigh_paint(best, 0, draw_picks[at], *seen, drawn_claims(seen->drawn));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
             say_paint(best, rule::filled,
                       string("fills its hollows in ") +
-                          (best.paint < 0 ? string("its own color") : "color " + to_string(best.paint)));
+                          (best.seen.paint < 0 ? string("its own color") : "color " + to_string(best.seen.paint)));
         } };
     };
 
@@ -6033,14 +5959,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         if (!still) return {};
         heard best;
         for (size_t at = 0; at < draw_picks.size(); ++at) {
-            int8_t paint = -1;
-            vector<vector<std::pair<int, int>>> filled_box;
-            bool every_piece = false;
-            if (box_holds(opened, handed_by_pick[at], canvas, paint, filled_box, every_piece))
-                weigh_paint(best, 0, draw_picks[at], every_piece, paint, drawn_claims(filled_box), filled_box);
+            if (const auto seen = box_holds(opened, handed_by_pick[at], canvas))
+                weigh_paint(best, 0, draw_picks[at], *seen, drawn_claims(seen->drawn));
         }
         if (best.value < 0) return {};
-        return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.paint)); } };
+        return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.seen.paint)); } };
     };
 
     const std::function<offer()> paints[] = { ray_paint, trail_paint, copy_paint, repeat_paint, turned_paint,
@@ -6250,9 +6173,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
         const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation);
         return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
-                piece.each_cell([&](int row, int col, int8_t color) {
-                    if (canvas.contains(row, col)) canvas.data[row][col] = color;
-                });
+                paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0, true, /*clip=*/true);
             return true;
         });
     });

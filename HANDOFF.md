@@ -5,9 +5,45 @@ This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 199 right, 0 wrong. Current run: out/word_groups/ (out\ is not
+- Training: 199 right, 0 wrong. Current run: out/base/ (out\ is not
   in git). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8, 199 at abc3f0b.
-- The last session grouped the words: group_of in 7_infer, just above
+- EVALUATION, 2026-10-08, inference only (arc_headless, ARC_INFERENCE_ONLY=1,
+  ARC_DATASET=eval): 0 of 167 test outputs, 0 of 120 puzzles; no program
+  fits any puzzle's pairs (out\eval\). Readouts: `ARC_DATASET=eval
+  scripts\said.bat evalread` (out\evalread\). Missing words named: copies 99,
+  recolor 71, turns 64, where pieces went 55, shape changes 36, drawn on the
+  ground 13; 58% lack 3 or more words (31% of unsolved training), only 23
+  lack one. The training solves bunch in the first hundred by id (42, then
+  10-24 a hundred). 8f215267 names no missing word yet does not fit: cells
+  drawn with no partner wait on no word, so `missing` undercounts.
+- This session (not committed yet) simplified files 0-11 again, every step a
+  full build and a score against out/base: 199 right, 0 wrong, gained 0,
+  lost 0, every program and all 1000 readouts byte-for-byte unchanged. Net
+  source: 67 fewer lines (1_readings +34, 4_objects -4, 7_infer -79,
+  cuda_solver.cu -18). The GPU kernel's stack 29,536 -> 29,488 bytes.
+  - One box: object_summary::box() and cell_box::include; box_of is gone.
+  - One numbering of directions: walk_out, on_object_edge and 3_background's
+    side loops step through heading (every_nth_way<4> for the sides); the
+    neighbour_row/col_4/8 helpers are gone. touches() is the one touch test
+    (each_partner, move_toward); a cell on the other piece counts as touching.
+  - color_tally: "most cells, lowest color on a tie, none where nothing was
+    counted" for majority_vote, object_paint_color, denoise_ground, the snap
+    body, the most-common pick, and the GPU's SelectMostCommonColor (it had
+    its own copy). The tie rules that differ (rarest color refuses a tie,
+    Pattern's unit and the denoise vote go by scan order) were left apart.
+  - object verbs: painted_box, repaint, posed (the pose block moved above
+    object); paint_piece moved beside empty_grid and paints the hand-written
+    loops in read_the_cut, finish_the_line and size_rank_holds.
+  - Shared with the GPU (HANDOFF #6 done): mirror_middle, each_mirror,
+    mirrored_box, mirror_pose (MirrorAround: its op, mirror_holds,
+    carry_the_hand), march_trail (ExtendTo: its op, trail_holds).
+  - Replays return one result (#3 done): optional<replayed> (drawn, left,
+    pieces, paint, every_piece) and cells_by_pair; bar_paint still says
+    every piece itself (Bridge reads every piece whatever is picked).
+  - snap_to_anchors keeps a plain range check on a key's color: the static
+    analyzer (C6385) cannot see through is_color once the tally made the
+    function simpler for it to walk.
+- Two sessions ago grouped the words: group_of in 7_infer, just above
   carry_the_hand, puts each fired_rule::said_as kind in one word_group
   (recolors, changes_pieces, removes, paints, whole_program); a
   static_assert checks every kind has one (kind_count ends the enum). It
@@ -41,6 +77,11 @@ This file holds only what is current; past stages are in git history
   were: the manual 05a7bcf2, 10fcaaa3 (now inferred too), 32597951,
   f25fbde4, and 44d8ac46 (an old inferred one that no longer fits).
   solutions/shelf/ holds puzzles outside training.
+- BUILD TIME IS THE BOTTLENECK NOW (the user: speed up the build or drop the
+  GPU soon). One checked step this session took 7-10 minutes: a full build
+  3-4 minutes, most of it cuda_solver.cu, which every header in include/core
+  recompiles; then a score of 85-220 s. Even `said.bat` builds the GPU
+  library, since arc_said links it.
 - A full score takes 30 to 80 s; the laptop's clock moves with heat, so
   compare two builds by interleaving them (old, new, old, new) and taking
   each one's fastest. `ARC_THREADS=1` reads one puzzle at a time (about 15
@@ -58,8 +99,8 @@ This file holds only what is current; past stages are in git history
   purpose, map the old run's numbers first, then compare.
 - Where a helper the GPU runs changes, compare the build's `ptxas info` and
   `stack frame` lines before and after.
-- Line endings are mixed in the repo: 1_readings, 4_objects, 5_matching and
-  6_correspondence are CRLF; 7_infer, 8_vocabulary, 9_sentences, 10_log,
+- Line endings are mixed in the repo: 1_readings, 3_background, 4_objects,
+  5_matching and 6_correspondence are CRLF; 7_infer, 8_vocabulary, 9_sentences, 10_log,
   cuda_solver.cu, this file and solutions/ are LF, though .gitattributes
   says CRLF everywhere (the user's call). Keep each file's own. Git Bash's
   `grep -c $'\r$'` counts every line: check endings with Python.
@@ -78,29 +119,40 @@ uses it, global before local. Estimates are rough.
    use; the partner value packing (value / PARTNER_KINDS) belongs with its
    shared arithmetic. The local name arrays each have one owner already;
    move them only when a second reader needs them.
-3. Replays return one result (~80): a `replayed` (the cells it says, the
-   cells the pieces stood on, how many pieces, its paint, every piece
-   picked) and a `cells_by_pair` alias for the type spelled 53 times, in
-   place of the four out-arguments of about 25 `*_holds`. Careful: bar_paint
-   weighs every_piece true and pick {}, copy_paint false, the paints 0
-   pieces.
-4. One pattern for the line's 15 kinds in finish_the_line (~200): each
-   repeats gate, picks, handed pieces, values, replay, weigh, offer, say.
-   After the shared replay result in 3.
-5. One mechanism for a rule that redraws every output by itself (~60):
-   today the rivals (own_sentences, list_the_rivals, say_rival) and the
-   whole-line rules (whole_line, and six branches in say_the_cut).
-6. The arithmetic the GPU op runs, shared (~30, an AGENTS rule broken
-   today): MirrorAround's mirror is written three times (the GPU op,
-   mirror_holds, carry_the_hand), ExtendTo's march twice (the GPU op,
-   trail_holds). Their helpers belong in 7_infer, which the GPU reads
-   through 12_dsl.cuh, as slam_cells and bridge_bars do.
-7. Measure first: old rivals that have a twin word on the line -- bridge (4
-   solved), hole colors (4), interior fill (3), rarest color (3), copy-to
-   (2), edge slide (1), rays (1), corner crop. Turn each off, score, drop it
-   where nothing is lost: up to ~750 lines over 7, 9 and 10. The other old
-   rules (corner chain, projection, DiagTile, denoise, slam, snap, lattice,
-   ranked layout, motif) each carry 1-3 puzzles with no twin.
+3. Done this session (replays return one result).
+4. Tried this session and dropped: one frame for the line's kinds (`ask`
+   over picks and values, `offer_of` for the saying) passed every check but
+   made finish_the_line 13 lines longer; the replay result in 3 already took
+   what there was. Splitting finish_the_line into named parts would read
+   better, not shorter.
+5. One mechanism for a rule that redraws every output by itself (~100 over
+   7, 9 and 10): today the rivals (own_sentences, list_the_rivals,
+   say_rival) and the whole-line rules (whole_line, and six branches in
+   say_the_cut); each rule touches six places (struct, inference field,
+   read call, listing, say_X, report_X), and 10's small report_ functions
+   would fold into one.
+6. Done this session (mirror and trail shared with the GPU).
+7. Measured this session: no old rival can go yet. With all eight off
+   (bridge, hole colors, interior fill, rarest color, copy-to, edge slide,
+   rays, corner crop) 12 puzzles were lost and 5 went wrong: interior fill
+   00d62c1b, 7b6016b9, a5313dff (wrong without it); corner crop 5bd6f4ac,
+   d10ecb37; hole colors 0a2355a6, 37d3e8b2; rarest color 1f85a75f (wrong);
+   edge slide 3618c87e (wrong); rays 0962bcdd; bridge 22eb0ac0; copy-to
+   363442ee. Each is the line's word to learn before its rule can go -- the
+   wrong ones first: the line's fill, edge slide and least-color readings
+   fit the pairs and miss the test.
+7a. Smaller, from this session's report: framing dispatched once
+   (choose_piece_frame and read_the_cut both switch on the frame kind,
+   ~40); one walk for "the posed piece laid on a place" in 5_matching
+   (written about 9 times) and an edge that holds its object_match instead
+   of copying 7 fields (~60); a sentence's source as a field in 9_sentences
+   instead of cutting strings (substr(5)) in frame_the_sentences,
+   cut_then_tile and say_the_plan (~20); typed op names (spell(node_type))
+   for the 71 spell("...") calls; one piece map for "which piece holds this
+   cell" (6 twice, 7); color sets are both bool[10] and uint16_t masks;
+   the packed values of AlignTo, MirrorAround and MoveToward beside
+   paint_value; the two pre-existing compiler warnings (C4458 `count` in
+   shape_color_map_rule, C6336 in picks_to_ask's middle-out values).
 8. Think with the user: grid::tile_width/tile_height is state every grid
    carries for one frame (10fcaaa3); passing the tile to each_object where
    the frame needs it would keep the base type plain.

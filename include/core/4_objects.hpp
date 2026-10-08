@@ -173,18 +173,14 @@ ARC_HOST_DEVICE inline int tiled_source(int at, int start, int period, int size)
 // puzzle-level background is consulted, by the op or by the reading.
 template <typename At>
 ARC_HOST_DEVICE inline int8_t denoise_ground(int w, int h, At at) {
-    int counts[COLOR_COUNT] = {};
+    color_tally tally;
     for (int r = 0; r < h; ++r)
         for (int c = 0; c < w; ++c) {
             const int8_t v = at(r, c);
             if (!is_color(v)) return (int8_t)TRANSPARENT;
-            ++counts[v];
+            tally.add(v);
         }
-    int8_t best = (int8_t)TRANSPARENT;
-    int most = -1;
-    for (int v = 0; v < COLOR_COUNT; ++v)
-        if (counts[v] > most) { most = counts[v]; best = (int8_t)v; }
-    return best;
+    return tally.most();
 }
 
 // An empty value votes in a slot of its own, past the ten colors, and comes

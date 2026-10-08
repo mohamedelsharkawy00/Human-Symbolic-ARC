@@ -408,19 +408,15 @@ __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_obj
 __device__ gpu_object_list& gpu_exec_select_most_common_color(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
-    int freq[GPU_MAX_COLORS];
-    for (int i = 0; i < GPU_MAX_COLORS; ++i) freq[i] = 0;
+    // The count the reading replays (color_tally, 1_readings.hpp).
+    arc::color_tally freq;
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
         for (int r = 0; r < obj.height; ++r)
-            for (int c = 0; c < obj.width; ++c) {
-                int8_t col = obj.mask[r][c];
-                if (arc::is_color(col)) freq[col]++;
-            }
+            for (int c = 0; c < obj.width; ++c) freq.add((int8_t)obj.mask[r][c]);
     }
-    int top = 0;
-    for (int i = 1; i < GPU_MAX_COLORS; ++i) if (freq[i] > freq[top]) top = i;
-    if (freq[top] == 0) return res;  // nothing painted -> nothing to mark
+    const int top = freq.most();
+    if (top < 0) return res;  // nothing painted -> nothing to mark
     // Mark every object that contains the most-common color. After a carve
     // (Colors/Split) each object is single-color, so this is exactly "the
     // top-color object(s)".
@@ -1282,33 +1278,28 @@ __device__ gpu_object_list& gpu_exec_mirror_around(gpu_exec_context& ctx, const 
     for (int i = 0; i < src.count; ++i) {
         const gpu_fixed_object& piece = src.objects[i];
         if (!piece.selected || piece.width <= 0 || piece.height <= 0) continue;
-        // Twice the middle's row and column, so a middle between two cells is whole.
-        int row2 = ctx.input.height - 1, col2 = ctx.input.width - 1;
-        if (how < (int)arc::partner_by::count) {
-            const int partner = view.partner((arc::partner_by)how, i);
-            if (partner < 0) continue;
-            const arc::cell_box there = view.box(partner);
-            row2 = there.row0 + there.row1;
-            col2 = there.col0 + there.col1;
-        }
-        for (int way = 0; way < 3; ++way) {
-            if (mirror != arc::mirror_by::four_ways && way != (int)mirror) continue;
-            if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
-            const bool across = way != 1, down = way != 0;
+        // The middle, the copies and where each lies are 7_infer.hpp's to say
+        // (mirror_middle, each_mirror, mirrored_box), the arithmetic the reading
+        // replays.
+        int row2 = 0, col2 = 0;
+        if (!arc::mirror_middle(how, i, view, ctx.input.width, ctx.input.height, row2, col2)) continue;
+        const arc::cell_box box{ piece.y0, piece.x0, piece.y0 + piece.height - 1, piece.x0 + piece.width - 1 };
+        bool full = false;
+        arc::each_mirror(mirror, [&](bool down, bool across) {
+            if (full || res.count >= GPU_KERNEL_MAX_OBJECTS) { full = true; return; }
             gpu_fixed_object& copy = res.objects[res.count++];
             copy = piece;
+            const int pose = arc::mirror_pose(down, across);
             for (int r = 0; r < piece.height; ++r)
-                for (int c = 0; c < piece.width; ++c)
-                    copy.mask[r][c] = (int8_t)piece.mask[down ? piece.height - 1 - r : r][across ? piece.width - 1 - c : c];
-            if (across) {
-                copy.x0 = (int16_t)(col2 - (piece.x0 + piece.width - 1));
-                copy.x1 = (int16_t)(copy.x0 + piece.width - 1);
-            }
-            if (down) {
-                copy.y0 = (int16_t)(row2 - (piece.y0 + piece.height - 1));
-                copy.y1 = (int16_t)(copy.y0 + piece.height - 1);
-            }
-        }
+                for (int c = 0; c < piece.width; ++c) {
+                    const auto [from_r, from_c] = arc::pose_source(pose, piece.width, piece.height, r, c);
+                    copy.mask[r][c] = (int8_t)piece.mask[from_r][from_c];
+                }
+            const arc::cell_box to = arc::mirrored_box(box, row2, col2, down, across);
+            copy.y0 = (int16_t)to.row0; copy.x0 = (int16_t)to.col0;
+            copy.y1 = (int16_t)to.row1; copy.x1 = (int16_t)to.col1;
+        });
+        if (full) return res;
     }
     return res;
 }
@@ -2600,7 +2591,6 @@ __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const g
 __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
     auto& res = gpu_acquire(ctx);
     const arc::heading_step step = arc::step_of(dir);
-    const int ddx = step.across, ddy = step.down;
     int gw = ctx.output.width  > 0 ? (int)ctx.output.width  : (int)ctx.input.width;
     int gh = ctx.output.height > 0 ? (int)ctx.output.height : (int)ctx.input.height;
     if (gw <= 0 || gh <= 0) return res;
@@ -2625,20 +2615,17 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
         if (!o.selected) { res.objects[res.count++] = o; continue; }
         int8_t col = gpu_obj_first_color(o);
 
+        // The march is 7_infer.hpp's (march_trail), the walk the reading replays.
+        auto own = [&](int y, int x) { return gpu_obj_contains(o, x, y); };
+        auto taken = [&](int y, int x) { return occ[y][x] != 0; };
         int min_x = 1 << 30, min_y = 1 << 30, max_x = -(1 << 30), max_y = -(1 << 30);
+        auto reach = [&](int y, int x) {
+            if (x < min_x) min_x = x; if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y; if (y > max_y) max_y = y;
+        };
         GPU_DEV_FOR_EACH_PIXEL(o, r, c, v) { (void)v;
-            int sx = o.x0 + c, sy = o.y0 + r;
-            if (sx < min_x) min_x = sx; if (sx > max_x) max_x = sx;
-            if (sy < min_y) min_y = sy; if (sy > max_y) max_y = sy;
-            int x = sx, y = sy;
-            for (;;) {
-                x += ddx; y += ddy;
-                if (x < 0 || x >= gw || y < 0 || y >= gh) break;
-                if (occ[y][x] && !gpu_obj_contains(o, x, y)) break;
-                if (gpu_obj_contains(o, x, y)) continue;
-                if (x < min_x) min_x = x; if (x > max_x) max_x = x;
-                if (y < min_y) min_y = y; if (y > max_y) max_y = y;
-            }
+            reach(o.y0 + r, o.x0 + c);
+            arc::march_trail(o.y0 + r, o.x0 + c, step, gw, gh, own, taken, reach);
         }
         if (max_x < min_x) continue;
         int nw = min(max_x - min_x + 1, GPU_MAX_GRID);
@@ -2660,15 +2647,10 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
             int sx = o.x0 + c, sy = o.y0 + r;
             int lx = sx - min_x, ly = sy - min_y;
             if (lx >= 0 && lx < nw && ly >= 0 && ly < nh) out.mask[ly][lx] = v; // body keeps its color
-            int x = sx, y = sy;
-            for (;;) {
-                x += ddx; y += ddy;
-                if (x < 0 || x >= gw || y < 0 || y >= gh) break;
-                if (occ[y][x] && !gpu_obj_contains(o, x, y)) break;
-                if (gpu_obj_contains(o, x, y)) continue;
+            arc::march_trail(sy, sx, step, gw, gh, own, taken, [&](int y, int x) {
                 int px = x - min_x, py = y - min_y;
                 if (px >= 0 && px < nw && py >= 0 && py < nh) out.mask[py][px] = col;
-            }
+            });
         }
         ++res.count;
     }

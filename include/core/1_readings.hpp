@@ -14,11 +14,45 @@ using namespace std;
 // so the code will match that level of abstraction
 // vs carrying each cell as its own entity.
 
+// A box in grid coordinates, with inclusive bottom and right edges.
+// An empty box has its last row or column before its first.
+struct cell_box {
+    int row0 = 0, col0 = 0, row1 = -1, col1 = -1;
+
+    // Its own size, so no caller has to spell the +1 out and none can spell it
+    // differently. A box nobody wrote to has no cells, and says so itself
+    // rather than leaving the reader to check the tally beside it.
+    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
+    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
+    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
+    ARC_HOST_DEVICE int area()   const { return width() * height(); }
+
+    ARC_HOST_DEVICE void include_cell(int row, int col) {
+        if (empty()) {
+            row0 = row1 = row;
+            col0 = col1 = col;
+            return;
+        }
+        if (row < row0) row0 = row;
+        if (row > row1) row1 = row;
+        if (col < col0) col0 = col;
+        if (col > col1) col1 = col;
+    }
+    // Grown to hold another box as well; an empty one adds nothing.
+    ARC_HOST_DEVICE void include(const cell_box& other) {
+        if (other.empty()) return;
+        include_cell(other.row0, other.col0);
+        include_cell(other.row1, other.col1);
+    }
+};
+
 // An object's bounding box and cell count, usable without storing its cells.
+// Packed small for the device; box() reads it as a cell_box.
 struct object_summary {
     int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
     int8_t  w = 0, h = 0;    // box width and height
     int16_t count = 0;       // number of cells in the object
+    ARC_HOST_DEVICE cell_box box() const { return { y0, x0, y0 + h - 1, x0 + w - 1 }; }
 };
 
 // The sole drawing with no equal in the list. Compare full frames and cells,
@@ -147,26 +181,88 @@ struct alignas(4) object_cells {
     }
 };
 
+// HOW MANY CELLS WEAR EACH COLOR, counted a cell at a time -- what is no color
+// is not counted -- and the color the most of them wear, or the fewest, the
+// lowest on a tie: TRANSPARENT where nothing was counted. The one tie rule for
+// every op and every reading that asks which color leads.
+struct color_tally {
+    int counts[COLOR_COUNT] = {};
+    ARC_HOST_DEVICE void add(int color) { if (is_color(color)) ++counts[color]; }
+    ARC_HOST_DEVICE int8_t most() const { return leading(true); }
+    ARC_HOST_DEVICE int8_t least() const { return leading(false); }
+
+private:
+    ARC_HOST_DEVICE int8_t leading(bool most) const {
+        int8_t best = TRANSPARENT;
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            if (counts[color] && (best < 0 || (most ? counts[color] > counts[best] : counts[color] < counts[best])))
+                best = (int8_t)color;
+        return best;
+    }
+};
+
+// The color most of a `factor` by `factor` block wears, as ScaleDown votes.
 template <class Mask>
 ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
                                              int factor, int height, int width) {
-    int counts[COLOR_COUNT] = {};
-    int non_transparent = 0;
+    color_tally tally;
     for (int dr = 0; dr < factor; ++dr)
         for (int dc = 0; dc < factor; ++dc) {
             const int source_row = row * factor + dr;
             const int source_col = col * factor + dc;
-            if (source_row >= height || source_col >= width) continue;
-            const int8_t color = (int8_t)mask[source_row][source_col];
-            if (color == TRANSPARENT) continue;
-            ++counts[color % COLOR_COUNT];
-            ++non_transparent;
+            if (source_row < height && source_col < width) tally.add((int8_t)mask[source_row][source_col]);
         }
-    if (non_transparent == 0) return TRANSPARENT;
-    int winner = -1, best = -1;
-    for (int color = 0; color < COLOR_COUNT; ++color)
-        if (counts[color] > best) { best = counts[color]; winner = color; }
-    return (int8_t)winner;
+    return tally.most();
+}
+
+// POSES · the ways a grid can sit, and naming the shape that results
+
+// THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
+// bits, pose 0 being the grid as given.
+//   1  rows and columns trade places, transpose
+//   2  flipped top to bottom
+//   4  flipped left to right
+// Single home of what the bits mean. Every reader of a pose goes through the
+// three below, so none of them can drift on what "the same shape, turned" is.
+constexpr int POSE_COUNT = 8;
+
+// Where a cell of the ORIGINAL lands once posed, so a place can be carried into
+// the frame a pair is compared in. The exact inverse of pose_source.
+ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int height,
+                                  int row, int col) {
+    const int down   = (pose & 2) ? height - 1 - row : row;
+    const int across = (pose & 4) ? width  - 1 - col : col;
+    return (pose & 1) ? std::pair<int, int>{ across, down } : std::pair<int, int>{ down, across };
+}
+
+// How big a grid reads once posed. Only the trade changes the size.
+ARC_HOST_DEVICE inline std::pair<int, int> posed_size(int pose, int width, int height) {
+    return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
+}
+
+// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
+// original's own, which is what the mirrors are measured against.
+ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int height,
+                                  int posed_row, int posed_col) {
+    int row = (pose & 1) ? posed_col : posed_row;
+    int col = (pose & 1) ? posed_row : posed_col;
+    if (pose & 2) row = height - 1 - row;
+    if (pose & 4) col = width  - 1 - col;
+    return { row, col };
+}
+
+// The one pose that does `first` and then `then`. Read off where the corners of
+// a square land, since the eight ways round are exactly the ways to move them.
+inline int compose_poses(int first, int then) {
+    for (int pose = 0; pose < POSE_COUNT; ++pose) {
+        bool same = true;
+        for (int corner = 0; corner < 4 && same; ++corner) {
+            const auto [row, col] = posed_place(first, 2, 2, corner / 2, corner % 2);
+            same = posed_place(then, 2, 2, row, col) == posed_place(pose, 2, 2, corner / 2, corner % 2);
+        }
+        if (same) return pose;
+    }
+    return 0;
 }
 
 // MSVC C4324: the device only grabs memory 4 bytes at a time, so object_cells
@@ -230,6 +326,38 @@ struct object {
             }
     }
 
+    // The box its cells fill -- which the summary's box need not be: a block
+    // keeps its whole box, empty cells and all.
+    cell_box painted_box() const {
+        cell_box box;
+        each_cell([&](int row, int col, int8_t) { box.include_cell(row, col); });
+        return box;
+    }
+
+    // Every cell it fills repainted in the color `color_of(was)` names.
+    template <class ColorOf>
+    void repaint(ColorOf color_of) {
+        for (int row = 0; row < summary.h; ++row)
+            for (int col = 0; col < summary.w; ++col)
+                if (cells[row][col] != (int8_t)TRANSPARENT) cells[row][col] = (int8_t)color_of((int8_t)cells[row][col]);
+    }
+
+    // The object turned or flipped to `pose` in its own box, its top-left
+    // corner where it was: each cell read through pose_source, as the ops read it.
+    object posed(int pose) const {
+        object turned = *this;
+        const auto [width, height] = posed_size(pose, summary.w, summary.h);
+        turned.summary.w = (int8_t)width;
+        turned.summary.h = (int8_t)height;
+        turned.cells.clear();
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col) {
+                const auto [from_row, from_col] = pose_source(pose, summary.w, summary.h, row, col);
+                turned.cells[row][col] = cells[from_row][from_col];
+            }
+        return turned;
+    }
+
     // The object on its own, as a grid just big enough to hold it: its own
     // colors where it reaches, TRANSPARENT in the gaps and nowhere else's cells.
     // The cells are already this, packed four bits each; this spells them out
@@ -271,24 +399,46 @@ struct object_walk_scratch {
     int16_t cells[MAX_GRID_CELLS];
 };
 
-// Grouping of cells into an object is 8 way, "is this one object?" -- save
-// the one finer cut that asks it of sides alone (touching_sides_same_color).
-//
-// Worked out rather than written down, because a constexpr array lives in
-// host memory and device code cannot index one -- and the walk below runs on
-// both sides. The eight are the 3x3 around a cell with the cell itself left
-// out, so dir 0..7 steps over the missing middle and reads off row and column.
-ARC_HOST_DEVICE constexpr int neighbour_row_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) / 3 - 1;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
-    return (dir + (dir >= 4 ? 1 : 0)) % 3 - 1;
+// THE EIGHT WAYS, the one numbering of directions in the project: the cells
+// around a cell, and the ways a piece can go, numbered as a compass is,
+// clockwise from up, as MoveToEdge, ExtendTo and Shift take them. The way back
+// is four on, a quarter turn two on, and the sides are the even ways.
+struct heading {
+    enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
+};
+inline constexpr const char* const heading_names[heading::count] = {
+    "up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left" };
+
+// THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
+// much is broken in: the four sides before the diagonals, the plainer move
+// first, each clockwise from up.
+constexpr int heading_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 1; }
+
+// One step that way. A switch and not a table, so the kernel reads the same
+// steps the host does; a heading out of range goes up.
+struct heading_step { int down, across; };
+ARC_HOST_DEVICE inline heading_step step_of(int way) {
+    switch (way) {
+    case heading::up_right:   return { -1,  1 };
+    case heading::right:      return {  0,  1 };
+    case heading::down_right: return {  1,  1 };
+    case heading::down:       return {  1,  0 };
+    case heading::down_left:  return {  1, -1 };
+    case heading::left:       return {  0, -1 };
+    case heading::up_left:    return { -1, -1 };
+    default:                  return { -1,  0 };
+    }
 }
 
-// Adjacency between two cells is 4 way, "what shares an edge with this cell?".
-// Up, down, left, right. A diagonal cell touches only at a corner.
+// THE CELLS THAT JOIN A CELL: all eight ways round, or only the four sides,
+// the even ways -- the step between the ways asked, for 8 or for 4.
 //
-// Why four here and eight for grouping. Picture a ring of blocks meeting only
+// Grouping cells into an object is eight ways, "is this one object?" -- save
+// the one finer cut that asks it of sides alone (touching_sides_same_color).
+// Adjacency is four ways, "what shares an edge with this cell?": a diagonal
+// cell touches only at a corner.
+//
+// Why four there and eight for grouping. Picture a ring of blocks meeting only
 // at their corners. Ask "is this one ring" and the answer is yes, corners
 // count, which is the eight. Ask "can the water inside get out" and corners
 // must not count, or the water escapes through the very tip just called a
@@ -297,12 +447,8 @@ ARC_HOST_DEVICE constexpr int neighbour_col_8(int dir) {
 // the grid edge -- takes the four. Whatever the shapes use, the space around
 // them uses the other one. Let both use eight and no shape has an inside any
 // more, so holes stop existing.
-ARC_HOST_DEVICE constexpr int neighbour_row_4(int dir) {
-    return dir < 2 ? dir * 2 - 1 : 0;
-}
-ARC_HOST_DEVICE constexpr int neighbour_col_4(int dir) {
-    return dir < 2 ? 0 : (dir - 2) * 2 - 1;
-}
+template <int Ways>
+constexpr int every_nth_way = Ways == 4 ? 2 : 1;
 
 // Walks connected cells: eight directions for objects, four for surrounding space.
 // `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
@@ -315,9 +461,8 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
         const int row = queue_row[head], col = queue_col[head];
         ++head;
         see(row, col);
-        for (int dir = 0; dir < Directions; ++dir) {
-            const int next_row = row + (Directions == 4 ? neighbour_row_4(dir) : neighbour_row_8(dir));
-            const int next_col = col + (Directions == 4 ? neighbour_col_4(dir) : neighbour_col_8(dir));
+        for (int way = 0; way < heading::count; way += every_nth_way<Directions>) {
+            const int next_row = row + step_of(way).down, next_col = col + step_of(way).across;
             if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
             if (!claim(next_row, next_col)) continue;
             queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
@@ -336,8 +481,8 @@ ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width
 // The caller supplies occupancy, including false outside its own frame.
 template <class Occupied>
 ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) {
-    for (int dir = 0; dir < 8; ++dir)
-        if (!occupied(row + neighbour_row_8(dir), col + neighbour_col_8(dir))) return true;
+    for (int way = 0; way < heading::count; ++way)
+        if (!occupied(row + step_of(way).down, col + step_of(way).across)) return true;
     return false;
 }
 
@@ -346,17 +491,11 @@ ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) 
 template <class ColorAt>
 ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t value, ColorAt color_at) {
     if (value < COLOR_COUNT) return value;
-    int counts[COLOR_COUNT] = {};
+    color_tally tally;
     for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            const int color = color_at(row, col);
-            if (color >= 0 && color < COLOR_COUNT) ++counts[color];
-        }
-    int best = TRANSPARENT;
-    for (int color = 0; color < COLOR_COUNT; ++color)
-        if (counts[color] && (best < 0 || (value == COLOR_COUNT
-            ? counts[color] < counts[best] : counts[color] > counts[best]))) best = color;
-    return (int8_t)best;
+        for (int col = 0; col < width; ++col) tally.add(color_at(row, col));
+    // COLOR_COUNT names the color the fewest cells wear, past it the most.
+    return value == COLOR_COUNT ? tally.least() : tally.most();
 }
 
 // Mark cells reachable from the border without crossing a blocked cell.
@@ -422,32 +561,6 @@ ARC_HOST_DEVICE inline int object_hole_count(int height, int width, Occupied occ
     return holes;
 }
 
-// A box in grid coordinates, with inclusive bottom and right edges.
-// An empty box has its last row or column before its first.
-struct cell_box {
-    int row0 = 0, col0 = 0, row1 = -1, col1 = -1;
-
-    // Its own size, so no caller has to spell the +1 out and none can spell it
-    // differently. A box nobody wrote to has no cells, and says so itself
-    // rather than leaving the reader to check the tally beside it.
-    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
-    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
-    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
-    ARC_HOST_DEVICE int area()   const { return width() * height(); }
-
-    ARC_HOST_DEVICE void include_cell(int row, int col) {
-        if (empty()) {
-            row0 = row1 = row;
-            col0 = col1 = col;
-            return;
-        }
-        if (row < row0) row0 = row;
-        if (row > row1) row1 = row;
-        if (col < col0) col0 = col;
-        if (col > col1) col1 = col;
-    }
-};
-
 // WHAT Fit STRETCHES TO, its value: the input's frame, the canvas the output is
 // drawn on, or the box of what is painted on it -- none where nothing is.
 // Reading and execution ask the same helper.
@@ -468,10 +581,8 @@ ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int
     return target_cell * source_size / target_size;
 }
 
-// An object's box as cell_box has it, and back again with its cell count.
-inline cell_box box_of(const object_summary& summary) {
-    return { summary.y0, summary.x0, summary.y0 + summary.h - 1, summary.x0 + summary.w - 1 };
-}
+// A box as an object's summary has it, with its cell count (object_summary::box
+// reads it back).
 ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count) {
     return { (int8_t)box.col0, (int8_t)box.row0, (int8_t)box.width(), (int8_t)box.height(),
              (int16_t)count };
@@ -516,36 +627,6 @@ ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
         band_of[i] = (int8_t)(bands - 1);
     }
     return bands;
-}
-
-// THE EIGHT WAYS A PIECE CAN GO, numbered as a compass is, clockwise from up,
-// as MoveToEdge, ExtendTo and Shift take them: the way back is four on, a
-// quarter turn two on, and the sides are the even ways.
-struct heading {
-    enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
-};
-inline constexpr const char* const heading_names[heading::count] = {
-    "up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left" };
-
-// THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
-// much is broken in: the four sides before the diagonals, the plainer move
-// first, each clockwise from up.
-constexpr int heading_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 1; }
-
-// One step that way. A switch and not a table, so the kernel reads the same
-// steps the host does; a heading out of range goes up.
-struct heading_step { int down, across; };
-ARC_HOST_DEVICE inline heading_step step_of(int way) {
-    switch (way) {
-    case heading::up_right:   return { -1,  1 };
-    case heading::right:      return {  0,  1 };
-    case heading::down_right: return {  1,  1 };
-    case heading::down:       return {  1,  0 };
-    case heading::down_left:  return {  1, -1 };
-    case heading::left:       return {  0, -1 };
-    case heading::up_left:    return { -1, -1 };
-    default:                  return { -1,  0 };
-    }
 }
 
 // How far a box goes that way before its far side meets the edge of a canvas
@@ -731,56 +812,6 @@ inline bool pairs_overlay(const vector<example>& train) {
     });
 }
 
-// POSES · the ways a grid can sit, and naming the shape that results
-
-// THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
-// bits, pose 0 being the grid as given.
-//   1  rows and columns trade places, transpose
-//   2  flipped top to bottom
-//   4  flipped left to right
-// Single home of what the bits mean. Every reader of a pose goes through the
-// three below, so none of them can drift on what "the same shape, turned" is.
-constexpr int POSE_COUNT = 8;
-
-// Where a cell of the ORIGINAL lands once posed, so a place can be carried into
-// the frame a pair is compared in. The exact inverse of pose_source.
-ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int height,
-                                  int row, int col) {
-    const int down   = (pose & 2) ? height - 1 - row : row;
-    const int across = (pose & 4) ? width  - 1 - col : col;
-    return (pose & 1) ? std::pair<int, int>{ across, down } : std::pair<int, int>{ down, across };
-}
-
-// How big a grid reads once posed. Only the trade changes the size.
-ARC_HOST_DEVICE inline std::pair<int, int> posed_size(int pose, int width, int height) {
-    return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
-}
-
-// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
-// original's own, which is what the mirrors are measured against.
-ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int height,
-                                  int posed_row, int posed_col) {
-    int row = (pose & 1) ? posed_col : posed_row;
-    int col = (pose & 1) ? posed_row : posed_col;
-    if (pose & 2) row = height - 1 - row;
-    if (pose & 4) col = width  - 1 - col;
-    return { row, col };
-}
-
-// The one pose that does `first` and then `then`. Read off where the corners of
-// a square land, since the eight ways round are exactly the ways to move them.
-inline int compose_poses(int first, int then) {
-    for (int pose = 0; pose < POSE_COUNT; ++pose) {
-        bool same = true;
-        for (int corner = 0; corner < 4 && same; ++corner) {
-            const auto [row, col] = posed_place(first, 2, 2, corner / 2, corner % 2);
-            same = posed_place(then, 2, 2, row, col) == posed_place(pose, 2, 2, corner / 2, corner % 2);
-        }
-        if (same) return pose;
-    }
-    return 0;
-}
-
 // A GRID LYING ON ITS SIDE is wider than it is tall. NormalizeOrientation[0]
 // reads one transposed, so its long way runs down, and a square one as it
 // stands. Asked here by the op and by any reading that replays it, so the two
@@ -923,6 +954,23 @@ ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
     return rows + cols;
 }
 
+// WHETHER THE PIECE `mine`, MOVED `by`, TOUCHES THE PIECE `other`: a cell of it
+// on a cell of the other, or beside one at a side -- or, unless `sides_only`,
+// at a corner. The pieces are asked as each_partner asks them, below.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, heading_step by, bool sides_only) {
+    const cell_box own = pieces.box(mine);
+    for (int row = own.row0; row <= own.row1; ++row)
+        for (int col = own.col0; col <= own.col1; ++col) {
+            if (!pieces.painted(mine, row, col)) continue;
+            const int at_row = row + by.down, at_col = col + by.across;
+            if (pieces.painted(other, at_row, at_col)) return true;
+            for (int way = 0; way < heading::count; way += sides_only ? every_nth_way<4> : every_nth_way<8>)
+                if (pieces.painted(other, at_row + step_of(way).down, at_col + step_of(way).across)) return true;
+        }
+    return false;
+}
+
 // Every partner the piece `mine` has by `how` among the pieces not picked,
 // handed to `visit(other)` -- for the nearest, only the ones no other is nearer
 // than. THE PIECES ARE ASKED, so one walk serves a grid's pieces and the op's
@@ -975,14 +1023,7 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
                 break;
             case partner_by::touching:
             case partner_by::touching_sides:
-                for (int row = own.row0; row <= own.row1 && !partner; ++row)
-                    for (int col = own.col0; col <= own.col1 && !partner; ++col) {
-                        if (!painted(mine, row, col)) continue;
-                        for (int down = -1; down <= 1 && !partner; ++down)
-                            for (int across = -1; across <= 1 && !partner; ++across)
-                                partner = (how == partner_by::touching || down == 0 || across == 0) &&
-                                          painted(other, row + down, col + across);
-                    }
+                partner = touches(pieces, mine, other, { 0, 0 }, how == partner_by::touching_sides);
                 break;
             case partner_by::same_shape: partner = same_paint(other, box, 0); break;
             case partner_by::same_shape_turned:
@@ -1075,7 +1116,6 @@ ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int par
     const cell_box own = pieces.box(mine);
     const int way = heading_toward(own, pieces.box(partner));
     if (way < 0 || own.empty()) return { 0, 0 };
-    auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
     const heading_step step = step_of(way);
     if (far == toward_by::a_step) return step;
     if (far == toward_by::its_size) return { step.down * own.height(), step.across * own.width() };
@@ -1083,13 +1123,7 @@ ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int par
         const int down = steps * step.down, across = steps * step.across;
         if (own.row0 + down < 0 || own.row1 + down >= height || own.col0 + across < 0 || own.col1 + across >= width)
             return { 0, 0 };
-        for (int row = own.row0; row <= own.row1; ++row)
-            for (int col = own.col0; col <= own.col1; ++col) {
-                if (!painted(mine, row, col)) continue;
-                for (int near_row = -1; near_row <= 1; ++near_row)
-                    for (int near_col = -1; near_col <= 1; ++near_col)
-                        if (painted(partner, row + down + near_row, col + across + near_col)) return { down, across };
-            }
+        if (touches(pieces, mine, partner, { down, across }, false)) return { down, across };
     }
 }
 

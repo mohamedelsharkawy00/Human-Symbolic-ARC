@@ -42,6 +42,7 @@ language lacks.
   so delete old labels. It reads a puzzle on every CPU thread and takes about
   30 s on the 20-thread laptop (twice that when it runs hot); `ARC_THREADS=1`
   reads one at a time (the profiler does, under the label `profile`).
+  `ARC_DATASET=eval` reads the evaluation set instead (training by default).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
   shows what it drew beside what was wanted, pair by pair.
 - Tests: none besides the score and the readouts. `tests/puzzles` holds small

@@ -225,14 +225,14 @@ ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const i
     // A ground showing through is everywhere but always thin.
     // ADJACENCY, SO FOUR: a fraying measure asks what BORDERS this cell, and a
     // corner touch is not a border. Not the 8 that grouping uses — see the note
-    // beside neighbour_row_4 in 1_readings.hpp before making these agree.
+    // beside every_nth_way in 1_readings.hpp before making these agree.
     int touching[COLOR_COUNT] = {};
     cell_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
     walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
-        for (int dir = 0; dir < 4; ++dir) {
-            int next_row = row + neighbour_row_4(dir);
-            int next_col = col + neighbour_col_4(dir);
+        for (int way = 0; way < heading::count; way += every_nth_way<4>) {
+            int next_row = row + step_of(way).down;
+            int next_col = col + step_of(way).across;
             if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
             if (one_grid.data[next_row][next_col] != color) { touching[color]++; return; }
         }
@@ -335,9 +335,9 @@ ARC_HOST_DEVICE inline void measure_embedding(const Grid& one_grid, const int ce
         for (int nth = 0; nth < objects.size[this_object]; ++nth) {
             int row = cell_row(objects.cells[objects.first_cell[this_object] + nth]);
             int col = cell_col(objects.cells[objects.first_cell[this_object] + nth]);
-            for (int dir = 0; dir < 4; ++dir) {
-                int next_row = row + neighbour_row_4(dir);
-                int next_col = col + neighbour_col_4(dir);
+            for (int way = 0; way < heading::count; way += every_nth_way<4>) {
+                int next_row = row + step_of(way).down;
+                int next_col = col + step_of(way).across;
                 if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
                 if (!outside[next_row][next_col]) continue;
                 int owner_object = objects.id[next_row][next_col];
