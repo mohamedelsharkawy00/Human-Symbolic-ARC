@@ -933,8 +933,10 @@ inline bool say_rarest_color(const inference& inf, said_reading& said) {
 // piece, so a line about one color picks it from none picked.
 inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, const inference& inf) {
     using said_as = correspondence_election::fired_rule::said_as;
-    const string pick = pick_words(rule.pick);
     vector<beat> beats;
+    const auto group = group_of(rule.as);
+    if (group == word_group::unsaid || group == word_group::paints || group == word_group::whole_program) return beats;
+    const string pick = pick_words(rule.pick);
     switch (rule.as) {
         case said_as::turn:
             for (const string& word : words_for_pose(rule.value)) beats.push_back({pick, word});
@@ -998,12 +1000,13 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 // after the line.
 inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint) {
     using said_as = correspondence_election::fired_rule::said_as;
+    if (group_of(rule.as) != word_group::paints) return false;
     const string pick = pick_words(rule.pick);
     switch (rule.as) {
         case said_as::extend_rays: {
             // Rays only, the pieces are already down; painted over in the rule's
             // own color unless it is the one color picked.
-            string act = spell(rule.value >= 32 ? "ExtendDiagonal" : "ExtendOrthogonal", rule.value % 32);
+            string act = spell(paint_value::second(rule.value) ? "ExtendDiagonal" : "ExtendOrthogonal", paint_value::number(rule.value));
             if (rule.pick != piece_pick::of_color(rule.paint)) act += " " + spell("Recolor", rule.paint);
             drawn = { pick, act + onto_words(rule) };
             paint = laid_paint(rule);
@@ -1023,7 +1026,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
         case said_as::copied_onto: drawn = { pick, spell("CopyTo", rule.value) };        paint = "Union";    return true;
         case said_as::tiled_along:
-            drawn = { pick, spell(rule.value >= 32 ? "TileY" : "TileX", rule.value % 32) + onto_words(rule) };
+            drawn = { pick, spell(paint_value::second(rule.value) ? "TileY" : "TileX", paint_value::number(rule.value)) + onto_words(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::turned_copy: {

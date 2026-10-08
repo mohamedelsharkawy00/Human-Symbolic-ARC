@@ -5,9 +5,19 @@ This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 199 right, 0 wrong. Current run: out/helpers/ (out\ is not in
-  git). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8, 199 at abc3f0b.
-- The last session simplified files 0-11 upstream to downstream, 226 fewer
+- Training: 199 right, 0 wrong. Current run: out/word_groups/ (out\ is not
+  in git). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8, 199 at abc3f0b.
+- The last session grouped the words: group_of in 7_infer, just above
+  carry_the_hand, puts each fired_rule::said_as kind in one word_group
+  (recolors, changes_pieces, removes, paints, whole_program); a
+  static_assert checks every kind has one (kind_count ends the enum). It
+  replaces paints_after_the_line (6), reshapes, moves_a_pick and moves_cells
+  (finish_the_line), and gates beats_of and drawn_after (9_sentences).
+  paint_value names the +32 packing of rays and repeats. 199 right, 0 wrong,
+  gained 0, lost 0; every program and all 1000 readouts byte-for-byte
+  unchanged. Net source: 25 more lines. A first try, word_for (a full row
+  per kind: op, argument, landing), added more and was dropped.
+- The previous session simplified files 0-11 upstream to downstream, 226 fewer
   source lines, every step a full build and a score: 199 right, 0 wrong,
   every program and all 1000 readouts byte-for-byte unchanged, but where a
   step renumbered on purpose:
@@ -62,15 +72,12 @@ uses it, global before local. Estimates are rough.
    changes which plans are read). says_the_most picks the plan now, so the
    election only proposes plans; the veto, the per-pair majority and
    is_per_pair_raw (a copy of is_per_pair) may go.
-2. The word table (~150): one row per kind of fired_rule::said_as. In
-   6_correspondence the kind, the missing word it answers and the freedom it
-   is said under (read_the_acts, said_under); in 7_infer, its first use, the
-   op, how `value` is packed (the `+32` and `/ PARTNER_KINDS` tricks), the
-   flags paints after the line / moves / reshapes / recolors, and the names.
-   Replaces paints_after_the_line, reshapes, changes, moves_cells,
-   moves_a_pick, most of beats_of and drawn_after in 9_sentences, and the
-   name lists (partners, mirrors, how_far, lined_up, reaches, laid_words,
-   keys_named).
+2. Word table: done as word groups (above); the ~150 lines it was
+   estimated to save were not there. Left: the matching's missing-word and
+   freedom mapping (read_the_acts, said_under) belongs in 6 at its first
+   use; the partner value packing (value / PARTNER_KINDS) belongs with its
+   shared arithmetic. The local name arrays each have one owner already;
+   move them only when a second reader needs them.
 3. Replays return one result (~80): a `replayed` (the cells it says, the
    cells the pieces stood on, how many pieces, its paint, every piece
    picked) and a `cells_by_pair` alias for the type spelled 53 times, in
@@ -79,7 +86,7 @@ uses it, global before local. Estimates are rough.
    pieces.
 4. One pattern for the line's 15 kinds in finish_the_line (~200): each
    repeats gate, picks, handed pieces, values, replay, weigh, offer, say.
-   After 2 and 3.
+   After the shared replay result in 3.
 5. One mechanism for a rule that redraws every output by itself (~60):
    today the rivals (own_sentences, list_the_rivals, say_rival) and the
    whole-line rules (whole_line, and six branches in say_the_cut).

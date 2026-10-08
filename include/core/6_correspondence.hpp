@@ -259,9 +259,9 @@ struct correspondence_election {
         // with that partner's rows or columns, or drawn again mirrored around its
         // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
         // diagonals for `value` past 32 and otherwise up, down and to the sides,
-        // `value` % 32 long, painted `paint`; the bars bridged between pieces of
-        // one color or the hollows filled, in `paint` or their own for -1; or
-        // hollowed to the outline; or the pieces a pick by holes or by size takes,
+        // `value` % 32 long, painted `paint` (paint_value); the bars bridged between
+        // pieces of one color or the hollows filled, in `paint` or their own for -1;
+        // or hollowed to the outline; or the pieces a pick by holes or by size takes,
         // recolored to `value`; or the picked pieces removed, slid to the edge,
         // moved their own size or grown a trail the way heading `value` names,
         // their boxes filled in `paint`,
@@ -274,24 +274,15 @@ struct correspondence_election {
         // of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
-        // program of its own, the one numbered `value`.
+        // program of its own, the one numbered `value`. 7_infer groups the kinds by
+        // what they change (group_of); 9_sentences spells them.
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
                                 shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
-                                turned_copy, move_toward, shape_recolor, own_sentences } as = unsaid;
-        // WHETHER IT IS A PAINT SAID AFTER THE LINE: it draws off the pieces the
-        // cut hands over -- rays, bars, filled hollows, trails, filled boxes,
-        // copies, repeats, turned copies -- and moves, turns or recolors none.
-        bool paints_after_the_line() const {
-            switch (as) {
-                case extend_rays: case bridged: case filled: case trailed: case boxed:
-                case copied_onto: case tiled_along: case turned_copy: return true;
-                default: return false;
-            }
-        }
+                                turned_copy, move_toward, shape_recolor, own_sentences, kind_count } as = unsaid;
         int8_t value = 0;
         piece_pick pick = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.

@@ -5081,6 +5081,52 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
     return true;
 }
 
+// Each word belongs to one group. Acts change the hand; paints draw from the
+// cut again; whole-program rules have their own spelling. The act groups say
+// which later picks remain usable. No group carries another group's fields.
+enum class word_group { unsaid, recolors, changes_pieces, removes, paints, whole_program };
+inline constexpr word_group group_of(correspondence_election::fired_rule::said_as kind) {
+    using rule = correspondence_election::fired_rule;
+    switch (kind) {
+        // Acts: only the colors change.
+        case rule::recolor: case rule::swap_colors: case rule::size_rank:
+        case rule::color_from: case rule::recolor_picked: case rule::shape_recolor:
+            return word_group::recolors;
+        // Acts: pieces move, turn, change shape, or gain copies. Learned-table
+        // compositions keep the old gate: their hand cannot yet be carried.
+        case rule::turn: case rule::move_down: case rule::move_across:
+        case rule::learned_table: case rule::align_to: case rule::mirror_around:
+        case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
+            return word_group::changes_pieces;
+        case rule::removed: return word_group::removes;
+        // Paints: the hand on the line is left alone.
+        case rule::extend_rays: case rule::bridged: case rule::filled: case rule::trailed:
+        case rule::boxed: case rule::copied_onto: case rule::tiled_along: case rule::turned_copy:
+            return word_group::paints;
+        // These rules redraw the whole output and spell their own programs.
+        case rule::diagonal_tile: case rule::piece_slam: case rule::corner_chain:
+        case rule::slide_to_touch: case rule::project_on_seeds: case rule::snap_to_anchors:
+        case rule::own_sentences: return word_group::whole_program;
+        case rule::unsaid: case rule::kind_count: return word_group::unsaid;
+    }
+    return word_group::unsaid;
+}
+static_assert([] {
+    using rule = correspondence_election::fired_rule;
+    for (int kind = rule::unsaid + 1; kind < rule::kind_count; ++kind)
+        if (group_of((rule::said_as)kind) == word_group::unsaid) return false;
+    return true;
+}(), "every word belongs to a group; duplicate entries fail the switch");
+
+// Rays and repeats keep a length/period below 32, plus 32 for the second
+// direction. This is their stored value, not the argument written in the DSL.
+struct paint_value {
+    static constexpr int direction_bit = 32;
+    static constexpr int packed(bool second, int number) { return (second ? direction_bit : 0) + number; }
+    static constexpr bool second(int stored) { return stored >= direction_bit; }
+    static constexpr int number(int stored) { return stored % direction_bit; }
+};
+
 // THE REST OF THE ELECTED CUT'S LINE, after its own acts: a rule read off the
 // cut's own pieces that drew every output by itself, or else the words its
 // recolor is said with and what it has no word for. Listed on the reading under
@@ -5327,14 +5373,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         };
     };
 
-    auto reshapes = [](const rule& step) {
-        switch (step.as) {
-            case rule::turn: case rule::move_down: case rule::move_across: case rule::learned_table:
-            case rule::align_to: case rule::to_edge: case rule::shifted: case rule::mirror_around:
-            case rule::outlined: case rule::move_toward: return true;
-            default: return false;
-        }
-    };
     // What changes a pick by color: a word on the line that moves, turns or
     // recolors the pieces of that color, or turns another color into it.
     auto changes = [](const rule& step, int color) {
@@ -5347,10 +5385,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                 const auto [first, second] = color_pair::from_index(step.value);
                 return first == color || second == color;
             }
-            default:                return !step.paints_after_the_line();
+            default:                return group_of(step.as) != word_group::paints;
         }
     };
-    auto moves_a_pick = [&](const rule& step) { return reshapes(step) || step.as == rule::removed; };
 
     // THE WORDS READ OFF THE PIECES, THE ONE THAT SAYS THE MOST FIRST. Each kind --
     // a color taken from a partner, a move, a mirrored copy, an outline, a recolor
@@ -5551,7 +5588,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // only of a line nothing on it moves or reshapes a piece, and the color most
     // cells wear, which a recolor changes, only of a bare line.
     auto recolor_word = [&]() -> offer {
-        if (!facts.hand_known && ranges::any_of(read.line, [&](int8_t which) { return reshapes(read.fired[which]); }))
+        if (!facts.hand_known && ranges::any_of(read.line, [&](int8_t which) {
+                return group_of(read.fired[which].as) == word_group::changes_pieces; }))
             return {};
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, 0, starts_from(missing::a_recolor))) {
@@ -5663,7 +5701,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
             else if (pick.how == piece_pick::most_common)
                 may = read.line.empty();
             else if (pick.how >= 0)
-                may = ranges::none_of(read.line, [&](int8_t which) { return moves_a_pick(read.fired[which]); });
+                may = ranges::none_of(read.line, [&](int8_t which) {
+                    const auto group = group_of(read.fired[which].as);
+                    return group == word_group::changes_pieces || group == word_group::removes; });
             else
                 for (int color = 0; color < COLOR_COUNT && may; ++color)
                     may = !(pick.colors >> color & 1) ||
@@ -5754,18 +5794,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     };
     // Whether the line leaves every piece where the cut finds it: none of its
     // words moves, reshapes or removes one, though it may recolor them.
-    auto moves_cells = [](const rule& step) {
-        switch (step.as) {
-            case rule::recolor:
-            case rule::swap_colors:
-            case rule::size_rank:
-            case rule::color_from:
-            case rule::recolor_picked:
-            case rule::shape_recolor:  return false;
-            default:                   return !step.paints_after_the_line();
-        }
-    };
-    const bool still = ranges::none_of(read.line, [&](int8_t which) { return moves_cells(read.fired[which]); });
+    const bool still = ranges::all_of(read.line, [&](int8_t which) {
+        const auto group = group_of(read.fired[which].as);
+        return group == word_group::recolors || group == word_group::paints; });
     // WHAT IS DOWN WHERE A PAINT LANDS: the cut's pieces, which a still line
     // leaves where they lie, and every paint said before it. Laid under it or
     // only onto it, a paint reads it, so those two ways are asked only of a still
@@ -5822,7 +5853,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     const auto rays = row_of(node_type::ExtendOrthogonal);
     static_assert(row_of(node_type::ExtendOrthogonal).low == row_of(node_type::ExtendDiagonal).low &&
                   row_of(node_type::ExtendOrthogonal).high == row_of(node_type::ExtendDiagonal).high &&
-                  row_of(node_type::ExtendDiagonal).high < 32,
+                  row_of(node_type::ExtendDiagonal).high < paint_value::direction_bit,
                   "one ray length is said the same both ways round, and fits under the diagonal's 32");
     auto ray_paint = [&]() -> offer {
         heard best;
@@ -5838,7 +5869,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                                        every_piece))
                             continue;
                         const int before = best.said;
-                        weigh_paint(best, (diagonal ? 32 : 0) + radius, draw_picks[at], every_piece, paint,
+                        weigh_paint(best, paint_value::packed(diagonal, radius), draw_picks[at], every_piece, paint,
                               covered_claims(drawn), drawn);
                         if (best.said > before) best_lay = lay;
                     }
@@ -5846,8 +5877,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         return { best.said, [&, best, best_lay] {
             const bool own = best.pick.how < 0 && best.pick.colors == (uint16_t)(1u << best.paint);
             const int8_t said = say_paint(best, rule::extend_rays,
-                string("grows rays ") + (best.value >= 32 ? "along the diagonals" : "up, down and to the sides") + ", " +
-                    to_string(best.value % 32) + " long, in " +
+                string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") + ", " +
+                    to_string(paint_value::number(best.value)) + " long, in " +
                     (own ? string("its own color") : "color " + to_string(best.paint)) + laid_words[best_lay]);
             read.fired[said].lay = best_lay; } };
     };
@@ -5897,7 +5928,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     const auto tiles = row_of(node_type::TileX);
     static_assert(row_of(node_type::TileX).low == row_of(node_type::TileY).low &&
                   row_of(node_type::TileX).high == row_of(node_type::TileY).high &&
-                  row_of(node_type::TileY).high < 32,
+                  row_of(node_type::TileY).high < paint_value::direction_bit,
                   "one period is said the same both ways round, and fits under the columns' 32");
     auto repeat_paint = [&]() -> offer {
         heard best;
@@ -5911,15 +5942,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
                         if (!tile_holds(opened, handed_by_pick[at], canvas, down, period, lay, drawn, every_piece))
                             continue;
                         const int before = best.said;
-                        weigh_paint(best, (down ? 32 : 0) + period, draw_picks[at], every_piece, -1, covered_claims(drawn),
+                        weigh_paint(best, paint_value::packed(down, period), draw_picks[at], every_piece, -1, covered_claims(drawn),
                               drawn);
                         if (best.said > before) best_lay = lay;
                     }
         if (best.value < 0) return {};
         return { best.said, [&, best, best_lay] {
             const int8_t said = say_paint(best, rule::tiled_along,
-                "is repeated every " + to_string(best.value % 32) + " cells " +
-                    (best.value >= 32 ? "down its columns" : "along its rows") + laid_words[best_lay]);
+                "is repeated every " + to_string(paint_value::number(best.value)) + " cells " +
+                    (paint_value::second(best.value) ? "down its columns" : "along its rows") + laid_words[best_lay]);
             read.fired[said].lay = best_lay; } };
     };
 
