@@ -159,8 +159,9 @@ inline void report_shape_color_map(ostream& report, const shape_color_map_rule& 
       << " count " << rule.count
       << " claimed_by " << claimed_name[rule.claimed_by] << "\n";
     for (int i = 0; i < rule.count; ++i)
-        report << "shape " << rule.keys[i]
+        report << "key " << rule.keys[i]
           << " -> color " << (int)rule.colors[i] << "\n";
+    if (rule.otherwise >= 0) report << "any other key -> color " << (int)rule.otherwise << "\n";
     // Read off the elected reading: which of its pieces keyed which, as the
     // pairs below number them.
     for (size_t which = 0; which < rule.read.size(); ++which) {
@@ -596,10 +597,14 @@ inline void log_inference(const string& id, const inference& inf,
     report << "[snap_to_anchors] holds " << inf.snap_to_anchors.holds() << "\n\n";
     report << "[piece_frame] holds " << inf.frame.holds();
     static constexpr const char* frame_kinds[] = { "cut out", "scaled up", "scaled down", "tiled", "posed",
-                                                   "fractal", "repeat unit", "laid out" };
+                                                   "fractal", "repeat unit", "laid out", "filled" };
     if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::laid_out)
         report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
                << "  cell " << (int)inf.frame.factor;
+    else if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::filled)
+        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << inf.frame.colors
+               << "  how " << (int)inf.frame.how << "  value " << (int)inf.frame.value << "  keyed "
+               << (int)inf.frame.keyed;
     else if (inf.frame.holds() && inf.frame.kind != piece_frame_rule::cut_out)
         report << "  " << frame_kinds[inf.frame.kind] << "  factor " << (int)inf.frame.factor;
     else if (inf.frame.holds())

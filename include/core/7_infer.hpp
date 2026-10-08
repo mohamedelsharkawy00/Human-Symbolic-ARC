@@ -368,12 +368,7 @@ inline vector<object> pieces_of(const grid& input, int8_t background,
 }
 
 // Maps shapes to colors (rejected if any shape needs two different colors).
-struct shape_color_map_rule {
-    static constexpr int MAX_KEYS = 16;
-    uint32_t keys[MAX_KEYS]   = {};  // canonical_shape_hash: a shape, whichever way round
-    int8_t   colors[MAX_KEYS] = {};  // the color that shape names
-    int      count = 0;
-    bool holds() const { return count > 0; }
+struct shape_color_map_rule : shape_table {
     // WHO FILLED IT. The readers share this storage and mean different things by
     // it: body_recolor repaints a piece in the color its shape names
     // (ShapeColorMap), interior_fill paints the hole inside one (ShapeTo-
@@ -456,7 +451,7 @@ struct shape_color_map_rule {
                 },
                 [&](int j) { return j == target; });
             if (nearest != key) return {};
-            if (!rule.learn(shape_of(cut[key]), became)) return {};
+            if (!rule.learn(key_of(shape_key::shape, cut[key]), became)) return {};
             rule.read.push_back({ (int16_t)key, (int16_t)target, became });
         }
         if (!changed) return {};
@@ -525,31 +520,86 @@ struct shape_color_map_rule {
         return rule;
     }
 
-    // THE TABLE'S KEY FOR A PIECE: its shape, whichever way round it lies
-    // (canonical_shape_hash, the key the ops look up).
-    static uint32_t shape_of(const object& piece) {
-        return canonical_shape_hash(piece.summary.w, piece.summary.h, [&](int row, int col) {
-            return piece.cells[row][col] != (int8_t)TRANSPARENT; });
+    // THE TABLE'S KEY FOR A PIECE, of the kind ShapeColorMap's value names: its
+    // shape, whichever way round it lies, or its symmetry (shape_key_of, the key
+    // the ops look up).
+    static uint32_t key_of(shape_key kind, const object& piece) {
+        return shape_key_of((int)kind, piece.summary.w, piece.summary.h,
+                            [&](int row, int col) { return piece.cells[row][col]; });
     }
-    // The color the table names for a piece's shape, or -1 where it names none.
-    int color_of(const object& piece) const {
-        const uint32_t shape = shape_of(piece);
-        for (int i = 0; i < count; ++i)
-            if (keys[i] == shape) return colors[i];
-        return -1;
-    }
+    // The color the table names for a piece's key, as the ops look it up.
+    using shape_table::color_of;
+    int color_of(shape_key kind, const object& piece) const { return color_of(key_of(kind, piece)); }
 
-    // Remembers which color goes with this shape. Returns false if the shape gets conflicting colors.
-    bool learn(uint32_t shape, int8_t color) {
-        for (int i = 0; i < count; ++i)
-            if (keys[i] == shape) return colors[i] == color;
-        if (count >= MAX_KEYS) return false;
-        keys[count] = shape;
-        colors[count] = color;
-        count++;
-        return true;
+    // A KEY THE PAIRS SHOW: a picked piece's key, the one color it came out in,
+    // the pairs it is seen in, a bit each, and whether an input it is seen in
+    // shows that color anywhere.
+    struct seen_key { uint32_t key; int8_t color; uint32_t pairs; bool shown; };
+    // The colors a grid shows, a bit each.
+    static uint16_t colors_shown(const grid& one) {
+        uint16_t shown = 0;
+        for (int row = 0; row < one.height; ++row)
+            for (int col = 0; col < one.width; ++col)
+                if (is_color(one.data[row][col])) shown = (uint16_t)(shown | 1u << one.data[row][col]);
+        return shown;
+    }
+    // Notes that `key` came out in `color` in pair `which`, whose input shows
+    // the colors `shown`; false where it came out in another color before,
+    // which no table says.
+    static bool see(vector<seen_key>& seen, uint32_t key, int8_t color, size_t which, uint16_t shown) {
+        const uint32_t pair = 1u << min<size_t>(which, 31);
+        const bool shows = (shown >> color & 1) != 0;
+        const auto known = ranges::find(seen, key, &seen_key::key);
+        if (known == seen.end()) {
+            seen.push_back({ key, color, pair, shows });
+            return true;
+        }
+        known->pairs |= pair;
+        known->shown = known->shown || shows;
+        return known->color == color;
+    }
+    // THE TABLE THE PAIRS SHOW, or one that does not hold. A key seen in one pair
+    // only is that pair's own piece, not a rule (b230c067's twins, a new pair in
+    // every pair), so the table names the keys seen in two pairs at least -- and
+    // beside them a key seen in one pair whose color only the table can say: no
+    // other key comes out in it, so the color says the key and not something
+    // else about the piece (b230c067's twins all come out 1, whatever their
+    // shape), and its input shows that color nowhere, so no piece wearing it
+    // says it instead (ef26cbf6's and b7256dcd's markers; 27a28665's plus, 6,
+    // beside three shapes each seen twice). The keys seen in one pair and not
+    // named may still all come out in one color, itself seen in two pairs at
+    // least, and that is then the color of every key the table does not name
+    // (25d8a9c8: a full row 5, any other shape 0, though its square and its L
+    // are each seen in one pair). A table naming no key at all is one color for
+    // everything, which is no table.
+    static shape_color_map_rule read_off(const vector<seen_key>& seen) {
+        auto in_two_pairs = [](uint32_t pairs) { return popcount(pairs) >= 2; };
+        const bool repeats = ranges::any_of(seen, [&](const seen_key& one) { return in_two_pairs(one.pairs); });
+        auto named = [&](const seen_key& one) {
+            return in_two_pairs(one.pairs) ||
+                   (repeats && !one.shown && ranges::count(seen, one.color, &seen_key::color) == 1);
+        };
+        // The one color the keys not named come out in: -2 until one is read,
+        // -1 once two disagree.
+        int lone = -2;
+        uint32_t wearing = 0;
+        for (const seen_key& one : seen)
+            if (!named(one)) lone = lone == -2 || lone == one.color ? one.color : -1;
+        for (const seen_key& one : seen)
+            if (one.color == lone) wearing |= one.pairs;
+        if (lone == -1 || (lone >= 0 && !in_two_pairs(wearing))) return {};
+        shape_color_map_rule table;
+        table.otherwise = (int8_t)max(lone, -1);
+        // Every key named that the color of the rest does not already say.
+        for (const seen_key& one : seen)
+            if (named(one) && one.color != table.otherwise && !table.learn(one.key, one.color))
+                return {};
+        if (table.holds()) table.claimed_by = body_recolor;
+        return table;
     }
 };
+static_assert(row_of(node_type::ShapeColorMap).high + 1 == (int)shape_key::count,
+              "ShapeColorMap takes one value for each key a learned table knows a piece by");
 
 // A repeating pattern carried across the whole output, with its colors remapped.
 struct motif_continuation_rule {
@@ -3213,10 +3263,11 @@ struct corner_crop_rule {
 // whole input scaled up `factor` times, scaled down `factor` times by the
 // vote, tiled over the canvas, turned to the pose `factor` names, made into a
 // fractal of itself, or reduced to the unit it repeats; or the pieces a pick
-// takes laid out on graph paper of cells `factor` wide, by the bands they sit in.
+// takes laid out on graph paper of cells `factor` wide, by the bands they sit in;
+// or the canvas filled with the one color the pieces a pick takes come out in.
 struct piece_frame_rule {
     enum kind_of : int8_t { cut_out, scaled_up, scaled_down, tiled, posed, fractal, repeat_unit,
-                            laid_out } kind = cut_out;
+                            laid_out, filled } kind = cut_out;
     int8_t factor = 0;
     bool held = false;
     // Whether the pick takes several pieces in some pair, cut out together:
@@ -3226,6 +3277,9 @@ struct piece_frame_rule {
     // The pick, as piece_pick holds it: its colors a bit each, or a kind of pick.
     uint16_t colors = 0;
     int8_t how = -1, value = 0;
+    // What the filled canvas's color is read off: each piece's own color, -1, or
+    // the color the puzzle's table names for its key of this kind (shape_key).
+    int8_t keyed = -1;
     bool holds() const { return held; }
 };
 
@@ -3361,11 +3415,29 @@ inline void list_the_rivals(inference& inf) {
 // (object_hole_count, the count SelectObjectsWithHoles makes), or the one `value`
 // down the order of painted cells, largest or smallest first, ties keeping the
 // order the pieces came in -- the insertion sort SelectLargestObject and
-// SelectSmallestObject run -- or every one painting at least `value` cells, or
-// fewer.
+// SelectSmallestObject run -- or the first `value` of that order, one selector
+// a rank, or every one but those, or every one painting at least `value`
+// cells, or fewer, or every one with a cell on the row or the column `value`
+// lines past the middle of all the pieces paint (line_from_middle), or every
+// one but those.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
     using rule = correspondence_election::fired_rule;
     vector<bool> picked(pieces.size(), false);
+    if (how == rule::middle_row || how == rule::not_middle_row || how == rule::middle_column ||
+        how == rule::not_middle_column) {
+        const bool rows = how == rule::middle_row || how == rule::not_middle_row;
+        int lo = MAX_GRID_DIM * 2, hi = -MAX_GRID_DIM * 2;
+        for (const object& piece : pieces)
+            piece.each_cell([&](int row, int col, int8_t) {
+                lo = min(lo, rows ? row : col);
+                hi = max(hi, rows ? row : col);
+            });
+        const int line = line_from_middle(lo, hi, value);
+        for (size_t i = 0; i < pieces.size() && line >= 0; ++i)
+            pieces[i].each_cell([&](int row, int col, int8_t) { picked[i] = picked[i] || (rows ? row : col) == line; });
+        if (how == rule::not_middle_row || how == rule::not_middle_column) picked.flip();
+        return picked;
+    }
     if (how == rule::most_common || how == rule::not_most_common) {
         // The color most of the pieces' cells wear, the lowest on a tie, and every
         // piece wearing it -- the count SelectMostCommonColor makes -- or, turned
@@ -3420,12 +3492,17 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     }
     vector<int> order(pieces.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
-    const bool largest = how == rule::largest;
+    const bool largest = how == rule::largest || how == rule::largest_ranks || how == rule::not_largest_ranks;
     stable_sort(order.begin(), order.end(), [&](int one, int other) {
         return largest ? pieces[one].summary.count > pieces[other].summary.count
                        : pieces[one].summary.count < pieces[other].summary.count;
     });
-    if (value >= 0 && value < (int)order.size()) picked[order[value]] = true;
+    if (how == rule::largest || how == rule::smallest) {
+        if (value >= 0 && value < (int)order.size()) picked[order[value]] = true;
+        return picked;
+    }
+    for (int rank = 0; rank < value && rank < (int)order.size(); ++rank) picked[order[rank]] = true;
+    if (how == rule::not_largest_ranks || how == rule::not_smallest_ranks) picked.flip();
     return picked;
 }
 
@@ -3462,6 +3539,14 @@ struct piece_places {
         return partner_of(how, i, count(), [&](int j) { return boxes[j]; },
                           [&](int j, int row, int col) { return painted(j, row, col); },
                           [&](int j) { return (bool)picked[j]; });
+    }
+    // Whether piece i has any partner by `how` among them, one or several.
+    bool partnered(partner_by how, int i, const vector<bool>& picked) const {
+        bool any = false;
+        each_partner(how, i, count(), [&](int j) { return boxes[j]; },
+                     [&](int j, int row, int col) { return painted(j, row, col); },
+                     [&](int j) { return (bool)picked[j]; }, [&](int) { any = true; });
+        return any;
     }
     // Whether piece i would fit into a gap of that one partner.
     bool fits(partner_by how, int i, const vector<bool>& picked) const {
@@ -3508,6 +3593,8 @@ struct partner_pieces : piece_places {
     bool every_piece_picked() const { return ranges::all_of(picked, [](bool one) { return one; }); }
     // Piece i's one partner by `how` among the pieces not picked, or -1.
     int partner(partner_by how, int i) const { return piece_places::partner(how, i, picked); }
+    // Whether piece i has any partner by `how` among them.
+    bool partnered(partner_by how, int i) const { return piece_places::partnered(how, i, picked); }
     // Whether piece i holds a cell of `color`.
     bool holds(int i, int color) const {
         bool found = false;
@@ -3668,6 +3755,52 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (const int8_t how : { (int8_t)rule::at_least_cells, (int8_t)rule::fewer_cells })
             picks.push_back({ 0, how, (int8_t)value });
     }
+    // The first so many by size, largest or smallest first, and every piece but
+    // those (9caf5b84: every color but the two most common becomes 7), each asked
+    // only where in every pair the order parts there, the last piece taken
+    // painting more cells than the first left -- or fewer -- so no tie the order
+    // the pieces came in breaks says which. The first one alone is the pick by
+    // size above, so the first so many are asked from two.
+    for (const bool largest : { true, false })
+        for (int value = 1; value <= ranks.high + 1; ++value) {
+            if (!ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
+                    if ((int)cut.size() <= value) return false;
+                    vector<int> counts;
+                    for (const object& piece : cut) counts.push_back(piece.summary.count);
+                    if (largest) ranges::sort(counts, greater<>());
+                    else ranges::sort(counts);
+                    return counts[(size_t)value - 1] != counts[(size_t)value];
+                }))
+                continue;
+            if (value >= 2) picks.push_back({ 0, largest ? rule::largest_ranks : rule::smallest_ranks, (int8_t)value });
+            picks.push_back({ 0, largest ? rule::not_largest_ranks : rule::not_smallest_ranks, (int8_t)value });
+        }
+    // The row or the column so many lines past the middle of all the pieces
+    // paint, and every piece but those (d23f8c26 keeps its middle column), the
+    // middle first and then out a line at a time, each asked only where every
+    // pair has that line and it splits some pair's pieces: one at least taken
+    // there and one left.
+    constexpr auto from_middle = row_of(node_type::SelectRowFromMiddle);
+    static_assert(from_middle.high == (MAX_GRID_DIM - 1) / 2 && from_middle.low == -from_middle.high &&
+                  row_of(node_type::SelectColumnFromMiddle).low == from_middle.low &&
+                  row_of(node_type::SelectColumnFromMiddle).high == from_middle.high,
+                  "a line from the middle reaches either edge of the largest grid");
+    for (const bool rows : { true, false })
+        for (int at = 0; at <= 2 * from_middle.high; ++at) {
+            // 0, -1, 1, -2, 2, ...
+            const int value = (at + 1) / 2 * (at % 2 ? -1 : 1);
+            const int8_t how = rows ? rule::middle_row : rule::middle_column;
+            bool every = true, splits = false;
+            for (const auto& cut : facts.cuts) {
+                const vector<bool> taken = picked_pieces(cut, how, value);
+                const bool some = ranges::find(taken, true) != taken.end();
+                every = every && some;
+                splits = splits || (some && ranges::find(taken, false) != taken.end());
+            }
+            if (!every || !splits) continue;
+            picks.push_back({ 0, how, (int8_t)value });
+            picks.push_back({ 0, rows ? rule::not_middle_row : rule::not_middle_column, (int8_t)value });
+        }
     // A fit is asked only where it is at work in every pair: it keeps one piece
     // of the color at least and drops one, or the color alone says as much.
     for (int color = 0; color < COLOR_COUNT; ++color) {
@@ -3727,17 +3860,28 @@ inline bool shows_what_it_frames(const grid& drawing, int height, int width) {
     return half_turn || (cut_across ? across_mirror : down_mirror);
 }
 
+// Whether a pick by size took piece `one` on a tie with a piece that draws
+// something else: the op breaks the tie by where the pieces lie, so what it
+// takes is the order's to say and not the rule's.
+inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick, int one) {
+    using rule = correspondence_election::fired_rule;
+    if (pick.how != rule::largest && pick.how != rule::smallest) return false;
+    for (size_t i = 0; i < pieces.size(); ++i)
+        if ((int)i != one && pieces[i].summary.count == pieces[one].summary.count &&
+            !same_drawing(pieces[i], pieces[one]))
+            return true;
+    return false;
+}
+
 // THE INPUT FRAMED: the pieces a pick takes, moved as one to the corner of the
 // canvas the size rule gives, and ground everywhere else -- what the frame's
 // words leave on the canvas. Several go together, keeping their places to each
 // other, as UnionList merges them; `several` says whether this pair's pick took
 // more than one. False when the pick takes no piece; when the canvas does not
 // show what it frames (shows_what_it_frames); and when a pick by size lands on a
-// tie with a piece that draws something else, since the op breaks the tie by
-// where the pieces lie and the crop would be of whichever came first.
+// tie (size_pick_ties), since the crop would be of whichever came first.
 inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, const grid& input,
                          const output_dimension_rule& size, int8_t ground_out, grid& framed, bool& several) {
-    using rule = correspondence_election::fired_rule;
     const vector<bool> picked = picked_pieces(pieces, pick);
     cell_box box;
     int taken = 0, one = -1;
@@ -3750,12 +3894,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
         box.include_cell(at.y0 + at.h - 1, at.x0 + at.w - 1);
     }
     several = taken > 1;
-    if (taken == 0) return false;
-    if (pick.how == rule::largest || pick.how == rule::smallest)
-        for (size_t i = 0; i < pieces.size(); ++i)
-            if ((int)i != one && pieces[i].summary.count == pieces[one].summary.count &&
-                !same_drawing(pieces[i], pieces[one]))
-                return false;
+    if (taken == 0 || size_pick_ties(pieces, pick, one)) return false;
     grid drawing(box.width(), box.height());
     drawing.fill(TRANSPARENT);
     for (size_t i = 0; i < pieces.size(); ++i)
@@ -3830,6 +3969,37 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
         for (int row = 0; row < paper.height && row < canvas.height; ++row)
             for (int col = 0; col < paper.width && col < canvas.width; ++col)
                 if (paper.data[row][col] != TRANSPARENT) canvas.data[row][col] = paper.data[row][col];
+        return true;
+    });
+}
+
+// THE CANVAS FILLED, as the filled frame's words leave it: the pieces a pick
+// takes, each recolored by the puzzle's table where `keyed` names a key
+// (ShapeColorMap[keyed]), filled to its box with its most common color
+// (AddColor[11]) and stretched over the canvas the size rule gives (Fit[1]),
+// laid in turn. Held only where every piece the pick takes comes out in one
+// color, the same for all, so the canvas is that color whichever lies last;
+// false when the pick takes no piece, or a pick by size lands on a tie
+// (size_pick_ties).
+inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, int8_t keyed,
+                         const shape_color_map_rule& table, const grid& input, const output_dimension_rule& size,
+                         grid& framed) {
+    const vector<bool> picked = picked_pieces(pieces, pick);
+    int color = -1, one = -1;
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        if (!picked[i]) continue;
+        one = (int)i;
+        // The one color the piece comes out in: -2 until a cell is read, -1 once
+        // two disagree.
+        int worn = -2;
+        if (keyed >= 0) worn = table.color_of((shape_key)keyed, pieces[i]);
+        else pieces[i].each_cell([&](int, int, int8_t was) { worn = worn == -2 || worn == was ? was : -1; });
+        if (!is_color(worn) || (color >= 0 && worn != color)) return false;
+        color = worn;
+    }
+    if (!is_color(color) || size_pick_ties(pieces, pick, one)) return false;
+    return draw_on_canvas(input, size, TRANSPARENT, framed, [&](grid& canvas) {
+        canvas.fill((int8_t)color);
         return true;
     });
 }
@@ -3927,10 +4097,12 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
 // holes, size, band and the color most cells wear -- the one whose framed
 // inputs share the most cells with their outputs, counted in the pair that
 // shares the fewest; a tie goes to the cut and the pick asked first. And ahead
-// of them the whole input scaled or tiled, where the size rule scales it. Asked
-// only of a size change, and held only where the frame lands on the output's
-// size in every pair.
-inline piece_frame_rule choose_piece_frame(const vector<example>& train, const inference& inf) {
+// of them the whole input scaled or tiled, where the size rule scales it; and
+// after them all the canvas filled in one color. Asked only of a size change,
+// and held only where the frame lands on the output's size in every pair. A
+// filled frame that reads its color off a table read off the pairs makes that
+// the puzzle's table (inf.shape_color_map), the one ShapeColorMap looks up.
+inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf) {
     if (train.empty() || inf.size.Chosen == output_dimension_rule::Identity) return {};
     // The framed grid is of figures: no ground is filled into it, so what a
     // frame leaves unpainted is empty (draw_on_canvas).
@@ -4008,14 +4180,19 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, const i
         weigh(frame, [&](size_t which, grid& framed) {
             return framed_whole(train[which].input, frame, inf.size, TRANSPARENT, TRANSPARENT, framed);
         });
-    for (const segmentation_methods cut : { segmentation_methods::connected_multicolor,
-                                            segmentation_methods::connected_monochrome,
-                                            segmentation_methods::all_cells_of_one_color }) {
-        const replay_facts facts(train, {}, {}, cut);
-        // Every piece first, then each color on its own, then the picks by kind.
+    static constexpr segmentation_methods frame_cuts[] = { segmentation_methods::connected_multicolor,
+                                                           segmentation_methods::connected_monochrome,
+                                                           segmentation_methods::all_cells_of_one_color };
+    // Every piece first, then each color on its own, then the picks by kind.
+    auto picks_of = [&](const replay_facts& facts) {
         vector<piece_pick> picks = { { every_color } };
         for (int color = 0; color < COLOR_COUNT; ++color) picks.push_back({ (uint16_t)(1u << color) });
         for (const piece_pick& pick : picks_to_ask(facts, 0)) picks.push_back(pick);
+        return picks;
+    };
+    for (const segmentation_methods cut : frame_cuts) {
+        const replay_facts facts(train, {}, {}, cut);
+        const vector<piece_pick> picks = picks_of(facts);
         for (const piece_pick& pick : picks) {
             piece_frame_rule frame;
             frame.held = true;
@@ -4056,6 +4233,72 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, const i
             }
         }
     }
+    // THE CANVAS IN ONE COLOR, the color a word names off the input, where every
+    // output is one color all over: the pieces a pick takes, each in one color --
+    // its own, or the one its shape or its symmetry names in a table read off the
+    // pairs (ShapeColorMap, read_off) -- filled to its box and stretched over the
+    // canvas, as a plan lays its fill (filled_input). Each piece's own color is
+    // asked before a table; a table only while the puzzle has none, and only
+    // where it is at work in every pair: some piece it takes comes out in a
+    // color it did not wear (44f52bb0's picture, 1 where a turn or flip leaves
+    // it as it was, else 7). The size rule gives the canvas, so not under
+    // BoundingBox.
+    const bool one_color = ranges::all_of(train, [](const example& pair) {
+        const int first = pair.output.data[0][0];
+        for (int row = 0; row < pair.output.height; ++row)
+            for (int col = 0; col < pair.output.width; ++col)
+                if (pair.output.data[row][col] != first) return false;
+        return is_color(first);
+    });
+    shape_color_map_rule best_table;
+    if (one_color && inf.size.Chosen != output_dimension_rule::BoundingBox) {
+        const int last_kind = inf.shape_color_map.holds() ? -1 : (int)shape_key::count - 1;
+        vector<uint16_t> shown;
+        for (const example& pair : train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
+        for (const segmentation_methods cut : frame_cuts) {
+            const replay_facts facts(train, {}, {}, cut);
+            for (const piece_pick& pick : picks_of(facts))
+                for (int keyed = -1; keyed <= last_kind; ++keyed) {
+                    shape_color_map_rule table;
+                    if (keyed >= 0) {
+                        vector<shape_color_map_rule::seen_key> seen;
+                        bool learned = true;
+                        for (size_t which = 0; which < train.size() && learned; ++which) {
+                            const int8_t wanted = (int8_t)train[which].output.data[0][0];
+                            const vector<object>& pieces = facts.cuts[which];
+                            const vector<bool> picked = picked_pieces(pieces, pick);
+                            bool at_work = false;
+                            for (size_t i = 0; i < pieces.size() && learned; ++i) {
+                                if (!picked[i]) continue;
+                                learned = shape_color_map_rule::see(
+                                    seen, shape_color_map_rule::key_of((shape_key)keyed, pieces[i]), wanted, which,
+                                    shown[which]);
+                                pieces[i].each_cell([&](int, int, int8_t was) { at_work = at_work || was != wanted; });
+                            }
+                            learned = learned && at_work;
+                        }
+                        if (!learned) continue;
+                        table = shape_color_map_rule::read_off(seen);
+                        if (!table.holds()) continue;
+                    }
+                    piece_frame_rule frame;
+                    frame.kind = piece_frame_rule::filled;
+                    frame.held = true;
+                    frame.cut = cut;
+                    frame.colors = pick.colors;
+                    frame.how = pick.how;
+                    frame.value = pick.value;
+                    frame.keyed = (int8_t)keyed;
+                    const double before = best_share;
+                    weigh(frame, [&](size_t which, grid& framed) {
+                        return filled_input(facts.cuts[which], pick, (int8_t)keyed, table, train[which].input,
+                                            inf.size, framed);
+                    });
+                    if (best_share > before) best_table = table;
+                }
+        }
+    }
+    if (best.kind == piece_frame_rule::filled && best.keyed >= 0) inf.shape_color_map = best_table;
     return best;
 }
 
@@ -4152,12 +4395,21 @@ inline bool paint_holds(const replay_facts& facts, const vector<partner_pieces>&
     return how.in == laying::as_drawn || (is_color(paint) && !facts.is_output_ground(paint));
 }
 
+// The color a recolor's replay names for a piece the op leaves as it is.
+constexpr int8_t LEFT_AS_IT_IS = -2;
+
 // PICKED PIECES REPAINTED WHERE THEY LIE, replayed: what every recolor's replay
 // asks, once. On each pair, `color_of(which, cut, i, color)` says the color
-// picked piece i comes out in, or false where the word cannot say; the piece is
-// then a paint laid over itself in that color (paint_holds). Hands back the
-// cells of the pieces it repainted, pair by pair, how many pieces changed color,
-// and whether it picked every piece.
+// picked piece i comes out in -- LEFT_AS_IT_IS where the word names it none and
+// the op leaves it as it is (ColorFrom's piece with no partner; ShapeColorMap's
+// key the table does not name) -- or false where the word cannot say; the
+// piece is then a paint laid over itself in that color, or in its own colors
+// (paint_holds), so a piece the word leaves as it is has to come out as it
+// was: the word picked it, and does not get to leave it to another (4f537728's
+// blocks in the marker's column, left by "takes the color of a piece in its
+// rows", came out recolored). Hands back the cells of the pieces it repainted,
+// pair by pair, how many pieces changed color, and whether it picked every
+// piece.
 template <class ColorOf>
 inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces>& handed, ColorOf color_of,
                           vector<vector<std::pair<int, int>>>& recolored, int& pieces, bool& every_piece) {
@@ -4170,8 +4422,9 @@ inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces
             if (!color_of(which, cut, i, color)) return false;
             bool changed = false;
             cut.pieces[i].each_cell([&](int row, int col, int8_t was) {
-                put(row, col, color);
-                changed = changed || was != color;
+                const int8_t now = color == LEFT_AS_IT_IS ? was : color;
+                put(row, col, now);
+                changed = changed || was != now;
             });
             pieces += changed;
         }
@@ -4180,12 +4433,18 @@ inline bool recolors_hold(const replay_facts& facts, const vector<partner_pieces
 }
 
 // A PIECE THAT TAKES ITS COLOR FROM ANOTHER, replayed. ColorFrom paints every
-// picked piece in the color of its partner among the rest (recolors_hold).
+// picked piece in the color of its partner among the rest, and leaves one with
+// no partner as it is (recolors_hold: b7256dcd's shape with no dot at its side
+// stays 6). A piece whose partners disagree the op leaves too, but the word
+// cannot say it: which color the rule means there, no pair shows (d23f8c26's
+// middle column, left by "takes the color of a piece in its columns", read as
+// a rule that kept it, and was wrong on its test).
 inline bool color_from_holds(const replay_facts& facts, const vector<partner_pieces>& handed, partner_by how,
                              vector<vector<std::pair<int, int>>>& recolored, int& pieces, bool& every_piece) {
     return recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
-        color = (int8_t)cut.color_from(how, i);
-        return color >= 0;
+        const int worn = cut.color_from(how, i);
+        color = worn >= 0 ? (int8_t)worn : LEFT_AS_IT_IS;
+        return worn >= 0 || !cut.partnered(how, i);
     }, recolored, pieces, every_piece);
 }
 static_assert(row_of(node_type::ColorFrom).high + 1 == (int)partner_by::count,
@@ -4799,7 +5058,7 @@ inline bool interior_fills_hold(const replay_facts& facts, const shape_color_map
     return paint_holds(facts, handed_pieces(facts, { every_color }), { rule::laid_under, &hand },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
         for (const object& piece : cut.pieces) {
-            const int8_t fill = (int8_t)table.color_of(piece);
+            const int8_t fill = (int8_t)table.color_of(shape_key::shape, piece);
             if (fill < 0) continue;
             bool painted = false;
             each_hollow(piece, [&](int row, int col) { put(row, col, fill); painted = true; });
@@ -5144,13 +5403,16 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // every piece, since a test can hold a color no pair did (496994bd).
     static constexpr const char* partners[] = { "the nearest piece", "a piece in its rows",
         "a piece in its columns", "the piece around it", "the piece inside it", "the piece it touches",
-        "the piece of its shape", "the piece of its shape, turned" };
+        "the piece of its shape", "the piece of its shape, turned", "the piece it shares a side with" };
     static_assert(size(partners) == (size_t)partner_by::count);
     static constexpr const char* mirrors[] = { "left to right", "top to bottom", "all four ways" };
     static_assert(size(mirrors) == (size_t)mirror_by::count);
     static constexpr const char* pick_names[] = { "Holes", "Largest", "Smallest", "Row Band", "Column Band",
                                                   "Most Common Color", "Not Most Common Color",
-                                                  "Cells At Least", "Cells Fewer Than" };
+                                                  "Cells At Least", "Cells Fewer Than", "The Largest",
+                                                  "All But The Largest", "The Smallest", "All But The Smallest",
+                                                  "Row From The Middle", "Off The Row From The Middle",
+                                                  "Column From The Middle", "Off The Column From The Middle" };
     static_assert(size(pick_names) == (size_t)rule::pick_kinds);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
@@ -5487,62 +5749,69 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         return { best.said, [&, best] { carry(say(best, rule::recolor_picked, "becomes " + to_string(best.value), colors)); } };
     };
 
-    // A RECOLOR THE PIECES' OWN SHAPES DECIDE: every picked piece takes the color
-    // its shape names, the same shape whichever way round (e8593010's holes: one
-    // cell 3, two 2, three 1) -- ShapeColorMap, its table read off the pairs, one
-    // color a shape. A shape seen on one piece only is the pairs' own piece, not
-    // a rule, so every shape in the table is seen twice at least; and the puzzle
-    // has one table, so this is asked only while nothing else holds it. It
-    // accounts for the cells it recolored.
+    // A RECOLOR THE PIECES' OWN KEYS DECIDE: every picked piece takes the color
+    // its key names -- its shape, the same whichever way round (e8593010's holes:
+    // one cell 3, two 2, three 1), or its symmetry -- ShapeColorMap, its table
+    // read off the pairs (read_off), one color a key, the color of the rest for
+    // every key it does not name. The puzzle has one table, so this is asked
+    // only while nothing else holds it. It accounts for the cells it recolored.
+    static constexpr const char* keys_named[] = { "shape", "symmetry" };
+    static_assert(size(keys_named) == (size_t)shape_key::count);
     auto shape_word = [&]() -> offer {
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from || !facts.overlays || inf.shape_color_map.holds()) return {};
         heard best;
         shape_color_map_rule best_table;
+        vector<uint16_t> shown;
+        for (const example& pair : facts.train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            // Each picked piece's shape, the one color it comes out in.
-            shape_color_map_rule table;
-            int seen[shape_color_map_rule::MAX_KEYS] = {};
-            bool reads = true;
-            for (size_t which = 0; which < handed.size() && reads; ++which) {
-                const grid& output = facts.train[which].output;
-                const partner_pieces& cut = handed[which];
-                for (int i = 0; i < cut.count() && reads; ++i) {
-                    if (!cut.picked[i]) continue;
-                    // -2 until a cell is read, -3 once two cells disagree.
-                    int worn = -2;
-                    cut.pieces[i].each_cell([&](int row, int col, int8_t) {
-                        const int there = output.data[row][col];
-                        worn = worn == -2 || worn == there ? there : -3;
-                    });
-                    const uint32_t shape = shape_color_map_rule::shape_of(cut.pieces[i]);
-                    reads = is_color(worn) && table.learn(shape, (int8_t)worn);
-                    for (int key = 0; key < table.count && reads; ++key) seen[key] += table.keys[key] == shape;
+            for (int kind = 0; kind < (int)shape_key::count; ++kind) {
+                // Each picked piece's key and the one color it comes out in.
+                vector<shape_color_map_rule::seen_key> seen;
+                bool reads = true;
+                for (size_t which = 0; which < handed.size() && reads; ++which) {
+                    const grid& output = facts.train[which].output;
+                    const partner_pieces& cut = handed[which];
+                    for (int i = 0; i < cut.count() && reads; ++i) {
+                        if (!cut.picked[i]) continue;
+                        // -2 until a cell is read, -3 once two cells disagree.
+                        int worn = -2;
+                        cut.pieces[i].each_cell([&](int row, int col, int8_t) {
+                            const int there = output.data[row][col];
+                            worn = worn == -2 || worn == there ? there : -3;
+                        });
+                        reads = is_color(worn) &&
+                                shape_color_map_rule::see(seen, shape_color_map_rule::key_of((shape_key)kind,
+                                                                                             cut.pieces[i]),
+                                                          (int8_t)worn, which, shown[which]);
+                    }
                 }
+                if (!reads) continue;
+                const shape_color_map_rule table = shape_color_map_rule::read_off(seen);
+                if (!table.holds()) continue;
+                vector<vector<std::pair<int, int>>> recolored;
+                int pieces = 0;
+                bool every_piece = false;
+                if (!recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
+                        const int named = table.color_of((shape_key)kind, cut.pieces[i]);
+                        color = named >= 0 ? (int8_t)named : LEFT_AS_IT_IS;
+                        return true;
+                    }, recolored, pieces, every_piece))
+                    continue;
+                const int before = best.said;
+                weigh(best, kind, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
+                    return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
+                });
+                if (best.said > before) best_table = table;
             }
-            if (!reads || !table.holds() ||
-                ranges::any_of(seen, seen + table.count, [](int pieces) { return pieces < 2; }))
-                continue;
-            vector<vector<std::pair<int, int>>> recolored;
-            int pieces = 0;
-            bool every_piece = false;
-            if (!recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, int8_t& color) {
-                    color = (int8_t)table.color_of(cut.pieces[i]);
-                    return color >= 0;
-                }, recolored, pieces, every_piece))
-                continue;
-            const int before = best.said;
-            weigh(best, 0, pick, pieces, every_piece, -1, [recolored](size_t which, const left_over_cell& cell) {
-                return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
-            });
-            if (best.said > before) best_table = table;
         }
         if (best.value < 0) return {};
-        return { best.said, [&, best, best_table]() mutable {
-            best_table.claimed_by = shape_color_map_rule::body_recolor;
+        return { best.said, [&, best, best_table] {
             inf.shape_color_map = best_table;
-            carry(say(best, rule::shape_recolor, "takes the color its shape names", colors)); } };
+            const string rest = best_table.otherwise >= 0 ? ", any other " + to_string(best_table.otherwise) : "";
+            carry(say(best, rule::shape_recolor,
+                      string("takes the color its ") + keys_named[best.value] + " names" + rest, colors)); } };
     };
 
     // A PIECE REMOVED: every piece the pick takes is gone from every pair's output
@@ -5606,6 +5875,34 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         ++words[chosen];
     }
 
+    // WHAT THE LINE DRAWS, CELL BY CELL: the hand as the words leave it, laid as
+    // its sentence lays it -- over what is down, or under it where a piece sits
+    // on another -- explains every cell where it shows what the output shows,
+    // however the matching paired the pieces. d23f8c26's middle column, which
+    // the matching paired with pieces the words remove, is drawn by the line
+    // where it stands. Asked only of a hand the words carried, on pairs that lie
+    // over their outputs.
+    if (facts.hand_known && facts.overlays) {
+        const bool under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
+        vector<grid> drawn;
+        for (size_t which = 0; which < facts.cuts.size(); ++which) {
+            const grid& output = facts.train[which].output;
+            grid canvas(output.width, output.height);
+            canvas.fill(TRANSPARENT);
+            for (const object& piece : facts.cuts[which])
+                piece.each_cell([&](int row, int col, int8_t color) {
+                    if (canvas.contains(row, col) && (!under || canvas.data[row][col] == TRANSPARENT))
+                        canvas.data[row][col] = color;
+                });
+            drawn.push_back(std::move(canvas));
+        }
+        read.list_claims(listed("Drawn By The Line", "the words draw it as the output shows it", rule::unsaid),
+                         [&](size_t which, const left_over_cell& cell) {
+            return which < drawn.size() && drawn[which].contains(cell.row, cell.col) &&
+                   drawn[which].data[cell.row][cell.col] == facts.train[which].output.data[cell.row][cell.col];
+        });
+    }
+
     // The picks a draw word is asked with: each color on its own, then the picks by
     // holes, size and band.
     vector<piece_pick> draw_picks;
@@ -5661,115 +5958,144 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     if (still) lays.insert(lays.end(), { rule::laid_under, rule::laid_onto });
     static constexpr const char* laid_words[] = { "", ", laid under what is down", ", only onto what is down" };
 
+    // THE PAINTS, THE ONE THAT SAYS THE MOST FIRST. Each kind -- rays, trails,
+    // copies, repeats, the turned figure, bars, filled hollows, filled boxes --
+    // offers its best over every pick, the kind whose best accounts for the most
+    // cells nothing claims yet is said, a tie going in that order, and then every
+    // kind is asked again of the claims and the canvas that paint leaves, so a
+    // kind can be said again: a piece grows rays to the sides and then along the
+    // diagonals. Asked in a fixed order instead, the first kind took what a later
+    // one says whole: e729b7be's row from the middle repeated down the grid, a
+    // coincidence of the pairs, was said ahead of the half turn that draws every
+    // output. Each kind's pieces are handed over once, the cut opened again.
+    // A PAINT IS WEIGHED ONLY WHERE IT EXPLAINS A CELL IN EVERY PAIR that
+    // nothing claims yet. One that explains a cell or two of one pair redoes, by
+    // coincidence, what the line already did in the others: 91714a58's rays one
+    // cell long, in the ground's color, three of them, finished a line of color
+    // coincidences that is wrong on its test.
+    auto weigh_paint = [&](heard& best, int value, const piece_pick& pick, bool every_piece, int8_t paint,
+                           claim claims, const vector<vector<std::pair<int, int>>>& drawn) {
+        for (size_t which = 0; which < read.pairs.size(); ++which)
+            if (ranges::none_of(read.pairs[which].left_over, [&](const left_over_cell& cell) {
+                    return cell.claimed_by < 0 && claims(which, cell); }))
+                return;
+        weigh(best, value, pick, 0, every_piece, paint, std::move(claims), drawn);
+    };
+
+    vector<vector<partner_pieces>> handed_by_pick;
+    for (const piece_pick& pick : draw_picks) handed_by_pick.push_back(handed_pieces(opened, pick));
+
     // RAYS A PIECE GROWS: up, down and to the sides, or along the diagonals, as
     // long as every pair bears out, painted in one color, its own or one the line
     // names, which is a question of its own. A tie goes to the longer ray: a ray
     // that explains no more for being longer has run into the edge, and a larger
     // test grid is exactly where the shorter reading stops too soon (ea786f4a).
-    // Asked again of the same pick while a ray accounts for any cell, so one
-    // piece can grow both kinds: dc1df850's ring is the four to the sides and the
-    // four along the diagonals, and said once, the diagonals were left to any
-    // other pick that happened to take the same cells.
+    // Asked again while a ray accounts for any cell, so one piece can grow both
+    // kinds: dc1df850's ring is the four to the sides and the four along the
+    // diagonals, and said once, the diagonals were left to any other pick that
+    // happened to take the same cells.
     const auto rays = row_of(node_type::ExtendOrthogonal);
     static_assert(row_of(node_type::ExtendOrthogonal).low == row_of(node_type::ExtendDiagonal).low &&
                   row_of(node_type::ExtendOrthogonal).high == row_of(node_type::ExtendDiagonal).high &&
                   row_of(node_type::ExtendDiagonal).high < 32,
                   "one ray length is said the same both ways round, and fits under the diagonal's 32");
-    for (const piece_pick& pick : draw_picks) {
-        const vector<partner_pieces> handed = handed_pieces(opened, pick);
-        while (true) {
-            heard best;
-            int8_t best_lay = rule::laid_over;
+    auto ray_paint = [&]() -> offer {
+        heard best;
+        int8_t best_lay = rule::laid_over;
+        for (size_t at = 0; at < draw_picks.size(); ++at)
             for (const int8_t lay : lays)
                 for (const bool diagonal : { false, true })
                     for (int radius = rays.high; radius >= rays.low; --radius) {
                         int8_t paint = -1;
                         vector<vector<std::pair<int, int>>> drawn;
                         bool every_piece = false;
-                        if (!rays_hold(opened, handed, canvas, diagonal, radius, lay, paint, drawn, every_piece))
+                        if (!rays_hold(opened, handed_by_pick[at], canvas, diagonal, radius, lay, paint, drawn,
+                                       every_piece))
                             continue;
                         const int before = best.said;
-                        weigh(best, (diagonal ? 32 : 0) + radius, pick, 0, every_piece, paint, covered_claims(drawn),
-                              drawn);
+                        weigh_paint(best, (diagonal ? 32 : 0) + radius, draw_picks[at], every_piece, paint,
+                              covered_claims(drawn), drawn);
                         if (best.said > before) best_lay = lay;
                     }
-            if (best.value < 0) break;
-            const bool own = pick.how < 0 && pick.colors == (uint16_t)(1u << best.paint);
+        if (best.value < 0) return {};
+        return { best.said, [&, best, best_lay] {
+            const bool own = best.pick.how < 0 && best.pick.colors == (uint16_t)(1u << best.paint);
             const int8_t said = say_paint(best, rule::extend_rays,
                 string("grows rays ") + (best.value >= 32 ? "along the diagonals" : "up, down and to the sides") + ", " +
                     to_string(best.value % 32) + " long, in " +
                     (own ? string("its own color") : "color " + to_string(best.paint)) + laid_words[best_lay]);
-            read.fired[said].lay = best_lay;
-        }
-    }
+            read.fired[said].lay = best_lay; } };
+    };
 
     // A TRAIL A PIECE GROWS one of the eight ways, in its own color, until it meets
-    // the edge of the grid or another piece -- asked again of the same pick, like
-    // the rays, while a trail accounts for any cell.
+    // the edge of the grid or another piece -- asked again, like the rays, while a
+    // trail accounts for any cell.
     static_assert(heading::count == row_of(node_type::ExtendTo).high + 1);
-    for (const piece_pick& pick : draw_picks) {
-        const vector<partner_pieces> handed = handed_pieces(opened, pick);
-        while (true) {
-            heard best;
+    auto trail_paint = [&]() -> offer {
+        heard best;
+        for (size_t at = 0; at < draw_picks.size(); ++at)
             for (int way = 0; way < heading::count; ++way) {
                 vector<vector<std::pair<int, int>>> drawn;
                 bool every_piece = false;
-                if (trail_holds(opened, handed, way, drawn, every_piece))
-                    weigh(best, way, pick, 0, every_piece, -1, covered_claims(drawn), drawn);
+                if (trail_holds(opened, handed_by_pick[at], way, drawn, every_piece))
+                    weigh_paint(best, way, draw_picks[at], every_piece, -1, covered_claims(drawn), drawn);
             }
-            if (best.value < 0) break;
-            say_paint(best, rule::trailed,
-                      string("grows a trail ") + heading_names[best.value] + " until it meets something");
-        }
-    }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
+            say_paint(best, rule::trailed, string("grows a trail ") + heading_names[best.value] + " until it meets something");
+        } };
+    };
 
     // THE PICKED PIECES COPIED ONTO THE OTHERS, lined up one of CopyTo's nine ways.
     static_assert(row_of(node_type::CopyTo).high + 1 == 9);
     static constexpr const char* lined_up[] = { "top-left", "top", "top-right", "left", "middle", "right",
                                                 "bottom-left", "bottom", "bottom-right" };
-    for (const piece_pick& pick : draw_picks) {
-        const vector<partner_pieces> handed = handed_pieces(opened, pick);
+    auto copy_paint = [&]() -> offer {
         heard best;
-        for (int anchor = 0; anchor < (int)size(lined_up); ++anchor) {
-            vector<vector<std::pair<int, int>>> drawn;
-            if (copy_onto_holds(opened, handed, anchor, drawn))
-                weigh(best, anchor, pick, 0, false, -1, covered_claims(drawn), drawn);
-        }
-        if (best.value >= 0)
+        for (size_t at = 0; at < draw_picks.size(); ++at)
+            for (int anchor = 0; anchor < (int)size(lined_up); ++anchor) {
+                vector<vector<std::pair<int, int>>> drawn;
+                if (copy_onto_holds(opened, handed_by_pick[at], anchor, drawn))
+                    weigh_paint(best, anchor, draw_picks[at], false, -1, covered_claims(drawn), drawn);
+            }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
             say_paint(best, rule::copied_onto, string("is copied onto the other pieces, lined up ") + lined_up[best.value]);
-    }
+        } };
+    };
 
     // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, every so many cells, to
-    // the edges -- asked again of the same pick, like the rays, while a repeat
-    // accounts for any cell, so one piece can be repeated both ways. A tie goes
-    // to the shorter period, the tighter spacing the pairs bear out.
+    // the edges -- asked again, like the rays, while a repeat accounts for any
+    // cell, so one piece can be repeated both ways. A tie goes to the shorter
+    // period, the tighter spacing the pairs bear out.
     const auto tiles = row_of(node_type::TileX);
     static_assert(row_of(node_type::TileX).low == row_of(node_type::TileY).low &&
                   row_of(node_type::TileX).high == row_of(node_type::TileY).high &&
                   row_of(node_type::TileY).high < 32,
                   "one period is said the same both ways round, and fits under the columns' 32");
-    for (const piece_pick& pick : draw_picks) {
-        const vector<partner_pieces> handed = handed_pieces(opened, pick);
-        while (true) {
-            heard best;
-            int8_t best_lay = rule::laid_over;
+    auto repeat_paint = [&]() -> offer {
+        heard best;
+        int8_t best_lay = rule::laid_over;
+        for (size_t at = 0; at < draw_picks.size(); ++at)
             for (const int8_t lay : lays)
                 for (const bool down : { false, true })
                     for (int period = tiles.low; period <= tiles.high; ++period) {
                         vector<vector<std::pair<int, int>>> drawn;
                         bool every_piece = false;
-                        if (!tile_holds(opened, handed, canvas, down, period, lay, drawn, every_piece)) continue;
+                        if (!tile_holds(opened, handed_by_pick[at], canvas, down, period, lay, drawn, every_piece))
+                            continue;
                         const int before = best.said;
-                        weigh(best, (down ? 32 : 0) + period, pick, 0, every_piece, -1, covered_claims(drawn), drawn);
+                        weigh_paint(best, (down ? 32 : 0) + period, draw_picks[at], every_piece, -1, covered_claims(drawn),
+                              drawn);
                         if (best.said > before) best_lay = lay;
                     }
-            if (best.value < 0) break;
+        if (best.value < 0) return {};
+        return { best.said, [&, best, best_lay] {
             const int8_t said = say_paint(best, rule::tiled_along,
                 "is repeated every " + to_string(best.value % 32) + " cells " +
                     (best.value >= 32 ? "down its columns" : "along its rows") + laid_words[best_lay]);
-            read.fired[said].lay = best_lay;
-        }
-    }
+            read.fired[said].lay = best_lay; } };
+    };
 
     // THE WHOLE FIGURE DRAWN AGAIN TURNED in its own box -- a quarter turn
     // right, a half turn, a quarter turn left, each a copy of its own -- asked
@@ -5779,74 +6105,95 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
     // accident (2546ccf6's quadrants, which mirror across walls; 52df9849's
     // hidden corner). It accounts for the figure where it lies as well as for its
     // copies, so it is asked only of a still line.
-    if (still) {
-        const int right = pose_of(node_type::TurnRight);
-        const std::pair<int, const char*> turns[] = { { right, "a quarter turn right" },
-                                                      { compose_poses(right, right), "a half turn" },
-                                                      { pose_of(node_type::TurnLeft), "a quarter turn left" } };
-        const piece_pick figure{ (uint16_t)((1u << COLOR_COUNT) - 1) };
-        const vector<partner_pieces> handed = handed_pieces(opened, figure);
-        while (true) {
-            heard best;
-            for (const auto& [pose, name] : turns) {
-                vector<vector<std::pair<int, int>>> drawn;
-                bool every_piece = false;
-                if (turned_holds(opened, handed, pose, drawn, every_piece))
-                    weigh(best, pose, figure, 0, every_piece, -1, covered_claims(drawn), drawn);
-            }
-            if (best.value < 0) break;
+    const int right = pose_of(node_type::TurnRight);
+    const std::pair<int, const char*> turns[] = { { right, "a quarter turn right" },
+                                                  { compose_poses(right, right), "a half turn" },
+                                                  { pose_of(node_type::TurnLeft), "a quarter turn left" } };
+    const piece_pick figure{ (uint16_t)((1u << COLOR_COUNT) - 1) };
+    const vector<partner_pieces> figure_handed = still ? handed_pieces(opened, figure) : vector<partner_pieces>{};
+    auto turned_paint = [&]() -> offer {
+        if (!still) return {};
+        heard best;
+        for (const auto& [pose, name] : turns) {
+            vector<vector<std::pair<int, int>>> drawn;
+            bool every_piece = false;
+            if (turned_holds(opened, figure_handed, pose, drawn, every_piece))
+                weigh_paint(best, pose, figure, every_piece, -1, covered_claims(drawn), drawn);
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
             const auto turn = ranges::find_if(turns, [&](const auto& one) { return one.first == best.value; });
             say_paint(best, rule::turned_copy, string("is drawn again as one figure, ") + turn->second + " in its box");
-        }
-    }
+        } };
+    };
 
     // BARS BETWEEN PIECES OF ONE COLOR, in their own color or one of the line's,
     // reaching each way a bridge can, the narrowest first, so a wider way is said
     // only where it accounts for more.
-    if (still) {
-        static constexpr const char* reaches[BRIDGE_WAYS] = {
-            "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
-            "both ways to every one", "along rows to every one", "along columns to every one" };
-        const vector<partner_pieces> handed = handed_pieces(opened, {});
+    static constexpr const char* reaches[BRIDGE_WAYS] = {
+        "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
+        "both ways to every one", "along rows to every one", "along columns to every one" };
+    const vector<partner_pieces> bar_handed = still ? handed_pieces(opened, {}) : vector<partner_pieces>{};
+    auto bar_paint = [&]() -> offer {
+        if (!still) return {};
         heard best;
         for (const int way : bridge_ways_narrowest_first) {
             int8_t paint = -1;
             vector<vector<std::pair<int, int>>> bars;
-            if (bridge_holds(opened, handed, canvas, way, paint, bars))
-                weigh(best, way, {}, 0, true, paint, drawn_claims(bars), bars);
+            if (bridge_holds(opened, bar_handed, canvas, way, paint, bars))
+                weigh_paint(best, way, {}, true, paint, drawn_claims(bars), bars);
         }
-        if (best.value >= 0)
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
             say_paint(best, rule::bridged,
                 string("bars filled between pieces of one color, reaching ") + reaches[best.value] + ", in " +
                     (best.paint < 0 ? string("their own color") : "color " + to_string(best.paint)));
-    }
+        } };
+    };
 
     // THE HOLLOWS OF THE PICKED PIECES, FILLED, in their own color or one of the line's.
-    for (const piece_pick& pick : draw_picks) {
-        if (!still) break;
-        int8_t paint = -1;
-        vector<vector<std::pair<int, int>>> hollows;
-        bool every_piece = false;
-        if (!fill_holds(opened, handed_pieces(opened, pick), canvas, paint, hollows, every_piece)) continue;
+    auto fill_paint = [&]() -> offer {
+        if (!still) return {};
         heard best;
-        weigh(best, 0, pick, 0, every_piece, paint, drawn_claims(hollows), hollows);
-        if (best.value < 0) continue;
-        say_paint(best, rule::filled,
-                  string("fills its hollows in ") + (paint < 0 ? string("its own color") : "color " + to_string(paint)));
-    }
+        for (size_t at = 0; at < draw_picks.size(); ++at) {
+            int8_t paint = -1;
+            vector<vector<std::pair<int, int>>> hollows;
+            bool every_piece = false;
+            if (fill_holds(opened, handed_by_pick[at], canvas, paint, hollows, every_piece))
+                weigh_paint(best, 0, draw_picks[at], every_piece, paint, drawn_claims(hollows), hollows);
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
+            say_paint(best, rule::filled,
+                      string("fills its hollows in ") +
+                          (best.paint < 0 ? string("its own color") : "color " + to_string(best.paint)));
+        } };
+    };
 
     // THE BOXES OF THE PICKED PIECES, FILLED where the pieces leave them empty, in
     // one color.
-    for (const piece_pick& pick : draw_picks) {
-        if (!still) break;
-        int8_t paint = -1;
-        vector<vector<std::pair<int, int>>> filled_box;
-        bool every_piece = false;
-        if (!box_holds(opened, handed_pieces(opened, pick), canvas, paint, filled_box, every_piece)) continue;
+    auto box_paint = [&]() -> offer {
+        if (!still) return {};
         heard best;
-        weigh(best, 0, pick, 0, every_piece, paint, drawn_claims(filled_box), filled_box);
-        if (best.value < 0) continue;
-        say_paint(best, rule::boxed, "fills its box in color " + to_string(paint));
+        for (size_t at = 0; at < draw_picks.size(); ++at) {
+            int8_t paint = -1;
+            vector<vector<std::pair<int, int>>> filled_box;
+            bool every_piece = false;
+            if (box_holds(opened, handed_by_pick[at], canvas, paint, filled_box, every_piece))
+                weigh_paint(best, 0, draw_picks[at], every_piece, paint, drawn_claims(filled_box), filled_box);
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.paint)); } };
+    };
+
+    const std::function<offer()> paints[] = { ray_paint, trail_paint, copy_paint, repeat_paint, turned_paint,
+                                              bar_paint, fill_paint, box_paint };
+    while (true) {
+        offer best;
+        for (const auto& kind : paints)
+            if (offer one = kind(); one.said > best.said) best = std::move(one);
+        if (best.said == 0) break;
+        best.say();
     }
 }
 
@@ -6078,24 +6425,35 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
     // word a same-size puzzle has -- from each framed input to its output.
     inf.frame = choose_piece_frame(train, inf);
     if (inf.frame.holds()) {
-        const bool cut_out = inf.frame.kind == piece_frame_rule::cut_out ||
-                             inf.frame.kind == piece_frame_rule::laid_out;
+        using kind = piece_frame_rule::kind_of;
+        // The frames that take the pieces a pick takes off a cut of their own;
+        // the rest take the whole input.
+        const bool picks = inf.frame.kind == kind::cut_out || inf.frame.kind == kind::laid_out ||
+                           inf.frame.kind == kind::filled;
         // The framed grid is what the frame leaves of the figures: nothing is
         // filled in it, and the reading inside it is a reading of figures too.
-        const replay_facts facts(train, {}, {}, cut_out ? inf.frame.cut : inf.correspondence.segmentation);
+        const replay_facts facts(train, {}, {}, picks ? inf.frame.cut : inf.correspondence.segmentation);
         const piece_pick pick{ inf.frame.colors, inf.frame.how, inf.frame.value };
         vector<example> framed(train.size());
         bool all = true;
         for (size_t which = 0; which < train.size() && all; ++which) {
             framed[which].output = train[which].output;
+            const grid& input = train[which].input;
+            grid& into = framed[which].input;
             bool several = false;
-            all = inf.frame.kind == piece_frame_rule::laid_out
-                ? laid_out_input(facts.cuts[which], pick, inf.frame.factor, train[which].input, inf.size,
-                                 TRANSPARENT, framed[which].input)
-                : cut_out ? framed_input(facts.cuts[which], pick, train[which].input, inf.size, TRANSPARENT,
-                                         framed[which].input, several)
-                          : framed_whole(train[which].input, inf.frame, inf.size, TRANSPARENT, TRANSPARENT,
-                                         framed[which].input);
+            switch (inf.frame.kind) {
+            case kind::laid_out:
+                all = laid_out_input(facts.cuts[which], pick, inf.frame.factor, input, inf.size, TRANSPARENT, into);
+                break;
+            case kind::filled:
+                all = filled_input(facts.cuts[which], pick, inf.frame.keyed, inf.shape_color_map, input, inf.size,
+                                   into);
+                break;
+            case kind::cut_out:
+                all = framed_input(facts.cuts[which], pick, input, inf.size, TRANSPARENT, into, several);
+                break;
+            default: all = framed_whole(input, inf.frame, inf.size, TRANSPARENT, TRANSPARENT, into);
+            }
         }
         if (!all) inf.frame = {};
         else inf.framed = std::make_shared<const inference>(read_figures(framed));

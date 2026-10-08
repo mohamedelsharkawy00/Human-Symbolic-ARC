@@ -31,7 +31,8 @@
 //   1_readings.hpp); only the pane pick says it, for the odd pane.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
 //   painted output bounds [2]. Pane-pick uses [0]; explicit background fill uses
-//   [1] or [2]. General piece-stretch readings still need a replay.
+//   [1] or [2]; the filled frame uses [1] on pieces of one color, filled to
+//   their boxes. General piece-stretch readings still need a replay.
 // NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
 //   mark-lattice rule says them.
 // SortBySize: said only as a helper where a word reads list order (size rank,
@@ -138,8 +139,6 @@ enum class inferred_amount { none, some, all };
   X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false, false) \
   X(Partition                   , 0                 , 0                        , generate , none, true , true ) \
   X(RestoreOrientation          , 0                 , 0                        , translate, none, false, false) \
-  /* Each picked piece takes the color its own shape names, turned or not. */ \
-  X(ShapeColorMap               , 0                 , 0                        , map      , all , true , false) \
   X(Seeds                       , 0                 , 0                        , get      , some, false, false) \
   /* Partition cuts on the walls a selection marks; Panes cuts on the cut  */    \
   /* the split elected, which is the same act with a surer hand.           */        \
@@ -150,6 +149,10 @@ enum class inferred_amount { none, some, all };
   X(SortBySize                  , 0                 , 1                        , map      , none, true , false) \
   X(DiagTile                    , 0                 , 1                        , generate , none, false, false) \
   X(NormalizeOrientation        , 0                 , 1                        , translate, none, false, false) \
+  /* Each picked piece takes the color its own key names: its shape [0] or  */ \
+  /* its symmetry [1] (shape_key_of), or the color the table gives every    */ \
+  /* key it does not name.                                                  */ \
+  X(ShapeColorMap               , 0                 , 1                        , map      , all , true , false) \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
   X(Skew                        , -1                , 1                        , translate, none, true , false) \
   /* Split[3] joins one color's cells by sides alone, the finest connected cut. */ \
@@ -167,10 +170,10 @@ enum class inferred_amount { none, some, all };
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
   /* Each picked piece wears its partner's color, as partner_by numbers them. */ \
-  X(ColorFrom                   , 0                 , 7                        , map      , none, true , false) \
+  X(ColorFrom                   , 0                 , 8                        , map      , none, true , false) \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
   /* partner stay picked (would_fit, 1_readings.hpp). A pick, so it selects. */ \
-  X(WouldFit                    , 0                 , 7                        , select   , none, true , false) \
+  X(WouldFit                    , 0                 , 8                        , select   , none, true , false) \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
   /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \
@@ -193,10 +196,10 @@ enum class inferred_amount { none, some, all };
   X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
   /* Each picked piece moves level with its partner: rows first, then columns, */ \
   /* each by every way partner_by finds one.                                   */ \
-  X(AlignTo                     , 0                 , 15                       , translate, none, true , false) \
+  X(AlignTo                     , 0                 , 17                       , translate, none, true , false) \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
   /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
-  X(MirrorAround                , 0                 , 26                       , generate , none, true , false) \
+  X(MirrorAround                , 0                 , 29                       , generate , none, true , false) \
   X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
@@ -208,10 +211,14 @@ enum class inferred_amount { none, some, all };
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
-  X(MoveToward                  , 0                 , 53                       , translate, none, true , false) \
+  X(MoveToward                  , 0                 , 56                       , translate, none, true , false) \
   /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
   /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
-  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false, false)
+  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false, false) \
+  /* The pieces on the row or column `from` lines past the middle of all    */ \
+  /* they paint together (line_from_middle): 0 is the middle itself.        */ \
+  X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false, false) \
+  X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,

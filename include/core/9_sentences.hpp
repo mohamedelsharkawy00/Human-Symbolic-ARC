@@ -79,24 +79,37 @@ inline string pick_colors(uint16_t colors) {
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, every color but that one, at least so many cells,
-// fewer -- when `how` names one, else by its colors; then, when `fits` names a
-// partner way, WouldFit keeps the ones that would fit into a gap of their
-// partner.
+// fewer, the first so many by size, every piece but those, the ones on a row or
+// a column from the middle, every piece but those -- when `how` names one, else
+// by its colors; then, when `fits` names a partner way, WouldFit keeps the ones
+// that would fit into a gap of their partner.
 inline string pick_words(uint16_t colors, int8_t how, int8_t value, int8_t fits = -1) {
     using fired_rule = correspondence_election::fired_rule;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectMostCommonColor",
-                                                 "SelectAtLeastCells", "SelectAtLeastCells" };
+                                                 "SelectAtLeastCells", "SelectAtLeastCells",
+                                                 "SelectLargestObject", "SelectLargestObject",
+                                                 "SelectSmallestObject", "SelectSmallestObject",
+                                                 "SelectRowFromMiddle", "SelectRowFromMiddle",
+                                                 "SelectColumnFromMiddle", "SelectColumnFromMiddle" };
     static_assert(size(selectors) == (size_t)fired_rule::pick_kinds);
     const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
     if (how < 0) return pick_colors(colors) + kept;
     // SelectMostCommonColor takes no value: which color it picks is the list's to say.
     const bool valued = how != fired_rule::most_common && how != fired_rule::not_most_common;
+    // The first so many by size: one selector a rank, since selectors add.
+    const bool ranks = how == fired_rule::largest_ranks || how == fired_rule::not_largest_ranks ||
+                       how == fired_rule::smallest_ranks || how == fired_rule::not_smallest_ranks;
     // Every piece but those another pick takes, turned round by InvertSelection.
-    const bool turned = how == fired_rule::not_most_common || how == fired_rule::fewer_cells;
-    return "SelectAll InvertSelection " + (valued ? spell(selectors[how], value) : string(selectors[how])) +
-           (turned ? " InvertSelection" : "") + kept;
+    const bool turned = how == fired_rule::not_most_common || how == fired_rule::fewer_cells ||
+                        how == fired_rule::not_largest_ranks || how == fired_rule::not_smallest_ranks ||
+                        how == fired_rule::not_middle_row || how == fired_rule::not_middle_column;
+    string chosen;
+    if (ranks)
+        for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
+    else chosen = " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
+    return "SelectAll InvertSelection" + chosen + (turned ? " InvertSelection" : "") + kept;
 }
 
 // THE PIECES A RULE PICKS, as words, picked from none: by its pick of holes or of
@@ -301,7 +314,7 @@ inline void say_beats(said_reading& said, const string& source,
 inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
     if (!rule.holds()) return nullptr;
     switch (rule.claimed_by) {
-        case shape_color_map_rule::body_recolor:  return "ShapeColorMap";
+        case shape_color_map_rule::body_recolor:  return "ShapeColorMap[0]";
         case shape_color_map_rule::interior_fill: return "ShapeToInteriorColorMap";
         default:                                  return nullptr;
     }
@@ -972,14 +985,14 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
             if (inf.shape_color_map.claimed_by == shape_color_map_rule::body_recolor) {
                 using fired_rule = correspondence_election::fired_rule;
                 const string key = pick_words(0, fired_rule::smallest, 0);
-                beats.push_back({key, "ShapeColorMap"});
+                beats.push_back({key, spell("ShapeColorMap", (int)shape_key::shape)});
                 beats.push_back({pick_words(0, fired_rule::largest, 0), spell("ColorFrom", (int)partner_by::nearest)});
                 beats.push_back({key, "DeleteSelection"});
             } else if (const char* word = word_for_learned_recolor(inf.shape_color_map)) {
                 beats.push_back({"SelectAll", word});
             }
             break;
-        case said_as::shape_recolor: beats.push_back({pick, "ShapeColorMap"}); break;
+        case said_as::shape_recolor: beats.push_back({pick, spell("ShapeColorMap", rule.value)}); break;
         case said_as::size_rank:
             // A color layer can hold several disconnected pieces; the rank
             // belongs to each piece, not their combined color.
@@ -1055,8 +1068,11 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
 // THE FRAME'S WORDS IN FRONT OF A LINE: each sentence that opens on the input
 // opens instead on the input framed -- the piece the frame's pick takes, cut out
 // and moved to the corner (the cut, the pick, every other piece deleted, then
-// Origin), or the whole input scaled up, scaled down or tiled -- and the line's
-// own cut carves that. False for a line that opens any other way.
+// Origin), laid out on graph paper, or filled to its box in its one color and
+// stretched over the canvas (ShapeColorMap where a table names the color, then
+// AddColor[11] Fit[1], as a plan lays its fill), or the whole input scaled up,
+// scaled down or tiled -- and the line's own cut carves that. False for a line
+// that opens any other way.
 inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& said) {
     // Where a plan deleted the ground, its opening makes the input the figures
     // alone, so every frame acts on them.
@@ -1079,9 +1095,15 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         const bool every = frame.how < 0 && frame.colors == (uint16_t)((1u << COLOR_COUNT) - 1);
         framed = string("Input SelectAll ") + cut + " SelectAll Trim " +
                  (every ? string() : pick_words(frame.colors, frame.how, frame.value) +
-                                     " InvertSelection DeleteSelection ") +
-                 (frame.kind == piece_frame_rule::laid_out ? "SelectAll " + spell("Layout", frame.factor)
-                  : string(frame.merged ? "SelectAll UnionList " : "") + "SelectAll Origin");
+                                     " InvertSelection DeleteSelection ") + "SelectAll ";
+        switch (frame.kind) {
+        case piece_frame_rule::laid_out: framed += spell("Layout", frame.factor); break;
+        case piece_frame_rule::filled:
+            framed += (frame.keyed >= 0 ? spell("ShapeColorMap", frame.keyed) + " " : string()) +
+                      spell("AddColor", 11) + " " + spell("Fit", 1);
+            break;
+        default: framed += string(frame.merged ? "UnionList SelectAll " : "") + "Origin";
+        }
     }
     }
     // THE TILED FRAME CUTS BEFORE IT TILES: its copies are the input's pieces,

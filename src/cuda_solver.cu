@@ -1434,31 +1434,31 @@ __device__ gpu_object_list& gpu_exec_invert_selection(gpu_exec_context& ctx, con
     return res;
 }
 
-// The color the puzzle-level shape table names for a piece's shape (its paint's
-// fingerprint, gpu_shape_hash_of_paint), or -1 where it names none. The one
-// lookup both shape ops make.
-__device__ inline int gpu_shape_color(const gpu_exec_context& ctx, const gpu_fixed_object& obj) {
-    const uint32_t shape = gpu_shape_hash_of_paint(obj);
-    for (int k = 0; k < ctx.shape_color_count && k < GPU_MAX_SHAPE_KEYS; ++k)
-        if (ctx.shape_color_keys[k] == shape) return ctx.shape_color_vals[k];
-    return -1;
+// The color the puzzle-level table names for a piece's key of `kind` (its
+// paint's key, gpu_shape_key_of_paint), as the reading looks it up
+// (shape_table::color_of): -1 where it names none. The one lookup both shape
+// ops make.
+__device__ inline int gpu_shape_color(const gpu_exec_context& ctx, const gpu_fixed_object& obj, int kind) {
+    return ctx.shape_colors.color_of(gpu_shape_key_of_paint(obj, kind));
 }
 
-// ShapeColorMap: every picked piece takes the color its own SHAPE names in the
-// puzzle-level table learned host-side -- a shape the same turned either way or
-// mirrored either way (canonical_shape_hash, the key the reading learned). A
-// shape the table names no color for leaves its piece as it was; nothing else
-// changes. A piece colored by ANOTHER's shape is said in words (009d5c81's key
-// naming the figure's color): the key takes its shape's color, the figure the
-// key's (ColorFrom), and the key goes (DeleteSelection).
-__device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src) {
+// ShapeColorMap[kind]: every picked piece takes the color its own key names in
+// the puzzle-level table learned host-side -- its SHAPE, the same turned either
+// way or mirrored either way, or its SYMMETRY, the ways round that leave its
+// drawing as it was (shape_key_of, the key the reading learned) -- or the color
+// the table gives every other key. A key the table names no color for leaves
+// its piece as it was; nothing else changes. A piece colored by ANOTHER's shape
+// is said in words (009d5c81's key naming the figure's color): the key takes
+// its shape's color, the figure the key's (ColorFrom), and the key goes
+// (DeleteSelection).
+__device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, const gpu_object_list& src, int kind) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
-    if (ctx.shape_color_count <= 0) return res;
+    if (!ctx.shape_colors.holds()) return res;
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
         if (!obj.selected) continue;
-        const int color = gpu_shape_color(ctx, obj);
+        const int color = gpu_shape_color(ctx, obj, kind);
         if (color < 0) continue;
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c)
@@ -1471,13 +1471,14 @@ __device__ gpu_object_list& gpu_exec_shape_color_map(gpu_exec_context& ctx, cons
 // object's OWN shape via the puzzle-level table (shape_color_map_rule::detect_interior_fill).
 // Sibling of ShapeColorMap, but paints the enclosed interior (not the body). For
 // each object: lane 0 looks its shape's color up (gpu_shape_color, the lookup
-// ShapeColorMap makes) and broadcasts it; a hit floods the interior with that
+// ShapeColorMap[0] makes) and broadcasts it; a hit floods the interior with that
 // color, a miss passes the object through unchanged. Inside-noise (a
 // non-transparent pixel in the hole, e.g. a marker) is a wall to the flood, so
 // it keeps its color -- the trailing Union re-stamping the separate marker
 // object reproduces it either way.
 __device__ void gpu_exec_shape_to_interior_color_map_warp(gpu_exec_context& ctx, int lane) {
-    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) { return gpu_shape_color(ctx, obj); });
+    gpu_warp_fill_interiors(ctx, lane, [&](const gpu_fixed_object& obj) {
+        return gpu_shape_color(ctx, obj, (int)arc::shape_key::shape); });
 }
 
 // OverlapCorner: lay the objects out as a diagonal corner-chain. Objects are
@@ -1717,6 +1718,40 @@ __device__ gpu_object_list& gpu_exec_select_band(gpu_exec_context& ctx, const gp
     gpu_layout_bands(res, n, rows, band_of);
     for (int i = 0; i < n; ++i)
         if (band_of[i] == which) res.objects[i].selected = true;
+    return res;
+}
+
+// SelectRowFromMiddle[from] / SelectColumnFromMiddle[from]: mark every object
+// with a painted cell on the row (column) `from` lines past the middle of the
+// span every object's paint covers together -- the line as many lines from
+// either end, none where the span has two (line_from_middle, the reading's own
+// arithmetic). Keeps every object and prior mark.
+__device__ gpu_object_list& gpu_exec_select_from_middle(gpu_exec_context& ctx, const gpu_object_list& src,
+                                                        int8_t from, bool rows) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    const int n = min((int)res.count, GPU_KERNEL_MAX_OBJECTS);
+    int lo = GPU_MAX_GRID * 2, hi = -GPU_MAX_GRID * 2;
+    for (int i = 0; i < n; ++i) {
+        const auto& obj = res.objects[i];
+        for (int r = 0; r < obj.height; ++r)
+            for (int c = 0; c < obj.width; ++c)
+                if (obj.mask[r][c] != GPU_TRANSPARENT) {
+                    const int line = rows ? obj.y0 + r : obj.x0 + c;
+                    lo = min(lo, line);
+                    hi = max(hi, line);
+                }
+    }
+    const int line = arc::line_from_middle(lo, hi, from);
+    if (line < 0) return res;
+    for (int i = 0; i < n; ++i) {
+        auto& obj = res.objects[i];
+        bool on = false;
+        for (int r = 0; r < obj.height && !on; ++r)
+            for (int c = 0; c < obj.width && !on; ++c)
+                on = obj.mask[r][c] != GPU_TRANSPARENT && (rows ? obj.y0 + r : obj.x0 + c) == line;
+        if (on) obj.selected = true;
+    }
     return res;
 }
 
@@ -3256,7 +3291,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::AlignToCanvas:  result = last ? &gpu_exec_align_to_canvas(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::OverlapCorner:  result = last ? &gpu_exec_overlap_corner(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SnapToAnchors:  result = last ? &gpu_exec_snap_to_anchors(ctx, *last) : &gpu_acquire(ctx); break;
-            case node_type::ShapeColorMap:  result = last ? &gpu_exec_shape_color_map(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::ShapeColorMap:  result = last ? &gpu_exec_shape_color_map(ctx, *last, value) : &gpu_acquire(ctx); break;
             // ShapeToInteriorColorMap is handled in the warp-parallel branch above; here means !has_current_objects.
             case node_type::ShapeToInteriorColorMap: result = &gpu_acquire(ctx); break;
             case node_type::ExtendOrthogonal:   result = last ? &gpu_exec_extend_orthogonal(ctx, *last, value) : &gpu_acquire(ctx); break;
@@ -3270,6 +3305,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Outline:             result = last ? &gpu_exec_outline(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectRow:      result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, true) : &gpu_acquire(ctx); break;
             case node_type::SelectColumn:   result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
+            case node_type::SelectRowFromMiddle:    result = last ? &gpu_exec_select_from_middle(ctx, *last, (int8_t)value, true) : &gpu_acquire(ctx); break;
+            case node_type::SelectColumnFromMiddle: result = last ? &gpu_exec_select_from_middle(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
             // branch above; reaching here means has_current_objects was false -> empty result.
             case node_type::NormalizeOrientation:
@@ -3338,9 +3375,7 @@ struct gpu_example_template {
     int8_t pane_count;
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
-    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
-    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
-    int8_t   shape_color_count;
+    arc::shape_table shape_colors;
     int8_t distance_maps[GPU_MAX_COLORS][GPU_MAX_GRID][GPU_MAX_GRID];
     gpu_packed_mask target_grid;
     int8_t target_dims[2];  // w, h
@@ -3519,9 +3554,7 @@ static void build_example_templates(const cuda_dsl_example_data& ex, int count,
         memcpy(tmpl.output_colors_by_size, ex.output_colors_by_size,
                sizeof(tmpl.output_colors_by_size));
         tmpl.output_colors_by_size_count = ex.output_colors_by_size_count;
-        memcpy(tmpl.shape_color_keys, ex.shape_color_keys, sizeof(tmpl.shape_color_keys));
-        memcpy(tmpl.shape_color_vals, ex.shape_color_vals, sizeof(tmpl.shape_color_vals));
-        tmpl.shape_color_count = ex.shape_color_count;
+        tmpl.shape_colors = ex.shape_colors;
 
         memcpy(tmpl.target_objs,
                ex.target_objs + ei * GPU_MAX_TARGET_OBJECTS,
@@ -3631,11 +3664,7 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
                 ctx.output_colors_by_size[i] = tmpl.output_colors_by_size[i];
             ctx.output_colors_by_size_count = tmpl.output_colors_by_size_count;
             // Learned shape->color lookup for ShapeColorMap (puzzle-level).
-            for (int i = 0; i < GPU_MAX_SHAPE_KEYS; ++i) {
-                ctx.shape_color_keys[i] = tmpl.shape_color_keys[i];
-                ctx.shape_color_vals[i] = tmpl.shape_color_vals[i];
-            }
-            ctx.shape_color_count = tmpl.shape_color_count;
+            ctx.shape_colors = tmpl.shape_colors;
             // Where this example's panes lie, for the Panes act.
             ctx.pane_count = tmpl.pane_count;
             for (int i = 0; i < GPU_MAX_PANES; ++i)

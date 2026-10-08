@@ -335,9 +335,9 @@ namespace arc {
 		// Learned color swaps, by BidiColorMap's variant index k in [0,44].
 		// Bridged from inference (inf.color_swaps). Pins the op's 45-way fan-out
 		// in candidate generation; count==0 means "not learned / don't pin".
-		// Learned shape->color lookup for the ShapeColorMap op: hash of a small
-		// glyph's occupancy -> color the main object is repainted to. Bridged from
-		// inference (inf.shape_color_map); count==0 means "not learned" -> op no-ops.
+		// Learned key->color lookup for the ShapeColorMap op: a piece's key, its
+		// shape or its symmetry (shape_key_of) -> the color it is repainted to. Bridged
+		// from inference (inf.shape_color_map); count==0 means "not learned" -> op no-ops.
 		// Per-train-pair map of cells the input already gets right (input ==
 		// output). Bridged from inference (inf.unchanged.kept, Identity puzzles
 		// only; empty otherwise). Layer-lock commit uses it: wrong paint on a
@@ -705,14 +705,10 @@ namespace arc {
 
 			// Learned shape -> color lookup for the ShapeColorMap op. ONLY WHEN THE
 			// RULE STANDS: a detector that gave up part way through leaves the keys
-			// it had already learned behind it, and `valid` is the whole of what
+			// it had already learned behind it, and holds() is the whole of what
 			// says whether they were ever meant to be used.
 			const auto& learned = p.inf.shape_color_map;
-			for (int i = 0; i < GPU_MAX_SHAPE_KEYS; ++i) {
-				ex.shape_color_keys[i] = learned.holds() ? learned.keys[i] : 0;
-				ex.shape_color_vals[i] = learned.holds() ? (int8_t)learned.colors[i] : (int8_t)0;
-			}
-			ex.shape_color_count = learned.holds() ? (int8_t)learned.count : (int8_t)0;
+			ex.shape_colors = learned.holds() ? static_cast<const shape_table&>(learned) : shape_table{};
 
 
 			ex.rule_type = (int8_t)p.inf.size.Chosen;

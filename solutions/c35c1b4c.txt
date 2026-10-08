@@ -1,4 +1,4 @@
-Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] MirrorAround[8] SelectAll Union
+Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] MirrorAround[9] SelectAll Union
 
 Puzzle:       c35c1b4c
 Train:        Solved

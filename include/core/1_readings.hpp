@@ -498,6 +498,17 @@ ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count)
              (int16_t)count };
 }
 
+// THE LINE `from` STEPS PAST THE MIDDLE OF A SPAN of lines lo..hi, the middle
+// being the one line as many lines from either end: -1 where the span has two
+// middle lines, or the line falls outside it. SelectRowFromMiddle and
+// SelectColumnFromMiddle read the span every piece's paint covers, and the
+// reading replays them here (d23f8c26 keeps the middle column).
+ARC_HOST_DEVICE inline int line_from_middle(int lo, int hi, int from) {
+    if (lo > hi || (hi - lo) % 2 != 0) return -1;
+    const int line = (lo + hi) / 2 + from;
+    return line >= lo && line <= hi ? line : -1;
+}
+
 // Share the executor's span grouping between inference and Layout/SelectRow/SelectColumn.
 ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
                                                const int16_t* highs, int8_t* band_of,
@@ -839,14 +850,78 @@ ARC_HOST_DEVICE inline uint32_t canonical_shape_hash(int width, int height, Occu
     return best;
 }
 
+// WHICH OF THE EIGHT WAYS ROUND LEAVE A DRAWING AS IT WAS, colors and empty
+// cells and all, a bit each (pose_source, the turns' and flips' own reading):
+// 1 for a drawing only the same as it lies, 255 for one the same every way.
+template <class ColorAt>
+ARC_HOST_DEVICE inline uint32_t symmetry_of(int width, int height, ColorAt color_at) {
+    uint32_t poses = 0;
+    for (int pose = 0; pose < POSE_COUNT; ++pose) {
+        const auto [posed_width, posed_height] = posed_size(pose, width, height);
+        bool same = posed_width == width && posed_height == height;
+        for (int row = 0; row < height && same; ++row)
+            for (int col = 0; col < width && same; ++col) {
+                const auto [from_row, from_col] = pose_source(pose, width, height, row, col);
+                same = color_at(from_row, from_col) == color_at(row, col);
+            }
+        if (same) poses |= 1u << pose;
+    }
+    return poses;
+}
+
+// WHAT A LEARNED TABLE KNOWS A PIECE BY, ShapeColorMap's value: its shape,
+// whichever way round it lies (canonical_shape_hash), or its symmetry, which
+// ways round leave its drawing as it was (symmetry_of: 44f52bb0's picture, 7
+// where no turn or flip leaves it as it was, else 1). color_at(row, col) reads
+// the piece's drawing in its own box. The reading keys its table here and the
+// op looks it up here, so the two cannot know a piece by different keys.
+enum class shape_key : int8_t { shape, symmetry, count };
+template <class ColorAt>
+ARC_HOST_DEVICE inline uint32_t shape_key_of(int kind, int width, int height, ColorAt color_at) {
+    if (kind == (int)shape_key::symmetry) return symmetry_of(width, height, color_at);
+    return canonical_shape_hash(width, height, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+}
+
+// A LEARNED TABLE OF KEYS (shape_key_of): the color each key it knows names,
+// and the color every other key takes -- -1 where a piece it does not know
+// stays as it was (25d8a9c8: the full row 5, any other shape 0). The reading
+// learns it and the ops look it up, both through color_of, so the two cannot
+// name a key's color differently.
+struct shape_table {
+    static constexpr int MAX_KEYS = 16;
+    uint32_t keys[MAX_KEYS] = {};
+    int8_t colors[MAX_KEYS] = {};
+    int count = 0;
+    int8_t otherwise = -1;
+    ARC_HOST_DEVICE bool holds() const { return count > 0; }
+    ARC_HOST_DEVICE int color_of(uint32_t key) const {
+        for (int i = 0; i < count && i < MAX_KEYS; ++i)
+            if (keys[i] == key) return colors[i];
+        return otherwise;
+    }
+    // Remembers which color goes with this key. Returns false if the key gets
+    // conflicting colors.
+    bool learn(uint32_t key, int8_t color) {
+        for (int i = 0; i < count; ++i)
+            if (keys[i] == key) return colors[i] == color;
+        if (count >= MAX_KEYS) return false;
+        keys[count] = key;
+        colors[count] = color;
+        count++;
+        return true;
+    }
+};
+
 // WHO A PIECE TAKES ITS COLOR FROM: another piece of the same grid, found by how
 // the two sit -- the nearest one, one sharing its rows or its columns, the one
-// whose box holds it or that its box holds, one it touches, or one of its very
-// shape, as it lies or turned any of the eight ways round. The rule that reads
+// whose box holds it or that its box holds, one it touches at a side or a
+// corner, one of its very shape, as it lies or turned any of the eight ways
+// round, or one it touches at a side, the four-connected touch (b7256dcd's
+// pair meets the 3 at a side and the 4 only at a corner). The rule that reads
 // it off the pairs and the op that does it both ask here, so the two cannot
 // disagree about which piece is the partner. Numbered as the ops number them.
 enum class partner_by : int8_t { nearest, same_row, same_column, around_it, inside_it, touching,
-                                 same_shape, same_shape_turned, count };
+                                 same_shape, same_shape_turned, touching_sides, count };
 
 // THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
 // much is broken in: the surer a way names one partner, the sooner. The piece
@@ -854,10 +929,13 @@ enum class partner_by : int8_t { nearest, same_row, same_column, around_it, insi
 // lined up with it, in its rows or its columns, which a second piece in the
 // same band leaves without one (18419cfa's test shape, under two frames), then
 // the nearest, which ties as soon as two stand as far (ddf7fa4f's test block,
-// between two dots), then the rest as numbered.
+// between two dots), then the rest as numbered -- the touch at a side before
+// the touch at a corner too, four-connected before eight until eight is needed
+// (4938f0c2's shape meets its block only at a corner).
 inline constexpr partner_by partner_ways_asked[] = {
     partner_by::around_it, partner_by::inside_it, partner_by::same_row, partner_by::same_column,
-    partner_by::nearest, partner_by::touching, partner_by::same_shape, partner_by::same_shape_turned };
+    partner_by::nearest, partner_by::touching_sides, partner_by::touching, partner_by::same_shape,
+    partner_by::same_shape_turned };
 static_assert(sizeof(partner_ways_asked) / sizeof(partner_ways_asked[0]) == (size_t)partner_by::count,
               "every partner way is asked once");
 
@@ -934,12 +1012,14 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, int count, Bo
                 partner = own.row0 <= box.row0 && own.col0 <= box.col0 && box.row1 <= own.row1 && box.col1 <= own.col1;
                 break;
             case partner_by::touching:
+            case partner_by::touching_sides:
                 for (int row = own.row0; row <= own.row1 && !partner; ++row)
                     for (int col = own.col0; col <= own.col1 && !partner; ++col) {
                         if (!painted(mine, row, col)) continue;
                         for (int down = -1; down <= 1 && !partner; ++down)
                             for (int across = -1; across <= 1 && !partner; ++across)
-                                partner = painted(other, row + down, col + across);
+                                partner = (how == partner_by::touching || down == 0 || across == 0) &&
+                                          painted(other, row + down, col + across);
                     }
                 break;
             case partner_by::same_shape: partner = same_paint(other, box, 0); break;

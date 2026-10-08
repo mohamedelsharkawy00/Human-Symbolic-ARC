@@ -275,12 +275,19 @@ struct correspondence_election {
         // smallest first, or the ones in the band of rows or of columns numbered
         // `pick_value`, or the ones wearing the color most cells wear, or every
         // one but those, or the ones painting at least `pick_value` cells, or
-        // every one but those -- the picks SelectObjectsWithHoles,
+        // every one but those, or the first `pick_value` down the order of size,
+        // largest or smallest first, or every one but those, or the ones on the
+        // row or the column `pick_value` lines past the middle of all the pieces
+        // paint, or every one but those -- the picks SelectObjectsWithHoles,
         // SelectLargestObject, SelectSmallestObject, SelectRow, SelectColumn,
-        // SelectMostCommonColor and SelectAtLeastCells make, each "but those"
-        // turned round by InvertSelection. -1 when it picks by color.
+        // SelectMostCommonColor, SelectAtLeastCells, SelectRowFromMiddle and
+        // SelectColumnFromMiddle make, the first so many one SelectLargestObject
+        // or SelectSmallestObject a rank, each "but those" turned round by
+        // InvertSelection. -1 when it picks by color.
         enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
-                                  not_most_common, at_least_cells, fewer_cells, pick_kinds };
+                                  not_most_common, at_least_cells, fewer_cells, largest_ranks,
+                                  not_largest_ranks, smallest_ranks, not_smallest_ranks, middle_row,
+                                  not_middle_row, middle_column, not_middle_column, pick_kinds };
         int8_t pick_by = -1, pick_value = 0;
         // WHICH OF THOSE IT KEEPS: only the ones that would fit into a gap of
         // their partner, the partner way WouldFit numbers; -1 keeps them all.
@@ -337,6 +344,22 @@ struct correspondence_election {
         }
         int8_t say_fired(fired_rule rule, int8_t under) {
             return say_fired(std::move(rule), under, [](size_t, const left_over_cell&) { return false; });
+        }
+        // Lists a rule that claims cells the words on the line already account
+        // for together, and says nothing of its own: it is not put on the line.
+        // Listed only where it claims a cell; -1 where it claims none.
+        template <class Claims>
+        int8_t list_claims(fired_rule rule, Claims claims) {
+            const int8_t index = (int8_t)fired.size();
+            for (size_t which = 0; which < pairs.size(); ++which)
+                for (auto& cell : pairs[which].left_over)
+                    if (cell.claimed_by < 0 && claims(which, cell)) {
+                        cell.claimed_by = index;
+                        ++rule.cells;
+                    }
+            if (rule.cells == 0) return -1;
+            fired.push_back(std::move(rule));
+            return index;
         }
         // The rule this reading fired by that name, -1 when it fired none.
         int8_t fired_named(const string& name) const {
@@ -586,7 +609,10 @@ struct correspondence_election {
         }
         // THE CUT BY SIDES ALONE COMES LAST. It sees the cells the cut by corners
         // sees, only finer, so its words are said only where they say more
-        // (aedd82e4's lone cells, which touch the rest at a corner).
+        // (aedd82e4's lone cells, which touch the rest at a corner). Read ahead of
+        // the cut by corners -- four-connected until eight is needed, as the
+        // partners are asked -- it took the ties, and lost 4938f0c2, 64a7c07e and
+        // 9172f3a0: a test cuts by corners where its pairs cut either way.
         ranges::stable_partition(facts.ranked, [&](int8_t one) {
             return facts.readings[one].segmentation != segmentation_methods::four_connected_monochrome; });
         // A cut the reading would not read in time is no candidate at all while

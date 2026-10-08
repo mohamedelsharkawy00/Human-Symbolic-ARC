@@ -112,8 +112,6 @@ static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 // A grid cut both ways leaves at most this many panes worth carrying.
 static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
-// How many shapes the learned shape->color table holds (ShapeColorMap).
-static constexpr int GPU_MAX_SHAPE_KEYS = arc::shape_color_map_rule::MAX_KEYS;
 
 // The packed cell store lives upstream in 1_readings.hpp, where both sides can
 // reach it: it holds no addresses, so the same bytes mean the same thing on the
@@ -214,16 +212,17 @@ inline ARC_HOST_DEVICE gpu_painted_box gpu_box_of_paint(const gpu_fixed_object& 
     return {box.col0, box.row0, box.width(), box.height()};
 }
 
-// The glyph's fingerprint, read off the paint: the learned table's key,
-// canonical_shape_hash, the same whichever way round the glyph lies. Inference
-// learns its keys from tight color boxes, so applying must hash a tight box too
-// or a padded object fingerprints a different glyph and every lookup misses.
-// Untrimmed input is therefore accepted rather than required to arrive trimmed.
-inline ARC_HOST_DEVICE uint32_t gpu_shape_hash_of_paint(const gpu_fixed_object& obj) {
+// The glyph's key, read off the paint: the learned table's key of the `kind`
+// shape_key_of names -- its shape, the same whichever way round the glyph
+// lies, or its symmetry. Inference learns its keys from tight color boxes, so
+// applying must key a tight box too or a padded object keys a different glyph
+// and every lookup misses. Untrimmed input is therefore accepted rather than
+// required to arrive trimmed.
+inline ARC_HOST_DEVICE uint32_t gpu_shape_key_of_paint(const gpu_fixed_object& obj, int kind) {
     const gpu_painted_box box = gpu_box_of_paint(obj);
     if (box.width <= 0 || box.height <= 0) return 0;
-    return arc::canonical_shape_hash(box.width, box.height, [&](int row, int col) {
-        return obj.mask[box.y0 + row][box.x0 + col] != GPU_TRANSPARENT;
+    return arc::shape_key_of(kind, box.width, box.height, [&](int row, int col) {
+        return (int8_t)obj.mask[box.y0 + row][box.x0 + col];
     });
 }
 
@@ -300,9 +299,7 @@ struct gpu_exec_context {
     int8_t output_colors_by_size[GPU_MAX_COLORS];
     int8_t output_colors_by_size_count;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level broadcast).
-    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS];
-    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS];
-    int8_t   shape_color_count;
+    arc::shape_table shape_colors;
     int8_t distance_maps[GPU_MAX_COLORS][GPU_MAX_GRID][GPU_MAX_GRID];
 
     gpu_object_list pool[GPU_KERNEL_POOL_SIZE];
@@ -361,9 +358,7 @@ struct cuda_dsl_example_data {
     int8_t output_colors_by_size[GPU_MAX_COLORS] = {};
     int8_t output_colors_by_size_count = 0;
     // Learned shape->color lookup for the ShapeColorMap op (puzzle-level).
-    uint32_t shape_color_keys[GPU_MAX_SHAPE_KEYS] = {};
-    int8_t   shape_color_vals[GPU_MAX_SHAPE_KEYS] = {};
-    int8_t   shape_color_count = 0;
+    arc::shape_table shape_colors;
     int8_t rule_type = 0;
     int16_t rule_params[6] = {};
     // Per-example target CC summaries, precomputed host-side.
