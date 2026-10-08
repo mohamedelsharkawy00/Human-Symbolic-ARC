@@ -16,7 +16,7 @@ This file holds only what is current; past stages are in git history
   lack one. The training solves bunch in the first hundred by id (42, then
   10-24 a hundred). 8f215267 names no missing word yet does not fit: cells
   drawn with no partner wait on no word, so `missing` undercounts.
-- This session (not committed yet) simplified files 0-11 again, every step a
+- Commit 17715bb simplified files 0-11 again, every step a
   full build and a score against out/base: 199 right, 0 wrong, gained 0,
   lost 0, every program and all 1000 readouts byte-for-byte unchanged. Net
   source: 67 fewer lines (1_readings +34, 4_objects -4, 7_infer -79,
