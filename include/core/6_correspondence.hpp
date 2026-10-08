@@ -23,6 +23,20 @@
 namespace arc {
 using namespace std;
 
+// A tiled frame reads each copy's pieces separately. Only this reading carries
+// the boundaries: grids and their copies contain drawings alone. Both lists
+// live throughout the nested reading; `pair` belongs to the framed list.
+struct tiled_pieces {
+    const example* framed = nullptr;
+    const example* originals = nullptr;
+
+    tile_size of(const example& pair) const {
+        if (!originals) return {};
+        const grid& input = originals[&pair - framed].input;
+        return { input.width, input.height };
+    }
+};
+
 // Which pieces a word or frame takes. A color mask picks any piece wearing
 // one of its colors; `how` instead names a pick by shape, size or place, and
 // `but_those` turns it round, every piece but the ones it names, as
@@ -490,7 +504,7 @@ struct correspondence_election {
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
     // The pairs are figures: the plan deleted any ground (3_background.hpp).
-    static correspondence_election infer(const vector<example>& train) {
+    static correspondence_election infer(const vector<example>& train, const tiled_pieces& tiles = {}) {
 
         // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
         // because every reading's leftovers are a share of it.
@@ -501,7 +515,7 @@ struct correspondence_election {
 
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
-            preparations.push_back(prepare_segmentation(train, (segmentation_methods)method));
+            preparations.push_back(prepare_segmentation(train, (segmentation_methods)method, tiles));
         // THE CUT BY SIDES ALONE, READ ONLY WHERE IT IS ANOTHER READING THE READING
         // CAN READ. Where every grid cuts into the same pieces by corners, it is
         // that reading said again; where an input cuts into more pieces than the
@@ -648,7 +662,7 @@ private:
 
     // 2. Prepare each segmentation once, before trying its permissions.
     static prepared_segmentation prepare_segmentation(const vector<example>& train,
-                                                      segmentation_methods segmentation) {
+                                                      segmentation_methods segmentation, const tiled_pieces& tiles) {
         prepared_segmentation prepared;
         prepared.look.segmentation = segmentation;
         prepared.pairs.resize(train.size());
@@ -670,7 +684,7 @@ private:
             vector<object>& input_objects = saved.input_objects;
             vector<object>& output_objects = saved.output_objects;
             object_segmentation::segment_for_correspondence(input, segmentation, pair.input_info,
-                                       &input_objects, step_width, step_height);
+                                       &input_objects, step_width, step_height, tiles.of(train[pair_index]));
             object_segmentation::segment_for_correspondence(output, segmentation, pair.output_info,
                                        &output_objects, step_width, step_height);
             // Group copies and choose the most typical member while their cells are available.

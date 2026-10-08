@@ -650,6 +650,9 @@ ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
     return { step.down * height, step.across * width };
 }
 
+// Boundaries for reading copies separately; zero means one whole picture.
+struct tile_size { int width = 0, height = 0; };
+
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
 // and device share one answer about what one object is.
@@ -661,14 +664,13 @@ ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
 // not assumed. Pass -1 to exclude nothing but TRANSPARENT.
 template <class Grid, class Take>
 ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
-                                 grouping how, object_walk_scratch& scratch, Take take) {
+                                 grouping how, object_walk_scratch& scratch, Take take, tile_size tiles = {}) {
     const bool any_color = (how == grouping::touching_any_color);
     // One object per color takes every cell of the color at once, wherever it
     // is; the touching kinds walk out from the seed cell only.
     const bool whole_color = (how == grouping::all_of_one_color);
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
-    // A grid laid out of copies (tiles_of): a group never leaves its seed's copy.
-    const tile_size tiles = tiles_of(one_grid);
+    // A group never leaves its seed's copy when boundaries are supplied.
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
     for (int r = 0; r < MAX_GRID_DIM; ++r)
         for (int c = 0; c < MAX_GRID_DIM; ++c) taken[r][c] = false;

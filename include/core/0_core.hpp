@@ -34,11 +34,6 @@ constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 struct grid {
     int width = 0, height = 0;
     int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
-    // A GRID LAID OUT OF COPIES of one tile_width by tile_height picture, 0 by 0
-    // where it is one picture: no piece crosses from one copy into the next
-    // (each_object), as the program cuts the picture before it tiles it
-    // (10fcaaa3, framed_whole's tiled frame).
-    int tile_width = 0, tile_height = 0;
 
     // No cells at all, so there is nothing to read off it.
     bool empty() const {
@@ -68,13 +63,6 @@ struct grid {
         return true;
     }
 };
-
-// The size of the copies a grid is laid out of, 0 by 0 for one picture: a
-// host grid's own (grid::tile_width); every other kind of grid is one picture.
-struct tile_size { int width = 0, height = 0; };
-template <class Grid>
-ARC_HOST_DEVICE inline tile_size tiles_of(const Grid&) { return {}; }
-ARC_HOST_DEVICE inline tile_size tiles_of(const grid& one) { return { one.tile_width, one.tile_height }; }
 
 // The ARC demonstration example.
 struct example {

@@ -317,7 +317,7 @@ struct hole_color_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static hole_color_rule detect(const vector<example>& train) {
+    static hole_color_rule detect(const vector<example>& train, const tiled_pieces& tiles) {
         hole_color_rule rule;
         if (!pairs_overlay(train)) return {};
         object_walk_scratch scratch;
@@ -351,7 +351,7 @@ struct hole_color_rule {
                         return;
                     }
                     rule.colors[key] = (int8_t)color;
-                });
+                }, tiles.of(ex));
             if (!consistent) return {};
         }
         rule.held = changed;
@@ -360,10 +360,10 @@ struct hole_color_rule {
 };
 
 // Read just the pieces, in the same size-and-position order used by matching.
-inline vector<object> pieces_of(const grid& input, segmentation_methods segmentation) {
+inline vector<object> pieces_of(const grid& input, segmentation_methods segmentation, tile_size tiles = {}) {
     vector<object_segmentation::object_info> info;
     vector<object> pieces;
-    object_segmentation::segment_for_correspondence(input, segmentation, info, &pieces);
+    object_segmentation::segment_for_correspondence(input, segmentation, info, &pieces, 0, 0, tiles);
     return pieces;
 }
 
@@ -462,7 +462,8 @@ struct shape_color_map_rule : shape_table {
     // keeps its own color is a key naming it; one pair at least has to change
     // something.
     static shape_color_map_rule detect_body_recolor(const vector<example>& train,
-                                                    const correspondence_election& correspondence) {
+                                                    const correspondence_election& correspondence,
+                                                    const tiled_pieces& tiles) {
         const auto& pairs = correspondence.chosen_pairs();
         if (!pairs_overlay(train) || pairs.size() != train.size() ||
             !boxed_by_its_cells(correspondence.segmentation)) return {};
@@ -496,7 +497,7 @@ struct shape_color_map_rule : shape_table {
             if (became < 0) return {};
             changed = changed || became != pieces[target].color;
 
-            const auto cut = pieces_of(train[which].input, correspondence.segmentation);
+            const auto cut = pieces_of(train[which].input, correspondence.segmentation, tiles.of(train[which]));
             if (cut.size() != pieces.size()) return {};
             // The largest takes its color from its one nearest piece, as ColorFrom
             // finds it among the pieces not picked: that must be the key.
@@ -516,7 +517,7 @@ struct shape_color_map_rule : shape_table {
     // A table that only ever fills with the ground paints nothing, and as the
     // word for a recolor it stood in for changes it never makes -- so one shape
     // at least has to be filled with a color the ground is not.
-    static shape_color_map_rule detect_interior_fill(const vector<example>& train) {
+    static shape_color_map_rule detect_interior_fill(const vector<example>& train, const tiled_pieces& tiles) {
         shape_color_map_rule rule;
         if (!pairs_overlay(train)) return {};
         bool fills_something = false;
@@ -564,7 +565,7 @@ struct shape_color_map_rule : shape_table {
                     [&](int row, int col) { return occupied[row * width + col]; });
                 consistent = rule.learn(object_shape, (int8_t)fill);
                 fills_something = fills_something || fill != TRANSPARENT;
-            });
+            }, tiles.of(ex));
             if (!consistent) return {};
         }
         if (!fills_something) return {};
@@ -1935,14 +1936,14 @@ struct input_blocks_rule {
 // the word's own order, or a reading lays a later piece under an earlier one.
 // Split hands them over in the order the walk meets them. Colors walks the
 // palette rather than the grid, so its layers come in colour order.
-inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation) {
+inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation, tile_size tiles = {}) {
     vector<object> pieces;
     if (!boxed_by_its_cells(segmentation)) return pieces;
     object_walk_scratch scratch;
     each_object(input, TRANSPARENT, grouping_of(segmentation), scratch,
                 [&](const object_summary& box, const int16_t* cells, int count) {
         pieces.push_back(object::from_cells(input, box, cells, count));
-    });
+    }, tiles);
     if (segmentation == segmentation_methods::all_cells_of_one_color)
         stable_sort(pieces.begin(), pieces.end(), [](const object& one, const object& other) {
             return one.first_color() < other.first_color(); });
@@ -1987,7 +1988,7 @@ struct piece_slam_rule {
 
     // Tries all four slide directions and keeps the one that redraws every output.
     static piece_slam_rule detect(const vector<example>& train,
-                                  const correspondence_election& correspondence) {
+                                  const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The slide happens in each piece's own box, and the cells it leaves are ground.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
             !pairs_overlay(train)) return {};
@@ -1995,7 +1996,7 @@ struct piece_slam_rule {
         // cell moved at all.
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
             return redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                const auto pieces = pieces_of(pair.input, correspondence.segmentation);
+                const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
                 drawn = empty_grid(pair.output.width, pair.output.height);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
@@ -2174,7 +2175,7 @@ struct snap_to_anchors_rule {
     bool holds() const { return held; }
 
     static snap_to_anchors_rule detect(const vector<example>& train, const correspondence_election& correspondence,
-                                       const output_dimension_rule& size) {
+                                       const output_dimension_rule& size, const tiled_pieces& tiles) {
         if (train.empty()) return {};
         bool at_work = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
@@ -2182,7 +2183,7 @@ struct snap_to_anchors_rule {
             int8_t cells[MAX_GRID_DIM][MAX_GRID_DIM];
             for (auto& row : cells)
                 for (int8_t& cell : row) cell = (int8_t)TRANSPARENT;
-            for (const object& piece : pieces_as_said(pair.input, correspondence.segmentation))
+            for (const object& piece : pieces_as_said(pair.input, correspondence.segmentation, tiles.of(pair)))
                 piece.each_cell([&](int row, int col, int8_t color) { cells[row][col] = color; });
             const bool painted = draw_on_canvas(pair.input, size, drawn, [&](grid& canvas) {
                 int8_t label[MAX_GRID_DIM][MAX_GRID_DIM];
@@ -2226,7 +2227,7 @@ struct overlap_corner_rule {
     // Lays every input's pieces into the chain and keeps the claim only if that
     // drew each output on the nose.
     static overlap_corner_rule detect(const vector<example>& train,
-                                      const correspondence_election& correspondence) {
+                                      const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // Each piece is hung off the last one's box, so the pieces have to be
         // measured in their own, and the cells no piece reaches are ground.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
@@ -2236,7 +2237,7 @@ struct overlap_corner_rule {
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            const auto pieces = pieces_of(pair.input, correspondence.segmentation);
+            const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
             // The chain runs left to right, ties top to bottom -- the order the
@@ -2311,7 +2312,7 @@ struct slide_to_touch_rule {
     bool holds() const { return is_color(stays) && is_color(slides); }
 
     static slide_to_touch_rule detect(const vector<example>& train,
-                                      const correspondence_election& correspondence) {
+                                      const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The pieces slide in grid coordinates and the cells they leave behind
         // are ground, so the two grids have to lie over one another; and the
         // boxes measured here are the boxes Trim hands the op.
@@ -2324,7 +2325,8 @@ struct slide_to_touch_rule {
         for (const auto& pair : train) {
             vector<object_segmentation::object_info> info;
             object_segmentation::segment_for_correspondence(pair.input,
-                                                            correspondence.segmentation, info, nullptr);
+                                                            correspondence.segmentation, info, nullptr,
+                                                                0, 0, tiles.of(pair));
             // One list is all the op is ever handed, so a grid cut into more
             // pieces than that is one the word could not draw anyway.
             if (info.empty() || info.size() > MAX_OBJECTS_IN_A_LIST) return {};
@@ -2347,7 +2349,8 @@ struct slide_to_touch_rule {
                 vector<object_segmentation::object_info> info;
                 vector<object> pieces;
                 object_segmentation::segment_for_correspondence(pair.input,
-                                                                correspondence.segmentation, info, &pieces);
+                                                                correspondence.segmentation, info, &pieces,
+                                                                0, 0, tiles.of(pair));
                 drawn = empty_grid(pair.output.width, pair.output.height);
                 // WHAT THE OP SEES OF THE CANVAS is the box around everything
                 // already painted, read once, before the first piece slides --
@@ -2435,7 +2438,7 @@ struct edge_slide_rule {
     }
 
     static edge_slide_rule detect(const vector<example>& train, segmentation_methods elected,
-                                  const output_dimension_rule& size) {
+                                  const output_dimension_rule& size, const tiled_pieces& tiles) {
         if (train.empty()) return {};
         vector<segmentation_methods> cuts{ elected };
         for (const auto cut : { segmentation_methods::connected_monochrome,
@@ -2448,7 +2451,7 @@ struct edge_slide_rule {
             vector<vector<object>> pieces;
             uint16_t colors = 0;
             for (const example& pair : train) {
-                pieces.push_back(pieces_as_said(pair.input, cut));
+                pieces.push_back(pieces_as_said(pair.input, cut, tiles.of(pair)));
                 for (const object& piece : pieces.back()) colors = (uint16_t)(colors | palette(piece));
             }
             bool as_they_lie = true;
@@ -2495,7 +2498,7 @@ struct copy_to_rule {
     int8_t anchor = 4;
     bool holds() const { return held; }
 
-    static vector<object> pieces(const grid& input, const pane_split_facts& split, bool use_panes) {
+    static vector<object> pieces(const grid& input, const pane_split_facts& split, bool use_panes, tile_size tiles = {}) {
         grid source = input;
         if (use_panes) {
             vector<pane_split_facts::pane> frames;
@@ -2507,7 +2510,7 @@ struct copy_to_rule {
                     for (int c = frame.left; c < frame.left + frame.width; ++c)
                         source.data[r][c] = input.data[r][c];
         }
-        return pieces_as_said(source, segmentation_methods::connected_multicolor);
+        return pieces_as_said(source, segmentation_methods::connected_multicolor, tiles);
     }
 
     static int source_index(const vector<object>& objects) {
@@ -2534,7 +2537,7 @@ struct copy_to_rule {
     }
 
     static copy_to_rule detect(const vector<example>& train,
-                               const pane_split_facts& split) {
+                               const pane_split_facts& split, const tiled_pieces& tiles) {
         if (train.empty()) return {};
         bool changed = false;
         for (const auto& pair : train) {
@@ -2548,7 +2551,7 @@ struct copy_to_rule {
             vector<int> sources;
             bool readable = true;
             for (const auto& pair : train) {
-                cut.push_back(pieces(pair.input, split, use_panes));
+                cut.push_back(pieces(pair.input, split, use_panes, tiles.of(pair)));
                 sources.push_back(source_index(cut.back()));
                 if (sources.back() < 0) { readable = false; break; }
             }
@@ -2574,14 +2577,14 @@ struct marker_piece {
     int8_t color = 0;
 };
 
-inline vector<marker_piece> seeds_the_op_will_see(const grid& input) {
+inline vector<marker_piece> seeds_the_op_will_see(const grid& input, tile_size tiles = {}) {
     vector<marker_piece> pieces;
     object_walk_scratch scratch;
     each_object(input, TRANSPARENT, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int found) {
         if (found <= 0) return;
         pieces.push_back({ box, (int8_t)input.data[cell_row(cells[0])][cell_col(cells[0])] });
-    });
+    }, tiles);
     vector<object_summary> boxes;
     for (const marker_piece& piece : pieces) boxes.push_back(piece.summary);
     vector<marker_piece> seeds;
@@ -2636,8 +2639,8 @@ struct project_on_seeds_rule {
     // lay on this pair's canvas, and says how many stamps they laid -- none when
     // there is no template or no marker to lay one along.
     template <class Land>
-    static int stamp(const example& pair, segmentation_methods cut, Land land) {
-        const auto pieces = pieces_of(pair.input, cut);
+    static int stamp(const example& pair, segmentation_methods cut, Land land, tile_size tiles) {
+        const auto pieces = pieces_of(pair.input, cut, tiles);
         if (pieces.empty()) return 0;
         // The template is whichever piece SortBySize[0] puts first, and that
         // word ranks by cells -- not the box that picked the markers. The op
@@ -2650,7 +2653,7 @@ struct project_on_seeds_rule {
         // stamp before the list does.
         constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
         int stamped = 0;
-        for (const marker_piece& marker : seeds_the_op_will_see(pair.input))
+        for (const marker_piece& marker : seeds_the_op_will_see(pair.input, tiles))
             project_along(tpl.summary.box(), marker.summary.box(),
                           pair.input.width, pair.input.height, [&](int at_row, int at_col) {
                 if (stamped >= most_the_op_stamps) return false;
@@ -2668,7 +2671,8 @@ struct project_on_seeds_rule {
     }
 
     static project_on_seeds_rule detect(const vector<example>& train,
-                                        const correspondence_election& correspondence) {
+                                        const correspondence_election& correspondence,
+                                        const tiled_pieces& tiles) {
         // The template is handed over in the frame its cells make, which is
         // what the Trim in front of the word gives it. Stamping paints over a
         // copy of the input, so a canvas of another size is a different drawing
@@ -2681,7 +2685,7 @@ struct project_on_seeds_rule {
             drawn = pair.input;
             return stamp(pair, cut, [&](int row, int col, int8_t color) {
                 drawn.data[row][col] = color;
-            }) > 0;
+            }, tiles.of(pair)) > 0;
         });
         if (in_the_markers_colors) return { true, TRANSPARENT };
 
@@ -2701,7 +2705,7 @@ struct project_on_seeds_rule {
                 if (!is_color(worn)) worn = shown;
                 one_color = one_color && shown == worn;
                 drawn.data[row][col] = worn;
-            });
+            }, tiles.of(pair));
             return stamped > 0 && one_color;
         });
         // A stamp in the ground's own colour draws nothing at all.
@@ -2803,7 +2807,7 @@ struct bridge_rule {
     bool holds() const { return held; }
 
     static bridge_rule detect(const vector<example>& train,
-                              const correspondence_election& correspondence) {
+                              const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The bars fill cells that were ground, and the rest of the grid stays
         // where it was, so the two grids lie over one another.
         if (!pairs_overlay(train)) return {};
@@ -2820,7 +2824,7 @@ struct bridge_rule {
                 bool bridged = false;
                 const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
                     // The pieces as Split hands them over: the one walk, in its order.
-                    const vector<object> pieces = pieces_as_said(pair.input, cut);
+                    const vector<object> pieces = pieces_as_said(pair.input, cut, tiles.of(pair));
                     // One list is all the op is handed, and the bars take one place
                     // more in it, all of them one drawing.
                     if (pieces.empty() || pieces.size() >= MAX_OBJECTS_IN_A_LIST) return false;
@@ -2920,8 +2924,8 @@ struct mark_lattice_rule {
     // What the words draw on one input: the cut's marks, trimmed and read the
     // way the pair is turned, each laid as its line wherever the lattice puts
     // it, the rest left empty.
-    static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn) {
-        const vector<object> marks = pieces_as_said(input, cut);
+    static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn, tile_size tiles = {}) {
+        const vector<object> marks = pieces_as_said(input, cut, tiles);
         // One list is all the op is handed.
         if (marks.size() > MAX_OBJECTS_IN_A_LIST) return false;
         // Read turned, the marks' rows are their columns, and the other way round.
@@ -2948,7 +2952,7 @@ struct mark_lattice_rule {
     }
 
     static mark_lattice_rule detect(const vector<example>& train,
-                                    const correspondence_election& correspondence) {
+                                    const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // Lines go down on an empty canvas the size of the input, and whatever
         // they miss stays empty, for the plan to fill.
         if (!pairs_overlay(train)) return {};
@@ -2962,7 +2966,7 @@ struct mark_lattice_rule {
             for (const bool portrait : { false, true }) {
                 bool laid = false;
                 const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-                    if (!draw(pair.input, cut, portrait, drawn))
+                    if (!draw(pair.input, cut, portrait, drawn, tiles.of(pair)))
                         return false;
                     laid = laid || drawn != pair.input;
                     return true;
@@ -2980,7 +2984,7 @@ struct interior_spread_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static interior_spread_rule detect(const vector<example>& train) {
+    static interior_spread_rule detect(const vector<example>& train, const tiled_pieces& tiles) {
         if (train.empty() || !pairs_overlay(train)) return {};
         bool changed = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
@@ -2998,7 +3002,7 @@ struct interior_spread_rule {
                         drawn.data[row][col] = color;
                         changed = changed || color != was;
                     });
-                });
+                }, tiles.of(pair));
             return pieces > 0 && pieces <= MAX_OBJECTS_IN_A_LIST;
         });
         return {redraws && changed};
@@ -3012,7 +3016,7 @@ struct interior_fill_rule {
     int8_t color = -1;
     bool holds() const { return is_color(color); }
 
-    static interior_fill_rule detect(const vector<example>& train) {
+    static interior_fill_rule detect(const vector<example>& train, const tiled_pieces& tiles) {
         if (train.empty() || !pairs_overlay(train)) return {};
         interior_fill_rule rule;
         bool changed = false;
@@ -3054,7 +3058,7 @@ struct interior_fill_rule {
                             else if (!outside[r][c] && rule.holds())
                                 drawn.data[y][x] = rule.color;
                         }
-                });
+                }, tiles.of(pair));
             return consistent && pieces > 0 && pieces <= MAX_OBJECTS_IN_A_LIST;
         });
         return redraws && changed ? rule : interior_fill_rule{};
@@ -3542,14 +3546,15 @@ struct replay_facts {
     // is one carry_the_hand cannot carry the pieces through.
     bool hand_known = true;
     // The pieces a named cut hands over, rather than the elected one.
-    replay_facts(const vector<example>& pairs, segmentation_methods cut) : train(pairs) {
+    replay_facts(const vector<example>& pairs, segmentation_methods cut,
+        const tiled_pieces& tiles) : train(pairs) {
         for (const example& pair : train) {
-            cuts.push_back(pieces_as_said(pair.input, cut));
+            cuts.push_back(pieces_as_said(pair.input, cut, tiles.of(pair)));
             overlays = overlays && pair.input.same_size(pair.output);
         }
     }
-    replay_facts(const inference& inf, const vector<example>& pairs)
-        : replay_facts(pairs, inf.correspondence.segmentation) {}
+    replay_facts(const inference& inf, const vector<example>& pairs, const tiled_pieces& tiles)
+        : replay_facts(pairs, inf.correspondence.segmentation, tiles) {}
 };
 
 // THE PIECES A PICK TAKES, pair by pair, made ready once for a word asked many
@@ -3871,7 +3876,7 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
                          grid& framed) {
     using kind = piece_frame_rule::kind_of;
     const int factor = frame.factor;
-    const bool drew = draw_on_canvas(input, size, framed, [&](grid& canvas) {
+    return draw_on_canvas(input, size, framed, [&](grid& canvas) {
         switch (frame.kind) {
         case kind::posed:
             for (int row = 0; row < input.height; ++row)
@@ -3933,14 +3938,6 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
         default: return false;
         }
     });
-    // A TILED INPUT IS COPIES OF THE INPUT'S PIECES, each piece cut on its own
-    // and laid down again in every copy, as its words cut the input before they
-    // tile it (frame_the_sentences): no piece joins one in the next copy.
-    if (drew && frame.kind == kind::tiled) {
-        framed.tile_width = input.width;
-        framed.tile_height = input.height;
-    }
-    return drew;
 }
 
 // THE FRAME A SIZE CHANGE IS READ THROUGH, chosen. Of every cut with a word and
@@ -3953,7 +3950,7 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
 // and held only where the frame lands on the output's size in every pair. A
 // filled frame that reads its color off a table read off the pairs makes that
 // the puzzle's table (inf.shape_color_map), the one ShapeColorMap looks up.
-inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf) {
+inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf, const tiled_pieces& tiles) {
     if (train.empty() || inf.size.Chosen == output_dimension_rule::Identity) return {};
     // The framed grid is of figures: no ground is filled into it, so what a
     // frame leaves unpainted is empty (draw_on_canvas).
@@ -4041,7 +4038,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         return picks;
     };
     for (const segmentation_methods cut : frame_cuts) {
-        const replay_facts facts(train, cut);
+        const replay_facts facts(train, cut, tiles);
         const vector<piece_pick> picks = picks_of(facts);
         for (const piece_pick& pick : picks) {
             piece_frame_rule frame;
@@ -4103,7 +4100,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         vector<uint16_t> shown;
         for (const example& pair : train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
         for (const segmentation_methods cut : frame_cuts) {
-            const replay_facts facts(train, cut);
+            const replay_facts facts(train, cut, tiles);
             for (const piece_pick& pick : picks_of(facts))
                 for (int keyed = -1; keyed <= last_kind; ++keyed) {
                     shape_color_map_rule table;
@@ -5114,7 +5111,7 @@ struct paint_value {
 // recolor is said with and what it has no word for. Listed on the reading under
 // the rule whose evidence each one reads, and put on the line in the order it is
 // said.
-inline void finish_the_line(inference& inf, const vector<example>& train) {
+inline void finish_the_line(inference& inf, const vector<example>& train, const tiled_pieces& boundaries) {
     using rule = correspondence_election::fired_rule;
     auto& election = inf.correspondence;
     if (election.chosen_pairs().empty()) return;
@@ -5218,7 +5215,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
 
     // THE HAND AS THE LINE LEAVES IT: the cut's pieces carried through every word
     // already on the line, the hand the words asked below are replayed on.
-    replay_facts facts(inf, train);
+    replay_facts facts(inf, train, boundaries);
     for (const int8_t which : read.line)
         facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], facts);
     // Carries the hand through a word just said on the line.
@@ -5297,7 +5294,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train) {
         });
     };
     // What a paint said after the line reads: the cut opened again, as it is said.
-    const replay_facts opened(inf, train);
+    const replay_facts opened(inf, train, boundaries);
     // The colors an unsaid change of `word` starts from, a bit each.
     auto starts_from = [&](missing word) {
         uint16_t found = 0;
@@ -6044,14 +6041,14 @@ inline said_most says_the_most(int count, Read read) {
     return most;
 }
 
-inline void read_the_cut(inference& inf, const vector<example>& train);
+inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles);
 
 // THE READING OF FIGURES: pairs with no ground in them -- a plan deleted it,
 // or keeps every color as a figure -- read with no election and no ground in
 // any reader, so every detector sees figures and empty cells, and an empty cell
 // is nothing (where a plan deleted the ground, what it fills last). What reads
 // no cut is asked once; what reads one is asked of each cut the words weigh.
-inline inference read_figures(const vector<example>& train) {
+inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}) {
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);
     inf.colors = color_facts::detect(train);  // rule-independent
@@ -6075,9 +6072,9 @@ inline inference read_figures(const vector<example>& train) {
     // A noisy lattice cleaned by the vote. It reads the whole input, not the
     // pieces, and the ground the op reads off it (denoise_ground).
     inf.periodic_denoise = periodic_denoise_rule::detect(train);
-    inf.copy_to = copy_to_rule::detect(train, inf.pane_split);
-    inf.interior_fill = interior_fill_rule::detect(train);
-    inf.interior_spread = interior_spread_rule::detect(train);
+    inf.copy_to = copy_to_rule::detect(train, inf.pane_split, tiles);
+    inf.interior_fill = interior_fill_rule::detect(train, tiles);
+    inf.interior_spread = interior_spread_rule::detect(train, tiles);
     inf.ranked_layout = ranked_layout_rule::detect(train, inf.size);
     inf.rarest_color = rarest_color_rule::detect(train, inf.size);
     inf.corner_crop = corner_crop_rule::detect(train, inf.size);
@@ -6089,7 +6086,7 @@ inline inference read_figures(const vector<example>& train) {
     // same question itself (pairs_overlay), so this gate states the intent
     // and none of them depends on being called from here.
     if (inf.size.Chosen == output_dimension_rule::Identity) {
-        inf.hole_colors = hole_color_rule::detect(train);
+        inf.hole_colors = hole_color_rule::detect(train, tiles);
         inf.ray_extension = ray_extension_rule::detect(train);
         inf.unchanged   = unchanged_cells_facts::detect(train);
         inf.color_diff  = color_diff_facts::detect(train);
@@ -6100,19 +6097,19 @@ inline inference read_figures(const vector<example>& train) {
 
     // Edge level of correspondence: the figures cut up every way that competes,
     // ranked by how well the pieces match.
-    inf.correspondence = correspondence_election::infer(train);
+    inf.correspondence = correspondence_election::infer(train, tiles);
     // THE CUT IS CHOSEN HERE, just above the first word that reads it: each cut
     // in the matching's order is read to the end of its line, and the one whose
     // words say the most is said (says_the_most).
     const vector<int8_t> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
-        read_the_cut(inf, train);
+        read_the_cut(inf, train, tiles);
         return inf;
     }
     said_most said = says_the_most((int)ranked.size(), [&](int rank) {
         inference read = inf;
         read.correspondence.choose((size_t)rank);
-        read_the_cut(read, train);
+        read_the_cut(read, train, tiles);
         return read;
     });
     inference best = std::move(said.reading);
@@ -6130,38 +6127,38 @@ inline inference read_figures(const vector<example>& train) {
 // THE WORDS THAT READ THE CUT, asked of the one `inf` reads on: the rules read
 // off its pieces, then -- once every rule is known -- the rivals, the rest of
 // its line, what no rule on it says, and a size change read through its frame.
-inline void read_the_cut(inference& inf, const vector<example>& train) {
+inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles) {
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
     // because a repeating box is the plainer claim and should get first refusal.
     inf.diagonal_continuation = diagonal_continuation_rule::detect(train, inf.correspondence);
-    inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence);
-    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence);
+    inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence, tiles);
+    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence, tiles);
     // Pieces that slid up against the ones that stayed. Asked after the chain
     // because a layout that puts every piece somewhere new is the larger claim
     // and should get first refusal; this one leaves most of the grid alone.
-    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence);
+    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, tiles);
     // Pieces that slide to the canvas edge, over whatever is in the way. It reads
     // its own cut when the elected one joins the slider to what it passes over.
-    inf.edge_slide = edge_slide_rule::detect(train, inf.correspondence.segmentation, inf.size);
-    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence);
-    inf.snap_to_anchors = snap_to_anchors_rule::detect(train, inf.correspondence, inf.size);
+    inf.edge_slide = edge_slide_rule::detect(train, inf.correspondence.segmentation, inf.size, tiles);
+    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, tiles);
+    inf.snap_to_anchors = snap_to_anchors_rule::detect(train, inf.correspondence, inf.size, tiles);
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
-    inf.bridge = bridge_rule::detect(train, inf.correspondence);
+    inf.bridge = bridge_rule::detect(train, inf.correspondence, tiles);
     // Marks laid as lines that take turns down the grid. Like the bridge, it
     // falls back on a cut of its own when the elected one cannot say it.
-    inf.mark_lattice = mark_lattice_rule::detect(train, inf.correspondence);
+    inf.mark_lattice = mark_lattice_rule::detect(train, inf.correspondence, tiles);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence);
     if (inf.size.Chosen == output_dimension_rule::Identity) {
-        inf.shape_color_map = shape_color_map_rule::detect_body_recolor(train, inf.correspondence);
+        inf.shape_color_map = shape_color_map_rule::detect_body_recolor(train, inf.correspondence, tiles);
         // Fallback: same shape->color table, but keyed on each object's own
         // shape and applied as an interior fill (ShapeToInteriorColorMap)
         // instead of a body recolor. Only run when the body-recolor
         // hypothesis didn't validate; the winner is recorded in claimed_by,
         // which is what tells the two ops apart downstream.
         if (!inf.shape_color_map.holds())
-            inf.shape_color_map = shape_color_map_rule::detect_interior_fill(train);
+            inf.shape_color_map = shape_color_map_rule::detect_interior_fill(train, tiles);
     }
 
     // PIECES THAT DO NOT REDRAW THE OUTPUT where they lie: the cut's pieces,
@@ -6170,7 +6167,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
     // matched where half of them are gone -- so a line with no words is held to
     // what it would draw. Asked of the cut alone, before the line is chosen.
     inf.pieces_redraw = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-        const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation);
+        const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation, tiles.of(pair));
         return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
                 paint_piece(canvas, piece, piece.summary.y0, piece.summary.x0, true, /*clip=*/true);
@@ -6193,7 +6190,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
     inf = says_the_most(acts ? 2 : 1, [&](int alone) {
         inference read = inf;
         if (alone) leave_the_acts_unsaid(read);
-        finish_the_line(read, train);
+        finish_the_line(read, train, tiles);
         return read;
     }).reading;
     inf.correspondence.list_what_is_missing();
@@ -6201,7 +6198,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
     // A SIZE CHANGE, READ THROUGH ITS FRAME: once the frame cuts the output's
     // grid out of the input's, what is left is a same-size puzzle, read by every
     // word a same-size puzzle has -- from each framed input to its output.
-    inf.frame = choose_piece_frame(train, inf);
+    inf.frame = choose_piece_frame(train, inf, tiles);
     if (inf.frame.holds()) {
         using kind = piece_frame_rule::kind_of;
         // The frames that take the pieces a pick takes off a cut of their own;
@@ -6210,7 +6207,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
                            inf.frame.kind == kind::filled;
         // The framed grid is what the frame leaves of the figures: nothing is
         // filled in it, and the reading inside it is a reading of figures too.
-        const replay_facts facts(train, picks ? inf.frame.cut : inf.correspondence.segmentation);
+        const replay_facts facts(train, picks ? inf.frame.cut : inf.correspondence.segmentation, tiles);
         const piece_pick& pick = inf.frame.pick;
         vector<example> framed(train.size());
         bool all = true;
@@ -6234,7 +6231,12 @@ inline void read_the_cut(inference& inf, const vector<example>& train) {
             }
         }
         if (!all) inf.frame = {};
-        else inf.framed = std::make_shared<const inference>(read_figures(framed));
+        else {
+            // Split before Tile: each copy keeps the original input's boundaries.
+            const tiled_pieces copies = inf.frame.kind == kind::tiled
+                ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
+            inf.framed = std::make_shared<const inference>(read_figures(framed, copies));
+        }
     }
 }
 

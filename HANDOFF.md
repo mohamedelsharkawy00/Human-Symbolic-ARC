@@ -16,6 +16,13 @@ This file holds only what is current; past stages are in git history
   lack one. The training solves bunch in the first hundred by id (42, then
   10-24 a hundred). 8f215267 names no missing word yet does not fit: cells
   drawn with no partner wait on no word, so `missing` undercounts.
+- This session moved tile boundaries out of grid (item 8 below). The tiled
+  frame supplies them explicitly to the piece readers, matching and both
+  replay paths; replay_facts requires the context so a caller cannot omit it.
+  Full build and training run (tile_explicit, compared then deleted): 199
+  right, 0 wrong, gained 0, lost 0; every program and all 1000 readouts
+  byte-for-byte unchanged against out/base. Explained but unsolved: 0 -> 0.
+  GPU kernel stack unchanged at 29,488 bytes; only the two existing warnings.
 - Commit 17715bb simplified files 0-11 again, every step a
   full build and a score against out/base: 199 right, 0 wrong, gained 0,
   lost 0, every program and all 1000 readouts byte-for-byte unchanged. Net
@@ -92,6 +99,12 @@ This file holds only what is current; past stages are in git history
   116 / 7.
 
 ## How to check a refactor
+- Keep choosing changes upstream, in numbered file order. Once chosen, wire
+  the change from the lowest helper back up through every caller. Make new
+  context arguments required immediately, so the compiler catches omissions
+  before scoring. The tile refactor missed the second replay path (`opened`);
+  its default argument hid the omission, costing a second full build and run.
+  That was a wiring mistake, not a reason to reverse the reading order.
 - Full build, then `scripts\said.bat <label>`, then against the last run:
   `cmp out\<old>\said.txt out\<new>\said.txt` and
   `diff -rq out\<old>\logs out\<new>\logs` (byte for byte), and
@@ -153,9 +166,10 @@ uses it, global before local. Estimates are rough.
    the packed values of AlignTo, MirrorAround and MoveToward beside
    paint_value; the two pre-existing compiler warnings (C4458 `count` in
    shape_color_map_rule, C6336 in picks_to_ask's middle-out values).
-8. Think with the user: grid::tile_width/tile_height is state every grid
-   carries for one frame (10fcaaa3); passing the tile to each_object where
-   the frame needs it would keep the base type plain.
+8. Done: grid is only dimensions and cells. each_object takes an explicit
+   tile_size (1_readings); tiled_pieces (6_correspondence) supplies each framed
+   input's boundaries from the original pairs, passed through matching, the
+   rule readers and replays. Only the tiled frame creates this context.
 9. Structure: 7_infer.hpp includes 8_vocabulary.hpp, so the numbered
    reading order runs backwards there; 7_infer (about 6,300 lines) could be
    split by owner (tables, the standalone rules, picks and frames, replays,
@@ -239,8 +253,8 @@ Smaller, open:
   other cut, only where it cuts differently and into no more pieces than the
   reading reads.
 - A tiled input is copies of the input's pieces: its program cuts before
-  Tile, and the reading cuts a grid laid out of copies one copy at a time
-  (grid::tile_width, each_object; 10fcaaa3).
+  Tile, and the reading passes each input's tile_size explicitly to each_object
+  through tiled_pieces; grids carry no reading state (10fcaaa3).
 - A list holds 900 pieces (MAX_OBJECTS_IN_A_LIST); the reading reads a cut
   only where no input cuts into more than 128 (MOST_PIECES_READ, TEMPORARY).
 - Partner ways are numbered in the order they are asked, surest first

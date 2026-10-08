@@ -322,8 +322,8 @@ struct object_segmentation {
     static void segment_for_correspondence(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
-                                    int step_width = 0, int step_height = 0) {
-        segment_into_objects(one_grid, segmentation, info, objects, step_width, step_height);
+                                    int step_width = 0, int step_height = 0, tile_size tiles = {}) {
+        segment_into_objects(one_grid, segmentation, info, objects, step_width, step_height, tiles);
         vector<int> reading_order(info.size());
         iota(reading_order.begin(), reading_order.end(), 0);
         stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
@@ -433,7 +433,7 @@ private:
     static void segment_into_objects(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
-                                    int step_width = 0, int step_height = 0) {
+                                    int step_width = 0, int step_height = 0, tile_size tiles = {}) {
         // Allow up to one object per grid cell.
         static constexpr int MAX_OBJECTS = MAX_GRID_CELLS;
         // One object found: its record always, its cells when the caller keeps them.
@@ -485,7 +485,7 @@ private:
             for (int i = 1; i < how_many && color >= 0; ++i)
                 if (one_grid.data[cell_row(found_cells[i])][cell_col(found_cells[i])] != color) color = -1;
             keep(object::from_cells(one_grid, found, found_cells, how_many), color);
-        });
+        }, tiles);
     }
 
     // Canonical shape of an object: which cells of its box it fills, the same
