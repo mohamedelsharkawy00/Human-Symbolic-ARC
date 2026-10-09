@@ -69,13 +69,4 @@ struct example {
     grid input, output;
 };
 
-// HOW MANY OBJECTS ONE LIST HOLDS while a program runs: one for every cell of
-// the largest grid, so no cut of a grid runs out of room. The kernel's list is
-// this long, so an op handed more than this hands back this many -- and a
-// reading that says what an op will draw has to stop counting at the same
-// place, or it claims a drawing the op would not make. 12_dsl.cuh names it
-// GPU_KERNEL_MAX_OBJECTS on its own side of the fence. It was 32 while search
-// ran thousands of programs at once; one reading runs a handful.
-constexpr int MAX_OBJECTS_IN_A_LIST = MAX_GRID_CELLS;
-
 }  // namespace arc

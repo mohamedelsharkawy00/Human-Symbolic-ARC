@@ -5,8 +5,59 @@ This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
 ## Where it stands
-- Training: 199 right, 0 wrong. Current run: out/base/ (out\ is not
-  in git). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8, 199 at abc3f0b.
+- Training: 203 right, 0 wrong. Current run: out/opus55-compose-refined/
+  (out\ is not in git; out/opus55-replay/ is the run before it, out/base/
+  the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
+  199 at abc3f0b.
+- This session made the line compose existing words (all in 7_infer; report
+  out/opus55-compose-refined-report.md, patch and snapshots in
+  out/opus55-compose-refined-work/). 203 right, 0 wrong, gained 18286ef8,
+  22168020, ae3edfdc, b8825c91, lost 0, explained but unsolved 0 -> 0; six
+  solved puzzles say another program, still right. The old composition
+  patch (each start color alone in picks_to_ask, a move claims the input cell
+  its landing covers, recolor_word asks the start colors, paints laid under
+  read the hand the line leaves) broke five puzzles (out/opus55-compose-v1);
+  each break named a missing distinction or a bug, fixed at its owner:
+  - A size rank is asked only where no pair ties at that rank (picks_to_ask,
+    sizes_in_order): a tie is broken by scan order, a pick by place
+    (833966f4's one-cell pieces; 22168020's mirrors).
+  - The words' claims are held to the hand drawn as the line lays it, after
+    the words: a later word can undo an earlier one's landing (50c07299 slid
+    one piece twice).
+  - All four ways is the mirror asked first, so it takes a tie, as the longer
+    ray does (b8825c91's test patch sits on the middle column).
+  - Words and paints compete in ONE loop, biggest first (finish_the_line):
+    asked after the words, paints lost what they say whole to coincidental
+    words (178fcbfb's repeats). The canvas is laid again each round from the
+    hand (or the cut, where the line is still) and the paints said; a paint
+    that reads what is down (under, onto, bars, fills, boxes, the turned
+    figure) freezes the pieces: no word that moves, copies, reshapes or
+    removes one is asked after it. Each paint replay is cached per canvas.
+  - One drawing of the line (draw_the_line, line_shows): a paint accounts
+    only for cells the line does not already show (22168020's vacuous repeat
+    onto what is down), and Drawn By The Line claims what it shows.
+  Timed under the same conditions, the full run took 262 s against the
+  baseline's 267 s (the laptop was slow then; another session was building).
+  Left: a "paint cannot beat the best" bound was dropped (a pair's left-over
+  list can hold one place twice, so it was inexact, and it saved nothing).
+- This session fixed the move replay (host/GPU mismatch on 833966f4): Union
+  draws the hand in list order, a later piece over an earlier one (Underlay
+  the other way), but slides_show only asked the output to show a moved piece
+  where it lands, so it claimed the 9 that AlignTo lays under the unmoved 0
+  after it. Now one host owner, draw_the_hand (7_infer, beside paint_piece),
+  draws the hand as the line lays it (replay_facts::laid_under, set where a
+  piece sits on another); slides_show and "Drawn By The Line" both use it, and
+  a moved piece must show in that drawing and in the output. No GPU change;
+  the order is a loop, not arithmetic, so no ARC_HOST_DEVICE helper. Proof:
+  with the reverted composition patch on top (out/opus55low/composition.patch,
+  removed again), 833966f4 went from "0 unsaid" yet not fitting
+  (out/opus55low) to a line that fits its pairs (out/opus55-diag; its test is
+  wrong, a matter for that patch). Full run: 199 right, 0 wrong, gained 0,
+  lost 0, said.txt byte-identical, explained but unsolved 0 -> 0; 23 readouts
+  changed (18 unsolved, 5 solved where only a rival cut's count moved).
+  Missing words: copies 484, recolor 382, turns 253, where pieces went 225.
+  Left: a recolor's replay (paint_holds) still checks only the output, not
+  what the line lays over a recolored piece that moved under another.
 - EVALUATION, 2026-10-08, inference only (arc_headless, ARC_INFERENCE_ONLY=1,
   ARC_DATASET=eval): 0 of 167 test outputs, 0 of 120 puzzles; no program
   fits any puzzle's pairs (out\eval\). Readouts: `ARC_DATASET=eval
@@ -115,7 +166,7 @@ This file holds only what is current; past stages are in git history
   purpose, map the old run's numbers first, then compare.
 - Where a helper the GPU runs changes, compare the build's `ptxas info` and
   `stack frame` lines before and after.
-- Line endings are mixed in the repo: 1_readings, 3_background, 4_objects,
+- Line endings are mixed in the repo: 1_readings, 3_background, 4_objects, 8b_op_math,
   5_matching and 6_correspondence are CRLF; 7_infer, 8_vocabulary, 9_sentences, 10_log,
   cuda_solver.cu, this file and solutions/ are LF, though .gitattributes
   says CRLF everywhere (the user's call). Keep each file's own. Git Bash's
@@ -192,14 +243,7 @@ uses it, global before local. Estimates are rough.
     check speed by interleaving.
 
 ## Next, from before (the user's order)
-1. 18286ef8, parked (the user agreed). Sayable, checked with arc_spell
-   (fits, test right): `SelectColor[9] MoveToward[15]`, then
-   `SelectColor[6] Recolor[9]`, then the 5s' box `AddColor[5] Underlay`. Not
-   found; it needs the move to claim the input cell its landing covers (it
-   ties ColorFrom's "the 9 takes the 5 around it" at 6 cells), "6 becomes 9"
-   sayable after the move (by color it is only an act, and the acts open the
-   line), and the box fill asked of a line that moves pieces.
-2. Speed: read the cuts and plans of one puzzle in parallel (low priority).
+1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
 
 Smaller, open:
 - Recolors: 71 unsolved lack only a recolor, mostly a color taken from
@@ -230,19 +274,26 @@ Smaller, open:
   rule reads (1b2d62fb's 0s).
 - Every choice is says_the_most's: the plan, the cut, and whether the line
   opens with the matching's acts or leaves them to the words.
-- The line (finish_the_line): each kind of word offers its best on the hand
-  the line leaves, the biggest offer is said, then all are asked again; each
-  kind says at most 8 words (a reading lists at most 127 rules). The paints
-  follow the line, each in a sentence of its own, and compete the same way,
-  the biggest first (e729b7be). A paint is weighed only where it explains a
-  cell in every pair (91714a58).
+- The line (finish_the_line): each kind of word and of paint offers its best
+  on the hand and the canvas the line leaves so far, the biggest offer is
+  said (a tie to the words, then the paints in order), then all are asked
+  again; each kind of word says at most 8 words (a reading lists at most 127
+  rules). Spelled, the paints follow the line, each in a sentence of its own
+  (e729b7be's half turn, 178fcbfb's repeats). A paint that reads what is down
+  freezes the pieces: no word that moves, copies, reshapes or removes one
+  comes after it. A paint is weighed only where it explains a cell in every
+  pair (91714a58), and only on cells the line does not already show.
+- The words' claims are held to what the line draws once they are said
+  (50c07299): a cell the drawing does not bear out is unclaimed again.
 - What the line draws is said (Drawn By The Line, list_claims), however the
   matching paired the pieces (d23f8c26's middle column).
 - A recolor or a move answers to any cell changed in place
   (left_over_cell::answers_to). The cell a moved piece leaves may show
   anything but the piece itself.
 - A replay checks everything its op draws, with the op's own arithmetic: the
-  trail redraws its body; the turned figure is the whole drawing.
+  trail redraws its body; the turned figure is the whole drawing. A move is
+  checked on the hand drawn as the line lays it (draw_the_hand): under Union
+  a later piece in the list covers an earlier one.
 - Every replay (`*_holds`) sits on paint_holds (recolors, mirror, rays,
   trails, copies, repeats, the turned figure, boxes, bars, fills),
   slides_hold (the moves) or drops_hold (removal, outline), handed the
@@ -266,7 +317,7 @@ Smaller, open:
   or not. Directions are numbered as a compass is, clockwise from up
   (heading), asked sides first (heading_asked). A tie goes to the first
   asked.
-- The partner helpers (each_partner and kin, 1_readings.hpp) ask one pieces
+- The partner helpers (each_partner and kin, 8b_op_math.hpp) ask one pieces
   object, so the op and the replay find the same partners; move_toward and
   would_fit too.
 - ColorFrom leaves a picked piece with no partner as it is (LEFT_AS_IT_IS);
@@ -287,7 +338,10 @@ Smaller, open:
   holes, size, band, the most common color, at least so many cells, the
   first so many by size, a row or column from the middle -- and but_those
   turns a kind round, said with InvertSelection. A count or a rank is asked
-  only where it splits some pair's pieces with no tie.
+  only where it splits some pair's pieces with no tie; a size rank only where
+  no pair ties at it (833966f4). The colors an unsaid change starts from are
+  asked together, then each alone (18286ef8's 9).
+- A mirror all four ways is asked first and takes a tie (b8825c91).
 - Size rank and the fill by shape replay on the hand, so they are asked only
   while the hand is known.
 - MoveToward[value]: value / PARTNER_KINDS is how far, value % PARTNER_KINDS

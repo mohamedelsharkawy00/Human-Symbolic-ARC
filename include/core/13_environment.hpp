@@ -528,6 +528,21 @@ namespace arc {
 	};
 
 
+	// The same-color groups of a grid as their summaries alone, in the order the
+	// walk finds them. Writes at most max_out and returns how many; a grid with more
+	// groups than that silently loses the rest, so callers size the array for the
+	// worst case they care about.
+	inline int find_objects_by_color(const grid& one_grid, int background,
+	                                 object_summary* out, int max_out) {
+		int found = 0;
+		object_walk_scratch scratch;
+		each_object(one_grid, background, grouping::touching_same_color, scratch, [&](const object_summary& one,
+		                                   const int16_t*, int) {
+			if (found < max_out) out[found++] = one;
+		});
+		return found;
+	}
+
 	class environment {
 	public:
 		virtual ~environment() = default;

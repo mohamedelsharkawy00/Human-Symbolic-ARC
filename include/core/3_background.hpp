@@ -5,6 +5,7 @@
 // Background is elected per grid role: inputs and outputs are judged separately.
 #pragma once
 #include "1_readings.hpp"
+#include "2_size.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <memory>

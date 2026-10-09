@@ -12,8 +12,8 @@ language lacks.
 - Inference is the target, not search. Nothing in the reading searches.
 - The training set is the measure for now, not the evaluation set.
 - A word is said only after it is replayed on every training pair on the host,
-  with the arithmetic the GPU op runs (a shared `ARC_HOST_DEVICE` helper the op
-  calls), and seen to change something in every pair.
+  with the arithmetic the GPU op runs (a shared `ARC_HOST_DEVICE` helper in
+  `8b_op_math.hpp` the op calls), and seen to change something in every pair.
 - New words are compositions of existing ops where possible. Add an op only when
   none exists.
 - No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
@@ -89,6 +89,9 @@ No GPU there. Run from the repo root.
   choice is made just above the first word that reads it.
 - `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the words the
   reading cannot say yet and how to unlock one.
+- `include/core/8b_op_math.hpp`: what each op does to the cells, called by the
+  GPU op and by its replay in `7_infer.hpp`. `1_readings.hpp` is only how to
+  read a grid (cells, colors, objects, poses, walks, shapes).
 - `src/cuda_solver.cu`: the GPU ops.
 - `README.md`: Kaggle preparation and the private smoke run.
 

@@ -331,8 +331,7 @@ __device__ gpu_object_list& gpu_exec_split(gpu_exec_context& ctx, const gpu_obje
     gpu_paint_objects(src, GPU_MAX_GRID, GPU_MAX_GRID, temp);
     if (mode == 2) {
         // Split[2] = pixelize: one 1x1 object per non-transparent cell (no
-        // connectivity merge). Sparse scenes only -- caps at GPU_KERNEL_MAX_OBJECTS,
-        // so dense grids (>64 painted cells) get truncated.
+        // connectivity merge). A list holds one object per cell, so all fit.
         for (int r = 0; r < GPU_MAX_GRID && res.count < GPU_KERNEL_MAX_OBJECTS; ++r)
             for (int c = 0; c < GPU_MAX_GRID && res.count < GPU_KERNEL_MAX_OBJECTS; ++c) {
                 int8_t v = temp.data[r][c];
@@ -408,7 +407,7 @@ __device__ gpu_object_list& gpu_exec_colors(gpu_exec_context& ctx, const gpu_obj
 __device__ gpu_object_list& gpu_exec_select_most_common_color(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
-    // The count the reading replays (color_tally, 1_readings.hpp).
+    // The count the reading replays (color_tally, 8b_op_math.hpp).
     arc::color_tally freq;
     for (int i = 0; i < res.count; ++i) {
         auto& obj = res.objects[i];
@@ -1127,7 +1126,7 @@ __device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const
 // THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
 // paint fills on the canvas, whether it paints a cell there, whether it is
 // picked, its color and the colors it holds -- the questions the partner
-// helpers ask (each_partner and kin, 1_readings.hpp), asked as inference's
+// helpers ask (each_partner and kin, 8b_op_math.hpp), asked as inference's
 // partner_pieces asks them of the pieces it replays.
 struct gpu_partner_view {
     const gpu_object_list& list;
@@ -1167,7 +1166,7 @@ struct gpu_partner_view {
 // objects not picked -- the nearest, one in its rows or columns, the one around
 // it or inside it, one it touches, one of its shape as it lies or turned -- and
 // paints every cell it paints in it. The partner is found by partner_color
-// (1_readings.hpp), the walk inference replays, so the two cannot disagree. An
+// (8b_op_math.hpp), the walk inference replays, so the two cannot disagree. An
 // object with no partner, or partners that disagree, keeps its colors. Nothing
 // moves and nothing is dropped.
 __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
@@ -1189,7 +1188,7 @@ __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu
 
 // WouldFit[how]: of the picked objects, only those that would fit into a gap of
 // their one partner among the objects not picked stay picked -- the partner by
-// `how`, as partner_of (1_readings.hpp) finds it, and the fit as would_fit asks
+// `how`, as partner_of (8b_op_math.hpp) finds it, and the fit as would_fit asks
 // it, turned or mirrored any way: the walk inference replays, so the two cannot
 // disagree. Every partner is read off the marks as they came in. Nothing moves
 // and nothing is painted; an object with no partner, or several, is not picked.
@@ -1209,7 +1208,7 @@ __device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_
 // AlignTo[value]: each picked object slides, down or across alone, until its
 // painted box starts on the row its one partner's does -- or, for values past
 // the first partner_by::count, the column. The partner is found among the
-// objects not picked by partner_of (1_readings.hpp), the walk inference
+// objects not picked by partner_of (8b_op_math.hpp), the walk inference
 // replays: value % count says how. Partners are never picked, so none of them
 // moves while the others read them. An object with no partner, or several,
 // stays where it is.
@@ -1237,7 +1236,7 @@ __device__ gpu_object_list& gpu_exec_align_to(gpu_exec_context& ctx, const gpu_o
 // objects not picked -- of the kind value % PARTNER_KINDS names, each way
 // partner_by finds one and then each color (partner_of_kind) -- by what value /
 // PARTNER_KINDS names: one step, its own size, or until it touches the partner
-// (move_toward, 1_readings.hpp), the move inference replays. Partners are never
+// (move_toward, 8b_op_math.hpp), the move inference replays. Partners are never
 // picked, so none of them moves while the others read them. An object with no
 // partner, or several, stays where it is.
 __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
@@ -1262,7 +1261,7 @@ __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gp
 // MirrorAround[value]: each picked object is drawn again mirrored around the
 // middle of its one partner among the objects not picked -- left to right, top
 // to bottom, or all four ways at once, value / MIRROR_PARTNERS -- or, for the
-// last partner, around the middle of the grid itself. partner_of (1_readings.hpp)
+// last partner, around the middle of the grid itself. partner_of (8b_op_math.hpp)
 // finds the partner, the walk inference replays. The picked object stays; its
 // copies join the list after every object there was, picked as it is, as
 // CopyTo's are -- a sentence that picked every piece paints what it holds
@@ -1486,7 +1485,7 @@ __device__ gpu_object_list& gpu_exec_overlap_corner(gpu_exec_context& ctx, const
     int n = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
     if (n <= 0) { gpu_copy_list(res, src); return res; }
 
-    // Chain order = bbox (x0, y0) ascending. Selection sort, n <= 32.
+    // Chain order = bbox (x0, y0) ascending. Selection sort.
     int order[GPU_KERNEL_MAX_OBJECTS];
     for (int i = 0; i < n; ++i) order[i] = i;
     for (int i = 0; i < n; ++i) {
@@ -1833,7 +1832,7 @@ __device__ gpu_object_list& gpu_exec_shift(gpu_exec_context& ctx, const gpu_obje
         // Move only selected objects; the rest ride through in place. No
         // selection means Shift moves nothing — acts never fall back to "all".
         if (!obj.selected) { res.count++; continue; }
-        // Its own size away, the way heading `dir` names (shift_by, 1_readings.hpp).
+        // Its own size away, the way heading `dir` names (shift_by, 8b_op_math.hpp).
         const arc::heading_step by = arc::shift_by(dir, obj.width, obj.height);
         const int dx = by.across, dy = by.down;
         obj.x0 += (int16_t)dx; obj.y0 += (int16_t)dy;
@@ -2161,7 +2160,7 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
 }
 
 // VoteDenoise: noise-tolerant majority vote across repeating structure. The
-// arithmetic is vote_denoise_cells (4_objects.hpp), shared with inference.
+// arithmetic is vote_denoise_cells (8b_op_math.hpp), shared with inference.
 // No period on either axis -> object passes unchanged.
 __device__ gpu_object_list& gpu_exec_vote_denoise(gpu_exec_context& ctx, const gpu_object_list& src) {
     auto& res = gpu_acquire(ctx);

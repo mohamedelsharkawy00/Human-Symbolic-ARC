@@ -126,4 +126,18 @@ struct output_dimension_rule {
     }
 };
 
+// Do input and output overlay cell-for-cell in EVERY pair? The detectors in 7_infer.hpp
+// that read out.data at an input coordinate need this to be true, and each one
+// says so itself rather than trusting the caller — infer() gates on the size
+// rule, but a detector called from anywhere else must still be safe.
+inline bool pairs_overlay(const vector<example>& train) {
+    if (train.empty()) return false;
+    return ranges::all_of(train, [](const example& ex) {
+        // Non-empty as well as equal: an empty pair overlays itself vacuously,
+        // and a channel that divides by the cell count would hand back a
+        // nonsense number instead of declining.
+        return !ex.input.empty() && ex.input.same_size(ex.output);
+    });
+}
+
 }  // namespace arc

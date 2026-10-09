@@ -8,9 +8,9 @@
 // GPU op runs, and seeing it at work in every pair. The ops below have no such
 // replay in the general reading: no inferred program uses them, except where one
 // special-case rule spells them for its own pattern. To unlock one:
-//   1. Move the op's arithmetic into a shared ARC_HOST_DEVICE helper and have the
-//      GPU op in src/cuda_solver.cu call it (snap_to_anchors and slam_cells in
-//      7_infer.hpp are the pattern), so the replay and the op cannot differ.
+//   1. Move the op's arithmetic into a shared ARC_HOST_DEVICE helper in
+//      8b_op_math.hpp and have the GPU op in src/cuda_solver.cu call it, so
+//      the replay and the op cannot differ.
 //   2. Replay it in 7_infer.hpp: a *_holds check on one of the replay templates
 //      (paint_holds, slides_hold, drops_hold) asked in finish_the_line for a
 //      same-size word, a frame kind in choose_piece_frame for a size change, or a
@@ -28,9 +28,9 @@
 // Partition: cuts tiles on walls the selection marks; overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
 // SelectUnique: marks the one drawing with no twin (unique_drawing in
-//   1_readings.hpp); only the pane pick says it, for the odd pane.
+//   8b_op_math.hpp); only the pane pick says it, for the odd pane.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
-//   painted output bounds [2] (fit_to, 1_readings.hpp). Pane-pick uses [0];
+//   painted output bounds [2] (fit_to, 8b_op_math.hpp). Pane-pick uses [0];
 //   explicit background fill uses [1] or [2]; the filled frame uses [1] on
 //   pieces of one color, filled to their boxes. General piece-stretch readings
 //   still need a replay.
@@ -173,7 +173,7 @@ enum class inferred_amount { none, some, all };
   /* Each picked piece wears its partner's color, as partner_by numbers them. */ \
   X(ColorFrom                   , 0                 , 8                        , map      , none, true , false) \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
-  /* partner stay picked (would_fit, 1_readings.hpp). A pick, so it selects. */ \
+  /* partner stay picked (would_fit, 8b_op_math.hpp). A pick, so it selects. */ \
   X(WouldFit                    , 0                 , 8                        , select   , none, true , false) \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
