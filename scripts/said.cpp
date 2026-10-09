@@ -4,8 +4,9 @@
 // suggested_programs, run each on the train pairs, and where one fits them all,
 // ask it for the held-out test answer. No search anywhere. Run it from the repo
 // root, through scripts\said.bat, which builds it first:
-//   arc_said <label> [id...]
-// Everything it writes lands in out/<label>/:
+//   arc_said [--as <label>] [id...]
+// Everything it writes lands beside the program (out/x64-Release, out/cloud),
+// or in out/<label>/ when a run is named to be compared with another:
 //   said.txt                  a line per puzzle whose program fits the train
 //                             pairs: id, SOLVED or WRONG, program
 //   tally.txt                 the counts, also on stderr
@@ -87,8 +88,14 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
 #endif
 
 int main(int argc, char** argv) {
-    if (argc < 2) { fprintf(stderr, "arc_said <label> [id...]\n"); return 2; }
-    const vector<string> only(argv + 2, argv + argc);
+    // A name only when asked for: the run is kept apart to compare against.
+    vector<string> only(argv + 1, argv + argc);
+    string label;
+    if (!only.empty() && only[0] == "--as") {
+        if (only.size() < 2) { fprintf(stderr, "arc_said [--as <label>] [id...]\n"); return 2; }
+        label = only[1];
+        only.erase(only.begin(), only.begin() + 2);
+    }
     // Training unless ARC_DATASET names the evaluation set.
     const char* named = getenv("ARC_DATASET");
     const int dataset = named ? dataset_from_name(named) : DS_TRAIN;
@@ -108,9 +115,11 @@ int main(int argc, char** argv) {
             found_every_id = false;
         }
 
-    // EVERYTHING IT WRITES, IN ONE FOLDER: out/<label>, the readouts in its
-    // logs/inference, where log_inference writes them.
-    const filesystem::path out = filesystem::path("out") / argv[1];
+    // EVERYTHING IT WRITES, IN ONE FOLDER: the program's own, or out/<label>,
+    // the readouts in its logs/inference, where log_inference writes them.
+    const filesystem::path out = label.empty()
+        ? filesystem::absolute(argv[0]).parent_path()
+        : filesystem::path("out") / label;
     filesystem::create_directories(out);
     filesystem::current_path(out);
 #ifndef ARC_NO_GPU

@@ -64,8 +64,8 @@ static inline void fixed_segment_objects(const fixed_grid& g, fixed_object_list&
             if (out.count >= GPU_MAX_OBJECTS) return;
             fixed_object& obj = out.objects[out.count++];
             obj.clear();
-            obj.x0 = box.x0; obj.y0 = box.y0;
-            obj.width = box.w; obj.height = box.h;
+            obj.x0 = box.col; obj.y0 = box.row;
+            obj.width = box.width; obj.height = box.height;
             obj.x1 = (int16_t)(obj.x0 + obj.width - 1);
             obj.y1 = (int16_t)(obj.y0 + obj.height - 1);
             for (int i = 0; i < n; ++i) {
@@ -262,8 +262,8 @@ static inline void fixed_init_context(
         vector<object_summary> boxes;
         for (int i = 0; i < all_objects.count; ++i) {
             object_summary box;
-            box.w = (int8_t)all_objects.objects[i].width;
-            box.h = (int8_t)all_objects.objects[i].height;
+            box.width = (int8_t)all_objects.objects[i].width;
+            box.height = (int8_t)all_objects.objects[i].height;
             boxes.push_back(box);
         }
         // A grid holds at most 900 cells and so at most 900 objects, which is

@@ -211,6 +211,17 @@ ARC_HOST_DEVICE inline int background_rank(int color) {
     return COLOR_COUNT;
 }
 
+// The box each color's cells fill, with one color left out if asked; a color
+// no cell wears keeps an empty box.
+template <class Grid>
+ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
+                        int skip = TRANSPARENT) {
+    for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
+    walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
+        boxes[color].include_cell(row, col);
+    });
+}
+
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
 // which color reads as the background here.
 template <class Grid>
@@ -290,11 +301,40 @@ ARC_HOST_DEVICE inline void label_objects(const Grid& one_grid, object_map& obje
             }
             objects.color[id] = (int16_t)color;
             objects.size[id] = (int16_t)count;
-            objects.on_border[id] = summary.x0 == 0 || summary.y0 == 0 ||
-                summary.x0 + summary.w == one_grid.width ||
-                summary.y0 + summary.h == one_grid.height;
+            objects.on_border[id] = summary.col == 0 || summary.row == 0 ||
+                summary.col + summary.width == one_grid.width ||
+                summary.row + summary.height == one_grid.height;
             ++objects.object_count;
         });
+}
+
+// Whether a cell sits in the outermost ring of a height x width grid.
+ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width) {
+    return row == 0 || col == 0 || row == height - 1 || col == width - 1;
+}
+
+// Mark cells reachable from the border without crossing a blocked cell.
+// Space uses four-way connectivity, so it cannot leak through touching corners.
+template <class Blocked>
+ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
+                         bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) outside[row][col] = false;
+    auto claim = [&](int row, int col) {
+        if (outside[row][col] || blocked(row, col)) return false;
+        outside[row][col] = true;
+        return true;
+    };
+    int seeded = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (!on_border(row, col, height, width)) continue;
+            if (!claim(row, col)) continue;
+            queue_row[seeded] = (int16_t)row;
+            queue_col[seeded++] = (int16_t)col;
+        }
+    walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
 }
 
 // STAGE 2 — each figure votes for the color it sits in, weighted by its own
@@ -506,9 +546,9 @@ ARC_HOST_DEVICE inline local_background_candidates elect_grid_background(const G
 inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
     for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
     for (const grid* grid_ptr : grids) {
-        bool seen[COLOR_COUNT];
-        present_colors(*grid_ptr, seen);
-        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && seen[i];
+        int counts[COLOR_COUNT];
+        count_colors(*grid_ptr, counts);
+        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && counts[i] > 0;
     }
 }
 

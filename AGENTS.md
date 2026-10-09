@@ -32,13 +32,14 @@ language lacks.
 
 ## Build and check
 - Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
-- Score and readouts, one run: `scripts\said.bat <label> [id...]` builds
-  arc_said and reads every training puzzle, or the ids named, into
-  `out\<label>\`: `said.txt`, a line per puzzle whose program fits the
+- Score and readouts, one run: `scripts\said.bat [--as <label>] [id...]`
+  builds arc_said and reads every training puzzle, or the ids named, into
+  `out\x64-Release\`, or `out\<label>\` when a run is named to compare: `said.txt`, a line per puzzle whose program fits the
   training pairs (id, SOLVED or WRONG, program); `tally.txt`, the counts, also
   on screen; and `logs\inference\<id>.txt`, each puzzle's readout
   (background, readings, fired rules, sentences). A label is a new name,
-  never a build folder (x64-Release, cloud); a full run writes about 225 MB,
+  never a build folder (x64-Release, cloud), which readouts.py takes for
+  the unnamed run; a full run writes about 225 MB,
   so delete old labels. It reads a puzzle on every CPU thread and takes about
   30 s on the 20-thread laptop (twice that when it runs hot); `ARC_THREADS=1`
   reads one at a time (the profiler does, under the label `profile`).
@@ -60,8 +61,8 @@ No GPU there. Run from the repo root.
   a GPU, with a C++20 compiler (no CUDA, no Vulkan), and fetches the puzzles
   only when they are missing; `--build-only` skips that when they come another
   way.
-- Readouts: `out/cloud/arc_said <label> [id...]` writes
-  `out/<label>/logs/inference` and no score; no ids reads every training
+- Readouts: `out/cloud/arc_said [--as <label>] [id...]` writes
+  `out/cloud/logs/inference` (or `out/<label>/...`) and no score; no ids reads every training
   puzzle. Compare runs with `python3 scripts/readouts.py` as above.
 - No score: nothing there runs the programs. Right and wrong come from the
   Windows CUDA build or a GPU runner. Say plainly which checks did not run,
@@ -91,7 +92,7 @@ No GPU there. Run from the repo root.
   reading cannot say yet and how to unlock one.
 - `include/core/8b_op_math.hpp`: what each op does to the cells, called by the
   GPU op and by its replay in `7_infer.hpp`. `1_readings.hpp` is only how to
-  read a grid (cells, colors, objects, poses, walks, shapes).
+  read a grid (histogram, boxes, objects, shapes).
 - `src/cuda_solver.cu`: the GPU ops.
 - `README.md`: Kaggle preparation and the private smoke run.
 

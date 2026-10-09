@@ -35,7 +35,7 @@ def main():
         if not all((data / name).is_file() for name in needed):
             subprocess.run([sys.executable, str(root / "scripts/fetch_data.py")], cwd=root, check=True)
     print("arc_said without a GPU is ready. From the repo root:")
-    print("  out/cloud/arc_said first 00576224")
+    print("  out/cloud/arc_said 00576224")
     print("It writes out/first/logs/inference and no score; the score and the CopyTo")
     print("checks still need the CUDA build.")
 

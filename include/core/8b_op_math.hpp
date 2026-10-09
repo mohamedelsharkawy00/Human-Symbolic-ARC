@@ -5,6 +5,7 @@
 // generate, after what several of them share.
 #pragma once
 #include "1_readings.hpp"
+#include "3_background.hpp"  // mark_outside
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>

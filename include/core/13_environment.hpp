@@ -277,7 +277,7 @@ namespace arc {
 			int best_j = -1;
 			for (int j = 0; j < tn; ++j) {
 				if (used[j]) continue;
-				if (a[i].w != t[j].w || a[i].h != t[j].h || a[i].count != t[j].count) continue;
+				if (a[i].width != t[j].width || a[i].height != t[j].height || a[i].count != t[j].count) continue;
 				best_j = j;
 				break;
 			}
@@ -288,14 +288,14 @@ namespace arc {
 				// footprint (max(w,h)) — not by grid size. A 1px miss on a 3x3
 				// block scores ~0.83 (mostly right); the same miss on a 1x1 dot
 				// scores 0.5 (real penalty). Symmetric across CC sizes.
-				int acx = a[i].x0 * 2 + (a[i].w - 1);
-				int acy = a[i].y0 * 2 + (a[i].h - 1);
-				int tcx = t[best_j].x0 * 2 + (t[best_j].w - 1);
-				int tcy = t[best_j].y0 * 2 + (t[best_j].h - 1);
+				int acx = a[i].col * 2 + (a[i].width - 1);
+				int acy = a[i].row * 2 + (a[i].height - 1);
+				int tcx = t[best_j].col * 2 + (t[best_j].width - 1);
+				int tcy = t[best_j].row * 2 + (t[best_j].height - 1);
 				int dx = acx > tcx ? acx - tcx : tcx - acx;
 				int dy = acy > tcy ? acy - tcy : tcy - acy;
 				int cheb = (dx > dy ? dx : dy);  // halved units
-				int tsize = t[best_j].w > t[best_j].h ? t[best_j].w : t[best_j].h;
+				int tsize = t[best_j].width > t[best_j].height ? t[best_j].width : t[best_j].height;
 				if (tsize < 1) tsize = 1;
 				float norm = (float)cheb / (float)(tsize * 2);
 				float ps = 1.0f - norm;
@@ -575,10 +575,10 @@ namespace arc {
 			                                  found, MAX_TARGET_OBJECTS);
 			if (count > GPU_MAX_TARGET_OBJECTS) count = GPU_MAX_TARGET_OBJECTS;
 			for (int k = 0; k < count; ++k) {
-				dst[k].w = found[k].w;
-				dst[k].h = found[k].h;
-				dst[k].x0 = found[k].x0;
-				dst[k].y0 = found[k].y0;
+				dst[k].w = found[k].width;
+				dst[k].h = found[k].height;
+				dst[k].x0 = found[k].col;
+				dst[k].y0 = found[k].row;
 				dst[k].count = found[k].count;
 			}
 			for (int k = count; k < GPU_MAX_TARGET_OBJECTS; ++k) dst[k] = {};

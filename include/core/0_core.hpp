@@ -64,6 +64,13 @@ struct grid {
     }
 };
 
+// A cell's place in the largest grid as one number, counted row by row. Lists
+// of cells hold these, so a cell costs two bytes rather than a pair, and the
+// packed store of an object finds its cells the same way.
+ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
+ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
+ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+
 // The ARC demonstration example.
 struct example {
     grid input, output;

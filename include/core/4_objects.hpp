@@ -110,7 +110,7 @@ struct blank_patch {
     object_summary box;
     bool enclosed = false;
     // A patch with no box was never found.
-    bool found() const { return box.w > 0; }
+    bool found() const { return box.width > 0; }
 };
 
 // The object records and the operations that build and group them.
@@ -163,9 +163,9 @@ struct object_segmentation {
         stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
             if (info[left].summary.count != info[right].summary.count)
                 return info[left].summary.count > info[right].summary.count;
-            if (info[left].summary.y0 != info[right].summary.y0)
-                return info[left].summary.y0 < info[right].summary.y0;
-            return info[left].summary.x0 < info[right].summary.x0;
+            if (info[left].summary.row != info[right].summary.row)
+                return info[left].summary.row < info[right].summary.row;
+            return info[left].summary.col < info[right].summary.col;
         });
         vector<object_info> sorted;
         sorted.reserve(info.size());
@@ -325,19 +325,19 @@ private:
     // Canonical shape of an object: which cells of its box it fills, the same
     // number whichever way round it sits.
     static uint32_t shape_of(const object& one) {
-        return canonical_shape_hash(one.summary.w, one.summary.h,
+        return canonical_shape_hash(one.summary.width, one.summary.height,
                                     [&](int row, int col) { return one.cells[row][col] != TRANSPARENT; });
     }
 
     // Counts differing cells when two objects are aligned at their top-left corners.
     static int count_differing_cells(const object& left, const object& right) {
-        const int width = max(left.summary.w, right.summary.w);
-        const int height = max(left.summary.h, right.summary.h);
+        const int width = max(left.summary.width, right.summary.width);
+        const int height = max(left.summary.height, right.summary.height);
         int apart = 0;
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col) {
-                const int here = left.color_at(left.summary.y0 + row, left.summary.x0 + col);
-                const int there = right.color_at(right.summary.y0 + row, right.summary.x0 + col);
+                const int here = left.color_at(left.summary.row + row, left.summary.col + col);
+                const int there = right.color_at(right.summary.row + row, right.summary.col + col);
                 apart += (here != there);
             }
         return apart;
@@ -367,7 +367,7 @@ struct seeded_pieces {
 inline seeded_pieces read_seeds(const vector<object_summary>& boxes) {
     seeded_pieces reading;
     if (boxes.empty()) return reading;
-    auto area_of = [&](int which) { return (int)boxes[which].w * (int)boxes[which].h; };
+    auto area_of = [&](int which) { return (int)boxes[which].width * (int)boxes[which].height; };
     // Ties go to the first found, which is the way both sides broke them before
     // they shared this.
     int largest = 0;

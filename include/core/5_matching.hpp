@@ -41,7 +41,7 @@ struct recoloring {
 
 // Whether two boxes share their top-left corner: for two objects, the same place.
 inline bool same_corner(const object_summary& one, const object_summary& other) {
-    return one.x0 == other.x0 && one.y0 == other.y0;
+    return one.col == other.col && one.row == other.row;
 }
 
 // A set of permissions said as words: the names of the ones it may use, or
@@ -179,8 +179,8 @@ struct object_matching {
     // Reverse an output-to-input correspondence so both directions agree.
     static pair<int, int> move_of(const edge& edge,
                                   const object_info& one_object) {
-        const int down = edge.row - one_object.summary.y0;
-        const int across = edge.col - one_object.summary.x0;
+        const int down = edge.row - one_object.summary.row;
+        const int across = edge.col - one_object.summary.col;
         return edge.from_input ? pair<int, int>{down, across}
                                : pair<int, int>{-down, -across};
     }
@@ -269,8 +269,8 @@ struct object_matching {
             object_matching::edge edge;
             edge.from = (int16_t)from_index;
             edge.to = (int16_t)best;
-            edge.row = into_info[best].summary.y0;
-            edge.col = into_info[best].summary.x0;
+            edge.row = into_info[best].summary.row;
+            edge.col = into_info[best].summary.col;
             edge.exact = false;
             edge.same_shape = false;
             edges.push_back(edge);
@@ -286,9 +286,9 @@ struct object_matching {
             int best = -1;
             for (int i = 0; i < (int)info.size(); ++i) {
                 const auto& box = info[i].summary;
-                if (box.w != step_w || box.h != step_h) continue;
-                if (best < 0 || pair{box.y0, box.x0} <
-                    pair{info[best].summary.y0, info[best].summary.x0}) best = i;
+                if (box.width != step_w || box.height != step_h) continue;
+                if (best < 0 || pair{box.row, box.col} <
+                    pair{info[best].summary.row, info[best].summary.col}) best = i;
             }
             return best;
         };
@@ -298,7 +298,7 @@ struct object_matching {
         const bool stayed = same_corner(from_info[source].summary, landing);
         if (!allowed.translate && !stayed) return fit_verdict::no_fit;
         const auto matches = find_in(from_objects[source].drawn(), into,
-                                    false, landing.y0, landing.x0, true, allowed.poses());
+                                    false, landing.row, landing.col, true, allowed.poses());
         const object_match* best = nullptr;
         for (const auto& hit : matches.hits) {
             if (hit.hidden || hit.outside || (!allowed.recolor && !hit.exact)) continue;
@@ -332,7 +332,7 @@ struct object_matching {
                 return false;
             const grid cells = from_objects[from_index].drawn();
             const object_matches matches =
-                find_in(cells, into, true, target.summary.y0, target.summary.x0, true, allowed.poses());
+                find_in(cells, into, true, target.summary.row, target.summary.col, true, allowed.poses());
             // Prefer a match with unchanged colors, even if it uses a later rotation or reflection.
             const object_match* best = nullptr;
             for (const object_match& hit : matches.hits) {
@@ -690,7 +690,7 @@ private:
                 for (const object_match& hit : found_here.hits) {
                     if (!allowed.recolor && !hit.exact) continue;
                     if (!stationary && hit.pose == 0 &&
-                        hit.row == one_object.summary.y0 && hit.col == one_object.summary.x0)
+                        hit.row == one_object.summary.row && hit.col == one_object.summary.col)
                         continue;
                     // Estimate accidental-match odds using visible cells only.
                     const grid& posed = posed_for(hit.pose);
@@ -720,7 +720,7 @@ private:
             // Search both the original position and other positions: an object can stay and be copied.
             keep_positional(
                 find_in(cells, into, false,
-                        one_object.summary.y0, one_object.summary.x0, false, allowed.poses()), true);
+                        one_object.summary.row, one_object.summary.col, false, allowed.poses()), true);
             // Allow clipped matches only when copies establish the shape on either grid.
             if (allowed.translate)
                 keep_positional(
@@ -736,7 +736,7 @@ private:
                 const auto& landing = into_info[into_index];
                 if (landing.shape != one_object.shape || landing.summary.count != one_object.summary.count) continue;
                 if (same_corner(landing.summary, one_object.summary)) continue;
-                if (placed[landing.summary.y0][landing.summary.x0]) continue;
+                if (placed[landing.summary.row][landing.summary.col]) continue;
                 // Estimate chance from the target color count, or all grid colors for multicolor objects.
                 double odds = 1.0;
                 if (landing.color >= 0)
@@ -747,13 +747,13 @@ private:
                 object_matching::edge edge;
                 edge.from = (int16_t)from_index;
                 edge.to = (int16_t)into_index;
-                edge.row = landing.summary.y0; edge.col = landing.summary.x0;
+                edge.row = landing.summary.row; edge.col = landing.summary.col;
                 edge.exact = (landing.color == one_object.color);
                 if (!allowed.recolor && !edge.exact) continue;
                 if (!edge.exact && is_color(one_object.color))
                     edge.color_map[one_object.color] = landing.color;
                 const bool stands_alone = beats_chance(
-                    (into.width - landing.summary.w + 1) * (into.height - landing.summary.h + 1), odds);
+                    (into.width - landing.summary.width + 1) * (into.height - landing.summary.height + 1), odds);
                 // Same bar as source 1: a recolor is the weaker claim either way it
                 // was found, so it earns its place alone or not at all.
                 if (!edge.exact && !stands_alone) {
@@ -828,7 +828,7 @@ private:
     // copy a landing names -- 06df4c85 credited a block between two reds to a
     // red in another row entirely, for being listed first.
     static int travel_of(const edge& edge, const object_summary& source) {
-        const int down = edge.row - source.y0, across = edge.col - source.x0;
+        const int down = edge.row - source.row, across = edge.col - source.col;
         return (down != 0 && across != 0 ? MAX_GRID_DIM * 2 : 0) + abs(down) + abs(across);
     }
 

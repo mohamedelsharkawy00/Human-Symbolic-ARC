@@ -69,6 +69,15 @@ inline uint16_t palette(const object& piece) {
     return colors;
 }
 
+// Where a cell of the ORIGINAL lands once posed, so a place can be carried into
+// the frame a pair is compared in. The exact inverse of pose_source.
+ARC_HOST_DEVICE inline pair<int, int> posed_place(int pose, int width, int height,
+                                  int row, int col) {
+    const int down   = (pose & 2) ? height - 1 - row : row;
+    const int across = (pose & 4) ? width  - 1 - col : col;
+    return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
+}
+
 // Correspondences match objects from input to output and from output to input.
 
 // This structure collects the correspondences and summaries of the readings tried.
@@ -180,12 +189,12 @@ struct correspondence_election {
             if (link.to >= 0) return link.to;
             if (link.hidden || link.outside) return -1;
             const auto& source = output_info[link.from];
-            const auto [width, height] = posed_size(link.pose, source.summary.w, source.summary.h);
+            const auto [width, height] = posed_size(link.pose, source.summary.width, source.summary.height);
             int found = -1;
             for (size_t i = 0; i < input_info.size(); ++i) {
                 const auto& target = input_info[i];
-                if (target.summary.y0 != link.row || target.summary.x0 != link.col ||
-                    target.summary.w != width || target.summary.h != height ||
+                if (target.summary.row != link.row || target.summary.col != link.col ||
+                    target.summary.width != width || target.summary.height != height ||
                     target.summary.count != source.summary.count || target.shape != source.shape)
                     continue;
                 if (found >= 0) return -1;
@@ -242,11 +251,11 @@ struct correspondence_election {
                 // Found from the output side: it names this piece when it lands on it.
                 const object_info* from = source_of(link);
                 if (!from) continue;
-                const auto [width, height] = posed_size(link.pose, from->summary.w, from->summary.h);
+                const auto [width, height] = posed_size(link.pose, from->summary.width, from->summary.height);
                 const bool on_this_piece = link.to == input_index ||
-                    (link.to < 0 && link.row == piece.y0 && link.col == piece.x0 &&
-                     width == piece.w && height == piece.h);
-                if (on_this_piece) went(from->summary.y0, from->summary.x0);
+                    (link.to < 0 && link.row == piece.row && link.col == piece.col &&
+                     width == piece.width && height == piece.height);
+                if (on_this_piece) went(from->summary.row, from->summary.col);
             }
             return (int)places.size();
         }
@@ -529,8 +538,8 @@ struct correspondence_election {
             const auto corners = prepared_by(segmentation_methods::connected_monochrome);
             auto same_pieces = [](const vector<object>& one, const vector<object>& other) {
                 return ranges::equal(one, other, [](const object& a, const object& b) {
-                    return a.summary.x0 == b.summary.x0 && a.summary.y0 == b.summary.y0 &&
-                           a.summary.w == b.summary.w && a.summary.h == b.summary.h &&
+                    return a.summary.col == b.summary.col && a.summary.row == b.summary.row &&
+                           a.summary.width == b.summary.width && a.summary.height == b.summary.height &&
                            a.summary.count == b.summary.count; });
             };
             bool cuts_the_same = true, held = true;
@@ -699,7 +708,7 @@ private:
             ++counted;
             auto any_fits = [](const auto& objects, const grid& other) {
                 return ranges::any_of(objects, [&](const auto& one) {
-                    return one.summary.w <= other.width && one.summary.h <= other.height;
+                    return one.summary.width <= other.width && one.summary.height <= other.height;
                 });
             };
             // Preliminary ordering ignores rotations and clipping; all readings are still searched.
@@ -747,7 +756,7 @@ private:
             for (const bool input : { true, false })
                 for (const auto& one_object : pair.objects_on(input)) {
                     facts.objects_found++;
-                    facts.box_cells += one_object.summary.w * one_object.summary.h;
+                    facts.box_cells += one_object.summary.width * one_object.summary.height;
                 }
         }
         if (!facts.pairs.empty()) facts.describe_cost = shares / facts.pairs.size();
@@ -838,8 +847,8 @@ private:
             if (left.from_input != right.from_input) return left.from_input;
             const auto& here = pair.source_of(left)->summary;
             const auto& there = pair.source_of(right)->summary;
-            if (here.y0 != there.y0) return here.y0 < there.y0;
-            if (here.x0 != there.x0) return here.x0 < there.x0;
+            if (here.row != there.row) return here.row < there.row;
+            if (here.col != there.col) return here.col < there.col;
             if (left.row != right.row) return left.row < right.row;
             return left.col < right.col;
         });
@@ -957,10 +966,10 @@ private:
                     for (int i = 0; i < (int)info.size(); ++i) {
                         if (i == rep || info[i].has_partner) continue;
                         const auto& part = objects[i];
-                        if (part.summary.w > whole.summary.w || part.summary.h > whole.summary.h) continue;
+                        if (part.summary.width > whole.summary.width || part.summary.height > whole.summary.height) continue;
                         bool equal = true;
-                        for (int r = 0; r < part.summary.h; ++r)
-                            for (int c = 0; c < part.summary.w; ++c)
+                        for (int r = 0; r < part.summary.height; ++r)
+                            for (int c = 0; c < part.summary.width; ++c)
                                 if (part.cells[r][c] != whole.cells[r][c]) equal = false;
                         if (equal) info[i].instance_of = (int16_t)rep;
                     }
@@ -1126,8 +1135,8 @@ private:
         if (!link.same_shape || link.outside != 0) return;
         piece.each_cell([&](int row, int col, int8_t color) {
             if (link.hidden) {
-                const auto [down, across] = posed_place(link.pose, piece.summary.w, piece.summary.h,
-                                                        row - piece.summary.y0, col - piece.summary.x0);
+                const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
+                                                        row - piece.summary.row, col - piece.summary.col);
                 if (!landing.contains(link.row + down, link.col + across) ||
                     landing.data[link.row + down][link.col + across] != color) return;
             }
@@ -1299,8 +1308,8 @@ private:
                 // edges for its one landing (places_went), and read as a copy, so
                 // not one move was ever said.
                 if (pair.places_went(edge.from) == 1) {
-                    note(piece.color, fired_rule::move_down,   (int8_t)(edge.row - piece.summary.y0), edge.from);
-                    note(piece.color, fired_rule::move_across, (int8_t)(edge.col - piece.summary.x0), edge.from);
+                    note(piece.color, fired_rule::move_down,   (int8_t)(edge.row - piece.summary.row), edge.from);
+                    note(piece.color, fired_rule::move_across, (int8_t)(edge.col - piece.summary.col), edge.from);
                 }
                 // A color that became empty was deleted, which no recolor says.
                 if (!edge.exact)
@@ -1339,10 +1348,10 @@ private:
                                 that_way = edge.pose == act.value;
                                 break;
                             case fired_rule::move_down:
-                                that_way = pair.places_went(piece) == 1 && edge.row - box.y0 == act.value;
+                                that_way = pair.places_went(piece) == 1 && edge.row - box.row == act.value;
                                 break;
                             case fired_rule::move_across:
-                                that_way = pair.places_went(piece) == 1 && edge.col - box.x0 == act.value;
+                                that_way = pair.places_went(piece) == 1 && edge.col - box.col == act.value;
                                 break;
                             default:
                                 prepared.pairs[which].input_objects[piece].each_cell([&](int, int, int8_t cell) {
@@ -1391,7 +1400,7 @@ private:
                     if (link.pose != 0 && !said_by_an_act(fired_rule::turn, link.pose, which, piece)) return false;
                     continue;
                 }
-                const int down = link.row - box.y0, across = link.col - box.x0;
+                const int down = link.row - box.row, across = link.col - box.col;
                 if ((down != 0 && !said_by_an_act(fired_rule::move_down, down, which, piece)) ||
                     (across != 0 && !said_by_an_act(fired_rule::move_across, across, which, piece)))
                     return false;
@@ -1522,7 +1531,7 @@ private:
                     if (!link.same_shape || pair.input_piece_of(link) != piece) continue;
                     if (link.from_input) {
                         carried = true;
-                        moved = moved || link.row != box.y0 || link.col != box.x0;
+                        moved = moved || link.row != box.row || link.col != box.col;
                         turned = turned || link.pose != 0;
                         continue;
                     }
@@ -1632,8 +1641,8 @@ private:
     static void each_carried_cell(const edge& link, const object& piece, const grid& landing, Visit&& visit) {
         if (!link.same_shape) return;
         piece.each_cell([&](int row, int col, int8_t color) {
-            const auto [down, across] = posed_place(link.pose, piece.summary.w, piece.summary.h,
-                                                    row - piece.summary.y0, col - piece.summary.x0);
+            const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
+                                                    row - piece.summary.row, col - piece.summary.col);
             const int at_row = link.row + down, at_col = link.col + across;
             if (!landing.contains(at_row, at_col)) return;
             const int8_t there = (int8_t)landing.data[at_row][at_col];

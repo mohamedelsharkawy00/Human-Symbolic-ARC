@@ -3,14 +3,10 @@ setlocal
 cd /d "%~dp0.."
 
 :: EVERY PUZZLE READ, SCORED AND WRITTEN DOWN, in one run: builds arc_said
-:: through scripts\build.bat and runs it, writing out\<label>\said.txt,
-:: tally.txt and logs\inference\<id>.txt.
-::   scripts\said.bat <label> [id...]
-:: Then compare two labels with scripts\readouts.py.
-if "%~1"=="" (
-    echo usage: scripts\said.bat ^<label^> [id...]
-    exit /b 2
-)
+:: through scripts\build.bat and runs it, writing said.txt, tally.txt and
+:: logs\inference\<id>.txt into out\x64-Release\, or out\<label>\ when named.
+::   scripts\said.bat [--as <label>] [id...]
+:: Then compare two runs with scripts\readouts.py (the unnamed one is x64-Release).
 call "%~dp0build.bat" x64-Release NOLAUNCH arc_said
 if errorlevel 1 exit /b 1
 "out\x64-Release\arc_said.exe" %*

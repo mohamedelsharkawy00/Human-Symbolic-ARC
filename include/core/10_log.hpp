@@ -50,8 +50,8 @@ inline string box_said(int width, int height, int col, int row) {
 inline void report_piece(ostream& report, const correspondence_election::object_info& piece,
                          bool with_shape) {
     report << "color " << (int)piece.color
-      << " at " << (int)piece.summary.x0 << ',' << (int)piece.summary.y0
-      << " " << (int)piece.summary.w << 'x' << (int)piece.summary.h
+      << " at " << (int)piece.summary.col << ',' << (int)piece.summary.row
+      << " " << (int)piece.summary.width << 'x' << (int)piece.summary.height
       << " px " << piece.summary.count;
     if (with_shape) report << " shape " << piece.shape;
     report << " instance_of " << piece.instance_of << " edges " << piece.edges_touching << "\n";
@@ -483,8 +483,8 @@ inline void report_pieces_seen(ostream& report, const correspondence_election& c
                 const auto& piece = pairs[which].source_of(edge)->summary;
                 const auto* target = pairs[which].target_of(edge);
                 const auto& landed = target ? target->summary : piece;
-                report << "    pair " << which << "  " << box_said(piece.w, piece.h, piece.x0, piece.y0)
-                  << " -> " << box_said(landed.w, landed.h, edge.col, edge.row);
+                report << "    pair " << which << "  " << box_said(piece.width, piece.height, piece.col, piece.row)
+                  << " -> " << box_said(landed.width, landed.height, edge.col, edge.row);
                 if (edge.hidden) report << ", " << (int)edge.hidden << " hidden";
                 if (edge.outside) report << ", " << (int)edge.outside << " off grid";
                 report << "\n";

@@ -836,7 +836,7 @@ inline line_ends ends_of(const correspondence_election::pair_info& pair,
   const auto& piece = pair.source_of(edge)->summary;
   const auto* target = pair.target_of(edge);
   const auto& landed = target ? target->summary : piece;
-  return { piece.x0, piece.y0, piece.w, piece.h, edge.col, edge.row, landed.w, landed.h };
+  return { piece.col, piece.row, piece.width, piece.height, edge.col, edge.row, landed.width, landed.height };
 }
 
 // What the edge CLAIMS, which the drawing cannot say: found as itself, found
@@ -862,8 +862,8 @@ inline vector<piece_place> pieces_of(const vector<correspondence_election::pair_
   stable_sort(all.begin(), all.end(), [&](const piece_place& a, const piece_place& b) {
     const auto& one = piece_in(pairs, a);
     const auto& two = piece_in(pairs, b);
-    return tuple{ a.pair, !a.from_input, one.summary.y0, one.summary.x0 } <
-           tuple{ b.pair, !b.from_input, two.summary.y0, two.summary.x0 };
+    return tuple{ a.pair, !a.from_input, one.summary.row, one.summary.col } <
+           tuple{ b.pair, !b.from_input, two.summary.row, two.summary.col };
   });
   return all;
 }
@@ -919,8 +919,8 @@ inline vector<row_place> refusals_of(const vector<correspondence_election::pair_
     const auto& two = pairs[b.pair].discarded[b.which].match;
     const auto& first = pairs[a.pair].source_of(one)->summary;
     const auto& second = pairs[b.pair].source_of(two)->summary;
-    return tuple{ a.pair, !one.from_input, first.y0, first.x0 } <
-           tuple{ b.pair, !two.from_input, second.y0, second.x0 };
+    return tuple{ a.pair, !one.from_input, first.row, first.col } <
+           tuple{ b.pair, !two.from_input, second.row, second.col };
   });
   return all;
 }
@@ -1423,8 +1423,8 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
             if (!piece_is_in(pc, at, set)) continue;
             ++members;
             if (!pc.medoid) continue;
-            leader_w = pc.summary.w; leader_h = pc.summary.h;
-            leader_x = pc.summary.x0;  leader_y = pc.summary.y0;
+            leader_w = pc.summary.width; leader_h = pc.summary.height;
+            leader_x = pc.summary.col;  leader_y = pc.summary.row;
           }
           said = to_text("PAIR %d %s, %d COPIES OF %dX%d, LEADER AT %d,%d",
                          (int)set.pair, set.from_input ? "INPUT" : "OUTPUT",
@@ -1461,14 +1461,14 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           piece_said = to_text("%s  PAIR %d  COLOR %s  %dX%d AT %d,%d  %d CELLS",
                                silence, (int)at.pair,
                                (pc.color < 0 ? string("MIXED") : to_string(pc.color)).c_str(),
-                               (int)pc.summary.w, (int)pc.summary.h, (int)pc.summary.x0, (int)pc.summary.y0,
+                               (int)pc.summary.width, (int)pc.summary.height, (int)pc.summary.col, (int)pc.summary.row,
                                (int)pc.summary.count);
           if (pc.blank.found())
             blank_said = to_text("%s %dX%d AT %d,%d  %d CELLS",
                                  pc.blank.enclosed ? "FILLS A HOLE"
                                                    : "OVER OPEN SPACE",
-                                 (int)pc.blank.box.w, (int)pc.blank.box.h, (int)pc.blank.box.x0,
-                                 (int)pc.blank.box.y0, (int)pc.blank.box.count);
+                                 (int)pc.blank.box.width, (int)pc.blank.box.height, (int)pc.blank.box.col,
+                                 (int)pc.blank.box.row, (int)pc.blank.box.count);
         }
         detail(piece_said);
         detail(blank_said);
@@ -2336,7 +2336,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         if (motif_at != SHOW_ALL &&
             !(motif_at < (int)sets.size() && piece_is_in(pc, at, sets[motif_at]))) continue;
         draw_selection(context, task, lay, at.pair, at.from_input,
-                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, false, 0, 0, 0, 0,
+                       pc.summary.col, pc.summary.row, pc.summary.width, pc.summary.height, false, 0, 0, 0, 0,
                        (int)(pc.medoid ? arc_color::magenta : arc_color::blue),
                        rings);
       }
@@ -2349,8 +2349,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         const piece_place &at = alone[i];
         const auto &pc = piece_in(pairs, at);
         draw_selection(context, task, lay, at.pair, at.from_input,
-                       pc.summary.x0, pc.summary.y0, pc.summary.w, pc.summary.h, pc.blank.found(),
-                       pc.blank.box.x0, pc.blank.box.y0, pc.blank.box.w, pc.blank.box.h,
+                       pc.summary.col, pc.summary.row, pc.summary.width, pc.summary.height, pc.blank.found(),
+                       pc.blank.box.col, pc.blank.box.row, pc.blank.box.width, pc.blank.box.height,
                        (int)arc_color::gray, rings);
       }
       // THE CELLS NOTHING ACCOUNTED FOR, one cell each, so there is never room

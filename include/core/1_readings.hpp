@@ -1,23 +1,38 @@
-// This file describes how to read a grid: its cells, colors, objects, poses,
-// walks and shapes, each built on the ones before. What an op does to a grid
-// is 8b_op_math.hpp's.
+// The facts a person reads off a grid, used to infer the puzzle's rule from
+// its examples, to be applied later to the test cases.
 #pragma once
 #include "0_core.hpp"
-#include <algorithm>
 #include <cstdint>
 #include <utility>
 
 namespace arc {
 using namespace std;
 
-// CELLS AND BOXES · where a cell sits, and the box around cells
+// HISTOGRAM · how many cells each color has
 
-// A cell's place in the largest grid as one number, counted row by row. Lists
-// of cells hold these, so a cell costs two bytes rather than a pair, and the
-// packed store below finds its cells the same way.
-ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
-ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
-ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+// Every cell wearing a color, in reading order, with one color left out if
+// asked. Single home of the walk: the bounds are the grid's own, held to what a
+// grid can hold, so no two readings can disagree about which cells count.
+template <class Grid, class See>
+ARC_HOST_DEVICE inline void walk_colored_cells(const Grid& one_grid, int skip, See see) {
+    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
+        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
+            const int color = one_grid.data[row][col];
+            if (is_color(color) && color != skip) see(row, col, color);
+        }
+}
+
+// How many cells of each color a grid holds. `skip` leaves one color out of the
+// tally — the background, wherever a caller wants it ignored; TRANSPARENT
+// counts all ten.
+template <class Grid>
+ARC_HOST_DEVICE inline void count_colors(const Grid& one_grid, int counts[COLOR_COUNT],
+                         int skip = TRANSPARENT) {
+    for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
+    walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
+}
+
+// BOXES · a frame around a group of cells
 
 // A box in grid coordinates, with inclusive bottom and right edges.
 // An empty box has its last row or column before its first.
@@ -51,62 +66,22 @@ struct cell_box {
     }
 };
 
-// COLORS · how many cells wear each color, and where each sits
-
-// Every cell wearing a color, in reading order, with one color left out if
-// asked. Single home of the walk: the bounds are the grid's own, held to what a
-// grid can hold, so no two readings can disagree about which cells count.
-template <class Grid, class See>
-ARC_HOST_DEVICE inline void walk_colored_cells(const Grid& one_grid, int skip, See see) {
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            const int color = one_grid.data[row][col];
-            if (is_color(color) && color != skip) see(row, col, color);
-        }
-}
-
-// How many cells of each color a grid holds. `skip` leaves one color out of the
-// tally — the background, wherever a caller wants it ignored; TRANSPARENT
-// counts all ten.
-template <class Grid>
-ARC_HOST_DEVICE inline void count_colors(const Grid& one_grid, int counts[COLOR_COUNT],
-                         int skip = TRANSPARENT) {
-    for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
-    walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
-}
-
-// Which colors occur, using the same cell filtering as counts and color boxes.
-inline void present_colors(const grid& one_grid, bool seen[COLOR_COUNT]) {
-    ranges::fill_n(seen, COLOR_COUNT, false);
-    walk_colored_cells(one_grid, TRANSPARENT,
-                       [&](int, int, int color) { seen[color] = true; });
-}
-
-// The box each color's cells fill, with one color left out if asked; a color
-// no cell wears keeps an empty box.
-template <class Grid>
-ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
-                        int skip = TRANSPARENT) {
-    for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
-    walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
-        boxes[color].include_cell(row, col);
-    });
-}
-
-// OBJECTS · a group of cells read as one thing
+// OBJECTS · a group of cells read as one thing, and the walk that finds them
 
 // An object is a related group of cells.
 // Humans mostly decompose an ARC grid into objects when reading the grid,
 // so the code will match that level of abstraction
 // vs carrying each cell as its own entity.
 
-// An object's bounding box and cell count, usable without storing its cells.
+// An object's box and cell count, usable without storing its cells.
 // Packed small for the device; box() reads it as a cell_box.
 struct object_summary {
-    int8_t  x0 = 0, y0 = 0;  // top-left in grid coordinates
-    int8_t  w = 0, h = 0;    // box width and height
-    int16_t count = 0;       // number of cells in the object
-    ARC_HOST_DEVICE cell_box box() const { return { y0, x0, y0 + h - 1, x0 + w - 1 }; }
+    // Declared column first, so the braces that build one ({ col, row, width,
+    // height, count }) read left, top, then size.
+    int8_t  col = 0, row = 0;        // top-left in grid coordinates
+    int8_t  width = 0, height = 0;   // box width and height
+    int16_t count = 0;               // number of cells in the object
+    ARC_HOST_DEVICE cell_box box() const { return { row, col, row + height - 1, col + width - 1 }; }
 };
 
 // A box as an object's summary has it, with its cell count (object_summary::box
@@ -223,7 +198,7 @@ struct object {
         made.cells.clear();
         for (int i = 0; i < count; ++i) {
             const int row = cell_row(indices[i]), col = cell_col(indices[i]);
-            made.cells[row - box.y0][col - box.x0] = (int8_t)source.data[row][col];
+            made.cells[row - box.row][col - box.col] = (int8_t)source.data[row][col];
         }
         return made;
     }
@@ -231,10 +206,10 @@ struct object {
     // Object cell accessors here take grid coordinates, not box-local coordinates; they do the shift.
     // Gaps or holes within the box read as TRANSPARENT, and so does anything outside it.
     ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
-        const int local_row = row - summary.y0;
-        const int local_col = col - summary.x0;
-        if (local_row < 0 || local_row >= summary.h ||
-            local_col < 0 || local_col >= summary.w) return (int8_t)TRANSPARENT;
+        const int local_row = row - summary.row;
+        const int local_col = col - summary.col;
+        if (local_row < 0 || local_row >= summary.height ||
+            local_col < 0 || local_col >= summary.width) return (int8_t)TRANSPARENT;
         return cells[local_row][local_col];
     }
 
@@ -246,8 +221,8 @@ struct object {
     // started from and the one an op reads a piece's color off. TRANSPARENT
     // when it has no cells.
     ARC_HOST_DEVICE int8_t first_color() const {
-        for (int row = 0; row < summary.h; ++row)
-            for (int col = 0; col < summary.w; ++col)
+        for (int row = 0; row < summary.height; ++row)
+            for (int col = 0; col < summary.width; ++col)
                 if (cells[row][col] != (int8_t)TRANSPARENT) return cells[row][col];
         return (int8_t)TRANSPARENT;
     }
@@ -256,10 +231,10 @@ struct object {
     // grid coordinates.
     template <class See>
     void each_cell(See see) const {
-        for (int row = 0; row < summary.h; ++row)
-            for (int col = 0; col < summary.w; ++col) {
+        for (int row = 0; row < summary.height; ++row)
+            for (int col = 0; col < summary.width; ++col) {
                 const int8_t color = cells[row][col];
-                if (color != TRANSPARENT) see(summary.y0 + row, summary.x0 + col, color);
+                if (color != TRANSPARENT) see(summary.row + row, summary.col + col, color);
             }
     }
 
@@ -274,8 +249,8 @@ struct object {
     // Every cell it fills repainted in the color `color_of(was)` names.
     template <class ColorOf>
     void repaint(ColorOf color_of) {
-        for (int row = 0; row < summary.h; ++row)
-            for (int col = 0; col < summary.w; ++col)
+        for (int row = 0; row < summary.height; ++row)
+            for (int col = 0; col < summary.width; ++col)
                 if (cells[row][col] != (int8_t)TRANSPARENT) cells[row][col] = (int8_t)color_of((int8_t)cells[row][col]);
     }
 
@@ -285,9 +260,9 @@ struct object {
     // for the code that walks a grid row by row. Host only -- it allocates a
     // whole grid, which is what the packing exists to avoid on the device.
     grid drawn() const {
-        grid out(summary.w, summary.h);
-        for (int row = 0; row < summary.h; ++row)
-            for (int col = 0; col < summary.w; ++col)
+        grid out(summary.width, summary.height);
+        for (int row = 0; row < summary.height; ++row)
+            for (int col = 0; col < summary.width; ++col)
                 out.data[row][col] = cells[row][col];
         return out;
     }
@@ -298,59 +273,30 @@ struct object {
 #pragma warning(pop)
 #endif
 
-// POSES · the eight ways a grid can sit
+// What counts as one object. The walk answers all four the same way, so no
+// two readings can disagree about which cells belong together.
+enum class grouping : int8_t {
+    // Cells that touch, all of them the same color. The usual object.
+    touching_same_color,
+    // Cells that touch, whatever their colors. One object may be many colors.
+    touching_any_color,
+    // Every cell of a color at once, touching or not. One object per color.
+    all_of_one_color,
+    // Cells that share a side, all of them the same color: the usual object cut
+    // finer, a corner joining nothing (aedd82e4's lone cells).
+    touching_sides_same_color,
+};
 
-// THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
-// bits, pose 0 being the grid as given.
-//   1  rows and columns trade places, transpose
-//   2  flipped top to bottom
-//   4  flipped left to right
-// Single home of what the bits mean. Every reader of a pose goes through the
-// three below, so none of them can drift on what "the same shape, turned" is.
-constexpr int POSE_COUNT = 8;
+// Caller-owned so host and device can lend memory they already hold.
+struct object_walk_scratch {
+    bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_CELLS];
+    int16_t queue_col[MAX_GRID_CELLS];
+    int16_t cells[MAX_GRID_CELLS];
+};
 
-// Where a cell of the ORIGINAL lands once posed, so a place can be carried into
-// the frame a pair is compared in. The exact inverse of pose_source.
-ARC_HOST_DEVICE inline std::pair<int, int> posed_place(int pose, int width, int height,
-                                  int row, int col) {
-    const int down   = (pose & 2) ? height - 1 - row : row;
-    const int across = (pose & 4) ? width  - 1 - col : col;
-    return (pose & 1) ? std::pair<int, int>{ across, down } : std::pair<int, int>{ down, across };
-}
-
-// How big a grid reads once posed. Only the trade changes the size.
-ARC_HOST_DEVICE inline std::pair<int, int> posed_size(int pose, int width, int height) {
-    return (pose & 1) ? std::pair<int, int>{ height, width } : std::pair<int, int>{ width, height };
-}
-
-// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
-// original's own, which is what the mirrors are measured against.
-ARC_HOST_DEVICE inline std::pair<int, int> pose_source(int pose, int width, int height,
-                                  int posed_row, int posed_col) {
-    int row = (pose & 1) ? posed_col : posed_row;
-    int col = (pose & 1) ? posed_row : posed_col;
-    if (pose & 2) row = height - 1 - row;
-    if (pose & 4) col = width  - 1 - col;
-    return { row, col };
-}
-
-// The object turned or flipped to `pose` in its own box, its top-left
-// corner where it was: each cell read through pose_source, as the ops read it.
-inline object posed(const object& piece, int pose) {
-    object turned = piece;
-    const auto [width, height] = posed_size(pose, piece.summary.w, piece.summary.h);
-    turned.summary.w = (int8_t)width;
-    turned.summary.h = (int8_t)height;
-    turned.cells.clear();
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            const auto [from_row, from_col] = pose_source(pose, piece.summary.w, piece.summary.h, row, col);
-            turned.cells[row][col] = piece.cells[from_row][from_col];
-        }
-    return turned;
-}
-
-// WALKS · the ways round a cell, and the walk that finds objects
+// Boundaries for reading copies separately; zero means one whole picture.
+struct tile_size { int width = 0, height = 0; };
 
 // THE EIGHT WAYS, the one numbering of directions in the project: the cells
 // around a cell, and the ways a piece can go, numbered as a compass is,
@@ -417,60 +363,6 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
     }
     return tail;
 }
-
-// Whether a cell sits in the outermost ring of a height x width grid.
-ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width) {
-    return row == 0 || col == 0 || row == height - 1 || col == width - 1;
-}
-
-// Mark cells reachable from the border without crossing a blocked cell.
-// Space uses four-way connectivity, so it cannot leak through touching corners.
-template <class Blocked>
-ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
-                         bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
-    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) outside[row][col] = false;
-    auto claim = [&](int row, int col) {
-        if (outside[row][col] || blocked(row, col)) return false;
-        outside[row][col] = true;
-        return true;
-    };
-    int seeded = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            if (!on_border(row, col, height, width)) continue;
-            if (!claim(row, col)) continue;
-            queue_row[seeded] = (int16_t)row;
-            queue_col[seeded++] = (int16_t)col;
-        }
-    walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
-}
-
-// What counts as one object. The walk answers all four the same way, so no
-// two readings can disagree about which cells belong together.
-enum class grouping : int8_t {
-    // Cells that touch, all of them the same color. The usual object.
-    touching_same_color,
-    // Cells that touch, whatever their colors. One object may be many colors.
-    touching_any_color,
-    // Every cell of a color at once, touching or not. One object per color.
-    all_of_one_color,
-    // Cells that share a side, all of them the same color: the usual object cut
-    // finer, a corner joining nothing (aedd82e4's lone cells).
-    touching_sides_same_color,
-};
-
-// Caller-owned so host and device can lend memory they already hold.
-struct object_walk_scratch {
-    bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
-    int16_t queue_row[MAX_GRID_CELLS];
-    int16_t queue_col[MAX_GRID_CELLS];
-    int16_t cells[MAX_GRID_CELLS];
-};
-
-// Boundaries for reading copies separately; zero means one whole picture.
-struct tile_size { int width = 0, height = 0; };
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
@@ -567,6 +459,31 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
     return hsh;
 }
 
+// THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
+// bits, pose 0 being the grid as given.
+//   1  rows and columns trade places, transpose
+//   2  flipped top to bottom
+//   4  flipped left to right
+// Single home of what the bits mean. Every reader of a pose goes through the
+// ones below, so none of them can drift on what "the same shape, turned" is.
+constexpr int POSE_COUNT = 8;
+
+// How big a grid reads once posed. Only the trade changes the size.
+ARC_HOST_DEVICE inline pair<int, int> posed_size(int pose, int width, int height) {
+    return (pose & 1) ? pair<int, int>{ height, width } : pair<int, int>{ width, height };
+}
+
+// Which cell of the ORIGINAL a posed cell reads from. Width and height are the
+// original's own, which is what the mirrors are measured against.
+ARC_HOST_DEVICE inline pair<int, int> pose_source(int pose, int width, int height,
+                                  int posed_row, int posed_col) {
+    int row = (pose & 1) ? posed_col : posed_row;
+    int col = (pose & 1) ? posed_row : posed_col;
+    if (pose & 2) row = height - 1 - row;
+    if (pose & 4) col = width  - 1 - col;
+    return { row, col };
+}
+
 // Canonical (orientationless, positionless) shape identity: the smallest
 // shape_occupancy_hash over the eight ways round -- turned either way, mirrored
 // either way -- done by index arithmetic, no pose grids built. Equal shapes have
@@ -580,7 +497,7 @@ ARC_HOST_DEVICE inline uint32_t canonical_shape_hash(int width, int height, Occu
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, width, height);
-        const uint32_t hash = arc::shape_occupancy_hash(posed_width, posed_height, [&](int i) {
+        const uint32_t hash = shape_occupancy_hash(posed_width, posed_height, [&](int i) {
             const auto [row, col] = pose_source(pose, width, height, i / posed_width,
                                                 i % posed_width);
             return occupied(row, col);

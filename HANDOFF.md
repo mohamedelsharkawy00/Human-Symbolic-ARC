@@ -159,7 +159,7 @@ This file holds only what is current; past stages are in git history
   before scoring. The tile refactor missed the second replay path (`opened`);
   its default argument hid the omission, costing a second full build and run.
   That was a wiring mistake, not a reason to reverse the reading order.
-- Full build, then `scripts\said.bat <label>`, then against the last run:
+- Full build, then `scripts\said.bat --as <label>`, then against the last run:
   `cmp out\<old>\said.txt out\<new>\said.txt` and
   `diff -rq out\<old>\logs out\<new>\logs` (byte for byte), and
   `readouts.py solved` and `explained`. Where a change renumbers values on

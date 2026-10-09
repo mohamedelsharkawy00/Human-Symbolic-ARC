@@ -110,7 +110,7 @@ data using the existing public-data script. For an offline build, add
 `--build-only`. The checkout must contain these setup files.
 
 ```text
-out/cloud/arc_said first 00576224
+out/cloud/arc_said 00576224
 ```
 
 It writes the readouts to `out/first/logs/inference`. Omit the puzzle ID to
