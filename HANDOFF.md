@@ -1,13 +1,178 @@
-# Handoff, 2026-10-08
+# Handoff, 2026-10-10
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
+## Deadline: 2026-11-02
+The user: not much time left. Prefer work that gains puzzles soon over long
+redesigns; the big ideas wait in "Parked" below.
+
+## Parked (the user, 2026-10-10: good ideas, for later)
+- THE REST FIRES ON THE REST, EVERYWHERE. Today a word reads the hand (the
+  cut's pieces carried through the words before it), a paint reads the cut
+  opened again, and only a recolor read off the picture (picture_word, below)
+  sees what a paint drew. The general form: after every step, cut the picture
+  drawn so far again, and let every word and every paint read it -- the
+  picture as the line's one state, instead of the hand beside the canvas. A
+  word that moves or removes a piece then has to erase its old cells in the
+  program: Union and Underlay paint, Intersection and Difference erase
+  (8_vocabulary.hpp). Costs: every word's replay reads the cut-again picture,
+  and many readouts move.
+- RE-RUN THE INFERENCE ON THE REST. Once the line says part of the change,
+  read the rest as a puzzle of its own -- (what is drawn so far -> output)
+  pairs -- with the whole inference again: cuts, matching, rules, rivals, so
+  every reader fires on the rest, not only the line's words.
+
 ## Where it stands
-- Training: 203 right, 0 wrong. Current run: out/opus55-compose-refined/
-  (out\ is not in git; out/opus55-replay/ is the run before it, out/base/
-  the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
+- 2026-10-10: THE PICTURE MADE SYMMETRIC (the user: a composition; mirrored
+  pieces alone left 9ddd00f0's second pair unfinished). One word, the paint
+  `symmetric` (finish_the_line's symmetry_paint, symmetric_holds): the
+  picture laid over itself posed around the grid's middle, pose after pose,
+  each taken of what is drawn by then -- one mirror, either diagonal, the
+  half turn; both mirrors, the quarter turns; all eight ways (`symmetries`,
+  narrowest first). Spelled `Output SelectAll <pose words> Union`, a
+  sentence a pose (Output is the whole canvas). One word, not a pose at a
+  time: an early pose can finish one pair and leave a later one nothing to
+  change there. It claims as the mirror word does (copy_claims, now shared):
+  weighed as a paint it lost the cells of the pieces it copies to a mirror of
+  some of them. It completes the input, asked only while nothing is said yet:
+  asked after 21f83797's rays it mirrored them, a symmetry its pairs' marks
+  share by coincidence, and went wrong. 211 right, 0 wrong, gained 5751f35e,
+  9ddd00f0, lost 0; explained but unsolved 0 -> 0; e729b7be now says its
+  half turn this way, still right; 8e5a5113, ac0c2ac3 readouts changed.
+  Run: out/symmetry.
+  Copies batch (67 lack only "where each copy was drawn"), rough groups by
+  first pairs: lines and trails from pieces 15 (5c0a986e, 1f0c79e5); a
+  pattern repeated along a direction 12 (9b30e358, e619ca6e); output bigger,
+  the input tiled or fractal 11 (ccd554ac, a59b95c0, 8f2ea7aa); a template
+  stamped at markers or into panes 9 (3e980e27, 36d67576, c444b776); output
+  smaller, pick or crop 8 (f25fbde4, 662c240a); mirror into place 6
+  (2546ccf6, 2b01abd0); other 6. Open, each a general case: ccd554ac needs a
+  size rule scaling by a number read off the input (its side; others: its
+  color count, cell count); c444b776 needs a repeat both ways as one paint
+  (`TileX[10] TileY[10]` fits and is right; asked one way at a time, the
+  second way does nothing in pair 0).
+- 2026-10-10: THE INSIDE OF A PIECE, a composition of existing ops (the
+  user: read the op list): Outline hollows a piece to its edge, InteriorColor
+  fills what the edge encloses, so `pick Outline InteriorColor[c] Union`
+  recolors a piece's inside. The fill paint asks it as value 1 beside the
+  hollows (value 0): inside_holds replays it laid over, the edge as it was,
+  the inside in one color read off the output; `outlined` is now the one
+  hollowing, shared with carry_the_hand. 209 right, 0 wrong, gained
+  50cb2852, 694f12f3, bb43febb, lost 0; explained but unsolved 0 -> 0;
+  8886d717's readout changed too. Run: out/inside. Left in the cell-role
+  group: rings by depth (516b51b7: the inside's inside, which wants the
+  picture cut again), corners (b6afb2da, 15663ba9), quadrants (639f5a19).
+- 2026-10-10: the batch "lacks only a recolor" (66 puzzles; ids and a rough
+  grouping of all 66 by their first pairs, below). The outline word was
+  gated on cells waiting for a shape change, while it claims cells waiting on
+  no word too; 4347f46a's cores are simply gone, with no word named, so it
+  was never asked. Its gate now takes what its claim takes (colors_left in
+  finish_the_line, starts_from built on it). 206 right, 0 wrong, gained
+  4347f46a, lost 0; only its readout changed. Run: out/outline. Not bugs:
+  e509e548 colors a path by how it turns (one turn, a U, an S; sizes differ,
+  so no shape key), a09f6c25 reads no shape table.
+  Rough groups (first pairs only): not really a recolor 16 (moves, copies,
+  counting, size changes, denoise: 48634b99, 9f27f097, e26a3af2); a whole
+  piece by a property 12 (exact size d2abd087, shape class e509e548,
+  direction 1d61978c, every other one 817e6c09, mirror partner ce039d91);
+  part of a piece by the cell's role 11 (inside bb43febb, corner/edge/inside
+  b6afb2da, depth 516b51b7, inside by rank 694f12f3, corner kinds 15663ba9,
+  quadrants and inset 639f5a19, lower half e7dd8335, every second cell
+  a5f85a15); a key or legend in the grid 8 (1da012fc, e4888269, 33b52de3);
+  relation to another piece 8 (inside its box 36fdfd69, nested 7d1f7ee8,
+  ef26cbf6); local patterns on the ground 7 (a8d7556c, 9f5f939b); colors
+  rotating among pieces 4 (bda2d7a6, 880c1354).
+- 2026-10-10: the rest of the change read off the picture so far (the
+  user's "the rest fires on the rest"). Once a paint is said, ColorFrom may
+  be asked on the picture the line has drawn -- line_drawn, with every
+  painted cell in the output's color -- cut again as the line cuts the input
+  (finish_the_line: the_picture, picture_word; replay_facts takes grids).
+  Said after the paints said before it, in a sentence that opens on Output
+  (fired_rule::on_the_picture; 9_sentences), laying only its picked pieces,
+  over what is down; no word on the hand is asked after it (picture_read).
+  It may recolor only whole pieces of the line's cut (`whole`): unguarded,
+  63613498 fit by coincidence and went wrong (diagonal rays laid onto a
+  shape, then its fragments recolored).
+  READ AHEAD. Plainly, the line said "the largest becomes 1" (140 cells)
+  before the bars (37), leaving pair 0's one touched block nothing for the
+  picture to change (a word must change something in every pair). So each
+  line is also read ahead (finish_the_line's read_ahead; read_figures asks
+  both, says_the_most keeps the read-ahead line only where it leaves fewer
+  cells unsaid): a paint is worth its cells plus what read_off_the_picture
+  then says with its cells drawn in (each paint's offer carries `drawn`),
+  skipped where even every unclaimed recolor cell could not make it win; a
+  paint said on that promise is followed at once by the picture word.
+  Unpaired, 833966f4's rays went ahead and words followed: fit, wrong. Kept
+  only where better, since ae3edfdc's 8-connected line read ahead said less
+  (its rays and the picture stopped its moves). A line is read ahead only
+  where read plainly it left a recolor unsaid (the picture reads recolors
+  alone; checked: said.txt and every readout byte-identical without it).
+  0d87d2a6's line now: the bars across, then the red pieces take the color
+  of the piece they share a side with, read off the picture (all 7 blocks).
+  205 right, 0 wrong; against the session's start (out/snap-keys) gained
+  0d87d2a6, lost 0; explained but unsolved 0 -> 0. Against the plain line,
+  only 0d87d2a6 and b0722778 (unsolved, 27 -> 25 unsaid) changed. Run:
+  out/lookahead2. Full runs took 101-124 s against 54 s before the picture
+  word, but the laptop was hot and gaming (the user): not measured cleanly.
+  Tried and dropped: reading the line with the paints first (a coincidental
+  ray paint went first, 46 cells); a Bridge-only version (ColorFrom on the
+  list Bridge hands on) that solved 0d87d2a6 only by re-laying a block the
+  line had already made blue -- the user: no "for now".
+- 2026-10-10: Bridge reaches across the grid too: Bridge[6..8] (both ways,
+  rows, columns) join only pieces facing each other from opposite edges of
+  the output canvas (left and right along a row, top and bottom along a
+  column; bridge_bars takes the canvas size, as MoveToEdge does). Asked
+  before the nearest (bridge_ways_narrowest_first, {7,8,6,1,2,0,4,5,3}): it
+  asks more of a pair. 0d87d2a6's test has two marks on each side edge;
+  the nearest joined them down the edge, across joins each to the mark
+  facing it (checked in Python: its test bars 36 drawn, 0 wrong). 204 right,
+  0 wrong, gained 0, lost 0; explained but unsolved 0 -> 0; 4 readouts
+  changed: 0d87d2a6 says Bridge[6]; 22eb0ac0 says Bridge[7] for Bridge[1],
+  still right (solutions/22eb0ac0 rewritten); 6bcdb01e and 6cdd2623 say
+  more, unsolved. GPU kernel: 80 registers, 70,352 bytes stack, spill loads
+  +20 bytes. Build log out/bridge-across-build.txt (the run was compared
+  and deleted).
+- 2026-10-10: Bridge joins only the picked pieces, and only its bars come
+  back picked (bridge_bars takes `picked`, shared by the GPU op and the
+  replay; Bridge's PICK column is now true). It joined every piece whatever
+  was picked, so 0d87d2a6's red blocks that line up got red bars too. The
+  line asks the bars on every piece first, then on each pick the other paints
+  use (bar_paint), spelled `<pick> Bridge[v] [Recolor[c]] Underlay`: the old
+  `SelectAll Bridge InvertSelection` loses its InvertSelection (22168020,
+  a699fb00, aa18de87, dbc1a6ce respelled, still right; solutions/a699fb00
+  rewritten). 204 right, 0 wrong, gained 0, lost 0; explained but unsolved
+  0 -> 0; 14 readouts changed (5751f35e, 6bcdb01e, f8f52ecc now elect the
+  4-connected cut, which leaves fewer unsaid; cf133acc says one picked bar
+  for two trails). GPU kernel unchanged: 80 registers, 70,352 bytes stack.
+  Build log out/bridge-pick-build.txt (the run was compared and deleted).
+  0d87d2a6 then said its blue bars (SelectColor[1] Bridge[0]). Left:
+  (a) each red piece a bar touches turns blue: ColorFrom by touch with the
+  bars as partner, which needs a said paint to join the hand the later words
+  read, and the line spelled in the order said -- done above, for the bars;
+  (b) done above (Bridge across).
+- 2026-10-10: the app keeps what inference said when nothing fits. Where no
+  inferred program fits the pairs, try_what_inference_said (19_solver_executor)
+  leaves the first (most likely) one on as BEST, drawn on every train pair,
+  instead of wiping it; turn the inference pane off [I] to see it, hover its
+  words for each step. score_program drops the cached verdicts of the tree it
+  replaces (a mid-search import was judged by the old tree's). arc_said and
+  Kaggle's inference-only run have their own loops: 204 right, 0 wrong,
+  gained 0, lost 0, said.txt and all readouts byte-identical.
+- 2026-10-10: SnapToAnchors retains only body cells whose color has an
+  external anchor as keys (8b_op_math.hpp, shared by GPU and replay). Details
+  with no possible partner used up the first 12 key slots: on 94133066's
+  second and third pairs, ten detail cells displaced the third true key.
+  The existing alignment and bounding-box crop now infer the solution; no
+  new op, detector, or sentence handling. Full build and training score:
+  204 right, 0 wrong, gained 94133066, lost 0; explained but unsolved 0 -> 0.
+  Before: out/snap-before; after: out/snap-keys. The key-count limit itself
+  is unchanged. Build resource log: out/snap-full-build.txt; no pre-change
+  compiler resource log was available for comparison.
+- Training: 211 right, 0 wrong. Current run: out/symmetry/
+  (out\ is not in git; out/snap-keys/ is the run before the Bridge changes,
+  out/opus55-replay/ the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
   199 at abc3f0b.
 - This session made the line compose existing words (all in 7_infer; report
   out/opus55-compose-refined-report.md, patch and snapshots in

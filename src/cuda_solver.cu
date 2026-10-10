@@ -523,32 +523,36 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
-// Bridge[way]: the pieces handed back as they came, then every bar as one
-// drawing. Which pieces pair up, the way they reach, and where each bar lies is
-// 7_infer.hpp's bridge_bars, which the reading replays too; this only lays the
-// bars down, each cell to the first bar that crosses it. One drawing, so a list
-// that holds the pieces holds every bar too, however many gaps there are --
+// Bridge[way]: the pieces handed back as they came, unmarked, then every bar as
+// one drawing, marked, so what follows works on the bars. Which pieces pair up
+// (the picked ones alone), the way they reach, and where each bar lies is
+// 8b_op_math.hpp's bridge_bars, which the reading replays too; this only lays
+// the bars down, each cell to the first bar that crosses it. One drawing, so a
+// list that holds the pieces holds every bar too, however many gaps there are --
 // one per gap ran out of room (dbc1a6ce's test, 19 dots and 17 bars). It sits
-// in the whole grid's frame, as Split's pieces do, and is born unmarked.
+// in the whole grid's frame, as Split's pieces do.
 __device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t way) {
     auto& res = gpu_acquire(ctx);
-    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i)
-        res.objects[res.count++] = src.objects[i];
+    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
+        res.objects[res.count] = src.objects[i];
+        res.objects[res.count++].selected = false;
+    }
     if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
     // A pooled slot keeps whatever it last held, so every field is said.
     gpu_fixed_object& bars = res.objects[res.count];
     bars.x0 = 0; bars.y0 = 0;
     bars.x1 = (int16_t)(GPU_MAX_GRID - 1); bars.y1 = (int16_t)(GPU_MAX_GRID - 1);
     bars.width = bars.height = (int16_t)GPU_MAX_GRID;
-    bars.selected = false;
+    bars.selected = true;
     bars.mask.clear();
     bool drew = false;
-    arc::bridge_bars(way, src.count,
+    arc::bridge_bars(way, ctx.output.width, ctx.output.height, src.count,
         [&](int which) {
             const auto& piece = src.objects[which];
             return arc::cell_box{ piece.y0, piece.x0, piece.y1, piece.x1 };
         },
         [&](int which) { return gpu_obj_first_color(src.objects[which]); },
+        [&](int which) { return (bool)src.objects[which].selected; },
         [&](const arc::cell_box& bar, int8_t color) {
             for (int r = max(bar.row0, 0); r <= min(bar.row1, GPU_MAX_GRID - 1); ++r)
                 for (int c = max(bar.col0, 0); c <= min(bar.col1, GPU_MAX_GRID - 1); ++c)
@@ -2614,7 +2618,7 @@ __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_
         if (!o.selected) { res.objects[res.count++] = o; continue; }
         int8_t col = gpu_obj_first_color(o);
 
-        // The march is 7_infer.hpp's (march_trail), the walk the reading replays.
+        // The march is 8b_op_math.hpp's (march_trail), the walk the reading replays.
         auto own = [&](int y, int x) { return gpu_obj_contains(o, x, y); };
         auto taken = [&](int y, int x) { return occ[y][x] != 0; };
         int min_x = 1 << 30, min_y = 1 << 30, max_x = -(1 << 30), max_y = -(1 << 30);

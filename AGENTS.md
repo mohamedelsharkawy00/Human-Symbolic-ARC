@@ -10,6 +10,7 @@ language lacks.
 
 ## Rules
 - Inference is the target, not search. Nothing in the reading searches.
+- Solve for the general case.
 - The training set is the measure for now, not the evaluation set.
 - A word is said only after it is replayed on every training pair on the host,
   with the arithmetic the GPU op runs (a shared `ARC_HOST_DEVICE` helper in
@@ -19,6 +20,11 @@ language lacks.
 - No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
 - You have priority over the old code: change it when it is wrong, and say so.
 - Finish one stage completely and consistently before starting the next.
+- A case that breaks an abstraction calls for reviewing the break, not
+  abandoning the abstraction. Find the implementation bug or missing general
+  distinction and fix it at its owner, without puzzle-specific exceptions.
+  Revert unsafe code when needed, but keep the abstraction under investigation;
+  reject it only when the evidence contradicts its shared definition.
 - Every concept has one owner. If the same handling starts spreading into more
   places, stop and move it to its owner instead of patching each place (DRY,
   separation of concerns).

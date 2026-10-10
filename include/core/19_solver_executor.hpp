@@ -1971,7 +1971,9 @@ namespace arc {
     // Re-import (or import onto a puzzle that loaded with a solved tree) would
     // otherwise leak the whole prior node subtree.
     if (task.best_tree) environment::remove(task.best_tree);
-    // A failed import must not read as solved, so the old verdict goes with the old tree.
+    // A failed import must not read as solved, so the old verdict goes with the
+    // old tree, and so does every verdict cached for it.
+    invalidate_best_tree_cache(task);
     task.is_solved = false;
     task.is_test_solved = false;
     task.best_tree = environment::parse(program);
@@ -2062,13 +2064,10 @@ namespace arc {
         return true;
       }
     }
-    // Nothing fitted, so the last failed tree must not stay on as the best.
-    environment::remove(p.best_tree);
-    p.best_tree = nullptr;
-    invalidate_best_tree_cache(p);
-    p.best_node_count = NODE_COUNT_MAX;
-    clear_views(p, false);
-    clear_views(p, true);
+    // NOTHING FITTED, so the reading's most likely program (its first) stays on
+    // as the best, drawn on every pair: what inference came to is there to see,
+    // and for the search to beat. The last one tried is no likelier than the rest.
+    if (p.suggested_programs.size() > 1) score_program(p.suggested_programs.front());
     return false;
   }
 

@@ -770,8 +770,8 @@ ARC_HOST_DEVICE inline void snap_turn(int way, int row, int col, int& to_row, in
 // empty, are read as they lie:
 //   - the body color is the color most cells wear, the lowest on a tie;
 //   - a body is an 8-connected run of painted cells, of any colors, that holds
-//     the body color, and its keys are its cells of the other colors, the first
-//     SNAP_MOST_KEYS of them in reading order;
+//     the body color; its keys are cells of other colors with external anchors,
+//     the first SNAP_MOST_KEYS of them in reading order;
 //   - an anchor is a cell of a run that does not hold it, SNAP_MOST_ANCHORS of
 //     each color at most.
 // Each body, in the order the reading meets its run, is turned one of the eight
@@ -833,13 +833,15 @@ ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
         }
 
     // Each body, set down where the most of its keys meet anchors of their colors.
+    // Only colors with an external anchor are keys. Body details with no partner
+    // must not consume the bounded key list before the matching cells are read.
     for (int run = 0; run < runs; ++run) {
         if (!holds_body[run]) continue;
         int key_color[SNAP_MOST_KEYS], key_row[SNAP_MOST_KEYS], key_col[SNAP_MOST_KEYS], keys = 0;
         for (int row = 0; row < height && keys < SNAP_MOST_KEYS; ++row)
             for (int col = 0; col < width && keys < SNAP_MOST_KEYS; ++col) {
                 const int color = at(row, col);
-                if (label[row][col] != run || color == body || color == TRANSPARENT) continue;
+                if (label[row][col] != run || color == body || !is_color(color) || anchors[color] == 0) continue;
                 key_color[keys] = color;
                 key_row[keys] = row;
                 key_col[keys] = col;
@@ -922,21 +924,30 @@ ARC_HOST_DEVICE constexpr int aligned_copy_start(int source_size, int target_sta
 }
 
 // WHAT BRIDGE DRAWS, said once for the op and for the reading that replays it.
-// Each piece reaches for the pieces of its own colour whose centres share its
-// row or its column, and the box between two is filled in that colour. HOW IT
+// Each picked piece reaches for the picked pieces of its own colour whose
+// centres share its row or its column, and the box between two is filled in
+// that colour; a piece not picked neither reaches nor is reached (0d87d2a6's
+// blue marks are bridged across the red blocks, which are not). HOW IT
 // REACHES is Bridge's value, `way`: along rows and columns both, along rows
-// alone, or along columns alone (way % 3), and to the nearest piece that way or
-// to every one (way / 3) -- Bridge[0] reaching both ways for the nearest.
+// alone, or along columns alone (way % 3), and to the nearest piece that way,
+// to every one, or only to the one facing it across the grid (way / 3) --
+// Bridge[0] reaching both ways for the nearest. Two pieces face each other
+// across the `width` by `height` grid when one touches its left edge and the
+// other its right, along a row, or its top and its bottom, along a column
+// (0d87d2a6's test: two marks on the left edge share a column and are not
+// joined; each is joined to the mark facing it on the right).
 // `count` pieces in the op's own order: box_of_piece(i) is piece i's cell_box,
-// color_of(i) the colour the op reads off its first cell (-1 for none).
+// color_of(i) the colour the op reads off its first cell (-1 for none),
+// picked(i) whether piece i is picked.
 // land(bar, colour) sees each bar in the order the op lays them into its one
 // drawing of every bar, and may say false to stop. gpu_exec_bridge calls it, so
 // a reading and the op cannot draw different bars.
-constexpr int BRIDGE_WAYS = 6;
-template <class BoxOf, class ColorOf, class Land>
-ARC_HOST_DEVICE inline void bridge_bars(int way, int count, BoxOf box_of_piece, ColorOf color_of, Land land) {
+constexpr int BRIDGE_WAYS = 9;
+template <class BoxOf, class ColorOf, class Picked, class Land>
+ARC_HOST_DEVICE inline void bridge_bars(int way, int width, int height, int count, BoxOf box_of_piece,
+                                        ColorOf color_of, Picked picked, Land land) {
     if (way < 0 || way >= BRIDGE_WAYS) return;
-    const bool rows = way % 3 != 2, columns = way % 3 != 1, every = way >= 3;
+    const bool rows = way % 3 != 2, columns = way % 3 != 1, every = way / 3 == 1, facing = way / 3 == 2;
     constexpr int most_pairs = 64;
     int16_t lows[most_pairs], highs[most_pairs];
     int pairs = 0;
@@ -951,16 +962,29 @@ ARC_HOST_DEVICE inline void bridge_bars(int way, int count, BoxOf box_of_piece, 
         highs[pairs] = (int16_t)high;
         ++pairs;
     };
+    // Whether pieces i and j face each other across the grid, along a row or
+    // along a column.
+    auto face = [&](int i, int j, bool along_rows) {
+        const cell_box one = box_of_piece(i), other = box_of_piece(j);
+        return along_rows ? (one.col0 <= 0 && other.col1 >= width - 1) || (other.col0 <= 0 && one.col1 >= width - 1)
+                          : (one.row0 <= 0 && other.row1 >= height - 1) || (other.row0 <= 0 && one.row1 >= height - 1);
+    };
     for (int i = 0; i < count; ++i) {
+        if (!picked(i)) continue;
         const int8_t color = color_of(i);
         if (color < 0) continue;
         const int my_across = across(i), my_down = down(i);
         // Ties keep the first found, as the op's list has them.
         int partner = -1, nearest = 0x7FFF;
         for (int j = 0; j < count; ++j) {
-            if (j == i || color_of(j) != color) continue;
+            if (j == i || !picked(j) || color_of(j) != color) continue;
             const int their_across = across(j), their_down = down(j);
-            if (!(rows && their_down == my_down) && !(columns && their_across == my_across)) continue;
+            const bool on_row = rows && their_down == my_down, on_column = columns && their_across == my_across;
+            if (!on_row && !on_column) continue;
+            if (facing) {
+                if ((on_row && face(i, j, true)) || (on_column && face(i, j, false))) pair_up(i, j);
+                continue;
+            }
             if (every) { pair_up(i, j); continue; }
             const int distance = abs(their_across - my_across) + abs(their_down - my_down);
             if (distance < nearest) { nearest = distance; partner = j; }

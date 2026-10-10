@@ -182,11 +182,11 @@ inline the_mark mark_after(const string& words) {
             if (mark != the_mark::all) mark = the_mark::some;
         }
         else if (clears_the_marks(op)) mark = the_mark::none;
-        // Bridge hands its bars back unmarked beside the pieces it was given,
-        // so after it the hand is only partly picked, and a paint that means the
-        // whole of it has to say so. Said here for the one op, where CLEARS
-        // would say it for all of them if the table had a column for it.
-        else if (op == node_type::Bridge && mark == the_mark::all) mark = the_mark::some;
+        // Bridge hands back the pieces it was given unmarked and its bars
+        // marked, so after it the hand is only partly picked, and a paint that
+        // means the whole of it has to say so. Said here for the one op, where
+        // CLEARS would say it for all of them if the table had a column for it.
+        else if (op == node_type::Bridge) mark = the_mark::some;
     });
     return mark;
 }
@@ -868,7 +868,7 @@ inline bool say_periodic_denoise(const inference& inf, said_reading& said) {
 // THE GAPS BETWEEN PIECES OF ONE COLOUR, FILLED. Said under the cut its
 // replay held under, which need not be the elected one, and laid under what
 // is there, so a bar that crosses a wall goes behind it. The paint needs the
-// whole hand said out loud, since the bars come back unmarked (mark_after).
+// whole hand said out loud, since only the bars come back marked (mark_after).
 inline bool say_bridge(const inference& inf, said_reading& said) {
     if (!inf.bridge.holds()) return false;
     const string cut = word_for_segmentation(inf.bridge.segmentation);
@@ -1013,15 +1013,20 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             return true;
         }
         case said_as::bridged: {
-            // Bridge reads every piece and hands the bars back unmarked, so the
-            // inversion picks the bars alone, to paint them and to paint over.
-            string act = spell("Bridge", rule.value) + " InvertSelection";
+            // Bridge joins the picked pieces and hands back its bars alone
+            // marked, so what follows paints the bars and nothing else.
+            string act = spell("Bridge", rule.value);
             if (rule.paint >= 0) act += " " + spell("Recolor", rule.paint);
-            drawn = { "SelectAll", act };
+            drawn = { pick, act };
             paint = "Underlay";
             return true;
         }
-        case said_as::filled:      drawn = { pick, spell("InteriorColor", rule.paint) }; paint = "Underlay"; return true;
+        case said_as::filled:
+            // Its hollows, under what is down; or, said with 1, its inside: the
+            // piece hollowed to its edge first, then filled, laid over.
+            if (rule.value == 1) { drawn = { pick, "Outline " + spell("InteriorColor", rule.paint) }; paint = "Union"; }
+            else { drawn = { pick, spell("InteriorColor", rule.paint) }; paint = "Underlay"; }
+            return true;
         case said_as::trailed:     drawn = { pick, spell("ExtendTo", rule.value) };      paint = "Union";    return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
         case said_as::copied_onto: drawn = { pick, spell("CopyTo", rule.value) };        paint = "Union";    return true;
@@ -1278,21 +1283,38 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     // again: it reads the pieces as the cut hands them over, which is what its
     // replay read, and paints only what it draws, over what is down or under it,
     // so it neither reads what the line or another paint changed nor undoes it.
-    vector<std::pair<beat, const char*>> afterwards;
+    // A word read off the picture the line has drawn so far (on_the_picture)
+    // is said among them, where it was said, and opens on that picture instead,
+    // Output, cut the same way; it lays only the pieces it picked, over what is
+    // down. The picture made symmetric is the whole picture posed and laid over
+    // itself, uncut, a sentence a pose.
+    struct after_the_line { beat drawn; const char* paint; const char* source; bool cut = true; };
+    vector<after_the_line> afterwards;
     for (const int8_t which : read.line) {
         const auto& rule = read.fired[which];
         beat drawn;
         const char* paint = nullptr;
         if (!rule.no_word_for.empty()) said.no_word_for.push_back(rule.no_word_for);
-        else if (drawn_after(rule, drawn, paint)) afterwards.push_back({ drawn, paint });
+        else if (rule.as == said_as::symmetric)
+            for (const int8_t pose : symmetries[rule.value].poses) {
+                if (pose < 0) break;
+                string posed;
+                for (const string& word : words_for_pose(pose)) posed += (posed.empty() ? "" : " ") + word;
+                afterwards.push_back({ { "SelectAll", posed }, "Union", "Output", false });
+            }
+        else if (rule.on_the_picture)
+            for (const beat& one : beats_of(rule, inf)) afterwards.push_back({ one, "Union", "Output" });
+        else if (drawn_after(rule, drawn, paint)) afterwards.push_back({ drawn, paint, "Input" });
         else for (const beat& one : beats_of(rule, inf)) beats.push_back(one);
     }
 
     spoken();
-    for (const auto& [drawn, paint] : afterwards) {
-        for (size_t i = 0; i < opening.size(); ++i)
-            say_sentence(said, "Input", opening[i].pick, opening[i].act, "Withhold", i == 0);
-        said.sentences.push_back(closed_on_the_pick("CurrentObjects " + drawn.pick + " " + drawn.act, paint));
+    for (const auto& [drawn, paint, source, cut] : afterwards) {
+        if (cut)
+            for (size_t i = 0; i < opening.size(); ++i)
+                say_sentence(said, source, opening[i].pick, opening[i].act, "Withhold", i == 0);
+        said.sentences.push_back(closed_on_the_pick(
+            string(cut ? "CurrentObjects" : source) + " " + drawn.pick + " " + drawn.act, paint));
     }
     return true;
 }

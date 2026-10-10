@@ -293,7 +293,8 @@ struct correspondence_election {
         // their rows, every `value` % 32 cells, or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
         // partner as MoveToward's `value` says (move_toward), or recolored to
-        // the color its own shape names (shape_recolor) -- or a swap
+        // the color its own shape names (shape_recolor), or the picture so far
+        // made symmetric the way symmetry `value` names (symmetric) -- or a swap
         // of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
@@ -305,7 +306,8 @@ struct correspondence_election {
                                 shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
-                                turned_copy, move_toward, shape_recolor, own_sentences, kind_count } as = unsaid;
+                                turned_copy, move_toward, shape_recolor, symmetric, own_sentences,
+                                kind_count } as = unsaid;
         int8_t value = 0;
         piece_pick pick = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.
@@ -314,6 +316,10 @@ struct correspondence_election {
         // -- only where nothing is -- or only onto it, where something is.
         enum laid : int8_t { laid_over, laid_under, laid_onto };
         int8_t lay = laid_over;
+        // A WORD READ OFF THE PICTURE THE LINE HAS DRAWN SO FAR -- the hand and
+        // every paint said before it -- rather than off the hand: said after
+        // those paints, in a sentence of its own that opens on the picture.
+        bool on_the_picture = false;
         // What the language has no word for, when this fired and cannot be said.
         string no_word_for;
     };
