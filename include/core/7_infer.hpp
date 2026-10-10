@@ -391,6 +391,7 @@ struct partner_pieces {
     int count() const { return (int)pieces.size(); }
     cell_box box(int i) const { return boxes[i]; }
     bool painted(int i, int row, int col) const { return pieces[i].holds(row, col); }
+    int color_at(int i, int row, int col) const { return pieces[i].color_at(row, col); }
     bool is_picked(int i) const { return picked[i]; }
     int color(int i) const { return pieces[i].first_color(); }
     // Whether piece i holds a cell of `color`.
@@ -431,6 +432,16 @@ struct partner_pieces {
     }
     // The color piece i takes from its partners by `how`, or -1.
     int color_from(partner_by how, int i) const { return partner_color(how, i, *this); }
+    // The color a key drawn in the grid gives each picked piece by its place, -1
+    // for none -- every one where the key does not say (key_place_colors).
+    vector<int8_t> key_places() const {
+        const size_t count = pieces.size();
+        vector<int8_t> color(count, -1), band(count);
+        vector<int16_t> lows(count), highs(count);
+        vector<int> order(count);
+        if (count) key_place_colors(*this, color.data(), lows.data(), highs.data(), band.data(), order.data());
+        return color;
+    }
 };
 
 // Maps shapes to colors (rejected if any shape needs two different colors).
@@ -4030,28 +4041,29 @@ inline optional<replayed> paint_holds(const replay_facts& facts, const vector<pa
 constexpr int8_t LEFT_AS_IT_IS = -2;
 
 // PICKED PIECES REPAINTED WHERE THEY LIE, replayed: what every recolor's replay
-// asks, once. On each pair, `color_of(which, cut, i, color)` says the color
-// picked piece i comes out in -- LEFT_AS_IT_IS where the word names it none and
-// the op leaves it as it is (ColorFrom's piece with no partner; ShapeColorMap's
-// key the table does not name) -- or false where the word cannot say; the
-// piece is then a paint laid over itself in that color, or in its own colors
+// asks, once. On each pair, `colors_of(which, cut, i, to)` fills `to`, the color
+// each color picked piece i wears comes out in -- LEFT_AS_IT_IS where the word
+// leaves it as it is (ColorFrom's piece with no partner; ShapeColorMap's key the
+// table does not name; a color no key pairs) -- or answers false where the word
+// cannot say; the piece is then a paint laid over itself in those colors
 // (paint_holds), so a piece the word leaves as it is has to come out as it
 // was: the word picked it, and does not get to leave it to another (4f537728's
 // blocks in the marker's column, left by "takes the color of a piece in its
 // rows", came out recolored). Sees the cells of the pieces it repainted and
 // how many pieces changed color.
-template <class ColorOf>
-inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                        ColorOf color_of) {
+template <class ColorsOf>
+inline optional<replayed> repaints_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                        ColorsOf colors_of) {
     int pieces = 0;
     auto seen = paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
-            int8_t color = -1;
-            if (!color_of(which, cut, i, color)) return false;
+            int8_t to[COLOR_COUNT];
+            ranges::fill(to, LEFT_AS_IT_IS);
+            if (!colors_of(which, cut, i, to)) return false;
             bool changed = false;
             cut.pieces[i].each_cell([&](int row, int col, int8_t was) {
-                const int8_t now = color == LEFT_AS_IT_IS ? was : color;
+                const int8_t now = to[was] == LEFT_AS_IT_IS ? was : to[was];
                 put(row, col, now);
                 changed = changed || was != now;
             });
@@ -4061,6 +4073,36 @@ inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<
     });
     if (seen) seen->pieces = pieces;
     return seen;
+}
+
+// A RECOLOR OF WHOLE PIECES, replayed: `color_of(which, cut, i, color)` says the
+// one color picked piece i comes out in, every cell of it, or LEFT_AS_IT_IS
+// (repaints_hold).
+template <class ColorOf>
+inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                        ColorOf color_of) {
+    return repaints_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, int8_t* to) {
+        int8_t color = -1;
+        if (!color_of(which, cut, i, color)) return false;
+        std::fill(to, to + COLOR_COUNT, color);
+        return true;
+    });
+}
+
+// COLORS THAT TRADE PLACES AS A KEY PAIRS THEM, replayed: BidiColorMap past its
+// fixed pairs reads the key on each grid -- every piece not picked, along its
+// rows or its columns (key_swaps) -- and every cell of a picked piece in a color
+// the key pairs comes out in its partner's (repaints_hold). A key that names no
+// swap leaves them as they were, so that pair shows the word at no work.
+inline optional<replayed> key_swap_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                         int value) {
+    vector<array<int8_t, COLOR_COUNT>> swaps(handed.size());
+    for (size_t which = 0; which < handed.size(); ++which) swaps_of(value, handed[which], swaps[which].data());
+    return repaints_hold(facts, handed, [&](size_t which, const partner_pieces&, int, int8_t* to) {
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            if (swaps[which][color] >= 0) to[color] = swaps[which][color];
+        return true;
+    });
 }
 
 // A PIECE THAT TAKES ITS COLOR FROM ANOTHER, replayed. ColorFrom paints every
@@ -4078,8 +4120,24 @@ inline optional<replayed> color_from_holds(const replay_facts& facts, const vect
         return worn >= 0 || !cut.partnered(how, i);
     });
 }
-static_assert(row_of(node_type::ColorFrom).high + 1 == (int)partner_by::count,
-              "ColorFrom takes one value for each way partner_by finds a partner");
+static_assert(row_of(node_type::ColorFrom).high == KEY_BY_PLACE,
+              "ColorFrom takes one value for each way partner_by finds a partner, then the key by place");
+
+// A PIECE THAT TAKES ITS COLOR OFF A KEY BY ITS PLACE, replayed: ColorFrom past
+// its partner ways reads the key on each grid -- every piece not picked -- and
+// paints the n-th picked piece in reading order in the key's n-th entry
+// (key_place_colors: 33b52de3's shapes, its key cell by cell). Where the key
+// does not say, every piece is left as it is, so that pair shows the word at no
+// work (recolors_hold).
+inline optional<replayed> key_place_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
+    vector<vector<int8_t>> places;
+    for (const partner_pieces& cut : handed) places.push_back(cut.key_places());
+    return recolors_hold(facts, handed, [&](size_t which, const partner_pieces&, int i, int8_t& color) {
+        const int8_t worn = places[which][(size_t)i];
+        color = worn >= 0 ? worn : LEFT_AS_IT_IS;
+        return true;
+    });
+}
 
 // A RECOLOR A PICK DECIDES, replayed: every piece picked comes out wholly in
 // `color` (recolors_hold).
@@ -4802,10 +4860,14 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             for (size_t i = 0; i < hand.size(); ++i)
                 if (picked[i]) recolored(hand[i], rule.value);
             break;
-        case said::swap_colors: {
-            const auto [first, second] = color_pair::from_index(rule.value);
-            for (object& piece : hand)
-                piece.repaint([&](int8_t now) { return now == first ? second : now == second ? first : now; });
+        case said::swap_colors:
+        case said::key_swap: {
+            // What trades places, read off the hand as it is before any piece
+            // changes: a fixed pair, or the pairs the key the pick leaves names.
+            int8_t to[COLOR_COUNT];
+            swaps_of(rule.value, partner_pieces(hand, pick), to);
+            for (size_t i = 0; i < hand.size(); ++i)
+                if (picked[i]) hand[i].repaint([&](int8_t now) { return to[now] >= 0 ? to[now] : now; });
             break;
         }
         case said::color_from:
@@ -4817,9 +4879,12 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             constexpr int ways = (int)partner_by::count;
             vector<int> found(hand.size(), -1);
             vector<heading_step> by(hand.size(), heading_step{ 0, 0 });
+            const bool by_place = rule.as == said::color_from && rule.value == KEY_BY_PLACE;
+            const vector<int8_t> places = by_place ? cut.key_places() : vector<int8_t>{};
             for (int i = 0; i < cut.count(); ++i) {
                 if (!cut.picked[i]) continue;
-                if (rule.as == said::color_from) found[i] = cut.color_from((partner_by)rule.value, i);
+                if (by_place) found[i] = places[(size_t)i];
+                else if (rule.as == said::color_from) found[i] = cut.color_from((partner_by)rule.value, i);
                 else if (rule.as == said::align_to)
                     cut.goes_level(i, rule.value >= ways, (partner_by)(rule.value % ways), by[i]);
                 else cut.goes_toward(i, rule.value, pair.output.width, pair.output.height, by[i]);
@@ -4890,7 +4955,7 @@ inline constexpr word_group group_of(correspondence_election::fired_rule::said_a
     switch (kind) {
         // Acts: only the colors change.
         case rule::recolor: case rule::swap_colors: case rule::size_rank:
-        case rule::color_from: case rule::recolor_picked: case rule::shape_recolor:
+        case rule::color_from: case rule::recolor_picked: case rule::shape_recolor: case rule::key_swap:
             return word_group::recolors;
         // Acts: pieces move, turn, change shape, or gain copies. Learned-table
         // compositions keep the old gate: their hand cannot yet be carried.
@@ -5237,21 +5302,26 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // paint, the cells it would draw.
     struct offer { int said = 0; std::function<void()> say; cells_by_pair drawn; };
 
-    // A RECOLOR ANOTHER PIECE DECIDES: every picked piece takes its partner's color.
-    // It accounts for the cells it recolored.
+    // A RECOLOR ANOTHER PIECE DECIDES: every picked piece takes its partner's color
+    // -- or, past the partner ways, the color a key drawn in the grid shows at its
+    // place (key_place_holds). It accounts for the cells it recolored.
     auto color_from_word = [&]() -> offer {
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
         for (const piece_pick& pick : picks_to_ask(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int how = 0; how < ways; ++how)
-                if (const auto seen = color_from_holds(facts, handed, (partner_by)how))
+            for (int how = 0; how <= KEY_BY_PLACE; ++how)
+                if (const auto seen = how == KEY_BY_PLACE ? key_place_holds(facts, handed)
+                                                          : color_from_holds(facts, handed, (partner_by)how))
                     weigh(best, how, pick, *seen, recolor_claims(*seen));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
-            carry(say(best, rule::color_from, string("takes the color of ") + partners[best.value], colors)); } };
+            carry(say(best, rule::color_from,
+                      string("takes the color of ") +
+                          (best.value == KEY_BY_PLACE ? "the key at its place" : partners[best.value]),
+                      colors)); } };
     };
 
     // A MOVE THE PIECES DECIDE: every picked piece slides level with its partner,
@@ -5492,6 +5562,32 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const string rest = best_table.otherwise >= 0 ? ", any other " + to_string(best_table.otherwise) : "";
             carry(say(best, rule::shape_recolor,
                       string("takes the color its ") + keys_named[best.value] + " names" + rest, colors)); } };
+    };
+
+    // A RECOLOR A KEY DECIDES: the colors of every picked piece trade places as a
+    // key drawn in the grid pairs them -- the pieces the pick leaves, read along
+    // their rows or their columns (key_swaps) -- BidiColorMap past its fixed
+    // pairs. Each grid brings its own key, so no swap fixed for every pair says it
+    // (0becf7df's corner: 1 and 3, 2 and 8, then 4 and 2, 3 and 7). It accounts
+    // for the cells it recolored.
+    static constexpr const char* keys_read[] = { "rows", "columns" };
+    static_assert(size(keys_read) == (size_t)(KEY_PAIRS_ALONG_COLUMNS - KEY_PAIRS_ALONG_ROWS + 1) &&
+                  KEY_PAIRS_ALONG_COLUMNS == row_of(node_type::BidiColorMap).high);
+    auto key_word = [&]() -> offer {
+        const uint16_t from = starts_from(missing::a_recolor);
+        if (!facts.hand_known || !from) return {};
+        heard best;
+        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+            const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            for (int value = KEY_PAIRS_ALONG_ROWS; value <= KEY_PAIRS_ALONG_COLUMNS; ++value)
+                if (const auto seen = key_swap_holds(facts, handed, value))
+                    weigh(best, value, pick, *seen, recolor_claims(*seen));
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
+            carry(say(best, rule::key_swap,
+                      string("trades colors as the key's ") + keys_read[best.value - KEY_PAIRS_ALONG_ROWS] +
+                          " pair them", colors)); } };
     };
 
     // A PIECE REMOVED: every piece the pick takes is gone from every pair's output
@@ -6021,6 +6117,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     const asked kinds[] = { { color_from_word, false, false }, { move_word, false, true },
                             { mirror_word, false, true }, { outline_word, false, true },
                             { recolor_word, false, false }, { shape_word, false, false },
+                            { key_word, false, false },
                             { removal_word, false, true }, { ray_paint, true, false },
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },

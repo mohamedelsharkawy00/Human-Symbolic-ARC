@@ -71,6 +71,10 @@ struct color_pair {
     }
 };
 
+// PAST ITS FIXED PAIRS, BidiColorMap trades the pairs a key drawn in the grid
+// names (key_swaps, 8b_op_math.hpp), read along the key's rows, or its columns.
+constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS = COLOR_PAIR_COUNT + 1;
+
 }  // namespace arc
 
 // What an op does to the layer, in pipeline-authoring order (a single solution
@@ -172,8 +176,9 @@ enum class inferred_amount { none, some, all };
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
-  /* Each picked piece wears its partner's color, as partner_by numbers them. */ \
-  X(ColorFrom                   , 0                 , 8                        , map      , none, true , false) \
+  /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
+  /* past those [9], the color a key drawn in the grid shows at its place.    */ \
+  X(ColorFrom                   , 0                 , 9                        , map      , none, true , false) \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
   /* partner stay picked (would_fit, 8b_op_math.hpp). A pick, so it selects. */ \
   X(WouldFit                    , 0                 , 8                        , select   , none, true , false) \
@@ -208,7 +213,10 @@ enum class inferred_amount { none, some, all };
   /* Where a piece sits among the others, the one thing no other pick says. */   \
   X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
   X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
-  X(BidiColorMap                , 0                 , arc::COLOR_PAIR_COUNT - 1, map      , none, true , false) \
+  /* The picked pieces trade the colors of one fixed pair, color_pair's      */ \
+  /* numbering, or past those, the pairs a key drawn in the grid names: the  */ \
+  /* pieces not picked, read along their rows, then their columns.           */ \
+  X(BidiColorMap                , 0                 , arc::KEY_PAIRS_ALONG_COLUMNS, map   , none, true , false) \
   /* The move IS the number of cells, so the whole grid is sayable in one. */    \
   X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \

@@ -954,6 +954,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;
+        case said_as::key_swap:    beats.push_back({pick, spell("BidiColorMap", rule.value)}); break;
         case said_as::learned_table:
             // A key's shape naming the figure's color (detect_body_recolor), in
             // three words: the key -- the smallest -- takes the color its own shape

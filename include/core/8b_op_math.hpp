@@ -6,6 +6,7 @@
 #pragma once
 #include "1_readings.hpp"
 #include "3_background.hpp"  // mark_outside
+#include "8_vocabulary.hpp"  // color_pair, BidiColorMap's key values
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -555,8 +556,8 @@ ARC_HOST_DEVICE inline std::pair<int, int> shift_to_touch(const cell_box& moving
     return {down, across};
 }
 
-// MAP · Recolor and AddColor, ShapeColorMap, VoteDenoise, SnapToAnchors,
-// ProjectOnSeeds
+// MAP · Recolor and AddColor, ShapeColorMap, BidiColorMap, VoteDenoise,
+// SnapToAnchors, ProjectOnSeeds
 
 // Recolor and AddColor's relative color sources, shared by reading and execution.
 // Ties choose the lowest color, and an empty object stays transparent.
@@ -631,6 +632,178 @@ struct shape_table {
         return true;
     }
 };
+
+// A KEY DRAWN IN THE GRID: a table the grid holds itself, read off each grid
+// rather than learned off the pairs, so every grid brings its own (0becf7df's
+// corner pairs 1 with 3 and 2 with 8 in one pair, 4 with 2 and 3 with 7 in the
+// next). The key is every piece not picked, however many and wherever they
+// lie, read together as one drawing, a later piece over an earlier one as
+// Union lays them; each entry in it names what a property of a piece maps to,
+// and each way of reading it below is one property. The pieces are asked as
+// each_partner asks them, and `color_at(i, row, col)`, the color piece i paints
+// at that cell of the grid.
+// The piece that shows a cell of the key's drawing, the last not picked to
+// paint it, or -1 where none does.
+template <class Pieces>
+ARC_HOST_DEVICE inline int key_piece_at(const Pieces& pieces, int row, int col) {
+    int found = -1;
+    for (int i = 0; i < pieces.count(); ++i)
+        if (!pieces.is_picked(i) && pieces.painted(i, row, col)) found = i;
+    return found;
+}
+// The color the key's drawing shows at a cell, TRANSPARENT where it shows none.
+template <class Pieces>
+ARC_HOST_DEVICE inline int key_color_at(const Pieces& pieces, int row, int col) {
+    const int i = key_piece_at(pieces, row, col);
+    return i < 0 ? (int)TRANSPARENT : (int)pieces.color_at(i, row, col);
+}
+
+// READ BY COLOR: two cells of two colors side by side, alone together along a
+// row -- or, `along_rows` false, a column -- are an entry, handed to
+// `visit(first, second)`, the first cell's color and the second's.
+template <class Pieces, class Visit>
+ARC_HOST_DEVICE inline void each_key_entry(const Pieces& pieces, bool along_rows, Visit visit) {
+    auto key_at = [&](int row, int col) { return key_color_at(pieces, row, col); };
+    const int down = along_rows ? 0 : 1, across = along_rows ? 1 : 0;
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (pieces.is_picked(i)) continue;
+        const cell_box box = pieces.box(i);
+        if (box.empty()) continue;
+        for (int row = box.row0; row <= box.row1; ++row)
+            for (int col = box.col0; col <= box.col1; ++col) {
+                if (key_piece_at(pieces, row, col) != i) continue;
+                const int first = key_at(row, col), second = key_at(row + down, col + across);
+                if (!is_color(key_at(row - down, col - across)) && is_color(second) && second != first &&
+                    !is_color(key_at(row + 2 * down, col + 2 * across)))
+                    visit(first, second);
+            }
+    }
+}
+
+// THE SWAPS A KEY NAMES, read by color (each_key_entry): the two colors of each
+// entry trade places, `to[color]` the color each comes out in, -1 for a color no
+// entry names. False, and no color traded, where the key names no entry, or
+// names a color with two partners: a table that is no swap.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
+    for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
+    bool any = false, swaps = true;
+    each_key_entry(pieces, along_rows, [&](int first, int second) {
+        swaps = swaps && (to[first] < 0 || to[first] == second) && (to[second] < 0 || to[second] == first);
+        to[first] = (int8_t)second;
+        to[second] = (int8_t)first;
+        any = true;
+    });
+    if (any && swaps) return true;
+    for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
+    return false;
+}
+
+// WHAT BidiColorMap[value] TRADES, as `to[color]`, -1 for a color it leaves as
+// it was: the fixed pair `value` numbers (color_pair), or past those, the pairs
+// a key drawn in the grid names (key_swaps), read along its rows or its
+// columns. False where it trades nothing.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
+    if (value == KEY_PAIRS_ALONG_ROWS || value == KEY_PAIRS_ALONG_COLUMNS)
+        return key_swaps(pieces, value == KEY_PAIRS_ALONG_ROWS, to);
+    for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
+    const color_pair pair = color_pair::from_index(value);
+    if (!is_color(pair.first)) return false;
+    to[pair.first] = (int8_t)pair.second;
+    to[pair.second] = (int8_t)pair.first;
+    return true;
+}
+
+// READ BY PLACE: the key's entries are its cells in reading order, row by row,
+// left to right, each handed to `visit(color)` -- every one, or, `grounded`,
+// every one but those of its ground, the color most of its cells wear
+// (color_tally), as a grid's ground is: the panel the entries are drawn on.
+template <class Pieces, class Visit>
+ARC_HOST_DEVICE inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
+    cell_box box;
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (pieces.is_picked(i)) continue;
+        const cell_box own = pieces.box(i);
+        if (own.empty()) continue;
+        box.include_cell(own.row0, own.col0);
+        box.include_cell(own.row1, own.col1);
+    }
+    if (box.empty()) return;
+    int ground = TRANSPARENT;
+    if (grounded) {
+        color_tally tally;
+        for (int row = box.row0; row <= box.row1; ++row)
+            for (int col = box.col0; col <= box.col1; ++col) tally.add(key_color_at(pieces, row, col));
+        ground = tally.most();
+    }
+    for (int row = box.row0; row <= box.row1; ++row)
+        for (int col = box.col0; col <= box.col1; ++col) {
+            const int color = key_color_at(pieces, row, col);
+            if (is_color(color) && color != ground) visit(color);
+        }
+}
+
+// ColorFrom PAST ITS PARTNER WAYS: each picked piece takes its color off a key
+// by its place (key_place_colors).
+constexpr int KEY_BY_PLACE = (int)partner_by::count;
+
+// THE COLOR A KEY GIVES EACH PICKED PIECE BY ITS PLACE: the picked pieces in
+// reading order -- by the bands of rows they sit in, as SelectRow reads a row
+// (overlapping_bands), then left to right, then top to bottom -- and the key's
+// entries in reading order (each_key_cell), the first piece taking the first
+// entry's color, the next the next. The entries are every cell of the key where
+// it holds one for each picked piece (33b52de3's sixteen cells, sixteen
+// shapes), else every cell but its ground's (1da012fc's gray panel: its four
+// dots, four shapes, one dot on the panel's very edge). `color[i]` gets piece
+// i's, -1 for a piece not picked. False, and no color given, where the picked
+// pieces and the entries are still not as many. `lows`, `highs`, `band` and
+// `order` are scratch, as many as the pieces.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows, int16_t* highs,
+                                             int8_t* band, int* order) {
+    // Past every row, a piece not picked bands after every picked one, apart.
+    constexpr int16_t past = 2 * MAX_GRID_DIM;
+    const int count = pieces.count();
+    int picked = 0;
+    for (int i = 0; i < count; ++i) {
+        color[i] = -1;
+        const cell_box box = pieces.box(i);
+        const bool mine = pieces.is_picked(i) && !box.empty();
+        lows[i] = mine ? (int16_t)box.row0 : past;
+        highs[i] = mine ? (int16_t)box.row1 : past;
+        picked += mine;
+    }
+    if (picked == 0) return false;
+    overlapping_bands(count, lows, highs, band, order);
+    // Each picked piece's place: how many picked pieces come before it, by
+    // band, then left column, then top row, then the order they came in.
+    for (int i = 0; i < count; ++i) highs[i] = lows[i] == past ? past : (int16_t)pieces.box(i).col0;
+    for (int i = 0; i < count; ++i) {
+        order[i] = -1;
+        if (lows[i] == past) continue;
+        int before = 0;
+        for (int j = 0; j < count; ++j) {
+            if (j == i || lows[j] == past) continue;
+            const bool earlier = band[j] != band[i] ? band[j] < band[i]
+                               : highs[j] != highs[i] ? highs[j] < highs[i]
+                               : lows[j] != lows[i] ? lows[j] < lows[i] : j < i;
+            before += earlier;
+        }
+        order[i] = before;
+    }
+    int cells = 0;
+    each_key_cell(pieces, false, [&](int) { ++cells; });
+    int entries = 0;
+    each_key_cell(pieces, cells != picked, [&](int worn) {
+        for (int i = 0; i < count; ++i)
+            if (order[i] == entries) color[i] = (int8_t)worn;
+        ++entries;
+    });
+    if (entries == picked) return true;
+    for (int i = 0; i < count; ++i) color[i] = -1;
+    return false;
+}
 
 // VoteDenoise's arithmetic, in one place for the kernel and for inference.
 // Period per axis: a spacing qualifies when the structure it aligns agrees

@@ -1098,35 +1098,6 @@ __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int l
     __syncwarp();
 }
 
-// BidiColorMap[k]: bidirectional color swap. k in [0,44] indexes one of the 45
-// unordered color pairs {a,b} with 0<=a<b<=9, enumerated row-major (k=0 -> {0,1},
-// k=1 -> {0,2}, ... k=44 -> {8,9}). Every pixel of color a becomes b AND every
-// pixel of color b becomes a, across all objects. Self-inverse (a swap), so it
-// expresses involutive recolor tasks where Recolor/MapTo cannot: one node does
-// a->b and b->a with identical program behavior, surviving examples that need
-// the swap in either direction (e.g. 0d3d703e: chain Swap{1,5},{2,6},{3,4},{8,9}).
-// Colors not in the pair are untouched, so disjoint swaps compose order-free.
-__device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const gpu_object_list& src, int8_t k) {
-    auto& res = gpu_acquire(ctx);
-    if (k < 0 || k >= arc::COLOR_PAIR_COUNT) { gpu_copy_list(res, src); return res; }
-    const auto [a, b] = arc::color_pair::from_index(k);
-
-    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        res.objects[res.count] = src.objects[i];
-        auto& obj = res.objects[res.count];
-        // Only what was picked swaps colors; the rest ride through as they are.
-        if (!obj.selected) { res.count++; continue; }
-        for (int r = 0; r < obj.height; ++r)
-            for (int c = 0; c < obj.width; ++c) {
-                int8_t v = obj.mask[r][c];
-                if (v == (int8_t)a)      obj.mask[r][c] = (int8_t)b;
-                else if (v == (int8_t)b) obj.mask[r][c] = (int8_t)a;
-            }
-        res.count++;
-    }
-    return res;
-}
-
 // THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
 // paint fills on the canvas, whether it paints a cell there, whether it is
 // picked, its color and the colors it holds -- the questions the partner
@@ -1147,11 +1118,13 @@ struct gpu_partner_view {
         }
         return found;
     }
-    __device__ bool painted(int i, int row, int col) const {
+    __device__ bool painted(int i, int row, int col) const { return color_at(i, row, col) != GPU_TRANSPARENT; }
+    // The color object i paints at that cell of the canvas, transparent off it.
+    __device__ int color_at(int i, int row, int col) const {
         const gpu_fixed_object& obj = list.objects[i];
         const int down = row - obj.y0, across = col - obj.x0;
-        return down >= 0 && across >= 0 && down < obj.height && across < obj.width &&
-               obj.mask[down][across] != GPU_TRANSPARENT;
+        return down >= 0 && across >= 0 && down < obj.height && across < obj.width ? (int)obj.mask[down][across]
+                                                                                    : GPU_TRANSPARENT;
     }
     // Whether object i holds a cell of `color`.
     __device__ bool holds(int i, int color) const {
@@ -1166,6 +1139,36 @@ struct gpu_partner_view {
     __device__ int color_from(arc::partner_by how, int i) const { return arc::partner_color(how, i, *this); }
 };
 
+// BidiColorMap[k]: the picked objects trade colors, each pixel of one color of
+// a pair becoming the other. k in [0,44] is one fixed pair {a,b}, 0<=a<b<=9,
+// numbered row-major (k=0 -> {0,1}, k=1 -> {0,2}, ... k=44 -> {8,9}); past
+// those, the pairs a key drawn in the grid names, the objects not picked read
+// along their rows [45] or their columns [46] -- 0becf7df's corner, a pair a
+// row, other colors in every grid. What it trades is swaps_of's to say
+// (8b_op_math.hpp), the table inference replays, so the two cannot disagree.
+// Self-inverse (a swap), so it expresses involutive recolor tasks where
+// Recolor/MapTo cannot: one node does a->b and b->a with identical program
+// behavior, surviving examples that need the swap in either direction (e.g.
+// 0d3d703e: chain Swap{1,5},{2,6},{3,4},{8,9}). Colors not in a pair are
+// untouched, so disjoint swaps compose order-free.
+__device__ gpu_object_list& gpu_exec_bidi_color_map(gpu_exec_context& ctx, const gpu_object_list& src, int8_t k) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    int8_t to[arc::COLOR_COUNT];
+    if (!arc::swaps_of(k, gpu_partner_view{ src }, to)) return res;
+    for (int i = 0; i < res.count; ++i) {
+        auto& obj = res.objects[i];
+        // Only what was picked swaps colors; the rest ride through as they are.
+        if (!obj.selected) continue;
+        for (int r = 0; r < obj.height; ++r)
+            for (int c = 0; c < obj.width; ++c) {
+                const int8_t v = obj.mask[r][c];
+                if (arc::is_color(v) && to[v] >= 0) obj.mask[r][c] = to[v];
+            }
+    }
+    return res;
+}
+
 // ColorFrom[how]: each picked object takes the color of its partner among the
 // objects not picked -- the nearest, one in its rows or columns, the one around
 // it or inside it, one it touches, one of its shape as it lies or turned -- and
@@ -1173,9 +1176,31 @@ struct gpu_partner_view {
 // (8b_op_math.hpp), the walk inference replays, so the two cannot disagree. An
 // object with no partner, or partners that disagree, keeps its colors. Nothing
 // moves and nothing is dropped.
+// ColorFrom[9], past the partner ways: each picked object takes the color a key
+// drawn in the grid -- the objects not picked -- shows at its place, the n-th
+// picked in reading order the key's n-th entry (key_place_colors, 8b_op_math.hpp,
+// the walk inference replays). Its scratch lives in a frame of its own.
+__device__ __noinline__ static void gpu_paint_key_places(const gpu_object_list& src, gpu_object_list& res) {
+    int8_t color[GPU_KERNEL_MAX_OBJECTS], band[GPU_KERNEL_MAX_OBJECTS];
+    int16_t lows[GPU_KERNEL_MAX_OBJECTS], highs[GPU_KERNEL_MAX_OBJECTS];
+    int order[GPU_KERNEL_MAX_OBJECTS];
+    if (!arc::key_place_colors(gpu_partner_view{ src }, color, lows, highs, band, order)) return;
+    for (int i = 0; i < res.count; ++i) {
+        if (color[i] < 0) continue;
+        auto& obj = res.objects[i];
+        for (int r = 0; r < obj.height; ++r)
+            for (int c = 0; c < obj.width; ++c)
+                if (obj.mask[r][c] != GPU_TRANSPARENT) obj.mask[r][c] = color[i];
+    }
+}
+
 __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
+    if (how == arc::KEY_BY_PLACE) {
+        gpu_paint_key_places(src, res);
+        return res;
+    }
     if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
     const gpu_partner_view view{ src };
     for (int i = 0; i < src.count; ++i) {

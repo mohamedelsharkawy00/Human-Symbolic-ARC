@@ -25,6 +25,45 @@ redesigns; the big ideas wait in "Parked" below.
   every reader fires on the rest, not only the line's words.
 
 ## Where it stands
+- 2026-10-10: A KEY DRAWN IN THE GRID (the user: reading something off a key
+  is general in ARC; any number of keys, any property as a key). A key is a
+  table the grid holds itself, read off each grid: every piece the program
+  leaves unpicked, read together as one drawing (each_key_entry, 8b_op_math).
+  Its first reading is by color: two cells of two colors side by side, alone
+  together along a row (or a column), are an entry. The first word on it:
+  BidiColorMap past its 45 fixed pairs trades the pairs the key names, [45]
+  along rows, [46] along columns (key_swaps; swaps_of is the one table of
+  every BidiColorMap value, for the GPU op and the replay). In the line it is
+  key_word (fired_rule::key_swap, a recolor), replayed by key_swap_holds on
+  repaints_hold (recolors_hold, one color a piece, now sits on it). 0becf7df:
+  the multicolor cut, key and figure, `SelectLargestObject[0]
+  BidiColorMap[45]`; it had elected the colors cut by coincidence (105 vs 114
+  unsaid), naming copies, turns and shape changes. 212 right, 0 wrong, gained
+  0becf7df, lost 0; explained but unsolved 0 -> 0; only its readout changed
+  (run out/keyswap).
+  GPU kernel unchanged: 80 registers, 70,352 bytes stack; 5 more #20014
+  warnings of the kind 8b_op_math already had (host pieces in a host-device
+  template). Build log out/keyswap-build.txt (the run was compared and
+  deleted).
+  Then READ BY PLACE (each_key_cell, key_place_colors): the n-th picked piece
+  in reading order -- the bands of rows SelectRow reads, then left to right --
+  takes the color of the key's n-th entry in reading order. The entries are
+  every cell of the key where it holds one for each picked piece, else every
+  cell but its ground's, the color most of it wears (color_tally), as a
+  grid's ground is: 1da012fc's gray panel, one of its dots on the panel's
+  very edge, so "framed in one color" was tried and dropped. Said as
+  ColorFrom[9] (KEY_BY_PLACE, past the partner ways): color_from_word asks it
+  with the partners, key_place_holds replays it, carry_the_hand carries it;
+  the GPU's scratch sits in a frame of its own (gpu_paint_key_places, 9,016
+  bytes; the kernel's 70,352 unchanged). 216 right, 0 wrong, gained 1da012fc,
+  33b52de3, fafd9572 and ef26cbf6 (its shapes take the dot of their pane; the
+  walls are the key's ground, and the n-th dot and the n-th shape share a pane
+  in every pair and the test), lost 0; explained but unsolved 0 -> 0; only
+  those four readouts changed. Run: out/keyplace; build log
+  out/keyplace-build.txt (7 more #20014 warnings, same kind).
+  Next keys (unsolved training): by place in a field, each piece the key cell
+  of its quadrant (58743b76: the field is the canvas outside the key's frame);
+  by color one way, the rows in order (e4888269); a sequence (b457fec5).
 - 2026-10-10: THE PICTURE MADE SYMMETRIC (the user: a composition; mirrored
   pieces alone left 9ddd00f0's second pair unfinished). One word, the paint
   `symmetric` (finish_the_line's symmetry_paint, symmetric_holds): the
@@ -170,8 +209,8 @@ redesigns; the big ideas wait in "Parked" below.
   Before: out/snap-before; after: out/snap-keys. The key-count limit itself
   is unchanged. Build resource log: out/snap-full-build.txt; no pre-change
   compiler resource log was available for comparison.
-- Training: 211 right, 0 wrong. Current run: out/symmetry/
-  (out\ is not in git; out/snap-keys/ is the run before the Bridge changes,
+- Training: 216 right, 0 wrong. Current run: out/keyplace/, the one before the
+  keys out/symmetry/ (out\ is not in git; out/snap-keys/ is the run before the Bridge changes,
   out/opus55-replay/ the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
   199 at abc3f0b.
 - This session made the line compose existing words (all in 7_infer; report
