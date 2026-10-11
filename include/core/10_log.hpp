@@ -233,8 +233,9 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 // WHAT EACH WAY OF SEEING OBJECTS WAS TAKEN TO SAY, a rule a line, a rule that
 // reads another's evidence a step under it, and what all of them leave over.
 // Only the segmentations that compete: the block claims show up as rules.
-inline void report_fired(ostream& report, const correspondence_election& correspondence) {
-    report << "\n[fired] each segmentation's own reading, rule by rule\n";
+inline void report_fired(ostream& report, const correspondence_election& correspondence,
+                         const string& title = "[fired] each segmentation's own reading, rule by rule") {
+    report << "\n" << title << "\n";
     for (size_t method = 0; method < correspondence.best_of.size(); ++method) {
         const int16_t kept = correspondence.best_of[method];
         if (kept < 0 || !correspondence_election::competes((segmentation_methods)method)) continue;
@@ -260,6 +261,18 @@ inline void report_fired(ostream& report, const correspondence_election& corresp
         }
     }
     report << "\n";
+}
+
+// THE PASSES AFTER THE LINE (read_the_rest), each read on the picture the passes
+// before it drew: its own reading, rule by rule, the last one's what is left --
+// the last one read saying no more, where it names only the words the rest lacks.
+inline void report_the_rest(ostream& report, const inference& inf) {
+    for (const inference* at = &inf; at->rest; at = at->rest.get()) {
+        report_fired(report, at->rest->correspondence,
+                     "[rest " + to_string((int)at->rest->pass) + "] the picture so far read again, rule by rule" +
+                         (at->rest_says_more ? "" : ", saying no more than the pass before it"));
+        if (!at->rest_says_more) break;
+    }
 }
 
 // Which way the pieces' cells piled up inside their own boxes, if they did.
@@ -590,6 +603,7 @@ inline void log_inference(const string& id, const inference& inf,
     report_color_diff(report, inf.color_diff);
     report_correspondence_readings(report, inf.correspondence);
     report_fired(report, inf.correspondence);
+    report_the_rest(report, inf);
     report_diagonal_continuation(report, inf.diagonal_continuation);
     report_periodic_denoise(report, inf.periodic_denoise);
     report_piece_slam(report, inf.piece_slam);
@@ -617,6 +631,7 @@ inline void log_inference(const string& id, const inference& inf,
     if (inf.framed) {
         report << "[framed] the same-size puzzle read through the frame\n";
         report_fired(report, inf.framed->correspondence);
+        report_the_rest(report, *inf.framed);
     }
     report << "[copy_to] holds " << inf.copy_to.holds();
     if (inf.copy_to.holds())

@@ -1109,23 +1109,70 @@ ARC_HOST_DEVICE constexpr int aligned_copy_start(int source_size, int target_sta
 // other its right, along a row, or its top and its bottom, along a column
 // (0d87d2a6's test: two marks on the left edge share a column and are not
 // joined; each is joined to the mark facing it on the right).
-// `count` pieces in the op's own order: box_of_piece(i) is piece i's cell_box,
-// color_of(i) the colour the op reads off its first cell (-1 for none),
-// picked(i) whether piece i is picked.
+// PAST THOSE, Bridge[BRIDGE_TO_PARTNER + kind] joins each picked piece to its
+// one partner of `kind` (partner_of_kind, among the pieces not picked: each
+// way partner_by finds one, then the piece of each color) with an L: along the
+// picked piece's middle row to the partner's middle column, then along that
+// column to the partner. The start is the pick and the end its partner, so
+// which way the L turns is said by which of the two is picked (0e671a1a: the
+// 2 runs to the 4 along its own row, and the 4 to the 3 along its own). Like a
+// bar, it is the path between the two: neither one's own box is its to fill,
+// so two pieces side by side leave it nothing to draw (833966f4's column of
+// cells, each beside the next).
+// THE PIECES ARE ASKED as partner_of_kind asks them, in the op's own order;
+// `color(i)` is the colour the op reads off piece i's first cell, -1 for none.
 // land(bar, colour) sees each bar in the order the op lays them into its one
 // drawing of every bar, and may say false to stop. gpu_exec_bridge calls it, so
-// a reading and the op cannot draw different bars.
-constexpr int BRIDGE_WAYS = 9;
-template <class BoxOf, class ColorOf, class Picked, class Land>
-ARC_HOST_DEVICE inline void bridge_bars(int way, int width, int height, int count, BoxOf box_of_piece,
-                                        ColorOf color_of, Picked picked, Land land) {
-    if (way < 0 || way >= BRIDGE_WAYS) return;
-    const bool rows = way % 3 != 2, columns = way % 3 != 1, every = way / 3 == 1, facing = way / 3 == 2;
+// a reading and the op cannot draw different bars. Answers whether an L it
+// drew turned: both its legs had cells to fill.
+constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS,
+              BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
+template <class Pieces, class Land>
+ARC_HOST_DEVICE inline bool bridge_bars(int way, int width, int height, const Pieces& pieces, Land land) {
+    if (way < 0 || way >= BRIDGE_VALUES) return false;
+    const int count = pieces.count();
+    auto box_of_piece = [&](int i) { return pieces.box(i); };
+    auto color_of = [&](int i) { return (int8_t)pieces.color(i); };
+    auto picked = [&](int i) { return pieces.is_picked(i); };
     constexpr int most_pairs = 64;
     int16_t lows[most_pairs], highs[most_pairs];
     int pairs = 0;
     auto across = [&](int i) { const cell_box box = box_of_piece(i); return (box.col0 + box.col1) / 2; };
     auto down = [&](int i) { const cell_box box = box_of_piece(i); return (box.row0 + box.row1) / 2; };
+    if (way >= BRIDGE_TO_PARTNER) {
+        // A leg, one cell wide, cut back off a box that holds one of its ends.
+        auto off = [](cell_box leg, const cell_box& box) {
+            const bool along_row = leg.row0 == leg.row1;
+            if (along_row ? leg.row0 < box.row0 || leg.row0 > box.row1 : leg.col0 < box.col0 || leg.col0 > box.col1)
+                return leg;
+            int& low = along_row ? leg.col0 : leg.row0;
+            int& high = along_row ? leg.col1 : leg.row1;
+            const int box_low = along_row ? box.col0 : box.row0, box_high = along_row ? box.col1 : box.row1;
+            if (box_low <= low) low = max(low, box_high + 1);
+            else if (box_high >= high) high = min(high, box_low - 1);
+            return leg;
+        };
+        bool going = true, turned = false;
+        for (int i = 0; i < count && going; ++i) {
+            if (!picked(i) || box_of_piece(i).empty()) continue;
+            const int other = partner_of_kind(way - BRIDGE_TO_PARTNER, i, pieces);
+            if (other < 0) continue;
+            const int row = down(i), col = across(i), turn_col = across(other), end_row = down(other);
+            cell_box along_row, along_column;
+            along_row.row0 = along_row.row1 = row;
+            along_row.col0 = min(col, turn_col); along_row.col1 = max(col, turn_col);
+            along_column.col0 = along_column.col1 = turn_col;
+            along_column.row0 = min(row, end_row); along_column.row1 = max(row, end_row);
+            const cell_box start = box_of_piece(i), end = box_of_piece(other);
+            along_row = off(off(along_row, start), end);
+            along_column = off(off(along_column, start), end);
+            const int8_t color = color_of(i), paint = color < 0 ? (int8_t)0 : color;
+            turned = turned || (!along_row.empty() && !along_column.empty());
+            going = (along_row.empty() || land(along_row, paint)) && (along_column.empty() || land(along_column, paint));
+        }
+        return turned;
+    }
+    const bool rows = way % 3 != 2, columns = way % 3 != 1, every = way / 3 == 1, facing = way / 3 == 2;
     auto pair_up = [&](int i, int partner) {
         const int low = min(i, partner), high = max(i, partner);
         bool said = false;
@@ -1181,8 +1228,9 @@ ARC_HOST_DEVICE inline void bridge_bars(int way, int width, int height, int coun
         // Pieces that touch or overlap along that way leave no gap to fill.
         if (bar.empty()) continue;
         const int8_t color = color_of(lows[p]);
-        if (!land(bar, color < 0 ? (int8_t)0 : color)) return;
+        if (!land(bar, color < 0 ? (int8_t)0 : color)) return false;
     }
+    return false;
 }
 
 // THE TRAIL ExtendTo GROWS, said once for the op and for the reading that

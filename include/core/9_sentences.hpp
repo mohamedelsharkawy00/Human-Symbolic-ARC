@@ -106,6 +106,10 @@ struct said_reading {
     // holds over every cell, so only the cut's own line leaves any.
     int left_unexplained = 0;
     bool background_filled = false;
+    // THE SENTENCES THAT LAY THE HAND, the first so many of the cut's line: the
+    // cut and the words on it, before any paint; and whether it says a word.
+    size_t hand_sentences = 0;
+    bool hand_words = false;
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
@@ -1105,7 +1109,8 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         return true;
     };
     auto reframe = [&](string& sentence) {
-        if (sentence.rfind("CurrentObjects ", 0) == 0) return true;
+        // A sentence that reads the picture so far reads the canvas, framed already.
+        if (sentence.rfind("CurrentObjects ", 0) == 0 || sentence.rfind("Output ", 0) == 0) return true;
         if (sentence.rfind("Input ", 0) != 0) return false;
         if (frame.kind == piece_frame_rule::tiled && cut_then_tile(sentence)) return true;
         sentence = framed + sentence.substr(5);
@@ -1309,7 +1314,9 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         else for (const beat& one : beats_of(rule, inf)) beats.push_back(one);
     }
 
+    said.hand_words = beats.size() > opening.size();
     spoken();
+    said.hand_sentences = said.sentences.size();
     for (const auto& [drawn, paint, source, cut] : afterwards) {
         if (cut)
             for (size_t i = 0; i < opening.size(); ++i)
@@ -1318,6 +1325,38 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
             string(cut ? "CurrentObjects" : source) + " " + drawn.pick + " " + drawn.act, paint));
     }
     return true;
+}
+
+// THE REST OF THE CHANGE, PASS BY PASS (read_the_rest): each pass after the
+// first said one change, read on the picture the passes before it drew, so its
+// sentence opens on that picture where the program has it, Output. Words on its
+// hand lay the hand again, so the picture is taken in hand (Withhold), cleared
+// off the canvas (Difference, which ends a sentence and hands nothing on), and
+// cut from the hand (CurrentObjects): a piece moved must not stay where it was
+// as well. A paint lays only what it draws onto the picture, which holds the
+// hand it read already, so the hand is not laid again. Said after the line,
+// the passes leave unsaid what the last one leaves, and lack the words it lacks.
+inline void say_the_rest(const inference& inf, said_reading& said) {
+    for (const inference* at = &inf; at->rest_says_more; at = at->rest.get()) {
+        const inference* rest = at->rest.get();
+        said_reading pass;
+        if (!say_the_cut(*rest, pass)) return;
+        const auto hand_end = pass.sentences.begin() + (ptrdiff_t)pass.hand_sentences;
+        const auto first = pass.hand_words ? pass.sentences.begin() : hand_end;
+        const auto last = pass.hand_words ? hand_end : pass.sentences.end();
+        if (pass.hand_words) {
+            said.sentences.push_back("Output SelectAll Withhold");
+            said.sentences.push_back("CurrentObjects SelectAll Difference");
+        }
+        for (auto sentence = first; sentence != last; ++sentence) {
+            string one = *sentence;
+            if (one.rfind("Input ", 0) == 0)
+                one = string(pass.hand_words && sentence == first ? "CurrentObjects" : "Output") + one.substr(5);
+            said.sentences.push_back(std::move(one));
+        }
+        said.left_unexplained = pass.left_unexplained;
+        said.no_word_for = pass.no_word_for;
+    }
 }
 
 // Fill is part of the chosen explanation, including a reading through a frame.
@@ -1386,14 +1425,18 @@ inline said_reading say_the_reading(const inference& inf) {
             said_reading one;
             heard(say_rival(rule, inf, one), one);
         }
+    // The cut's own line, and the passes after it.
     said_reading line;
-    heard(say_the_cut(inf, line), line);
+    const bool spoke_line = say_the_cut(inf, line);
+    if (spoke_line) say_the_rest(inf, line);
+    heard(spoke_line, line);
     // A SIZE CHANGE, READ THROUGH ITS FRAME: the framed reading's line, every
     // sentence of it that opens on the input opening on the framed input -- the
     // piece cut out and moved to the corner -- instead.
     if (inf.framed) {
         said_reading framed;
         bool spoke_frame = say_the_cut(*inf.framed, framed);
+        if (spoke_frame) say_the_rest(*inf.framed, framed);
         heard(spoke_frame && frame_the_sentences(inf.frame, framed), framed);
     }
     auto price = [](const said_reading& one) {

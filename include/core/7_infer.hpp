@@ -2566,7 +2566,7 @@ struct project_on_seeds_rule {
 // other from opposite edges, and nothing in its pairs says two marks on one
 // edge would be joined, as the nearest joins them on its test.
 constexpr int bridge_ways_narrowest_first[BRIDGE_WAYS] = { 7, 8, 6, 1, 2, 0, 4, 5, 3 };
-static_assert(row_of(node_type::Bridge).high + 1 == BRIDGE_WAYS, "Bridge takes one value for each way it reaches");
+static_assert(row_of(node_type::Bridge).high + 1 == BRIDGE_VALUES, "Bridge takes one value for each way it reaches");
 
 // THE GAP BETWEEN TWO PIECES OF ONE COLOUR, FILLED, and laid under what is
 // already there, so a bar that crosses a wall goes behind it. That is what
@@ -2609,8 +2609,6 @@ struct bridge_rule {
                     // One list is all the op is handed, and the bars take one place
                     // more in it, all of them one drawing.
                     if (pieces.empty() || pieces.size() >= MAX_OBJECTS_IN_A_LIST) return false;
-                    vector<int8_t> colors;
-                    for (const object& piece : pieces) colors.push_back(piece.first_color());
                     drawn = empty_grid(pair.output.width, pair.output.height);
                     bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                     for (const object& piece : pieces)
@@ -2620,10 +2618,8 @@ struct bridge_rule {
                         });
                     // Each bar is laid under whatever is already drawn. Every
                     // piece is picked, as SelectAll picks them before Bridge.
-                    bridge_bars(way, pair.output.width, pair.output.height, (int)pieces.size(),
-                                [&](int which) { return pieces[which].summary.box(); },
-                                [&](int which) { return colors[which]; },
-                                [](int) { return true; },
+                    bridge_bars(way, pair.output.width, pair.output.height,
+                                partner_pieces(pieces, vector<bool>(pieces.size(), true)),
                                 [&](const cell_box& bar, int8_t color) {
                         for (int row = bar.row0; row <= bar.row1; ++row)
                             for (int col = bar.col0; col <= bar.col1; ++col) {
@@ -3069,6 +3065,20 @@ struct inference {
     // from each framed input to its output, as a same-size puzzle of its own.
     piece_frame_rule frame;
     std::shared_ptr<const inference> framed;
+    // WHICH PASS THIS READING IS (read_the_rest): the first reads the input,
+    // and each pass after it the picture the passes before it drew.
+    int8_t pass = 1;
+    // WHAT THE LINE DRAWS, pair by pair, before the plan fills the ground: the
+    // hand as its words leave it and every cell a paint drew, in the color the
+    // output shows there (finish_the_line). None where the line cannot know
+    // it: a hand it could not carry, or pairs that do not lie over each other.
+    vector<grid> picture;
+    // THE REST OF THE CHANGE, READ ON THAT PICTURE: the next pass, a puzzle of
+    // its own from each picture to its output (read_the_rest), and whether it
+    // leaves fewer cells unsaid -- else it is only the readout's, which names
+    // the words the rest lacks.
+    std::shared_ptr<const inference> rest;
+    bool rest_says_more = false;
     // Whether the cut's pieces, painted where they lie on the canvas the size
     // rule gives, draw every output: what a line with no words claims.
     bool pieces_redraw = true;
@@ -4717,25 +4727,31 @@ inline optional<replayed> box_holds(const replay_facts& facts, const vector<part
 // column, the `way` it is told (bridge_bars, the walk the op takes), and fills
 // the box between two -- laid under what is down (paint_holds), so a bar only
 // fills what nothing has painted -- in the bar's own color, or all of them in one.
+// Past those ways, the L from each picked piece to its partner (bridge_bars),
+// SAID ONLY WHERE THE PAIRS SHOW IT TURN, in one pair at least: an L that never
+// turns is a bar, and which way it turns would be a guess on a test, as a bar is
+// said no wider than the pairs show it (833966f4's column of cells, where the
+// top one ran straight down to the 6 in every pair, a coincidence).
 inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                        const vector<cells_down>& canvas, int way) {
     using rule = correspondence_election::fired_rule;
-    return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
-                       [&](size_t which, const partner_pieces& cut, auto&& put) {
+    bool turned = false;
+    auto seen = paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
+                            [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         // The bars take one place more in the pieces' list, all of them one drawing.
         if (cut.count() >= MAX_OBJECTS_IN_A_LIST) return false;
-        bridge_bars(way, output.width, output.height, cut.count(), [&](int i) { return cut.boxes[i]; },
-                    [&](int i) { return cut.pieces[i].first_color(); },
-                    [&](int i) { return cut.is_picked(i); },
-                    [&](const cell_box& bar, int8_t color) {
+        turned = bridge_bars(way, output.width, output.height, cut,
+                             [&](const cell_box& bar, int8_t color) {
             for (int row = bar.row0; row <= bar.row1; ++row)
                 for (int col = bar.col0; col <= bar.col1; ++col)
                     if (output.contains(row, col)) put(row, col, color);
             return true;
-        });
+        }) || turned;
         return true;
     });
+    if (way >= BRIDGE_TO_PARTNER && !turned) return nullopt;
+    return seen;
 }
 
 // THE CELLS A PIECE ENCLOSES: those its own paint walls off from the edge of its
@@ -5035,7 +5051,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         read.say_fired(listed(name, says, as), -1, [](size_t, const auto&) { return true; });
         return true;
     };
-    if (whole_line(inf.diagonal_continuation.holds(), rule::diagonal_tile, "Diagonal Tile",
+    // A pass after the first says one change in one sentence, and these spell
+    // programs of their own, some reading the input again; the first pass alone
+    // asks them.
+    if (inf.pass == 1 &&
+        (whole_line(inf.diagonal_continuation.holds(), rule::diagonal_tile, "Diagonal Tile",
                    "the colors cycle along the diagonals") ||
         whole_line(inf.piece_slam.holds(), rule::piece_slam, "Slam", "each piece piled up inside its own box") ||
         whole_line(inf.overlap_corner.holds(), rule::corner_chain, "Corner Chain",
@@ -5045,7 +5065,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         whole_line(inf.project_on_seeds.holds(), rule::project_on_seeds, "Project On Seeds",
                    "the template stamped along every marker") ||
         whole_line(inf.snap_to_anchors.holds(), rule::snap_to_anchors, "Snap To Anchors",
-                   "each body turned and set down on the anchors its keys match"))
+                   "each body turned and set down on the anchors its keys match")))
         return;
     using missing = correspondence_election::missing;
     const auto& shapes = inf.shape_color_map;
@@ -5173,6 +5193,12 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         "a piece in its rows", "a piece in its columns", "the nearest piece", "the piece it shares a side with",
         "the piece it touches", "the piece of its shape", "the piece of its shape, turned" };
     static_assert(size(partners) == (size_t)partner_by::count);
+    // A partner of any kind (partner_of_kind) by name: each way partner_by finds
+    // one, then the piece of each color.
+    auto partner_named = [](int kind) {
+        return kind < (int)partner_by::count ? string(partners[kind])
+                                             : "the piece of color " + to_string(kind - (int)partner_by::count);
+    };
     static constexpr const char* mirrors[] = { "left to right", "top to bottom", "all four ways" };
     static_assert(size(mirrors) == (size_t)mirror_by::count);
     // Each kind of pick by name, then turned round, every piece but those.
@@ -5377,8 +5403,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             else if (stepped.said < most) {
                 const int kind = toward.value % PARTNER_KINDS;
                 carry(say(toward, rule::move_toward,
-                          string("moves ") + how_far[toward.value / PARTNER_KINDS] + " toward " +
-                              (kind < ways ? string(partners[kind]) : "the piece of color " + to_string(kind - ways)),
+                          string("moves ") + how_far[toward.value / PARTNER_KINDS] + " toward " + partner_named(kind),
                           moves));
             } else {
                 // Said as the acts a pick by color says: down, then across, each only
@@ -5913,6 +5938,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // the pieces each pick takes, as the other paints are asked: Bridge joins
     // only the picked pieces (0d87d2a6's blue marks, past red blocks that line
     // up with one another and must not be joined).
+    // THEN AN L from each picked piece to its one partner of each kind
+    // (partner_of_kind), every pick asked for every straight bar first, so an
+    // L is said only where it accounts for more. It leaves along the picked
+    // piece's row, so the pick says which way it turns (0e671a1a: the 2 runs to
+    // the piece of color 4, and the 4 to the piece of color 3).
     static constexpr const char* reaches[BRIDGE_WAYS] = {
         "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
         "both ways to every one", "along rows to every one", "along columns to every one",
@@ -5922,19 +5952,26 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto bar_paint = [&]() -> offer {
         if (!down_known()) return {};
         heard best;
-        for (size_t at = 0; at <= draw_picks.size(); ++at) {
-            const piece_pick pick = at == 0 ? piece_pick::all() : draw_picks[at - 1];
-            const vector<partner_pieces>& handed = at == 0 ? every_piece_handed : handed_by_pick[at - 1];
-            for (const int way : bridge_ways_narrowest_first)
-                if (const auto& seen = replayed_once(5, at, rule::laid_under, way, [&] {
-                        return bridge_holds(opened, handed, canvas, way); }))
-                    weigh_paint(best, way, pick, *seen, drawn_claims(seen->drawn));
-        }
+        for (const bool ells : { false, true })
+            for (size_t at = 0; at <= draw_picks.size(); ++at) {
+                const piece_pick pick = at == 0 ? piece_pick::all() : draw_picks[at - 1];
+                const vector<partner_pieces>& handed = at == 0 ? every_piece_handed : handed_by_pick[at - 1];
+                auto ask = [&](int way) {
+                    if (const auto& seen = replayed_once(5, at, rule::laid_under, way, [&] {
+                            return bridge_holds(opened, handed, canvas, way); }))
+                        weigh_paint(best, way, pick, *seen, drawn_claims(seen->drawn));
+                };
+                if (!ells) ranges::for_each(bridge_ways_narrowest_first, ask);
+                else for (int way = BRIDGE_TO_PARTNER; way < BRIDGE_VALUES; ++way) ask(way);
+            }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
             say_paint(best, rule::bridged,
-                string("bars filled between pieces of one color, reaching ") + reaches[best.value] + ", in " +
-                    (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
+                (best.value < BRIDGE_TO_PARTNER
+                     ? string("bars filled between pieces of one color, reaching ") + reaches[best.value]
+                     : "an L run along its row to the column of " + partner_named(best.value - BRIDGE_TO_PARTNER) +
+                           ", then along that column to it") +
+                    ", in " + (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
         }, best.seen.drawn };
     };
 
@@ -6143,6 +6180,19 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // of its pairs that is wrong on its test. The picture can say no more than
     // every recolored cell still unclaimed, so a paint that could not win even
     // so is not read ahead.
+    // A PASS AFTER THE FIRST SAYS ONE CHANGE (read_the_rest): the words on its
+    // hand, which lay the hand in one sentence, or else one paint. Its sentence
+    // reads the picture the passes before it drew, as the program hands it over
+    // (Output); a second sentence would read a picture the first had changed,
+    // one this reading never looked at, and the next pass looks at it instead.
+    const bool one_change = inf.pass > 1;
+    auto hand_said = [&] {
+        return ranges::any_of(read.line, [&](int8_t which) {
+            const auto group = group_of(read.fired[which].as);
+            return group == word_group::recolors || group == word_group::changes_pieces ||
+                   group == word_group::removes;
+        });
+    };
     bool frozen = false, picture_read = false;
     auto said_last = [&] {
         frozen = frozen || reads_what_is_down(read.fired[read.line.back()]);
@@ -6159,7 +6209,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         size_t chosen = 0;
         for (size_t kind = 0; kind < size(kinds); ++kind) {
             if ((!kinds[kind].paint && (words[kind] >= rounds || picture_read)) ||
-                (frozen && kinds[kind].changes_pieces)) continue;
+                (frozen && kinds[kind].changes_pieces) || (one_change && kinds[kind].paint && hand_said()))
+                continue;
             offer one = kinds[kind].offers();
             const bool may_unlock = read_ahead && one.said > 0 && !one.drawn.empty() &&
                                     one.said + recolors_left > best_worth;
@@ -6175,6 +6226,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         best.say();
         ++words[chosen];
         said_last();
+        if (one_change && kinds[chosen].paint) break;
         if (best_unlocks > 0)
             if (offer then = picture_word(); then.said > 0) {
                 then.say();
@@ -6212,6 +6264,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         read.list_claims(listed("Drawn By The Line", "the words draw it as the output shows it", rule::unsaid),
                          line_shows);
     }
+    // What the line draws, for the pass after it to read (read_the_rest).
+    inf.picture.clear();
+    if (line_drawn.size() == facts.train.size()) inf.picture = the_picture({});
 }
 
 // THE ACTS LEFT UNSAID: the line the matching opened with its acts, cleared.
@@ -6236,8 +6291,8 @@ inline bool pieces_go_unsaid(const inference& read) {
 
 // HOW MUCH OF THE PAIRS A READING LEAVES UNSAID: what its chosen cut's line
 // leaves unclaimed -- every cell, where its pieces go unsaid whole -- or its
-// framed line where that says more; none where a replayed standalone rule
-// already redraws every output.
+// framed line where that says more, or the passes after it (read_the_rest);
+// none where a replayed standalone rule already redraws every output.
 inline int cells_left_unsaid(const inference& read) {
     const auto& readings = read.correspondence.readings;
     if (readings.empty()) return numeric_limits<int>::max();
@@ -6248,7 +6303,10 @@ inline int cells_left_unsaid(const inference& read) {
         const auto& inside = read.framed->correspondence;
         const auto& line = inside.readings[inside.chosen];
         if (read.framed->pieces_redraw || !line.line.empty()) unsaid = min(unsaid, line.unclaimed());
+        if (read.framed->rest_says_more) unsaid = min(unsaid, cells_left_unsaid(*read.framed->rest));
     }
+    // What the passes after the line leave unsaid, read on the picture it drew.
+    if (read.rest_says_more) unsaid = min(unsaid, cells_left_unsaid(*read.rest));
     return unsaid;
 }
 
@@ -6282,14 +6340,18 @@ inline said_most says_the_most(int count, Read read) {
 }
 
 inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles);
+inline void read_the_rest(inference& inf, const vector<example>& train);
 
 // THE READING OF FIGURES: pairs with no ground in them -- a plan deleted it,
 // or keeps every color as a figure -- read with no election and no ground in
 // any reader, so every detector sees figures and empty cells, and an empty cell
 // is nothing (where a plan deleted the ground, what it fills last). What reads
 // no cut is asked once; what reads one is asked of each cut the words weigh.
-inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}) {
+// `pass` is which pass this reading is, and once its cut is chosen the rest of
+// the change is read on the picture its line draws (read_the_rest).
+inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}, int8_t pass = 1) {
     inference inf;
+    inf.pass = pass;
     inf.size = output_dimension_rule::infer_rule(train);
     inf.colors = color_facts::detect(train);  // rule-independent
     // No reader is handed a ground color: the ground is empty where a plan
@@ -6344,6 +6406,7 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     const vector<int8_t> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
         read_the_cut(inf, train, tiles);
+        read_the_rest(inf, train);
         return inf;
     }
     said_most said = says_the_most((int)ranked.size(), [&](int rank) {
@@ -6361,7 +6424,33 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
         const int left = at == ranked.end() ? -1 : said.left[(size_t)(at - ranked.begin())];
         return left > said.left[(size_t)said.kept];
     });
+    read_the_rest(best, train);
     return best;
+}
+
+// THE PASSES A READING MAKES AT MOST: the first, and nine after it.
+constexpr int8_t MOST_PASSES = 10;
+
+// THE REST OF THE CHANGE, READ ON THE PICTURE SO FAR (the user: build on the
+// output so far). Where a pass leaves cells unsaid and its line draws something
+// new, the picture it draws is the input of a puzzle of its own, from each
+// picture to its output, read by every word a puzzle has: the next pass. It is
+// said where it leaves fewer cells unsaid, and otherwise kept for the readout
+// alone; a pass that draws nothing new ends the passes, as the tenth does.
+// Every word is read on the picture the program hands it, so a pass after the
+// first says one change (finish_the_line).
+inline void read_the_rest(inference& inf, const vector<example>& train) {
+    if (inf.pass >= MOST_PASSES || inf.picture.size() != train.size() || cells_left_unsaid(inf) == 0) return;
+    vector<example> rest = train;
+    bool drew = false;
+    for (size_t which = 0; which < train.size(); ++which) {
+        rest[which].input = inf.picture[which];
+        drew = drew || !(inf.picture[which] == train[which].input);
+    }
+    if (!drew) return;
+    inference next = read_figures(rest, {}, (int8_t)(inf.pass + 1));
+    inf.rest_says_more = cells_left_unsaid(next) < cells_left_unsaid(inf);
+    inf.rest = std::make_shared<const inference>(std::move(next));
 }
 
 // THE WORDS THAT READ THE CUT, asked of the one `inf` reads on: the rules read
@@ -6431,7 +6520,10 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
     // say less -- ae3edfdc's rays and the reading after them stopped its moves.
     // The picture reads recolors alone, so a line is read ahead only where read
     // plainly it left a recolor unsaid.
-    list_the_rivals(inf);
+    // A PASS AFTER THE FIRST (read_the_rest) says one change in one sentence:
+    // no rival, whose program is its own, and no reading ahead, which says a
+    // second change after the first.
+    if (inf.pass == 1) list_the_rivals(inf);
     const auto& election = inf.correspondence;
     const bool acts = !election.readings.empty() && !election.readings[election.chosen].line.empty();
     const int openings = acts ? 2 : 1;
@@ -6443,7 +6535,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
                 return cell.claimed_by < 0 && cell.answers_to(correspondence_election::missing::a_recolor); });
         });
     };
-    inf = says_the_most(2 * openings, [&](int which) {
+    inf = says_the_most(inf.pass == 1 ? 2 * openings : openings, [&](int which) {
         const int opening = which % openings;
         const bool ahead = which >= openings;
         if (ahead && !recolor_unsaid(plain[(size_t)opening])) return plain[(size_t)opening];
@@ -6457,7 +6549,9 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
 
     // A SIZE CHANGE, READ THROUGH ITS FRAME: once the frame cuts the output's
     // grid out of the input's, what is left is a same-size puzzle, read by every
-    // word a same-size puzzle has -- from each framed input to its output.
+    // word a same-size puzzle has -- from each framed input to its output. A
+    // pass after the first reads a picture its output's size.
+    if (inf.pass > 1) return;
     inf.frame = choose_piece_frame(train, inf, tiles);
     if (inf.frame.holds()) {
         using kind = piece_frame_rule::kind_of;

@@ -47,19 +47,21 @@ language lacks.
   never a build folder (x64-Release, cloud), which readouts.py takes for
   the unnamed run; a full run writes about 225 MB,
   so delete old labels. It reads a puzzle on every CPU thread and takes about
-  30 s on the 20-thread laptop (twice that when it runs hot); `ARC_THREADS=1`
+  4 minutes on the 20-thread laptop, most of it the passes after the first
+  (it was 30 s before them); `ARC_THREADS=1`
   reads one at a time (the profiler does, under the label `profile`).
   `ARC_DATASET=eval` reads the evaluation set instead (training by default).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
-  shows what it drew beside what was wanted, pair by pair.
+  shows what it drew beside what was wanted, pair by pair; `--test` after
+  the program also shows each test, whether it fits the pairs or not.
 - Tests: none besides the score and the readouts. `tests/puzzles` holds small
   made-up puzzles to view in the app (the CUS dataset button).
 - Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost
-  and gained), `explained <before> <after>` (readings that explain every cell
-  yet are unsolved; must not grow), `missing <label>` (which missing words
-  block the unsolved puzzles).
-- A change is good when no solved puzzle is lost, the wrong count does not go
-  up, and no new "explained but unsolved" appears.
+  and gained), `explained <before> <after>` (readings that claim every cell
+  while their program does not fit the training pairs; must not grow),
+  `missing <label>` (which missing words block the unsolved puzzles).
+- A change is good when no solved puzzle is lost and no new "explained but
+  unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
 
 ## Linux cloud
 No GPU there. Run from the repo root.
@@ -81,9 +83,15 @@ No GPU there. Run from the repo root.
   missing words, ranking the cuts), `7_infer.hpp` (replays `*_holds` on three
   templates, `paint_holds`, `slides_hold` and `drops_hold`; picks,
   frames, `carry_the_hand`, `finish_the_line`, `says_the_most`,
-  `read_figures`, `read_the_cut`, `infer`),
-  `9_sentences.hpp` (the line spelled as programs, `say_the_plan`) and
-  `10_log.hpp` (readouts).
+  `read_figures`, `read_the_cut`, `read_the_rest`, `infer`),
+  `9_sentences.hpp` (the line spelled as programs, `say_the_rest`,
+  `say_the_plan`) and `10_log.hpp` (readouts).
+- The passes: once a reading's cut is chosen, `read_the_rest` reads what its
+  line leaves unsaid on the picture the line drew, as a puzzle of its own,
+  up to 10 passes, stopping when a pass draws nothing new. Each pass after
+  the first says one change, read on that picture as the program has it
+  (`Output`); `say_the_rest` spells the passes after the line, and the
+  readout shows each as `[rest N]`.
 - The background: `infer` asks the election for plans (delete what first,
   fill what last), reads each plan's figures with `read_figures` (no detector
   sees a background; empty cells are nothing), keeps the plan that explains

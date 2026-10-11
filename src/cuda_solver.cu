@@ -523,49 +523,6 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
-// Bridge[way]: the pieces handed back as they came, unmarked, then every bar as
-// one drawing, marked, so what follows works on the bars. Which pieces pair up
-// (the picked ones alone), the way they reach, and where each bar lies is
-// 8b_op_math.hpp's bridge_bars, which the reading replays too; this only lays
-// the bars down, each cell to the first bar that crosses it. One drawing, so a
-// list that holds the pieces holds every bar too, however many gaps there are --
-// one per gap ran out of room (dbc1a6ce's test, 19 dots and 17 bars). It sits
-// in the whole grid's frame, as Split's pieces do.
-__device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t way) {
-    auto& res = gpu_acquire(ctx);
-    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
-        res.objects[res.count] = src.objects[i];
-        res.objects[res.count++].selected = false;
-    }
-    if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
-    // A pooled slot keeps whatever it last held, so every field is said.
-    gpu_fixed_object& bars = res.objects[res.count];
-    bars.x0 = 0; bars.y0 = 0;
-    bars.x1 = (int16_t)(GPU_MAX_GRID - 1); bars.y1 = (int16_t)(GPU_MAX_GRID - 1);
-    bars.width = bars.height = (int16_t)GPU_MAX_GRID;
-    bars.selected = true;
-    bars.mask.clear();
-    bool drew = false;
-    arc::bridge_bars(way, ctx.output.width, ctx.output.height, src.count,
-        [&](int which) {
-            const auto& piece = src.objects[which];
-            return arc::cell_box{ piece.y0, piece.x0, piece.y1, piece.x1 };
-        },
-        [&](int which) { return gpu_obj_first_color(src.objects[which]); },
-        [&](int which) { return (bool)src.objects[which].selected; },
-        [&](const arc::cell_box& bar, int8_t color) {
-            for (int r = max(bar.row0, 0); r <= min(bar.row1, GPU_MAX_GRID - 1); ++r)
-                for (int c = max(bar.col0, 0); c <= min(bar.col1, GPU_MAX_GRID - 1); ++c)
-                    if (bars.mask[r][c] == GPU_TRANSPARENT) {
-                        bars.mask[r][c] = color;
-                        drew = true;
-                    }
-            return true;
-        });
-    if (drew) ++res.count;
-    return res;
-}
-
 // s clipped to rows [r0, r1) and columns [c0, c1); false when nothing is left.
 __device__ inline bool gpu_clip_to_box(const gpu_fixed_object& s, int r0, int c0, int r1, int c1,
                                        gpu_fixed_object& obj) {
@@ -1138,6 +1095,43 @@ struct gpu_partner_view {
     // The color object i takes from its partners by `how`, or -1.
     __device__ int color_from(arc::partner_by how, int i) const { return arc::partner_color(how, i, *this); }
 };
+
+// Bridge[way]: the pieces handed back as they came, unmarked, then every bar as
+// one drawing, marked, so what follows works on the bars. Which pieces pair up
+// (the picked ones alone), the way they reach, and where each bar lies is
+// 8b_op_math.hpp's bridge_bars, which the reading replays too; this only lays
+// the bars down, each cell to the first bar that crosses it. One drawing, so a
+// list that holds the pieces holds every bar too, however many gaps there are --
+// one per gap ran out of room (dbc1a6ce's test, 19 dots and 17 bars). It sits
+// in the whole grid's frame, as Split's pieces do.
+__device__ gpu_object_list& gpu_exec_bridge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t way) {
+    auto& res = gpu_acquire(ctx);
+    for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
+        res.objects[res.count] = src.objects[i];
+        res.objects[res.count++].selected = false;
+    }
+    if (res.count >= GPU_KERNEL_MAX_OBJECTS) return res;
+    // A pooled slot keeps whatever it last held, so every field is said.
+    gpu_fixed_object& bars = res.objects[res.count];
+    bars.x0 = 0; bars.y0 = 0;
+    bars.x1 = (int16_t)(GPU_MAX_GRID - 1); bars.y1 = (int16_t)(GPU_MAX_GRID - 1);
+    bars.width = bars.height = (int16_t)GPU_MAX_GRID;
+    bars.selected = true;
+    bars.mask.clear();
+    bool drew = false;
+    arc::bridge_bars(way, ctx.output.width, ctx.output.height, gpu_partner_view{ src },
+        [&](const arc::cell_box& bar, int8_t color) {
+            for (int r = max(bar.row0, 0); r <= min(bar.row1, GPU_MAX_GRID - 1); ++r)
+                for (int c = max(bar.col0, 0); c <= min(bar.col1, GPU_MAX_GRID - 1); ++c)
+                    if (bars.mask[r][c] == GPU_TRANSPARENT) {
+                        bars.mask[r][c] = color;
+                        drew = true;
+                    }
+            return true;
+        });
+    if (drew) ++res.count;
+    return res;
+}
 
 // BidiColorMap[k]: the picked objects trade colors, each pixel of one color of
 // a pair becoming the other. k in [0,44] is one fixed pair {a,b}, 0<=a<b<=9,

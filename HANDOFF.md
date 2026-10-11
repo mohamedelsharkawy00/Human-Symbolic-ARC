@@ -1,4 +1,4 @@
-# Handoff, 2026-10-10
+# Handoff, 2026-10-11
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
@@ -18,13 +18,68 @@ redesigns; the big ideas wait in "Parked" below.
   word that moves or removes a piece then has to erase its old cells in the
   program: Union and Underlay paint, Intersection and Difference erase
   (8_vocabulary.hpp). Costs: every word's replay reads the cut-again picture,
-  and many readouts move.
-- RE-RUN THE INFERENCE ON THE REST. Once the line says part of the change,
-  read the rest as a puzzle of its own -- (what is drawn so far -> output)
-  pairs -- with the whole inference again: cuts, matching, rules, rivals, so
-  every reader fires on the rest, not only the line's words.
+  and many readouts move. The passes after the first (below, 2026-10-11) now
+  do this a whole pass at a time, one change each; this is the same inside
+  one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-11: THE REST, READ ON THE PICTURE SO FAR (the user: after the
+  partial program, a second inference on what it drew, building on the output
+  so far; it was parked as "re-run the inference on the rest"). read_the_rest
+  (7_infer): once read_figures has chosen a pass's cut, where its line leaves
+  cells unsaid and draws something new, the picture it draws (finish_the_line
+  keeps it as inf.picture: the hand as the words leave it, every painted cell
+  in the output's color) is the input of a puzzle of its own, picture ->
+  output, read by read_figures as the next pass: at most 10 (MOST_PASSES),
+  and a pass that draws nothing new ends them. It is said where it leaves
+  fewer cells unsaid (rest_says_more), else shown in the readout only ("[rest
+  N] ..., saying no more than the pass before it", naming what the rest
+  lacks). A pass after the first says ONE change, its hand words or one paint
+  (finish_the_line's one_change; no whole-line rules, rivals, reading ahead
+  or frame there): each sentence reads the canvas as the program has it
+  (Output), and a second sentence would read a picture the reading never
+  looked at. say_the_rest (9_sentences) spells each pass after the line: a
+  paint opens on Output; hand words lay the hand again, `Output SelectAll
+  Withhold`, `CurrentObjects SelectAll Difference` (Difference ends a sentence
+  and hands nothing on, so the picture is taken in hand first), then the
+  hand's sentences from CurrentObjects. readouts.py judges the last kept pass,
+  and its "explained but unsolved" now skips a program that fits the pairs.
+  Tried and dropped: no picture where a paint cut into a hand piece (the
+  picture word's `whole` rule). It stopped 63613498 and f823c43c, and cost
+  6c434453, whose plus cuts each square and removes the leftover corners, its
+  real rule (the user: turn it off). 221 right, gained 6c434453, 92e50de0,
+  lost 0; explained but unsolved 0 -> 0; 5 new wrong, unsolved before, each
+  the reading flailing for a word it lacks (the user): 63613498 a key by
+  shape (the piece of the shape inside the grey frame turns grey), 7d1f7ee8
+  everything inside an outer frame takes its color at any depth (a pass
+  pushed it one frame in, and the test is one frame deeper), bdad9b1f rays to
+  the edges with a third color where two cross, e40b9e2f turned around the
+  body's middle and not its box, f823c43c the noise color removed and the
+  lattice kept (periodic_denoise did not fire). The user: keep it on, it
+  exposes the real issues; new wrong answers are allowed, a lost solve is not
+  (AGENTS.md). Full run 255 s (was about 50 s). arc_spell's `--test` shows
+  each test drawn, fitting or not. GPU kernel unchanged. Run out/rest, build
+  log out/rest-build.txt.
+- 2026-10-10: AN L BRIDGE (the user: generalize Bridge, an L as a variant,
+  a start pick and an end). Bridge[9..27] = BRIDGE_TO_PARTNER + kind: from
+  each picked piece to its one partner of `kind` (partner_of_kind, the owner
+  MoveToward reads too: each partner_by way, then the piece of each color),
+  along the picked piece's middle row to the partner's middle column, then
+  down or up that column; the pick is the start, so it says which way the L
+  turns. Like a bar it is only the path between: each leg is cut back off
+  both pieces' boxes. bridge_bars now asks the pieces as the partner helpers
+  do (gpu_partner_view, partner_pieces) instead of three lambdas, and answers
+  whether an L turned. bar_paint asks every pick for every straight bar
+  first, then the L kinds; bridge_holds says an L only where it turns in one
+  pair at least (833966f4's 1-wide column: an L straight down to the 6 in
+  every pair, a coincidence, was wrong on its test). 0e671a1a:
+  `SelectColor[2] Bridge[22] Recolor[5]` then `SelectColor[4] Bridge[21]
+  Recolor[5]`, the 2 to the 4 and the 4 to the 3. 219 right, 0 wrong,
+  gained 0e671a1a, a2fd1cf0, d4a91cb9, lost 0; explained but unsolved
+  0 -> 0; 9 unsolved readouts say an L for part of their change (e7639916
+  now elects the multicolor cut). GPU kernel: 80 registers, 70,400 bytes
+  stack (+48); 8 more #20014 warnings of the same kind. Run out/lbridge,
+  build log out/lbridge-build.txt.
 - 2026-10-10: A KEY DRAWN IN THE GRID (the user: reading something off a key
   is general in ARC; any number of keys, any property as a key). A key is a
   table the grid holds itself, read off each grid: every piece the program
@@ -59,7 +114,7 @@ redesigns; the big ideas wait in "Parked" below.
   33b52de3, fafd9572 and ef26cbf6 (its shapes take the dot of their pane; the
   walls are the key's ground, and the n-th dot and the n-th shape share a pane
   in every pair and the test), lost 0; explained but unsolved 0 -> 0; only
-  those four readouts changed. Run: out/keyplace; build log
+  those four readouts changed. The run was compared and deleted; build log
   out/keyplace-build.txt (7 more #20014 warnings, same kind).
   Next keys (unsolved training): by place in a field, each piece the key cell
   of its quadrant (58743b76: the field is the canvas outside the key's frame);
@@ -209,9 +264,10 @@ redesigns; the big ideas wait in "Parked" below.
   Before: out/snap-before; after: out/snap-keys. The key-count limit itself
   is unchanged. Build resource log: out/snap-full-build.txt; no pre-change
   compiler resource log was available for comparison.
-- Training: 216 right, 0 wrong. Current run: out/keyplace/, the one before the
-  keys out/symmetry/ (out\ is not in git; out/snap-keys/ is the run before the Bridge changes,
-  out/opus55-replay/ the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
+- Training: 221 right, 5 wrong. Current run: out/rest/, the one before the
+  passes out/lbridge/, the one before the keys out/symmetry/ (out\ is not in
+  git; out/snap-keys/ is the run before the Bridge changes, out/opus55-replay/
+  the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
   199 at abc3f0b.
 - This session made the line compose existing words (all in 7_infer; report
   out/opus55-compose-refined-report.md, patch and snapshots in

@@ -3,8 +3,10 @@
 
   python scripts/readouts.py explained <before> <after>
       The puzzles whose elected reading explains every cell -- nothing left
-      over and no word missing -- yet are not solved, before and after a
-      change. A new one is a reading that claims more than its program draws.
+      over and no word missing -- while their program does not fit the
+      training pairs, before and after a change. A new one is a reading that
+      claims more than its program draws. A program that fits every pair
+      draws what it claims, so a wrong answer is not one.
 
   python scripts/readouts.py missing <label>
       Across the unsolved puzzles, each word the elected reading names as
@@ -30,7 +32,15 @@ def readouts(label):
 
 
 def elected_block(readout):
-    """The elected reading's lines under [fired], or None."""
+    """The elected reading's lines under [fired], or None. Where passes after
+    the line read the rest on the picture it drew ([rest N]), the last pass
+    kept: what it leaves is what the reading leaves. A pass saying no more than
+    the one before it is only read, not said."""
+    passes = re.findall(r'^\[rest \d+\][^\n]*?(?<!before it)\n(.*?)^\[', readout, re.M | re.S)
+    if passes:
+        block = re.search(r'^  reading \d+ .*ELECTED\n((?:    .*\n)*)', passes[-1], re.M)
+        if block:
+            return block.group(1)
     fired = re.search(r'^\[fired\].*?\n(.*?)^\[', readout, re.M | re.S)
     if not fired:
         return None
@@ -58,8 +68,8 @@ def explained(label):
 
 def main(argv):
     if len(argv) == 3 and argv[0] == 'explained':
-        before = explained(argv[1]) - said(argv[1])
-        after = explained(argv[2]) - said(argv[2])
+        before = explained(argv[1]) - said(argv[1]) - said(argv[1], 'WRONG')
+        after = explained(argv[2]) - said(argv[2]) - said(argv[2], 'WRONG')
         print('explained but unsolved: before %d, after %d' % (len(before), len(after)))
         print('  new:  ', sorted(after - before))
         print('  gone: ', sorted(before - after))

@@ -3,6 +3,7 @@
 // answers "can the words we have already say this?".
 //
 //   spell <task-id> "<program>"          one program
+//   spell <task-id> "<program>" --test   and what it draws on each test, fitting or not
 //   spell <task-id> --file <path>        one program per line, first that solves wins
 #include "16_solver_beam.hpp"
 #include "14_puzzle_loader.hpp"
@@ -28,15 +29,19 @@ static void show(const char* label, const grid& g) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "spell <task-id> \"<program>\" | --file <path>\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "spell <task-id> \"<program>\" [--test] | --file <path>\n"); return 2; }
     const string id = argv[1];
     vector<string> programs;
+    // Every test drawn, whether the program fits the pairs or not: what a
+    // program not finished yet has drawn so far.
+    bool every_test = false;
     if (string(argv[2]) == "--file") {
         ifstream in(argv[3]);
         for (string line; getline(in, line);)
             if (!line.empty() && line[0] != '#') programs.push_back(line);
     } else {
         programs.push_back(argv[2]);
+        every_test = argc > 3 && string(argv[3]) == "--test";
     }
     if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
 
@@ -79,7 +84,7 @@ int main(int argc, char** argv) {
                 show("drew  ", drew[i]);
                 show("wanted", task.train[i].output);
             }
-        if (fits == (int)task.train.size()) {
+        if (fits == (int)task.train.size() || every_test) {
             const vector<grid>* answers = set.solutions_for(id);
             for (size_t i = 0; i < task.test.size() && answers && i < answers->size(); ++i) {
                 grid drawn; float score = 0; bool solved = false;
@@ -88,7 +93,7 @@ int main(int argc, char** argv) {
                 printf("            test %zu: %s\n", i, right ? "RIGHT" : "wrong");
                 // A program that fits every pair and still misses the test is the
                 // mistake worth seeing, so it is shown the way a pair is.
-                if (!right && programs.size() == 1) {
+                if ((!right && programs.size() == 1) || every_test) {
                     show("drew  ", drawn);
                     show("wanted", (*answers)[i]);
                 }

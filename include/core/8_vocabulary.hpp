@@ -171,8 +171,9 @@ enum class inferred_amount { none, some, all };
   /* How a bridge reaches (bridge_bars): rows and columns, rows, or columns, */ \
   /* to the nearest piece, then the same three to every one, then to the one */ \
   /* facing it across the grid. Only the picked pieces are bridged, and only */ \
-  /* the bars come back picked.                                              */ \
-  X(Bridge                      , 0                 , 8                        , generate , none, true , false) \
+  /* the bars come back picked. Past those [9], an L from each picked piece  */ \
+  /* to its one partner of each kind partner_of_kind names.                  */ \
+  X(Bridge                      , 0                 , 27                       , generate , none, true , false) \
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
