@@ -40,22 +40,30 @@ language lacks.
 - Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
 - Score and readouts, one run: `scripts\said.bat [--as <label>] [id...]`
   builds arc_said and reads every training puzzle, or the ids named, into
-  `out\x64-Release\`, or `out\<label>\` when a run is named to compare: `said.txt`, a line per puzzle whose program fits the
-  training pairs (id, SOLVED or WRONG, program); `tally.txt`, the counts, also
-  on screen; and `logs\inference\<id>.txt`, each puzzle's readout
-  (background, readings, fired rules, sentences). A label is a new name,
-  never a build folder (x64-Release, cloud), which readouts.py takes for
-  the unnamed run; a full run writes about 225 MB,
-  so delete old labels. It reads a puzzle on every CPU thread and takes about
-  4 minutes on the 20-thread laptop, most of it the passes after the first
-  (it was 30 s before them); `ARC_THREADS=1`
-  reads one at a time (the profiler does, under the label `profile`).
-  `ARC_DATASET=eval` reads the evaluation set instead (training by default).
+  `out\x64-Release\`, or `out\<label>\` when a run is named to compare:
+  `said.txt`, a line per puzzle whose program fits the training pairs (id,
+  SOLVED or WRONG, program); `tally.txt`, the counts, also on screen; and
+  `logs\inference\<id>.txt`, each puzzle's readout (background, readings,
+  fired rules, sentences). A label is a new name, never a build folder
+  (x64-Release, cloud), which readouts.py takes for the unnamed run; a full
+  run writes about 225 MB, so delete old labels. It reads a puzzle on every
+  CPU thread and takes 2 to 4 minutes on the 20-thread laptop (135 s and
+  255 s, the last two runs), most of it the passes after the first (it was
+  30 s before them); `ARC_THREADS=1` reads one at a time (the profiler does,
+  under the label `profile`). `ARC_DATASET=eval` reads the evaluation set
+  instead (training by default).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
   shows what it drew beside what was wanted, pair by pair; `--test` after
   the program also shows each test, whether it fits the pairs or not.
 - Tests: none besides the score and the readouts. `tests/puzzles` holds small
   made-up puzzles to view in the app (the CUS dataset button).
+- Check the GUI: `out\x64-Release\ARC.exe` listens on 127.0.0.1:2026, one
+  line in and one out: `state`, `puzzle <id>`, `screenshot <path>` (the
+  frame drawn in memory, as a PNG) and every `ui_action` name
+  (`24_global_app_state.hpp`). Clicks posted to its window must come from a
+  DPI-aware process, since the window is per-monitor aware. Copy
+  `settings\settings.txt` first and put it back after: the app saves where
+  it was left.
 - Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost
   and gained), `explained <before> <after>` (readings that claim every cell
   while their program does not fit the training pairs; must not grow),
@@ -107,6 +115,10 @@ No GPU there. Run from the repo root.
 - `include/core/8b_op_math.hpp`: what each op does to the cells, called by the
   GPU op and by its replay in `7_infer.hpp`. `1_readings.hpp` is only how to
   read a grid (histogram, boxes, objects, shapes).
+- Place: a piece's row band and column band (`overlapping_bands`: Layout,
+  `SelectRow`, `SelectColumn`), or the part walls fence it in (`fence_parts`:
+  Partition, `SelectPartition`, numbered in reading order). A key is every
+  piece a pick leaves unpicked (the key words, `SelectLikeKey`).
 - `src/cuda_solver.cu`: the GPU ops.
 - `README.md`: Kaggle preparation and the private smoke run.
 

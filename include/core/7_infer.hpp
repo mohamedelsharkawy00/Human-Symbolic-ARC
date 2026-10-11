@@ -385,8 +385,9 @@ struct partner_pieces {
         : pieces(cut), boxes(cut.size()), picked(std::move(marks)) {
         for (size_t i = 0; i < pieces.size(); ++i) boxes[i] = pieces[i].painted_box();
     }
-    // The pieces of a cut, the ones `pick` takes picked (picked_pieces, below).
-    partner_pieces(const vector<object>& cut, const piece_pick& pick);
+    // The pieces of a cut, the ones `pick` takes picked (picked_pieces, below),
+    // on a canvas the size of `canvas`, where a pick reads the parts walls fence.
+    partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas = {});
     // What the partner helpers ask.
     int count() const { return (int)pieces.size(); }
     cell_box box(int i) const { return boxes[i]; }
@@ -400,11 +401,7 @@ struct partner_pieces {
     // Piece i's one partner by `how` among the pieces not picked, or -1.
     int partner(partner_by how, int i) const { return partner_of(how, i, *this); }
     // Whether piece i has any partner by `how` among them, one or several.
-    bool partnered(partner_by how, int i) const {
-        bool any = false;
-        each_partner(how, i, *this, [&](int) { any = true; });
-        return any;
-    }
+    bool partnered(partner_by how, int i) const { return any_partner(how, i, *this); }
     // Whether piece i would fit into a gap of its one partner by `how`.
     bool fits(partner_by how, int i) const {
         const int other = partner(how, i);
@@ -3250,27 +3247,48 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
 
 static_assert(row_of(node_type::WouldFit).high + 1 == (int)partner_by::count,
               "WouldFit takes one value for each way partner_by finds a partner");
+static_assert(row_of(node_type::SelectLikeKey).high + 1 == KEY_LIKENESSES,
+              "SelectLikeKey takes one value for each likeness to the key");
 
-inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick) {
+// THE PIECES A PICK TAKES, as its words take them on a canvas the size of
+// `canvas`, in the order pick_words says them: its colors or its kind; the
+// pieces in the part those fence off, where it names a part; every piece but
+// those, where it turns them round; then WouldFit's and SelectLikeKey's keeps.
+inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick, tile_size canvas = {}) {
     vector<bool> picked(pieces.size(), false);
-    if (pick.how >= 0) {
-        picked = picked_pieces(pieces, pick.how, pick.value);
-        // Every piece but those, as InvertSelection turns them round.
-        if (pick.but_those) picked.flip();
-    } else
+    if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
+    else
         for (size_t i = 0; i < pieces.size(); ++i) picked[i] = (palette(pieces[i]) & pick.colors) != 0;
-    if (pick.fits < 0) return picked;
-    // WouldFit keeps those that would fit into a gap of their partner among the
-    // pieces not picked, every partner read off the pick as it stood, as the op
-    // reads its marks before it drops any.
-    const partner_pieces places(pieces, picked);
-    for (size_t i = 0; i < pieces.size(); ++i)
-        if (places.picked[i]) picked[i] = places.fits((partner_by)pick.fits, (int)i);
+    if (pick.part >= 0) {
+        // SelectPartition: the pick as it stands is the walls, and the pieces
+        // lying in the part `part` they fence off are picked instead.
+        const partner_pieces walls(pieces, picked);
+        int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
+        parts_the_pick_fences(walls, canvas.width, canvas.height, part);
+        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = lies_in_part(walls, (int)i, pick.part, part);
+    }
+    // Every piece but those, as InvertSelection turns them round.
+    if (pick.but_those) picked.flip();
+    if (pick.fits >= 0) {
+        // WouldFit keeps those that would fit into a gap of their partner among
+        // the pieces not picked, every partner read off the pick as it stood, as
+        // the op reads its marks before it drops any.
+        const partner_pieces places(pieces, picked);
+        for (size_t i = 0; i < pieces.size(); ++i)
+            if (places.picked[i]) picked[i] = places.fits((partner_by)pick.fits, (int)i);
+    }
+    if (pick.like >= 0) {
+        // SelectLikeKey keeps those like a piece of the key, the pieces not
+        // picked, read off the pick as it stood.
+        const partner_pieces key(pieces, picked);
+        for (size_t i = 0; i < pieces.size(); ++i)
+            if (key.picked[i]) picked[i] = like_the_key(pick.like, (int)i, key);
+    }
     return picked;
 }
 
-inline partner_pieces::partner_pieces(const vector<object>& cut, const piece_pick& pick)
-    : partner_pieces(cut, picked_pieces(cut, pick)) {}
+inline partner_pieces::partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas)
+    : partner_pieces(cut, picked_pieces(cut, pick, canvas)) {}
 
 static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::SelectSmallestObject).low &&
               row_of(node_type::SelectLargestObject).high == row_of(node_type::SelectSmallestObject).high,
@@ -3327,6 +3345,8 @@ struct replay_facts {
             overlays = overlays && train[which].input.same_size(train[which].output);
         }
     }
+    // The canvas pair `which`'s pieces lie on: its input's, as the ops take it.
+    tile_size canvas(size_t which) const { return { train[which].input.width, train[which].input.height }; }
 };
 
 // THE PIECES A PICK TAKES, pair by pair, made ready once for a word asked many
@@ -3336,7 +3356,8 @@ struct replay_facts {
 inline vector<partner_pieces> handed_pieces(const replay_facts& facts, const piece_pick& pick) {
     vector<partner_pieces> handed;
     handed.reserve(facts.cuts.size());
-    for (const vector<object>& cut : facts.cuts) handed.emplace_back(cut, pick);
+    for (size_t which = 0; which < facts.cuts.size(); ++which)
+        handed.emplace_back(facts.cuts[which], pick, facts.canvas(which));
     return handed;
 }
 
@@ -3361,8 +3382,10 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
 // wear and how many cells the ops can make, then
 // each of `fit_colors` alone kept to its pieces that would fit into a gap of
 // their partner, each partner way. Colors that change from pair to pair are
-// asked last, so a pick by holes or size that accounts for as much wins the tie
-// (aabf363d's shape, a new color in its test); then each of the colors alone.
+// asked after those, so a pick by holes or size that accounts for as much wins
+// the tie (aabf363d's shape, a new color in its test); then each of the colors
+// alone; then the parts one color's walls fence off, and the keys a pick turned
+// round leaves to be like.
 inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t colors, uint16_t fit_colors = 0) {
     vector<piece_pick> picks;
     const bool steady = colors && same_colors_every_pair(facts, colors);
@@ -3483,6 +3506,59 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             if (const piece_pick alone = piece_pick::of_color(color);
                 colors >> color & 1 && same_colors_every_pair(facts, alone.colors))
                 picks.push_back(alone);
+    // THE PARTS ONE COLOR'S WALLS FENCE OFF (parts_the_pick_fences): the pieces
+    // lying in one part, and every piece but those, asked only where every pair
+    // holds the color and its walls fence two parts at least in every pair, and
+    // only for a part every pair has that holds a piece in every pair
+    // (63613498's grey corner, its key alone in part 0). Then, on every pick
+    // that turns its pieces round, SelectLikeKey: the ones it keeps that are
+    // like a piece of the key, the pieces it turned away, asked only where it
+    // keeps one in every pair and drops one in some -- a key fenced off by walls
+    // first, the surer key, so it takes a tie (63613498's corner, not the column
+    // three left of the middle, which leaves its key and an 8 besides). The
+    // newest picks, asked last, so an older pick that says as much takes the tie.
+    auto every_pair = [&](const piece_pick& pick, auto holds) {
+        for (size_t which = 0; which < facts.cuts.size(); ++which)
+            if (!holds(which, picked_pieces(facts.cuts[which], pick, facts.canvas(which)))) return false;
+        return true;
+    };
+    auto takes_one = [](size_t, const vector<bool>& taken) { return ranges::find(taken, true) != taken.end(); };
+    for (int color = 0; color < COLOR_COUNT && !facts.cuts.empty(); ++color) {
+        const piece_pick walls = piece_pick::of_color(color);
+        if (!every_pair(walls, takes_one)) continue;
+        int parts = row_of(node_type::SelectPartition).high + 1;
+        for (size_t which = 0; which < facts.cuts.size(); ++which) {
+            const tile_size canvas = facts.canvas(which);
+            int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
+            parts = min(parts, parts_the_pick_fences(partner_pieces(facts.cuts[which], walls, canvas), canvas.width,
+                                                     canvas.height, part));
+        }
+        if (parts < 2) continue;
+        for (int which_part = 0; which_part < parts; ++which_part) {
+            piece_pick in_part = walls;
+            in_part.part = (int8_t)which_part;
+            if (!every_pair(in_part, takes_one)) continue;
+            for (const bool but_those : { false, true }) {
+                in_part.but_those = but_those;
+                picks.push_back(in_part);
+            }
+        }
+    }
+    const size_t asked = picks.size();
+    for (const bool fenced : { true, false })
+        for (size_t at = 0; at < asked; ++at) {
+            if (!picks[at].but_those || picks[at].fits >= 0 || (picks[at].part >= 0) != fenced) continue;
+            for (int like = 0; like < KEY_LIKENESSES; ++like) {
+                piece_pick liked = picks[at];
+                liked.like = (int8_t)like;
+                bool drops = false;
+                const bool keeps = every_pair(liked, [&](size_t which, const vector<bool>& kept) {
+                    drops = drops || kept != picked_pieces(facts.cuts[which], picks[at], facts.canvas(which));
+                    return takes_one(which, kept);
+                });
+                if (keeps && drops) picks.push_back(liked);
+            }
+        }
     return picks;
 }
 
@@ -3548,7 +3624,7 @@ inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick,
 // tie (size_pick_ties), since the crop would be of whichever came first.
 inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, const grid& input,
                          const output_dimension_rule& size, grid& framed, bool& several) {
-    const vector<bool> picked = picked_pieces(pieces, pick);
+    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height });
     cell_box box;
     int taken = 0, one = -1;
     for (size_t i = 0; i < picked.size(); ++i) {
@@ -3583,7 +3659,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
 // (shows_what_it_frames).
 inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick, int cell, const grid& input,
                            const output_dimension_rule& size, grid& framed) {
-    const vector<bool> picked = picked_pieces(pieces, pick);
+    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height });
     vector<const object*> kept;
     for (size_t i = 0; i < pieces.size() && kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST; ++i)
         if (picked[i]) kept.push_back(&pieces[i]);
@@ -3637,7 +3713,7 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
 inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, int8_t keyed,
                          const shape_color_map_rule& table, const grid& input, const output_dimension_rule& size,
                          grid& framed) {
-    const vector<bool> picked = picked_pieces(pieces, pick);
+    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height });
     int color = -1, one = -1;
     for (size_t i = 0; i < pieces.size(); ++i) {
         if (!picked[i]) continue;
@@ -3906,7 +3982,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                         for (size_t which = 0; which < train.size() && learned; ++which) {
                             const int8_t wanted = (int8_t)train[which].output.data[0][0];
                             const vector<object>& pieces = facts.cuts[which];
-                            const vector<bool> picked = picked_pieces(pieces, pick);
+                            const vector<bool> picked = picked_pieces(pieces, pick, facts.canvas(which));
                             bool at_work = false;
                             for (size_t i = 0; i < pieces.size() && learned; ++i) {
                                 if (!picked[i]) continue;
@@ -4859,7 +4935,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
     for (size_t which = 0; which < facts.cuts.size(); ++which) {
         vector<object>& hand = facts.cuts[which];
         const example& pair = facts.train[which];
-        const vector<bool> picked = picked_pieces(hand, pick);
+        const vector<bool> picked = picked_pieces(hand, pick, facts.canvas(which));
         switch (rule.as) {
         case said::turn:
             for (size_t i = 0; i < hand.size(); ++i)
@@ -4881,7 +4957,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             // What trades places, read off the hand as it is before any piece
             // changes: a fixed pair, or the pairs the key the pick leaves names.
             int8_t to[COLOR_COUNT];
-            swaps_of(rule.value, partner_pieces(hand, pick), to);
+            swaps_of(rule.value, partner_pieces(hand, pick, facts.canvas(which)), to);
             for (size_t i = 0; i < hand.size(); ++i)
                 if (picked[i]) hand[i].repaint([&](int8_t now) { return to[now] >= 0 ? to[now] : now; });
             break;
@@ -4891,7 +4967,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
         case said::move_toward: {
             // Every partner is found on the hand as it was, before any piece
             // changes; a piece with no one partner stays as it is.
-            const partner_pieces cut(hand, pick);
+            const partner_pieces cut(hand, pick, facts.canvas(which));
             constexpr int ways = (int)partner_by::count;
             vector<int> found(hand.size(), -1);
             vector<heading_step> by(hand.size(), heading_step{ 0, 0 });
@@ -4939,7 +5015,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
                 if (picked[i]) hand[i] = outlined(hand[i]);
             break;
         case said::mirror_around: {
-            const partner_pieces cut(hand, pick);
+            const partner_pieces cut(hand, pick, facts.canvas(which));
             const auto mirror = (mirror_by)(rule.value / MIRROR_PARTNERS);
             const int how = rule.value % MIRROR_PARTNERS;
             vector<object> copies;
@@ -5263,12 +5339,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
         }
         else {
-            name = "Colors";
+            name = best.pick.part < 0 ? "Colors"
+                 : string(best.pick.but_those ? "Off Part " : "Part ") + to_string(best.pick.part) + " Fenced By";
             for (int color = 0; color < COLOR_COUNT; ++color)
                 if (best.pick.colors >> color & 1) name += " " + to_string(color);
         }
         if (!every_piece && best.pick.fits >= 0)
             name += string(" That Would Fit ") + partners[best.pick.fits];
+        if (!every_piece && best.pick.like >= 0)
+            name += best.pick.like == 0 ? " Shaped Like The Key" : " Shaped Like The Key Any Way Round";
         rule one = listed(name.c_str(), says.c_str(), as, (int8_t)best.value);
         one.pick = every_piece ? piece_pick::all() : best.pick;
         one.pieces = best.seen.pieces;
@@ -5637,7 +5716,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 may = true;
             else if (pick.how == piece_pick::most_common)
                 may = read.line.empty();
-            else if (pick.how >= 0)
+            else if (!pick.by_color())
                 may = ranges::none_of(read.line, [&](int8_t which) {
                     const auto group = group_of(read.fired[which].as);
                     return group == word_group::changes_pieces || group == word_group::removes; });
@@ -5826,7 +5905,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     }
         if (best.value < 0) return {};
         return { best.said, [&, best, best_lay] {
-            const bool own = best.pick.how < 0 && best.pick.colors == (uint16_t)(1u << best.seen.paint);
+            const bool own = best.pick.by_color() && best.pick.colors == (uint16_t)(1u << best.seen.paint);
             const int8_t said = say_paint(best, rule::extend_rays,
                 string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") + ", " +
                     to_string(paint_value::number(best.value)) + " long, in " +

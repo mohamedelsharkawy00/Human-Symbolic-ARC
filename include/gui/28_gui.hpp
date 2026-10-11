@@ -227,16 +227,31 @@ inline void collect_pipeline_ops(node *root, vector<node *> &ops) {
   reverse(ops.begin(), ops.end());
 }
 
+// A LONG PIPELINE FOLDS to the four lines the footer always keeps for it: its
+// first ops, then a box saying how many more, which opens every line; open, a
+// box after its last op folds it again (show_whole_programs, the facts pane's
+// fold too). Every line at once ran CURRENT into BEST and BEST off the bottom
+// of the screen (31aa019c's 79 ops). The boxes a pipeline of `ops` draws:
+// `shown` ops, and the fold's box when it has one.
+constexpr size_t PIPELINE_FOLDED_LINES = 4;
+struct pipeline_fold { size_t shown; bool toggle; };
+inline pipeline_fold fold_of(size_t ops, bool whole) {
+  constexpr size_t room = PIPELINE_FOLDED_LINES * 4;
+  if (ops <= room) return { ops, false };
+  return { whole ? ops : room - 1, true };
+}
+
 // A program is sentences, so it reads as sentences: one to a line, four beats to
 // a sentence, and each beat in a column as wide as the widest word that lands in
 // it. The columns are what make GET under GET and ACT under ACT.
 // One line per sentence. MUST agree with draw_pipeline or reflow and draw
-// disagree about where the block ends.
-inline int count_pipeline_lines(node *root) {
+// disagree about where the block ends: both count the boxes fold_of says.
+inline int count_pipeline_lines(node *root, bool whole) {
   vector<node *> ops;
   collect_pipeline_ops(root, ops);
   if (ops.empty()) return 1;
-  return (int)((ops.size() + 3) / 4);
+  const pipeline_fold fold = fold_of(ops.size(), whole);
+  return (int)((fold.shown + fold.toggle + 3) / 4);
 }
 
 // Draws the header: every control and stat, in reading order. Returns the
@@ -533,10 +548,23 @@ inline void draw_footer_rows(
     uint64_t hh = app_state.hovered_hash.load();
     int hs = app_state.hovered_source.load();
     int x = start_x, y = top_y, end_x = start_x;
-    for (size_t i = 0; i < ops.size(); ++i) {
-      node *n = ops[i];
+    const bool whole = app_state.show_whole_programs.load();
+    const pipeline_fold fold = fold_of(ops.size(), whole);
+    for (size_t i = 0; i < fold.shown + fold.toggle; ++i) {
       // A new sentence starts a new line; inside one, words just follow on.
       if (i > 0 && i % 4 == 0) { x = start_x; y += line_h; }
+      if (i == fold.shown) {
+        // The fold's own box, pressed like any button: how many more, or FOLD.
+        const string label = whole ? string("FOLD") : to_text("... %d MORE", (int)(ops.size() - fold.shown));
+        int bw = text_w(label, scale) + pad * 2;
+        draw_boxed_text(context, font, label, x, y, scale, bw, box_h,
+                        app_state.active_ui_action == ui_action::toggle_programs ? 4 : 5);
+        app_state.click_zones.push_back({x, y, bw, box_h, ui_action::toggle_programs});
+        x += bw + gap;
+        if (x > end_x) end_x = x;
+        continue;
+      }
+      node *n = ops[i];
       string label = get_node_label(n->type, n->value);
       int bw = text_w(label, scale) + pad * 2;
       int color_idx = 1;
@@ -1222,18 +1250,20 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     ty += line_h;
   };
 
+  // A boxed word the mouse can press, in the header buttons' clothes. Hoisted
+  // out of the controls body so the facts face can fold its programs with one.
+  auto button = [&](const string& label, int x, int y, ui_action act) {
+    int bw = text_w(label, scale) + pad * 2;
+    draw_boxed_text(context, font, label, x, y, scale, bw, box_h,
+                    app_state.active_ui_action == act ? 4 : 1);
+    if (!measuring) app_state.click_zones.push_back({x, y, bw, box_h, act});
+    return bw;
+  };
+
   if (!facts_face) {
     // ONE BODY, RUN TWICE: measured first, drawn second, so the frame is sized
     // by what the rows actually spend and adding one needs no bookkeeping.
     auto paint_the_controls = [&]() {
-      // A boxed word the mouse can press, in the header buttons' clothes.
-      auto button = [&](const string& label, int x, int y, ui_action act) {
-        int bw = text_w(label, scale) + pad * 2;
-        draw_boxed_text(context, font, label, x, y, scale, bw, box_h,
-                        app_state.active_ui_action == act ? 4 : 1);
-        if (!measuring) app_state.click_zones.push_back({x, y, bw, box_h, act});
-        return bw;
-      };
       // Every control row reads NAME, what it is now, then the control. The name
       // column and the value field are fixed widths that don't depend on what they
       // say, so every control begins at the same place and none of them moves. The
@@ -1743,16 +1773,40 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs the
     // search will actually try, not a prettier retelling, so what is on screen and
     // what is run cannot drift apart. One sentence a row, four beats to a sentence.
+    // A LONG PROGRAM FOLDS: its first rows, then how many more it has. The
+    // button on the heading opens every row and folds them again; every row at
+    // once ran the pane off the bottom of the screen (31aa019c's fifteen
+    // sentences, f823c43c's nineteen). On the heading, so it stays in reach
+    // however far the open rows run.
     if (!task.suggested_programs.empty()) {
+      constexpr size_t folded_rows = 6;
+      const bool whole = app_state.show_whole_programs.load();
+      bool folds = false;
+      for (const string& program : task.suggested_programs)
+        folds = folds || sentences_of(program).size() > folded_rows;
+      if (folds) {
+        const string fold = whole ? "FOLD" : "SHOW ALL";
+        button(fold, right_x - (text_w(fold, scale) + pad * 2), ty - pad, ui_action::toggle_programs);
+      }
       named_row({{"WHAT THE READING SAYS",
                   to_text("%d PROGRAM%s", (int)task.suggested_programs.size(),
                           task.suggested_programs.size() == 1 ? "" : "S")}});
+      if (folds) ty += row_h - line_h;
+      // Folded, a row too wide for the pane ends in "..." at the last word that
+      // fits inside the frame; open, every row is said whole.
+      auto fitted = [&](string row) {
+        const int room = right_x - tx;
+        if (whole || text_w(row, scale) <= room) return row;
+        while (!row.empty() && text_w(row + " ...", scale) > room) row.pop_back();
+        if (const size_t space = row.rfind(' '); space != string::npos) row.resize(space);
+        return row + " ...";
+      };
       for (size_t which = 0; which < task.suggested_programs.size(); ++which) {
-        bool first = true;
-        for (const string& row : sentences_of(task.suggested_programs[which])) {
-          line(to_text("  %s %s", first ? to_text("%d", (int)which + 1).c_str() : " ", row.c_str()));
-          first = false;
-        }
+        const vector<string> rows = sentences_of(task.suggested_programs[which]);
+        const size_t shown = whole ? rows.size() : min(rows.size(), folded_rows);
+        for (size_t row = 0; row < shown; ++row)
+          line(fitted(to_text("  %s %s", row == 0 ? to_text("%d", (int)which + 1).c_str() : " ", rows[row].c_str())));
+        if (shown < rows.size()) line(to_text("    ... %d MORE", (int)(rows.size() - shown)));
       }
     }
 
@@ -2050,8 +2104,10 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
       // Always reserve at least 3 lines each so the layout doesn't jump on wrap.
       // Four sentences of room, always, so the footer does not walk up and down
       // the screen as a program grows a sentence.
-      int best_lines = max(4, task.best_tree ? count_pipeline_lines(task.best_tree) : 1);
-      int cur_lines = max(4, state.search.current_tree ? count_pipeline_lines(state.search.current_tree) : 1);
+      const bool whole = app_state.show_whole_programs.load();
+      int best_lines = max((int)PIPELINE_FOLDED_LINES, task.best_tree ? count_pipeline_lines(task.best_tree, whole) : 1);
+      int cur_lines = max((int)PIPELINE_FOLDED_LINES,
+                          state.search.current_tree ? count_pipeline_lines(state.search.current_tree, whole) : 1);
       lay.footer2_y = lay.footer3_y - best_lines * line_h;
       lay.footer1_y = lay.footer2_y - cur_lines * line_h;
       // Safety: never let footers climb into the grid-label band (absurdly deep
@@ -2156,7 +2212,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
                           lay.scale, lw, lh, 5);
         }
 
-        for (int i = 0; i < n; ++i) {
+        // A row with no room inside its pad shows no preview.
+        for (int i = 0; i < n && slot_h > pad * 2; ++i) {
           const display_grid &m = state.preview_grids[i];
           int row_y = lay.grid_data_start_y + i * slot_h;
           int back_y = row_y + pad;

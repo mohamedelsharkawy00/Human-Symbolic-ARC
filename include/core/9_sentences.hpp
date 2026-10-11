@@ -64,35 +64,39 @@ inline string foreground_input(const ground_plan& plan) {
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, at least so many cells, the first so many by size,
-// the ones on a row or a column from the middle -- when `how` names one, turned
-// round by InvertSelection for every piece but those, else by its colors; then,
-// when `fits` names a partner way, WouldFit keeps the ones that would fit into
-// a gap of their partner.
+// the ones on a row or a column from the middle -- when `how` names one, else by
+// its colors; then, when `part` names one, SelectPartition takes those as walls
+// and the pieces in that part instead; turned round by InvertSelection for
+// every piece but those; then, when `fits` names a partner way, WouldFit keeps
+// the ones that would fit into a gap of their partner, and when `like` names a
+// likeness, SelectLikeKey the ones like a piece of the key.
 inline string pick_words(const piece_pick& pick) {
     if (pick.every()) return "SelectAll";
-    const auto [colors, how, value, fits, but_those] = pick;
+    const auto& [colors, how, value, fits, but_those, part, like] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectAtLeastCells",
                                                  "SelectLargestObject", "SelectSmallestObject",
                                                  "SelectRowFromMiddle", "SelectColumnFromMiddle" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
-    const string kept = fits >= 0 ? " " + spell("WouldFit", fits) : string();
+    string chosen = "SelectAll InvertSelection";
     if (how < 0) {
-        string chosen = "SelectAll InvertSelection";
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (colors >> color & 1) chosen += " " + spell("SelectColor", color);
-        return chosen + kept;
+    } else {
+        // SelectMostCommonColor takes no value: which color it picks is the list's to say.
+        const bool valued = how != piece_pick::most_common;
+        // The first so many by size: one selector a rank, since selectors add.
+        const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::smallest_ranks;
+        if (ranks)
+            for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
+        else chosen += " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
     }
-    // SelectMostCommonColor takes no value: which color it picks is the list's to say.
-    const bool valued = how != piece_pick::most_common;
-    // The first so many by size: one selector a rank, since selectors add.
-    const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::smallest_ranks;
-    string chosen;
-    if (ranks)
-        for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
-    else chosen = " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
-    return "SelectAll InvertSelection" + chosen + (but_those ? " InvertSelection" : "") + kept;
+    if (part >= 0) chosen += " " + spell("SelectPartition", part);
+    if (but_those) chosen += " InvertSelection";
+    if (fits >= 0) chosen += " " + spell("WouldFit", fits);
+    if (like >= 0) chosen += " " + spell("SelectLikeKey", like);
+    return chosen;
 }
 
 struct said_reading {
@@ -177,11 +181,15 @@ inline the_mark mark_after(const string& words) {
         else if (op == node_type::InvertSelection)
             mark = mark == the_mark::all ? the_mark::none
                  : mark == the_mark::none ? the_mark::all : the_mark::some;
-        // WouldFit only drops marks, and with every piece picked no partner is
-        // left to fit into, so it drops them all.
-        else if (op == node_type::WouldFit) {
+        // WouldFit and SelectLikeKey only drop marks, and with every piece
+        // picked no partner is left to fit into, and no key to be like, so they
+        // drop them all. SelectPartition takes the marked pieces as walls: with
+        // every piece a wall no piece lies in a part.
+        else if (op == node_type::WouldFit || op == node_type::SelectLikeKey) {
             if (mark == the_mark::all) mark = the_mark::none;
         }
+        else if (op == node_type::SelectPartition)
+            mark = mark == the_mark::all ? the_mark::none : the_mark::some;
         else if (is_select_op(op)) {
             if (mark != the_mark::all) mark = the_mark::some;
         }

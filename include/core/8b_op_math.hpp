@@ -16,7 +16,8 @@ namespace arc {
 using namespace std;
 
 // SHARED · the color tally, partners (ColorFrom, AlignTo, MoveToward,
-// MirrorAround, WouldFit) and bands (Layout, SelectRow, SelectColumn)
+// MirrorAround, WouldFit, SelectLikeKey) and bands (Layout, SelectRow,
+// SelectColumn)
 
 // HOW MANY CELLS WEAR EACH COLOR, counted a cell at a time -- what is no color
 // is not counted -- and the color the most of them wear, or the fewest, the
@@ -173,6 +174,16 @@ ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, const Pieces& pi
     return partners == 1 ? found : -1;
 }
 
+// Whether the piece `mine` has a partner by `how` at all, one or several, among
+// the pieces not picked: what a piece like another asks (like_the_key), where
+// partner_of asks for the one.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
+    bool any = false;
+    each_partner(how, mine, pieces, [&](int) { any = true; });
+    return any;
+}
+
 // A PARTNER OF ANY KIND: the ways partner_by finds one by how two pieces sit,
 // then, past those, by color -- the one piece holding a cell of color `kind -
 // partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
@@ -253,7 +264,7 @@ ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int
 }
 
 // SELECT · SelectUnique, SelectAtLeastCells, SelectObjectsWithHoles,
-// SelectRowFromMiddle, WouldFit
+// SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey
 
 // The sole drawing with no equal in the list. Compare full frames and cells,
 // including transparent cells, in local coordinates; placement does not matter.
@@ -416,6 +427,89 @@ ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, const Pieces& piece
             for (int i = 0; i < count; ++i) seen[run_row[i]][run_col[i]] = 1;
         }
     return false;
+}
+
+// THE PARTS WALLS FENCE OFF: every cell of a canvas `width` by `height` that is
+// no wall, joined to the cells beside it at a side -- four ways, as water runs
+// (walk_out), so walls that meet only at a corner still fence -- each cell's
+// part into `part`, -1 on a wall and off the canvas, and how many parts there
+// are. Numbered in reading order by the first cell of each, row by row, left to
+// right, as rows wrap. Walls across the whole canvas fence the tiles of a
+// lattice, numbered row by row; walls that cross nothing fence what they close
+// off against the edges (63613498's grey corner, its key alone in part 0).
+// `wall(row, col)` says whether a cell is a wall. Partition cuts on these parts
+// and SelectPartition picks by them, so a part is one thing wherever it is asked.
+template <class Wall>
+ARC_HOST_DEVICE inline int fence_parts(int width, int height, Wall wall, int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    for (int row = 0; row < MAX_GRID_DIM; ++row)
+        for (int col = 0; col < MAX_GRID_DIM; ++col) part[row][col] = -1;
+    if (width > MAX_GRID_DIM) width = MAX_GRID_DIM;
+    if (height > MAX_GRID_DIM) height = MAX_GRID_DIM;
+    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
+    int parts = 0;
+    auto claim = [&](int row, int col) {
+        if (part[row][col] >= 0 || wall(row, col)) return false;
+        part[row][col] = (int16_t)parts;
+        return true;
+    };
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (!claim(row, col)) continue;
+            queue_row[0] = (int16_t)row;
+            queue_col[0] = (int16_t)col;
+            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
+            ++parts;
+        }
+    return parts;
+}
+
+// THE PARTS A PICK FENCES OFF (fence_parts): its walls are every cell a picked
+// piece paints, as Partition and SelectPartition read them. The pieces are
+// asked as each_partner asks them.
+template <class Pieces>
+ARC_HOST_DEVICE inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
+                                                int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    bool wall[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (!pieces.is_picked(i)) continue;
+        const cell_box box = pieces.box(i);
+        if (box.empty()) continue;
+        for (int row = box.row0 < 0 ? 0 : box.row0; row <= box.row1 && row < MAX_GRID_DIM; ++row)
+            for (int col = box.col0 < 0 ? 0 : box.col0; col <= box.col1 && col < MAX_GRID_DIM; ++col)
+                wall[row][col] = wall[row][col] || pieces.painted(i, row, col);
+    }
+    return fence_parts(width, height, [&](int row, int col) { return wall[row][col]; }, part);
+}
+
+// WHETHER THE PIECE `mine` LIES IN PART `which` of `part` (parts_the_pick_fences):
+// it paints a cell, and every cell it paints is in that part. A piece over a
+// wall, or across two parts, lies in none. SelectPartition[which] picks these.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool lies_in_part(const Pieces& pieces, int mine, int which,
+                                         const int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+    const cell_box box = pieces.box(mine);
+    if (box.empty()) return false;
+    for (int row = box.row0; row <= box.row1; ++row)
+        for (int col = box.col0; col <= box.col1; ++col)
+            if (pieces.painted(mine, row, col) &&
+                (row < 0 || col < 0 || row >= MAX_GRID_DIM || col >= MAX_GRID_DIM || part[row][col] != which))
+                return false;
+    return true;
+}
+
+// WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --
+// every piece not picked, as the key words read it (each_key_entry) -- is of
+// its shape as it lies [0], or turned or mirrored any of the eight ways [1], as
+// each_partner finds a piece of the same shape (63613498: the piece shaped as
+// the key in the grey corner lies turns grey, not the ones turned). The pieces
+// are asked as each_partner asks them.
+constexpr int KEY_LIKENESSES = 2;
+static_assert((int)partner_by::same_shape_turned == (int)partner_by::same_shape + 1,
+              "a likeness to the key is a partner way of the same shape, as it lies or turned");
+template <class Pieces>
+ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces) {
+    return how >= 0 && how < KEY_LIKENESSES &&
+           any_partner((partner_by)((int)partner_by::same_shape + how), mine, pieces);
 }
 
 // TRANSLATE · NormalizeOrientation, ScaleDown, Shift, MoveToEdge, MoveToward,

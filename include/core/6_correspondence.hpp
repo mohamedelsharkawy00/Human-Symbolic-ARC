@@ -38,11 +38,13 @@ struct tiled_pieces {
 };
 
 // Which pieces a word or frame takes. A color mask picks any piece wearing
-// one of its colors; `how` instead names a pick by shape, size or place, and
-// `but_those` turns it round, every piece but the ones it names, as
-// InvertSelection says it. `fits` optionally keeps only pieces that fit their
-// partner (WouldFit). The empty mask picks nothing; all() picks every color,
-// of_color() just one.
+// one of its colors; `how` instead names a pick by shape, size or place.
+// `part` optionally takes those as walls and picks the pieces lying in that
+// part of what they fence off instead (SelectPartition). `but_those` turns it
+// round, every piece but the ones it names, as InvertSelection says it. `fits`
+// optionally keeps only pieces that fit their partner (WouldFit), and `like`
+// only pieces like a piece of the key, the ones not picked (SelectLikeKey).
+// The empty mask picks nothing; all() picks every color, of_color() just one.
 struct piece_pick {
     enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
                              at_least_cells, largest_ranks, smallest_ranks, middle_row, middle_column,
@@ -50,15 +52,18 @@ struct piece_pick {
     uint16_t colors = 0;
     int8_t how = -1, value = 0, fits = -1;
     bool but_those = false;
+    int8_t part = -1, like = -1;
 
     static constexpr piece_pick all() { return { (uint16_t)((1u << COLOR_COUNT) - 1) }; }
     static constexpr piece_pick of_color(int color) { return { (uint16_t)(1u << color) }; }
-    bool every() const { return how < 0 && colors == all().colors && fits < 0; }
+    bool every() const { return by_color() && colors == all().colors && fits < 0 && like < 0; }
+    // Whether it picks pieces by the colors they wear alone, before any filter.
+    bool by_color() const { return how < 0 && part < 0 && !but_those; }
     // A pick by shape, size or place may take any color.
-    bool may_take_color(int color) const { return how >= 0 || (colors >> color & 1) != 0; }
+    bool may_take_color(int color) const { return !by_color() || (colors >> color & 1) != 0; }
     bool operator==(const piece_pick& other) const {
-        return how == other.how && fits == other.fits &&
-               (how >= 0 ? value == other.value && but_those == other.but_those : colors == other.colors);
+        return how == other.how && fits == other.fits && part == other.part && like == other.like &&
+               but_those == other.but_those && (how >= 0 ? value == other.value : colors == other.colors);
     }
 };
 

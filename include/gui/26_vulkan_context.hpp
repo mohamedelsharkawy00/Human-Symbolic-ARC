@@ -636,7 +636,11 @@ inline bool vulkan_context::begin_frame() {
 
 inline void vulkan_context::draw(int offset, int width, int height, int x,
                                  int y, int cell_w, int stride) {
-  if (active_command == VK_NULL_HANDLE) return;
+  // NOTHING WIDE OR TALL DRAWS NOTHING. vkCmdDraw counts its instances
+  // unsigned, so a size below zero made width * height four billion quads and
+  // hung the card: the hover preview, its rows sized off a grid band the open
+  // programs had squeezed to nothing.
+  if (active_command == VK_NULL_HANDLE || width <= 0 || height <= 0) return;
   push_constants p{width,
                    height,
                    (int)active_extent.width,

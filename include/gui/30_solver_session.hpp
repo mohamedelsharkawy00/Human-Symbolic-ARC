@@ -521,8 +521,14 @@ private:
   void read_facts_for_the_pane() {
     if (!m_loaded || !inference_pane_open()) return;
     if (!m_puzzle.inferred) {
+      // READ OUTSIDE THE LOCK THE FRAME DRAWS UNDER, taken in under it. A
+      // reading takes seconds where it reads its passes (f823c43c's four), and
+      // reading under the lock froze the window for all of them, till Windows
+      // called it not responding. Only this thread writes the puzzle, so its
+      // pairs hold still while they are read.
+      inference read = infer(m_puzzle.train);
       scoped_lock lock(m_search.mtx);
-      infer_into_puzzle(m_puzzle, m_label, true);
+      take_the_reading(m_puzzle, std::move(read), m_label, true);
       m_app.needs_upload = true;
     }
     if (!m_asked_to_infer && !m_benchmarking) {

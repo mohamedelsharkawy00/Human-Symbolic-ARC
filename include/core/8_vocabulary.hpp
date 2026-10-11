@@ -25,7 +25,8 @@
 //   is said as MaskBy[10] alone, for rays and repeats laid only onto what is down.
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
-// Partition: cuts tiles on walls the selection marks; overlaps the pane rules.
+// Partition: cuts the parts the walls the selection marks fence off
+//   (fence_parts, the parts SelectPartition picks by); overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
 // SelectUnique: marks the one drawing with no twin (unique_drawing in
 //   8b_op_math.hpp); only the pane pick says it, for the odd pane.
@@ -230,7 +231,15 @@ enum class inferred_amount { none, some, all };
   /* The pieces on the row or column `from` lines past the middle of all    */ \
   /* they paint together (line_from_middle): 0 is the middle itself.        */ \
   X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false, false) \
-  X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false, false)
+  X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false, false) \
+  /* The picked pieces are walls, as Partition reads them, and the pick    */ \
+  /* becomes the pieces lying in one part they fence off (fence_parts),   */ \
+  /* the parts numbered in reading order, row by row, as rows wrap.       */ \
+  X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, true , false) \
+  /* Of the picked pieces, only those like a piece of the key -- every    */ \
+  /* piece not picked -- stay picked: of its shape as it lies [0], or      */ \
+  /* turned any way [1] (like_the_key, 8b_op_math.hpp).                    */ \
+  X(SelectLikeKey               , 0                 , 1                        , select   , none, true , false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,

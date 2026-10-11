@@ -23,6 +23,62 @@ redesigns; the big ideas wait in "Parked" below.
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-11: LONG PROGRAMS FOLD IN THE GUI (the user: 31aa019c's program ran
+  off the screen). One toggle, show_whole_programs (ui_action
+  toggle_programs, also on the command port): folded, CURRENT and BEST keep
+  the footer's four lines, the last box "... N MORE" (fold_of, the one answer
+  for the reflow and the draw), and the facts pane shows a program's first 6
+  rows, "... N MORE", each row cut to "..." at the frame; SHOW ALL on the
+  pane's heading, or the box, opens them, FOLD folds them. Not saved in the
+  settings, so the app starts folded. Checked by screenshots over the port
+  and by mouse clicks posted to the window (from a DPI-aware process: the
+  window is per-monitor aware, so an unaware sender's clicks land elsewhere).
+  And the freeze the user saw (Windows logged ARC.exe hung): the pane read a
+  puzzle under the lock the frame draws under, seconds where it reads its
+  passes (f823c43c about 4 s). Now infer runs outside it and
+  take_the_reading (14_puzzle_loader, the rest of infer_into_puzzle) under
+  it; the port answers within 0.03 s while f823c43c is read. A second freeze
+  (the user: the third click): with the programs open the grid band shrinks
+  to nothing, and the hover preview sized its rows off it, a negative height
+  that vkCmdDraw's unsigned instance count read as four billion quads.
+  vulkan_context::draw now draws nothing for a size not above zero, and the
+  preview skips a row with no room; checked with the solver running, a box
+  hovered and the preview up, open and fold three times over, the port
+  answering within 0.02 s.
+- 2026-10-11: A KEY FENCED OFF, AND THE PIECES LIKE IT (the user: the key
+  is the shape in its sector; something that meshes with Partition and
+  Layout, "select the nth partition", numbered like rows that wrap). One
+  owner of the parts walls fence off, fence_parts (8b_op_math): the cells
+  off the walls joined at a side, numbered in reading order by each part's
+  first cell; walls across the whole grid fence a lattice's tiles, row by
+  row. parts_the_pick_fences takes the picked pieces' cells as the walls.
+  Partition now cuts on these parts, any shape, not only lines across the
+  grid (no program said it). Two new ops: SelectPartition[n], the picked
+  pieces as walls, the pick becomes the pieces lying wholly in part n
+  (lies_in_part); SelectLikeKey[how], of the picked pieces only those like
+  a piece of the key -- every piece not picked, as the key words read it --
+  stay picked, [0] the same shape as it lies, [1] any way round
+  (like_the_key, on the partner owner's two shape ways; any_partner is the
+  one "a partner at all" question, partner_pieces::partnered asks it too).
+  piece_pick gains `part` and `like`; picked_pieces takes the canvas, since
+  a part needs the grid's size (replay_facts::canvas, handed_pieces,
+  carry_the_hand, the frames). picks_to_ask asks, last: for each color every
+  pair holds whose walls fence 2 parts at least in every pair, each part
+  that holds a piece in every pair, and every piece but those; then
+  SelectLikeKey on every pick that turns its pieces round, where it keeps
+  one piece in every pair and drops one in some, a fenced key first (the
+  surer key: unfenced, 63613498 said "off the column 3 left of the middle",
+  which left its key and an 8 besides, right on its test by luck).
+  63613498: `SelectColor[5] SelectPartition[0] InvertSelection
+  SelectLikeKey[0] Recolor[5]`. 224 right, gained 31aa019c (a pass after
+  the first deletes part 0 of the 2 ring it drew), 332efdb3 (rays from part
+  0), 63613498, lost 0; explained but unsolved 0 -> 0; 5 wrong: 63613498
+  left the list and 272f95fa, unsolved before, joined it: four of its five
+  panes said by part, the center by "the 5th smallest", the center in both
+  pairs and not on the test (an older pick takes a tie, and sizes are asked
+  before places, bands too). Full run 135 s (255 s last time). GPU kernel:
+  80 registers, 71,504 bytes stack (+1,104); 4 more #20014 warnings of the
+  same kind. Run out/partition, build log out/partition-build3.txt.
 - 2026-10-11: THE REST, READ ON THE PICTURE SO FAR (the user: after the
   partial program, a second inference on what it drew, building on the output
   so far; it was parked as "re-run the inference on the rest"). read_the_rest
@@ -78,8 +134,8 @@ redesigns; the big ideas wait in "Parked" below.
   gained 0e671a1a, a2fd1cf0, d4a91cb9, lost 0; explained but unsolved
   0 -> 0; 9 unsolved readouts say an L for part of their change (e7639916
   now elects the multicolor cut). GPU kernel: 80 registers, 70,400 bytes
-  stack (+48); 8 more #20014 warnings of the same kind. Run out/lbridge,
-  build log out/lbridge-build.txt.
+  stack (+48); 8 more #20014 warnings of the same kind. The run was compared
+  and deleted; build log out/lbridge-build.txt.
 - 2026-10-10: A KEY DRAWN IN THE GRID (the user: reading something off a key
   is general in ARC; any number of keys, any property as a key). A key is a
   table the grid holds itself, read off each grid: every piece the program
@@ -264,8 +320,8 @@ redesigns; the big ideas wait in "Parked" below.
   Before: out/snap-before; after: out/snap-keys. The key-count limit itself
   is unchanged. Build resource log: out/snap-full-build.txt; no pre-change
   compiler resource log was available for comparison.
-- Training: 221 right, 5 wrong. Current run: out/rest/, the one before the
-  passes out/lbridge/, the one before the keys out/symmetry/ (out\ is not in
+- Training: 224 right, 5 wrong. Current run: out/partition/, the one before
+  it out/rest/, the one before the keys out/symmetry/ (out\ is not in
   git; out/snap-keys/ is the run before the Bridge changes, out/opus55-replay/
   the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
   199 at abc3f0b.
@@ -503,6 +559,10 @@ uses it, global before local. Estimates are rough.
     check speed by interleaving.
 
 ## Next, from before (the user's order)
+0. Now (the user, 2026-10-11): the wrong ones, in id order, each a word the
+   reading lacks. 272f95fa: the center pane said by "the 5th smallest" and
+   not by its part (sizes are asked before places); 7d1f7ee8, bdad9b1f,
+   e40b9e2f, f823c43c as the 2026-10-11 passes entry names them.
 1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
 
 Smaller, open:
@@ -596,11 +656,19 @@ Smaller, open:
   stretched over the canvas (AddColor[11] Fit[1]; 44f52bb0).
 - A pick (piece_pick, 6_correspondence.hpp) is by colors, or by a kind --
   holes, size, band, the most common color, at least so many cells, the
-  first so many by size, a row or column from the middle -- and but_those
-  turns a kind round, said with InvertSelection. A count or a rank is asked
-  only where it splits some pair's pieces with no tie; a size rank only where
-  no pair ties at it (833966f4). The colors an unsaid change starts from are
-  asked together, then each alone (18286ef8's 9).
+  first so many by size, a row or column from the middle -- or the part one
+  color's walls fence off (SelectPartition); but_those turns it round, said
+  with InvertSelection; then WouldFit, or SelectLikeKey (like a piece the
+  pick left out, the key), keeps some of what it took. A count or a rank is
+  asked only where it splits some pair's pieces with no tie; a size rank only
+  where no pair ties at it (833966f4). The colors an unsaid change starts
+  from are asked together, then each alone (18286ef8's 9). The newest picks
+  are asked last, so an older one takes a tie, and a key fenced off by walls
+  before any other key (63613498).
+- Place is a piece's row band and column band (overlapping_bands: Layout,
+  SelectRow, SelectColumn) or the part walls fence it in (fence_parts:
+  Partition cuts on the parts, SelectPartition picks by them), the parts
+  numbered in reading order, row by row, as rows wrap.
 - A mirror all four ways is asked first and takes a tie (b8825c91).
 - Size rank and the fill by shape replay on the hand, so they are asked only
   while the hand is known.

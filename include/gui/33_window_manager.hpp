@@ -175,6 +175,9 @@ private:
       case ui_action::toggle_op_list:
         m_app_state.show_op_list.store(!m_app_state.show_op_list.load());
         break;
+      case ui_action::toggle_programs:
+        m_app_state.show_whole_programs.store(!m_app_state.show_whole_programs.load());
+        break;
       case ui_action::op_tab_get:       m_app_state.op_tab = (int)op_role::get; break;
       case ui_action::op_tab_reduce:    m_app_state.op_tab = (int)op_role::reduce; break;
       case ui_action::op_tab_select:    m_app_state.op_tab = (int)op_role::select; break;

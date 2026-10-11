@@ -226,10 +226,17 @@ struct puzzle_label {
 // stepping through a thousand puzzles should cost only the parse. Whoever
 // needs the facts asks for them — the pane when it opens, the search before
 // it starts. The readout file is written only when asked for, since only a
-// person ever reads it.
+// person ever reads it. The reading itself, infer, is the slow part (seconds
+// where it reads its passes); take_the_reading is the rest, so a caller that
+// holds a lock others wait on can read outside it and take inside it.
+inline void take_the_reading(puzzle& task, inference read, const puzzle_label& label = {},
+                             bool write_report = false);
 inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
                               bool write_report = false) {
-    task.inf = infer(task.train);
+    take_the_reading(task, infer(task.train), label, write_report);
+}
+inline void take_the_reading(puzzle& task, inference read, const puzzle_label& label, bool write_report) {
+    task.inf = std::move(read);
     const inference& inf = task.inf;
     if (write_report)
         log_inference(task.id, inf, label.idx, label.count, label.dataset_flags);
@@ -270,6 +277,8 @@ inline void infer_into_puzzle(puzzle& task, const puzzle_label& label = {},
     for (const auto& [op, as] : by_partner)
         task.dead_ops[(int)op] = !line_says([&](const auto& rule) { return rule.as == as; });
     task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick.fits >= 0; });
+    task.dead_ops[(int)node_type::SelectPartition] = !line_says([](const auto& rule) { return rule.pick.part >= 0; });
+    task.dead_ops[(int)node_type::SelectLikeKey] = !line_says([](const auto& rule) { return rule.pick.like >= 0; });
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one

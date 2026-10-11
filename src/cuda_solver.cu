@@ -523,9 +523,11 @@ __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx
     return res;
 }
 
-// s clipped to rows [r0, r1) and columns [c0, c1); false when nothing is left.
-__device__ inline bool gpu_clip_to_box(const gpu_fixed_object& s, int r0, int c0, int r1, int c1,
-                                       gpu_fixed_object& obj) {
+// s clipped to rows [r0, r1) and columns [c0, c1), and there to the cells
+// `keep(row, col)` holds, in that frame; false when nothing is left.
+template <class Keep>
+__device__ inline bool gpu_clip_to(const gpu_fixed_object& s, int r0, int c0, int r1, int c1, Keep keep,
+                                   gpu_fixed_object& obj) {
     obj.x0 = (int16_t)c0; obj.y0 = (int16_t)r0;
     obj.x1 = (int16_t)(c1 - 1); obj.y1 = (int16_t)(r1 - 1);
     obj.width = (int16_t)(c1 - c0); obj.height = (int16_t)(r1 - r0);
@@ -534,86 +536,16 @@ __device__ inline bool gpu_clip_to_box(const gpu_fixed_object& s, int r0, int c0
     bool any = false;
     GPU_DEV_FOR_EACH_PIXEL(s, sr, sc, v) {
         const int gr = s.y0 + sr, gc = s.x0 + sc;
-        if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1) continue;
+        if (gr < r0 || gr >= r1 || gc < c0 || gc >= c1 || !keep(gr, gc)) continue;
         obj.mask[gr - r0][gc - c0] = v;
         any = true;
     }
     return any;
 }
-
-__device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_object_list& src) {
-    auto& res = gpu_acquire(ctx);
-    // Selection marks the PARTITIONER: selected cells are the divider walls;
-    // the walls are only VIEWED to locate the cut lines, never merged into the
-    // output. Strict, like every act: no selection means no walls, so the whole
-    // thing stays one tile — Partition NEVER falls back to "all painted are
-    // walls". The tiles are cut from the SOURCE objects (clipped to each tile
-    // rectangle), so Partition views the scene as a grid but does not modify the
-    // list by merging — want tiles as single masks? place a UnionList yourself.
-    int gw = ctx.input.width, gh = ctx.input.height;
-    if (gw <= 0 || gh <= 0) return res;
-
-    gpu_fixed_grid walls;
-    walls.clear_cells();
-    for (int i = 0; i < src.count; ++i) {
-        const auto& obj = src.objects[i];
-        if (!obj.selected) continue;
-        GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
-            int gr = obj.y0 + r, gc = obj.x0 + c;
-            if (gr >= 0 && gr < gh && gc >= 0 && gc < gw) walls.data[gr][gc] = v;
-        }
-    }
-
-    bool is_divider[GPU_MAX_GRID][GPU_MAX_GRID];
-    memset(is_divider, 0, sizeof(is_divider));
-    for (int r = 0; r < gh; ++r)
-        for (int c = 0; c < gw; ++c)
-            if (walls.data[r][c] != GPU_TRANSPARENT) is_divider[r][c] = true;
-
-    bool div_row[GPU_MAX_GRID], div_col[GPU_MAX_GRID];
-    memset(div_row, 0, sizeof(div_row)); memset(div_col, 0, sizeof(div_col));
-    for (int r = 0; r < gh; ++r) {
-        bool full = true;
-        for (int c = 0; c < gw && full; ++c) if (!is_divider[r][c]) full = false;
-        div_row[r] = full;
-    }
-    for (int c = 0; c < gw; ++c) {
-        bool full = true;
-        for (int r = 0; r < gh && full; ++r) if (!is_divider[r][c]) full = false;
-        div_col[c] = full;
-    }
-
-    auto open_spans = [](const bool* divider, int n, int16_t* start, int16_t* end) {
-        int count = 0;
-        for (int i = 0; i < n;) {
-            if (divider[i]) { ++i; continue; }
-            start[count] = (int16_t)i;
-            while (i < n && !divider[i]) ++i;
-            end[count++] = (int16_t)i;
-        }
-        return count;
-    };
-    int16_t row_start[GPU_MAX_GRID], row_end[GPU_MAX_GRID];
-    int16_t col_start[GPU_MAX_GRID], col_end[GPU_MAX_GRID];
-    const int row_span_count = open_spans(div_row, gh, row_start, row_end);
-    const int col_span_count = open_spans(div_col, gw, col_start, col_end);
-
-    // Cut each SOURCE object (walls excluded) by the tile rectangles: clip its
-    // cells to each tile, emit the clipped piece as its own object at the tile's
-    // frame. A source object crossing a tile boundary is severed there — that is
-    // what partitioning means. No merge: distinct source layers stay distinct.
-    for (int ri = 0; ri < row_span_count; ++ri)
-        for (int ci = 0; ci < col_span_count; ++ci) {
-            int r0 = row_start[ri], r1 = row_end[ri], c0 = col_start[ci], c1 = col_end[ci];
-            if (c1 <= c0 || r1 <= r0) continue;
-            for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
-                const auto& s = src.objects[i];
-                if (s.selected) continue;  // walls are not content
-                gpu_fixed_object obj;
-                if (gpu_clip_to_box(s, r0, c0, r1, c1, obj)) res.objects[res.count++] = obj;
-            }
-        }
-    return res;
+// s clipped to rows [r0, r1) and columns [c0, c1); false when nothing is left.
+__device__ inline bool gpu_clip_to_box(const gpu_fixed_object& s, int r0, int c0, int r1, int c1,
+                                       gpu_fixed_object& obj) {
+    return gpu_clip_to(s, r0, c0, r1, c1, [](int, int) { return true; }, obj);
 }
 
 // Panes: Partition's act with the cut already decided. Partition reads the
@@ -1224,6 +1156,69 @@ __device__ gpu_object_list& gpu_exec_would_fit(gpu_exec_context& ctx, const gpu_
         if (!src.objects[i].selected) continue;
         const int partner = view.partner((arc::partner_by)how, i);
         res.objects[i].selected = partner >= 0 && arc::would_fit(i, partner, view);
+    }
+    return res;
+}
+
+// SelectLikeKey[how]: of the picked objects, only those like a piece of the key
+// -- every object not picked -- stay picked: of its shape as it lies [0], or
+// turned any way [1] (like_the_key, 8b_op_math.hpp), the question inference
+// replays. Every likeness is read off the marks as they came in.
+__device__ gpu_object_list& gpu_exec_select_like_key(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    const gpu_partner_view view{ src };
+    for (int i = 0; i < src.count; ++i)
+        if (src.objects[i].selected) res.objects[i].selected = arc::like_the_key(how, i, view);
+    return res;
+}
+
+// SelectPartition[which]: the picked objects are walls, as Partition reads them,
+// and the pick becomes every object lying in the part `which` they fence off
+// (parts_the_pick_fences and lies_in_part, 8b_op_math.hpp, which inference
+// replays), the parts numbered in reading order. The walls lie in no part, so
+// they come out unpicked. The canvas is the input's, as Partition's is.
+__device__ gpu_object_list& gpu_exec_select_partition(gpu_exec_context& ctx, const gpu_object_list& src, int which) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    const gpu_partner_view view{ src };
+    int16_t part[arc::MAX_GRID_DIM][arc::MAX_GRID_DIM];
+    arc::parts_the_pick_fences(view, ctx.input.width, ctx.input.height, part);
+    for (int i = 0; i < src.count; ++i) res.objects[i].selected = arc::lies_in_part(view, i, which, part);
+    return res;
+}
+
+// Partition: the selection marks the PARTITIONER: selected cells are walls, only
+// VIEWED to fence the parts, never merged into the output. Strict, like every
+// act: no selection means no walls, so the whole thing stays one part --
+// Partition NEVER falls back to "all painted are walls". The parts are the ones
+// the walls fence off, whatever their shape (parts_the_pick_fences, the parts
+// SelectPartition picks by), each cut from the SOURCE objects: every object not
+// a wall, clipped to the cells of a part, comes back in the part's box, part
+// after part in reading order -- walls across the whole grid fence the tiles of
+// a lattice, row by row. A source object crossing into two parts is severed
+// there -- that is what partitioning means. No merge: distinct source layers stay
+// distinct; want parts as single masks? place a UnionList yourself.
+__device__ gpu_object_list& gpu_exec_partition(gpu_exec_context& ctx, const gpu_object_list& src) {
+    auto& res = gpu_acquire(ctx);
+    const int gw = ctx.input.width, gh = ctx.input.height;
+    if (gw <= 0 || gh <= 0) return res;
+    int16_t part[arc::MAX_GRID_DIM][arc::MAX_GRID_DIM];
+    const int parts = arc::parts_the_pick_fences(gpu_partner_view{ src }, gw, gh, part);
+    for (int which = 0; which < parts; ++which) {
+        arc::cell_box box;
+        for (int r = 0; r < gh && r < arc::MAX_GRID_DIM; ++r)
+            for (int c = 0; c < gw && c < arc::MAX_GRID_DIM; ++c)
+                if (part[r][c] == which) box.include_cell(r, c);
+        if (box.empty()) continue;
+        for (int i = 0; i < src.count && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
+            const auto& s = src.objects[i];
+            if (s.selected) continue;  // walls are not content
+            gpu_fixed_object obj;
+            if (gpu_clip_to(s, box.row0, box.col0, box.row1 + 1, box.col1 + 1,
+                            [&](int row, int col) { return part[row][col] == which; }, obj))
+                res.objects[res.count++] = obj;
+        }
     }
     return res;
 }
@@ -3298,6 +3293,8 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SelectColumn:   result = last ? &gpu_exec_select_band(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
             case node_type::SelectRowFromMiddle:    result = last ? &gpu_exec_select_from_middle(ctx, *last, (int8_t)value, true) : &gpu_acquire(ctx); break;
             case node_type::SelectColumnFromMiddle: result = last ? &gpu_exec_select_from_middle(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
+            case node_type::SelectPartition: result = last ? &gpu_exec_select_partition(ctx, *last, value) : &gpu_acquire(ctx); break;
+            case node_type::SelectLikeKey:  result = last ? &gpu_exec_select_like_key(ctx, *last, (int8_t)value) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
             // branch above; reaching here means has_current_objects was false -> empty result.
             case node_type::NormalizeOrientation:
