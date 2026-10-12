@@ -998,9 +998,14 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
 
 // HOW A PAINT LIES ON WHAT IS DOWN, as words: over it, Union; under it,
 // Underlay, which lands only where nothing is; only onto it, MaskBy[10] -- any
-// color -- and then Union, so it lands only where something is.
+// color -- and then Union, so it lands only where something is; only onto one
+// color, MaskBy of it, or only off it, MaskOut of it, and then Union.
 inline string onto_words(const correspondence_election::fired_rule& rule) {
-    return rule.lay == correspondence_election::fired_rule::laid_onto ? " " + spell("MaskBy", 10) : string();
+    using fired = correspondence_election::fired_rule;
+    if (rule.lay == fired::laid_onto) return " " + spell("MaskBy", 10);
+    if (rule.lay >= fired::laid_off_color) return " " + spell("MaskOut", rule.lay - fired::laid_off_color);
+    if (rule.lay >= fired::laid_onto_color) return " " + spell("MaskBy", rule.lay - fired::laid_onto_color);
+    return string();
 }
 inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
     return rule.lay == correspondence_election::fired_rule::laid_under ? "Underlay" : "Union";
@@ -1040,9 +1045,15 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             if (rule.value == 1) { drawn = { pick, "Outline " + spell("InteriorColor", rule.paint) }; paint = "Union"; }
             else { drawn = { pick, spell("InteriorColor", rule.paint) }; paint = "Underlay"; }
             return true;
-        case said_as::trailed:     drawn = { pick, spell("ExtendTo", rule.value) };      paint = "Union";    return true;
+        case said_as::trailed:
+            drawn = { pick, spell("ExtendTo", rule.value) + onto_words(rule) };
+            paint = laid_paint(rule);
+            return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
-        case said_as::copied_onto: drawn = { pick, spell("CopyTo", rule.value) };        paint = "Union";    return true;
+        case said_as::copied_onto:
+            drawn = { pick, spell("CopyTo", rule.value) + onto_words(rule) };
+            paint = laid_paint(rule);
+            return true;
         case said_as::tiled_along:
             drawn = { pick, spell(paint_value::second(rule.value) ? "TileY" : "TileX", paint_value::number(rule.value)) + onto_words(rule) };
             paint = laid_paint(rule);

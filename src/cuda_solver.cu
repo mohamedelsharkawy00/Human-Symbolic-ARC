@@ -2728,8 +2728,7 @@ __device__ gpu_object_list& gpu_exec_read_under(gpu_exec_context& ctx, const gpu
 __device__ gpu_object_list& gpu_exec_mask(gpu_exec_context& ctx, const gpu_object_list& src, int8_t color, bool keep_match) {
     const bool any_color = (color == GPU_COLOR_ANY);
     return gpu_repaint_over_canvas(ctx, src, [&](int8_t v, int8_t cv) {
-        const bool match = any_color ? (cv != GPU_TRANSPARENT) : (cv == color);
-        return match == keep_match ? v : (int8_t)GPU_TRANSPARENT;
+        return arc::mask_keeps(cv, color, any_color, keep_match) ? v : (int8_t)GPU_TRANSPARENT;
     });
 }
 

@@ -1327,6 +1327,15 @@ ARC_HOST_DEVICE inline bool bridge_bars(int way, int width, int height, const Pi
     return false;
 }
 
+// WHAT MaskBy AND MaskOut KEEP of a cell, said once for the ops and for the
+// reading that replays a paint laid onto or off what is down: MaskBy keeps a
+// cell where the canvas shows `color` -- any color at all, with `any`, as
+// MaskBy[10] -- and MaskOut every other.
+ARC_HOST_DEVICE inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bool keep_match) {
+    const bool match = any ? canvas != TRANSPARENT : canvas == color;
+    return match == keep_match;
+}
+
 // THE TRAIL ExtendTo GROWS, said once for the op and for the reading that
 // replays it: from the cell (row, col) of a piece, step by step that way to the
 // edge of a canvas `width` by `height` or to a cell another piece holds,

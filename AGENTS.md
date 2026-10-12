@@ -11,7 +11,8 @@ language lacks.
 ## Rules
 - Inference is the target, not search. Nothing in the reading searches.
 - Solve for the general case.
-- The training set is the measure for now, not the evaluation set.
+- The training set is the measure until 2026-10-25, then the evaluation set
+  for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
 - A word is said only after it is replayed on every training pair on the host,
   with the arithmetic the GPU op runs (a shared `ARC_HOST_DEVICE` helper in
   `8b_op_math.hpp` the op calls), and seen to change something in every pair.
@@ -47,9 +48,10 @@ language lacks.
   fired rules, sentences). A label is a new name, never a build folder
   (x64-Release, cloud), which readouts.py takes for the unnamed run; a full
   run writes about 225 MB, so delete old labels. It reads a puzzle on every
-  CPU thread and takes 2 to 4 minutes on the 20-thread laptop (135 s and
-  255 s, the last two runs), most of it the passes after the first (it was
-  30 s before them); `ARC_THREADS=1` reads one at a time (the profiler does,
+  CPU thread and takes about 9 minutes on the 20-thread laptop (558 s the
+  last run), most of it the readings whose words may lay cells wrong (it was
+  255 s before them, and 30 s before the passes after the first);
+  `ARC_THREADS=1` reads one at a time (the profiler does,
   under the label `profile`). `ARC_DATASET=eval` reads the evaluation set
   instead (training by default).
 - Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"`
@@ -105,11 +107,17 @@ No GPU there. Run from the repo root.
   sees a background; empty cells are nothing), keeps the plan that explains
   most, and `say_the_plan` writes its delete and fill once.
 - Every choice the reading makes (the ground plan, the cut, whether the
-  line opens with the matching's acts or the words say every change) has one owner,
+  line opens with the matching's acts or the words say every change, whether
+  a word may lay cells wrong) has one owner,
   `says_the_most`: each candidate is read to the end of its words, in the
-  order given, and the one leaving the fewest cells unsaid is kept; the order
-  only breaks a tie, and once one leaves none no later one is read. Each
+  order given, and the one leaving the fewest cells unsaid is kept, of those
+  the one said in the fewest passes; the order only breaks a tie, and once
+  one leaves none with no pass after its own no later one is read. Each
   choice is made just above the first word that reads it.
+- A word is kept where, in every pair, it makes more cells right than it lays
+  wrong (`brings_nearer`, the one judge of every word); the cells it lays
+  wrong are left unsaid for a later word or pass. Every plan is read with
+  words that lay none wrong first (`inference::tolerant`).
 - `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the words the
   reading cannot say yet and how to unlock one.
 - `include/core/8b_op_math.hpp`: what each op does to the cells, called by the

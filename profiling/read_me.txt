@@ -1,7 +1,8 @@
 CPU profiling of dataset inference and DSL replay
 
-Run scripts\profile.bat from the project root.
-It builds RelWithDebInfo, runs arc_said through the full training dataset
+Run scripts\profile.bat [id...] from the project root.
+It builds RelWithDebInfo, runs arc_said through the puzzles named, or the
+full training dataset where none are,
 under the label "profile" (its readouts land in out\profile, as every
 arc_said run's do), one puzzle at a time (ARC_THREADS=1, so profiles compare
 with earlier ones),

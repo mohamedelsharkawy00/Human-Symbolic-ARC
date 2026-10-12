@@ -1,4 +1,4 @@
-# Handoff, 2026-10-11
+# Handoff, 2026-10-12
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
@@ -8,7 +8,36 @@ This file holds only what is current; past stages are in git history
 The user: not much time left. Prefer work that gains puzzles soon over long
 redesigns; the big ideas wait in "Parked" below.
 
+The plan (the user, 2026-10-12): training until 2026-10-25, aiming at about
+350 right there, about 9 a day; then the last week on the evaluation set,
+which is what Kaggle scores (the last evaluation run, 2026-10-10, fit 0 of
+120). The trend, training right, the best of each day: 187 on 10-07, 199 on
+10-08, 219 on 10-10, 224 on 10-11, 231 on 10-12 -- 6 to 9 a day, slowing as
+the easier puzzles go; it gives about 310 to 350 by 10-25. All 1000 by then
+would need about 59 a day.
+
+UNTESTED (the user, 2026-10-12): work a batch of consecutive ids at a time,
+say the next 50 in id order (the user's word was cohort), rather than the
+whole set at once or a puzzle picked here and there. A run of the batch's
+ids alone takes a minute or two, not a full run that stalls the machine, so
+a day holds many more tries; the ids are random, so a batch is a fair sample
+and its count says how the whole set goes; and a batch is a fixed list to
+get through, one unit of progress at a time. A full run now and then shows
+what a word made for one batch broke in the others. A variant: a family of
+the unsolved puzzles that lack the same word (`readouts.py missing`; the
+largest named so far, the 71 that lack only a recolor, "Smaller, open"
+below), one word made for many at once.
+
 ## Parked (the user, 2026-10-10: good ideas, for later)
+- THE READING ON THE GPU (the user, 2026-10-12; parked until after the
+  deadline). The time is in thousands of small checks -- each pick, length
+  and lay of a paint, each word's replay, grids at most 30 by 30 -- the kind
+  of work a GPU does, while it sits idle as the reading runs, and the ops'
+  arithmetic is shared with the device already (8b_op_math.hpp). But the
+  reading around them is greedy and round by round -- claims, maps, passes --
+  so only the checks could move, a round's at a time: about 200,000 calls a
+  full run, 20 threads on one GPU. Weeks of work, and it speeds the runs here,
+  not the Kaggle score (about 3 CPU seconds a puzzle).
 - THE REST FIRES ON THE REST, EVERYWHERE. Today a word reads the hand (the
   cut's pieces carried through the words before it), a paint reads the cut
   opened again, and only a recolor read off the picture (picture_word, below)
@@ -23,6 +52,112 @@ redesigns; the big ideas wait in "Parked" below.
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-12: A WORD MAY LAY CELLS WRONG WHERE IT BRINGS EVERY PAIR NEARER
+  (the user: rejecting a paint for one wrong cell is too early; bdad9b1f,
+  two bars grown to full lines whose crossing is a third color). One judge
+  for every word, brings_nearer (7_infer): paints (paint_holds), moves
+  (slides_show), removals and outlines (drops_hold) tally, pair by pair, the
+  cells they make right (gained: the output shows what was laid there and it
+  was not there before) and the cells they lay wrong; a word holds where it
+  gains more than it lays wrong in every pair. Its wrong cells are left
+  unsaid: the reading's drawn_wrong, counted in what is left over (and
+  printed as "drawn wrong" under it), drawn in the picture the next pass
+  reads (`painted` keeps every paint's cells in the order said, right or
+  wrong), and unclaimed from any word whose claim the picture no longer bears
+  out; weigh nets them off what a word says. A paint laid in one color takes
+  the color the output shows most where it lands. Paints may be laid only
+  onto or off one color of what is down (MaskBy[c], MaskOut[c]; mask_keeps in
+  8b_op_math is the ops' and the replay's one arithmetic; the canvas keeps
+  colors), and trails and copies are laid every way rays and repeats are.
+  Whether words may lay cells wrong is a choice infer makes
+  (inference::tolerant): every plan read with exact words first, then with
+  tolerant ones, a tolerant reading kept only where it leaves fewer cells
+  unsaid, passes and all -- always tolerant, 332efdb3 was lost to "every
+  cell becomes 1", which left its holes wrong and crowded out the rays that
+  solve it. says_the_most breaks a tie by fewer passes (passes_said):
+  bdad9b1f's tolerant reading in one pass over five passes of mirrored
+  copies that drew its pairs by coincidence. 231 right, gained 23581191,
+  319f2597, 41e4d17e, 6f8cd79b, bdad9b1f, d90796e8, lost 0; explained but
+  unsolved 0 -> 0; 7 wrong: bdad9b1f left the list, and 782b5218, ba26e723
+  (tolerant readings) and 29623171, 833966f4, ac0c2ac3 (exact, trails and
+  copies laid under) joined it. 209 readings keep the tolerant words. Run
+  out/fast, against out/ranks.
+- 2026-10-12: SPEED KEPT BACK, AND WHAT IS ONLY SUSPECTED (the user: back to
+  the safe checkpoint, every speculation and suspicion written down). The
+  code is what out/shared ran: 558 s, 231 right, 7 wrong.
+  KEPT BACK, saved as extras/speed_kept_back.patch (against this
+  checkpoint's 7_infer.hpp; extras\ is not in git): bars, filled
+  hollows and filled boxes walked once per cut like rays and laid on each
+  canvas (bridge_walk, fill_walk, box_walk, with own_else_one the one helper
+  for "in its own colors, or else in one"); the picks the words ask read off
+  the hand once until a word changes it (picks_on_hand); and a pick that
+  takes the same pieces as one asked before it, in every pair, not asked
+  again (taken_before) -- every paint, bar and word, each thing a word asks of
+  some picks only keeping its own record (a move's step, a recolor's color, a
+  removal's may). Its full run, out/dedup, read every puzzle the same as
+  out/shared. On every tenth id, the two versions run in turn: about 30% less
+  CPU (306 to 308 s against 428 to 446 s) and 47 to 51 s against 64 to 71 s
+  by the clock. But its full run took 698 s, against 558 s for the
+  checkpoint at a quieter time, and its memory was never measured: less CPU
+  may come with more memory or thrashing (the user). Not settled: a full run
+  of both, one after the other, with time and memory, would settle it (one was
+  begun and stopped at 744 of 1000, for the checkpoint).
+  SUSPECTED, NOT MEASURED -- THE GPU QUEUE: arc_said checks each puzzle's
+  programs on the GPU one puzzle at a time, under one lock
+  (run_what_it_said), a call for each program on each training pair. With
+  the reading faster, the reading threads may queue behind it: during that
+  stopped run 14 of 20 threads were blocked and about 10 at work, while the
+  GPU showed 1 to 13% use (the lock is held through each call's setup and
+  wait, not its work alone). Suspected to cap a full run by the clock, and
+  worse when the GPU is shared (the user had YouTube playing). The idea: the
+  checks off the reading threads -- on the main thread, which only waits, or a
+  thread of their own -- the same results; the catch, each puzzle's reading
+  kept until it is checked (the check reads its palettes, size rule and
+  learned tables), much memory if the checks fall behind. How long the
+  checks take in all was never measured.
+  SUSPECTED -- THE MACHINE: runs at different times do not compare by the
+  clock. Over the day the NVIDIA Overlay used about 8,300 s of CPU and Edge
+  (YouTube) about 4,700 s, and the same binary that ran 558 s was later on pace
+  for over 1,000 s. Compare versions run one after the other on the same ids,
+  by CPU time and by the clock, and watch memory; a timing probe of its own
+  slowed a run by its clock reads (it read the clock some 400 million times).
+- 2026-10-12: A PAINT WALKED ONCE, LAID EVERY WAY (the user: the cost is
+  upstream of the lines the profiler shows). Timed by layer on the 20
+  slowest puzzles: about 88 line readings each, 61% of the time in the
+  tolerant ones, and in each line 90% in the paints, every lay a replay of
+  its own, again whenever the canvas changed. Now a paint is walked once
+  (walk_paint: each cell it reaches, the color laid there first and last,
+  whether two of its own disagree, what was there before) and laid from the
+  walk every way, on every canvas (lay_paint, each_landing); rays, trails,
+  copies and repeats keep their walks for the line (laid_once), and
+  paint_holds is a walk laid one way. Also behind it: the picked pieces'
+  drawing and the ray seeds drawn once per pick (partner_pieces::shown,
+  ray_seeds), ray lengths past the grid read once and repeats too far apart
+  for a second copy not read, claims looked up in a cell grid (cell_marks).
+  Full run 818 s (1204 s before, 255 s before the tolerant readings);
+  said.txt and every readout the same. Then a walk is counted once for each
+  canvas it is laid on, by what lies under its cells (walk_tally), and each
+  lay judged from the counts (may_hold), only a lay that may hold laid cell
+  by cell: 580 s. Then the cut's paints shared by every line read on the cut
+  (cut_paints, read_the_cut): 558 s, about 4% of CPU. Each the same said.txt
+  and readouts. Run out/shared. Tried and dropped: words' replays kept until
+  the hand changes (about 2% of CPU); one reading a plan, strict words first
+  and loose ones only where no strict word says anything (lost 23581191 and
+  332efdb3, and slower, 639 s: the loose words at a line's end leave the
+  passes a worse picture). Measured by CPU time on every tenth id, two
+  versions run in turn (wall time on a sample is its slowest puzzle).
+- 2026-10-12: A RANK BY SIZE COUNTS SIZES, NOT COPIES (the user: 272f95fa,
+  wrong). Its center pane was said by "the fifth smallest", which took the
+  tie from "part 4" (sizes are asked before places) and landed on the center
+  in both pairs only past three panes of 8 cells; on its test three panes of
+  18 put another pane fifth. picks_to_ask now asks a rank by size only where
+  no pair's pieces tie at that place nor anywhere before it. 225 right,
+  gained 272f95fa (part 4 says the center), lost 0; explained but unsolved
+  0 -> 0; 3 wrong: 7d1f7ee8 left the list and no longer fits (its fit leaned
+  on "the third smallest" past pieces of one size; its word, a frame's color
+  at any depth, is still missing). Run out/ranks, against out/x64-Release,
+  the same code before it (out\ was wiped on 2026-10-12: the older runs are
+  gone).
 - 2026-10-11: LONG PROGRAMS FOLD IN THE GUI (the user: 31aa019c's program ran
   off the screen). One toggle, show_whole_programs (ui_action
   toggle_programs, also on the command port): folded, CURRENT and BEST keep
@@ -320,11 +455,11 @@ redesigns; the big ideas wait in "Parked" below.
   Before: out/snap-before; after: out/snap-keys. The key-count limit itself
   is unchanged. Build resource log: out/snap-full-build.txt; no pre-change
   compiler resource log was available for comparison.
-- Training: 224 right, 5 wrong. Current run: out/partition/, the one before
-  it out/rest/, the one before the keys out/symmetry/ (out\ is not in
-  git; out/snap-keys/ is the run before the Bridge changes, out/opus55-replay/
-  the one before that). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
-  199 at abc3f0b.
+- Training: 231 right, 7 wrong. Current run: out/shared/ (out/faster/ reads
+  the same, slower), the one before it out/ranks/, and before that
+  out/x64-Release/ (out\ is not in git, and was wiped on 2026-10-12: the
+  older runs are gone). 170 at 32d371d, 172 at a201ff6, 187 at 7740de8,
+  199 at abc3f0b, 224 at 0b35bfb.
 - This session made the line compose existing words (all in 7_infer; report
   out/opus55-compose-refined-report.md, patch and snapshots in
   out/opus55-compose-refined-work/). 203 right, 0 wrong, gained 18286ef8,
@@ -560,10 +695,20 @@ uses it, global before local. Estimates are rough.
 
 ## Next, from before (the user's order)
 0. Now (the user, 2026-10-11): the wrong ones, in id order, each a word the
-   reading lacks. 272f95fa: the center pane said by "the 5th smallest" and
-   not by its part (sizes are asked before places); 7d1f7ee8, bdad9b1f,
-   e40b9e2f, f823c43c as the 2026-10-11 passes entry names them.
+   reading lacks: 29623171, 782b5218, 833966f4, ac0c2ac3, ba26e723 (new,
+   2026-10-12), e40b9e2f and f823c43c as the 2026-10-11 passes entry names
+   them. 272f95fa and bdad9b1f are solved (2026-10-12), and 7d1f7ee8 no
+   longer fits, its word still missing.
 1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
+   A full run is 558 s: about 88 line readings a slow puzzle, half of them
+   tolerant; each rays and repeats length is still a walk of its own (one
+   walk could judge every length). A run takes every CPU thread, so the
+   machine stalls while it runs (the user). The hotspots are several now --
+   the passes after the first, walking paints, partner lookups, matching --
+   and most of what is left needs fewer readings, not faster ones. Open:
+   the speed kept back and the GPU queue (2026-10-12, "Speed kept back").
+   Lighter runs (the user, bored by a stalled machine): a batch of ids for
+   quick checks, ARC_THREADS=10 to leave half the CPU free.
 
 Smaller, open:
 - Recolors: 71 unsolved lack only a recolor, mostly a color taken from

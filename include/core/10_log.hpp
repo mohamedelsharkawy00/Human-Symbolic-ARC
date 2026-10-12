@@ -253,6 +253,8 @@ inline void report_fired(ostream& report, const correspondence_election& corresp
             report << "\n";
         }
         report << "    left over  " << reading.unclaimed() << " of " << correspondence.cells << " cells\n";
+        if (reading.drawn_wrong)
+            report << "    drawn wrong  " << reading.drawn_wrong << " of those, laid wrong by a word and never set right\n";
         // The order the cut's own line says them in, which is the program.
         if (!reading.line.empty()) {
             report << "    said as";
@@ -592,6 +594,8 @@ inline void log_inference(const string& id, const inference& inf,
     for (const ground_plan& plan : ground_plans(inf.ground_election))
         report << "  |" << (plan == inf.plan ? "*" : " ") << "delete " << deletes(plan)
                << ", fill " << side(plan.filled);
+    // Kept with words that may lay cells wrong (inference::tolerant).
+    if (inf.tolerant) report << "  | words lay cells wrong";
     report << "\n\n";
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);

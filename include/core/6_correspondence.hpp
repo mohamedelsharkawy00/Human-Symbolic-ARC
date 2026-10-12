@@ -320,8 +320,12 @@ struct correspondence_election {
         // The color it paints what it draws in, when it draws in one of its own.
         int8_t paint = -1;
         // HOW A PAINT SAID AFTER THE LINE LIES on what is down: over it, under it
-        // -- only where nothing is -- or only onto it, where something is.
-        enum laid : int8_t { laid_over, laid_under, laid_onto };
+        // -- only where nothing is -- or only onto it, where something is; or
+        // only onto one color of it, or only off one color of it, as MaskBy and
+        // MaskOut of that color keep it: laid_onto_color and laid_off_color
+        // plus the color.
+        enum laid : int8_t { laid_over, laid_under, laid_onto, laid_onto_color,
+                             laid_off_color = laid_onto_color + COLOR_COUNT, laid_count = laid_off_color + COLOR_COUNT };
         int8_t lay = laid_over;
         // A WORD READ OFF THE PICTURE THE LINE HAS DRAWN SO FAR -- the hand and
         // every paint said before it -- rather than off the hand: said after
@@ -402,11 +406,17 @@ struct correspondence_election {
                 if (fired[i].name == name) return (int8_t)i;
             return -1;
         }
+        // THE CELLS THE LINE DRAWS WRONG that no cell left over stands for: a
+        // word said where it brings every pair nearer its output, though it
+        // lays some cells wrong (brings_nearer, 7_infer), and none said after it
+        // set them right. Left unsaid, for the next pass to read on the picture.
+        int drawn_wrong = 0;
         // What every rule together still leaves unexplained, on every pair: the
         // cells nothing claims, whether no match covered them or a change they
-        // were carried through still waits on its word.
+        // were carried through still waits on its word, and the cells the line
+        // drew wrong.
         int unclaimed() const {
-            int left = 0;
+            int left = drawn_wrong;
             for (const auto& pair : pairs) left += pair.unclaimed();
             return left;
         }

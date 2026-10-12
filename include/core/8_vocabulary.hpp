@@ -20,9 +20,10 @@
 //      the wrong count not up) and the readouts' fully-explained-but-unsolved
 //      list.
 // Read what earlier paints left on the canvas, so they wait on composition:
-//   Output, ReadUnder, MaskOut, Intersection, Difference (only the input-blocks
-//   and pane rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy
-//   is said as MaskBy[10] alone, for rays and repeats laid only onto what is down.
+//   Output, ReadUnder, Intersection, Difference (only the input-blocks and pane
+//   rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy and
+//   MaskOut are said only after a paint -- rays, trails, copies, repeats --
+//   laid only onto what is down (MaskBy[10]), or onto or off one color of it.
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
