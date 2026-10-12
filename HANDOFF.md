@@ -28,6 +28,21 @@ the unsolved puzzles that lack the same word (`readouts.py missing`; the
 largest named so far, the 71 that lack only a recolor, "Smaller, open"
 below), one word made for many at once.
 
+## Paper: due 2026-11-08 (the user, 2026-10-12: let's try)
+The ARC Prize paper track (kaggle.com/competitions/arc-prize-2026-paper-track),
+written in the week after the Kaggle deadline, so the work comes first. A
+Kaggle writeup of at most 1,500 words, a cover image and the public
+notebook. It must name a competition submission: the last one before 11-02
+is the one it describes (the last so far: 56790276, 10-03, 0.00). Marked 0
+to 5 on accuracy (the Kaggle score), universality, progress, theory,
+completeness and novelty, averaged. It reports the evaluation set and Kaggle
+only, never the training count. Its main result: the words the evaluation
+puzzles lack (`readouts.py missing` on an evaluation run), which the last
+week reads anyway. Closest earlier work: Neumann and Pinter 2023 (no search;
+each output object's properties read off the input objects), Ferre's grid
+models (MADIL, 2025), Alford et al. 2021 (output objects bound to input
+facts, with search).
+
 ## Parked (the user, 2026-10-10: good ideas, for later)
 - THE READING ON THE GPU (the user, 2026-10-12; parked until after the
   deadline). The time is in thousands of small checks -- each pick, length
@@ -52,6 +67,17 @@ below), one word made for many at once.
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-12: PICK LISTS REUSED ON THE UNCHANGED HAND. finish_the_line keeps
+  picks_on_hand, keyed by colors and fit_colors, and clears it in carry before
+  carrying a word. picks_to_ask sorts each pair's sizes once per call, reused
+  for both directions and every rank. No picks, order or replays removed.
+  Fresh full GPU runs, both ARC_THREADS=20: out/picks_before_all versus
+  out/picks_after_cold. Both 231 right, 7 wrong; gained 0, lost 0; explained
+  but unsolved 0 -> 0. All 1000 readouts and said.txt byte-identical.
+  Sampled process totals: wall 581.95 -> 556.77 s, CPU 5119.66 -> 4849.19 s
+  (5.3% less); peak working set 5509394432 -> 5831999488 bytes (5.9% more).
+  The user paused before the edited run to start cold; this is one comparison,
+  not a controlled repeated speed measurement. The aborted runs are excluded.
 - 2026-10-12: A WORD MAY LAY CELLS WRONG WHERE IT BRINGS EVERY PAIR NEARER
   (the user: rejecting a paint for one wrong cell is too early; bdad9b1f,
   two bars grown to full lines whose crossing is a third color). One judge

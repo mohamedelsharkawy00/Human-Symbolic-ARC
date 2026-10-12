@@ -3461,13 +3461,16 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
     if (steady) picks.push_back({ colors });
     const auto holes = row_of(node_type::SelectObjectsWithHoles), ranks = row_of(node_type::SelectLargestObject);
     for (int value = holes.low; value <= holes.high; ++value) picks.push_back({ 0, piece_pick::by_holes, (int8_t)value });
-    // Each pair's piece sizes in the order a pick by size takes them.
-    auto sizes_in_order = [](const vector<object>& cut, bool largest) {
+    // Sort each pair once for both size orders and every rank asked below.
+    vector<vector<int>> sizes;
+    for (const auto& cut : facts.cuts) {
         vector<int> counts;
         for (const object& piece : cut) counts.push_back(piece.summary.count);
-        if (largest) ranges::sort(counts, greater<>());
-        else ranges::sort(counts);
-        return counts;
+        ranges::sort(counts);
+        sizes.push_back(std::move(counts));
+    }
+    auto size_at = [](const vector<int>& counts, size_t at, bool largest) {
+        return counts[largest ? counts.size() - 1 - at : at];
     };
     // By size, the nearer an end the plainer: the largest and the smallest, then
     // the second of each, so where two take the same pieces in every pair the
@@ -3482,13 +3485,13 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
     // another pane fifth).
     for (int value = ranks.low; value <= ranks.high; ++value)
         for (const int8_t how : { (int8_t)piece_pick::largest, (int8_t)piece_pick::smallest })
-            if (ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
-                    const vector<int> counts = sizes_in_order(cut, how == piece_pick::largest);
+            if (ranges::all_of(sizes, [&](const vector<int>& counts) {
                     const size_t at = (size_t)value;
                     if (at >= counts.size()) return true;
-                    const auto through = counts.begin() + (ptrdiff_t)at + 1;
-                    return ranges::adjacent_find(counts.begin(), through) == through &&
-                           (through == counts.end() || *through != counts[at]);
+                    const bool largest = how == piece_pick::largest;
+                    for (size_t i = 0; i <= at && i + 1 < counts.size(); ++i)
+                        if (size_at(counts, i, largest) == size_at(counts, i + 1, largest)) return false;
+                    return true;
                 }))
                 picks.push_back({ 0, how, (int8_t)value });
     // The bands, as many as some pair's pieces make.
@@ -3522,10 +3525,9 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
     // size above, so the first so many are asked from two.
     for (const bool largest : { true, false })
         for (int value = 1; value <= ranks.high + 1; ++value) {
-            if (!ranges::all_of(facts.cuts, [&](const vector<object>& cut) {
-                    if ((int)cut.size() <= value) return false;
-                    const vector<int> counts = sizes_in_order(cut, largest);
-                    return counts[(size_t)value - 1] != counts[(size_t)value];
+            if (!ranges::all_of(sizes, [&](const vector<int>& counts) {
+                    if ((int)counts.size() <= value) return false;
+                    return size_at(counts, (size_t)value - 1, largest) != size_at(counts, (size_t)value, largest);
                 }))
                 continue;
             const int8_t first_so_many = largest ? piece_pick::largest_ranks : piece_pick::smallest_ranks;
@@ -3636,6 +3638,18 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         }
     return picks;
 }
+
+// Picks depend on the hand and the requested colors, not on claims or the
+// canvas painted beside it. Keep their order, and forget them when carried.
+struct picks_on_hand {
+    std::map<std::pair<uint16_t, uint16_t>, vector<piece_pick>> asked;
+    const vector<piece_pick>& get(const replay_facts& facts, uint16_t colors, uint16_t fit_colors = 0) {
+        const auto [at, fresh] = asked.try_emplace({ colors, fit_colors });
+        if (fresh) at->second = picks_to_ask(facts, colors, fit_colors);
+        return at->second;
+    }
+    void clear() { asked.clear(); }
+};
 
 // Whether two pieces draw the same thing: the same cells in the same colors,
 // wherever each lies.
@@ -5596,12 +5610,14 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // already on the line, the hand the words asked below are replayed on, laid
     // under what is down where a piece sits on another, as the line is said.
     replay_facts facts(inf, train, boundaries);
+    picks_on_hand hand_picks;
     facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
     for (const int8_t which : read.line)
         facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], facts);
     // Carries the hand through a word just said on the line. Once it cannot,
     // the line no longer draws its picture, and no word after lays a cell wrong.
     auto carry = [&](int8_t which) {
+        hand_picks.clear();
         facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], facts);
         facts.tolerant = facts.tolerant && facts.hand_known;
     };
@@ -5803,7 +5819,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int how = 0; how <= KEY_BY_PLACE; ++how)
                 if (const auto seen = how == KEY_BY_PLACE ? key_place_holds(facts, handed)
@@ -5835,7 +5851,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (!facts.hand_known || !from) return {};
         heard aligned, edged, sized, stepped, toward;
         int best_down = 0, best_across = 0;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int value = 0; value < 2 * ways; ++value)
                 if (const auto seen = align_holds(facts, handed, value >= ways, (partner_by)(value % ways)))
@@ -5923,7 +5939,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::where_it_was_copied);
         if (!facts.hand_known || !from) return {};
         heard best;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (const mirror_by mirror : mirrors_asked)
                 for (int how = 0; how < MIRROR_PARTNERS; ++how) {
@@ -5952,7 +5968,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = colors_left(says);
         if (!facts.hand_known || !from) return {};
         heard best;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const auto seen = outline_holds(facts, handed_pieces(facts, pick));
             if (!seen) continue;
             weigh(best, 0, pick, *seen, [says, kept = cell_marks(seen->drawn), dropped = cell_marks(seen->left)](size_t which,
@@ -5981,7 +5997,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             return {};
         heard best;
         const uint16_t from = starts_from(missing::a_recolor);
-        for (const piece_pick& pick : picks_to_ask(facts, facts.hand_known ? from : 0, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, facts.hand_known ? from : 0, from)) {
             if (pick.how == piece_pick::most_common &&
                 !facts.hand_known && !read.line.empty())
                 continue;
@@ -6011,7 +6027,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         shape_color_map_rule best_table;
         vector<uint16_t> shown;
         for (const example& pair : facts.train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int kind = 0; kind < (int)shape_key::count; ++kind) {
                 // Each picked piece's key and the one color it comes out in.
@@ -6070,7 +6086,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int value = KEY_PAIRS_ALONG_ROWS; value <= KEY_PAIRS_ALONG_COLUMNS; ++value)
                 if (const auto seen = key_swap_holds(facts, handed, value))
@@ -6099,7 +6115,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 if (cell.claimed_by < 0 && cell.from_input) from = (uint16_t)(from | 1u << cell.color);
         if (!from) return {};
         heard best;
-        for (const piece_pick& pick : picks_to_ask(facts, from)) {
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
             bool may = true;
             if (facts.hand_known)
                 may = true;
