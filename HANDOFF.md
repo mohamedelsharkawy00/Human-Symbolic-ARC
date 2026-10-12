@@ -67,6 +67,45 @@ facts, with search).
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-12: WHERE THE TIME GOES, MEASURED (the user: speed, pure speed;
+  stopped here; nothing in the reading changed). Each puzzle timed in
+  arc_said -- its reading by the clock and by its thread's CPU, and the GPU
+  lock's wait and hold, into timing.txt -- kept back as
+  extras/said_timing.patch (against scripts/said.cpp; extras\ is not in
+  git). Every tenth id, 20 threads (out/timing_base2): 63 s, the readings
+  460 s by the clock, 414 s of CPU.
+  THE GPU CHECK IS NO QUEUE: its lock held 1.07 s in all, the longest wait
+  0.16 s. A FEW PUZZLES TAKE THE TIME: the ten slowest are 61% of the
+  readings -- e681b708 54 s, 92e50de0 36, 256b0a75 35, 6d0160f0 31, 543a7ed5
+  29, ea959feb 24, ad173014 23, 9edfc990 20, b782dc8a 16, 7837ac64 15 -- and a
+  sample's clock is its slowest puzzle's. THREADS COST LITTLE: e681b708
+  takes 49.2 s alone, 54 s among 20 threads.
+  THE MACHINE: the same ids and build took 142 s at 19:28 and 63 s at 19:42,
+  every readout the same; e681b708 took 132 s then, its last 66 s with no
+  other puzzle running, so something outside the reading slowed it (heat or
+  another program, not known). Asking Windows not to throttle the process
+  (SetProcessInformation, ProcessPowerThrottling) changed nothing, 64 s
+  against 63 s, and was taken out. One thread repeats: e681b708 49.16 s, then
+  49.15 s. So the paint-sharing run Codex stopped (bars, filled hollows and
+  boxes walked once; reverted when its usage ran out; out/paints_shared,
+  half done) may have looked twice as slow for the machine alone: never
+  measured fairly. Back-to-back runs heat the laptop too (the user), so
+  compare old against new on a few slow puzzles, ARC_THREADS=1, old, new,
+  old, new, the best of each; check the readouts on the tenth sample.
+  e681b708 PROFILED ALONE (VTune, 45 s; profiling/output/cpu-20261012-193314-382;
+  inclusive times from its callstacks.csv by extras/inclusive.py): the lines
+  85%; laying a paint cell by cell (lay_paint) 28%, the cell lists of every
+  lay that may hold, built, weighed once and dropped (their push_back 12%);
+  malloc 14% of all; the replay cache, a std::map keyed by tuples, 5% in
+  lookups and 4% torn down at each line's end; the walks 15% (bars 4.6, rays
+  4.4, repeats 3, copies 1.4, trails 1); matching 13%; the key words 11%
+  (key_swap_holds 7, key_place_holds 4); the passes after the first 27% of
+  it all.
+  NEXT, NOT STARTED: (1) a lay weighed by marks and counts alone, its cell
+  lists made only for the paint each kind offers (the same answers by
+  construction; 20% on the slow puzzles is a guess); (2) the replay cache a
+  flat table; (3) the strict and tolerant readings of one plan share its
+  matching.
 - 2026-10-12: PICK LISTS REUSED ON THE UNCHANGED HAND. finish_the_line keeps
   picks_on_hand, keyed by colors and fit_colors, and clears it in carry before
   carrying a word. picks_to_ask sorts each pair's sizes once per call, reused
@@ -128,25 +167,15 @@ facts, with search).
   may come with more memory or thrashing (the user). Not settled: a full run
   of both, one after the other, with time and memory, would settle it (one was
   begun and stopped at 744 of 1000, for the checkpoint).
-  SUSPECTED, NOT MEASURED -- THE GPU QUEUE: arc_said checks each puzzle's
-  programs on the GPU one puzzle at a time, under one lock
-  (run_what_it_said), a call for each program on each training pair. With
-  the reading faster, the reading threads may queue behind it: during that
-  stopped run 14 of 20 threads were blocked and about 10 at work, while the
-  GPU showed 1 to 13% use (the lock is held through each call's setup and
-  wait, not its work alone). Suspected to cap a full run by the clock, and
-  worse when the GPU is shared (the user had YouTube playing). The idea: the
-  checks off the reading threads -- on the main thread, which only waits, or a
-  thread of their own -- the same results; the catch, each puzzle's reading
-  kept until it is checked (the check reads its palettes, size rule and
-  learned tables), much memory if the checks fall behind. How long the
-  checks take in all was never measured.
-  SUSPECTED -- THE MACHINE: runs at different times do not compare by the
-  clock. Over the day the NVIDIA Overlay used about 8,300 s of CPU and Edge
-  (YouTube) about 4,700 s, and the same binary that ran 558 s was later on pace
-  for over 1,000 s. Compare versions run one after the other on the same ids,
-  by CPU time and by the clock, and watch memory; a timing probe of its own
-  slowed a run by its clock reads (it read the clock some 400 million times).
+  THE GPU QUEUE, RULED OUT (measured that evening, "Where the time goes"
+  above): arc_said's one lock on the GPU checks (run_what_it_said) was held
+  1.07 s in all over the tenth sample's 63 s, the longest wait 0.16 s.
+  THE MACHINE, MEASURED (the same entry): runs at different times do not
+  compare by the clock -- the same ids and build took 142 s, then 63 s. Over
+  the day the NVIDIA Overlay used about 8,300 s of CPU and Edge (YouTube)
+  about 4,700 s. Compare on a few slow puzzles on one thread, old and new in
+  turn; a timing probe of its own slowed a run by its clock reads (it read
+  the clock some 400 million times).
 - 2026-10-12: A PAINT WALKED ONCE, LAID EVERY WAY (the user: the cost is
   upstream of the lines the profiler shows). Timed by layer on the 20
   slowest puzzles: about 88 line readings each, 61% of the time in the
