@@ -11,6 +11,10 @@ language lacks.
 ## Rules
 - Inference is the target, not search. Nothing in the reading searches.
 - Solve for the general case.
+- Solve each puzzle with all of its adjacent concepts, as much and as far as
+  they go: the word it lacks, built in the op that owns it (read the whole op
+  list), with every concept next to it, each as general as it can be made;
+  then a full run shows what else they say.
 - The training set is the measure until 2026-10-25, then the evaluation set
   for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
 - A word is said only after it is replayed on every training pair on the host,

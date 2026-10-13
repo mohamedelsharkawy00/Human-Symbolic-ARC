@@ -36,7 +36,7 @@ def elected_block(readout):
     the line read the rest on the picture it drew ([rest N]), the last pass
     kept: what it leaves is what the reading leaves. A pass saying no more than
     the one before it is only read, not said."""
-    passes = re.findall(r'^\[rest \d+\][^\n]*?(?<!before it)\n(.*?)^\[', readout, re.M | re.S)
+    passes = re.findall(r'^\[rest \d+\][^\n]*?(?<!before it)\n(.*?)(?=^\[)', readout, re.M | re.S)
     if passes:
         block = re.search(r'^  reading \d+ .*ELECTED\n((?:    .*\n)*)', passes[-1], re.M)
         if block:

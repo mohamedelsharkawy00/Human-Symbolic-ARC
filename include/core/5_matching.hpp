@@ -64,16 +64,21 @@ struct degrees_of_freedom {
     bool recolor = true;
     // Allow part of an object to extend beyond the target grid's border.
     bool hang_off = true;
-    // Each of the four permissions can be on or off, giving 2^4 = 16 combinations.
-    static constexpr int FREEDOMS = 4;
+    // Allow an object to be found a whole number of times bigger, each of its
+    // cells a square block (same_shape's scale, 1_readings.hpp).
+    bool scale = true;
+    // Each of the five permissions can be on or off, giving 2^5 = 32 combinations.
+    static constexpr int FREEDOMS = 5;
+    // Scale's bit in a reading's packed freedoms.
+    static constexpr int SCALE_BIT = 16;
     static constexpr int COMBINATIONS = 1 << FREEDOMS;
     static constexpr degrees_of_freedom from_index(int packed) {
         return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0,
-                 (packed & 8) != 0 };
+                 (packed & 8) != 0, (packed & SCALE_BIT) != 0 };
     }
     constexpr int index() const {
         return (translate ? 1 : 0) | (pose ? 2 : 0) | (recolor ? 4 : 0) |
-               (hang_off ? 8 : 0);
+               (hang_off ? 8 : 0) | (scale ? SCALE_BIT : 0);
     }
     // How many of the eight ways round a match may try: all, or only as it is.
     constexpr int poses() const { return pose ? POSE_COUNT : 1; }
@@ -81,10 +86,10 @@ struct degrees_of_freedom {
     // Heading and permission labels used to describe a reading.
     static constexpr const char* freedom_names_lead = "And It May";
     static constexpr const char* const freedom_names[FREEDOMS] =
-        { "Move", "Turn", "Color", "Hang Off" };
+        { "Move", "Turn", "Color", "Hang Off", "Scale" };
     constexpr bool may(int freedom) const {
         return freedom == 0 ? translate : freedom == 1 ? pose
-             : freedom == 2 ? recolor   : hang_off;
+             : freedom == 2 ? recolor   : freedom == 3 ? hang_off : scale;
     }
     string label() const { return freedoms_said(*this, "As Is"); }
 };
@@ -105,6 +110,9 @@ struct object_matching {
         int8_t row = 0, col = 0;
         // Rotation or reflection, numbered 0 to 7; 0 means unchanged.
         int8_t pose = 0;
+        // How many times bigger it was found: each of its cells, turned by
+        // `pose`, a square block this many cells wide; 1 at its own size.
+        int8_t scale = 1;
         // Whether the correspondence preserves the object's colors.
         bool exact = true;
         // Whether the object was found at its original position.
@@ -173,6 +181,13 @@ struct object_matching {
         const int into_row = edge.row + row, into_col = edge.col + col;
         if (!into.contains(into_row, into_col)) return false;
         return !edge.hidden || into.data[into_row][into_col] == cells.data[row][col];
+    }
+
+    // THE BOX AN EDGE LANDS IN: its source's, turned the way it landed and
+    // grown as many times as it was found bigger.
+    static pair<int, int> landing_size(const edge& edge, const object_summary& source) {
+        const auto [width, height] = posed_size(edge.pose, source.width, source.height);
+        return { width * edge.scale, height * edge.scale };
     }
 
     // Movement from input to output in the original grid coordinates.
@@ -433,6 +448,13 @@ private:
             }
         return posed;
     }
+    // An object's cells drawn `factor` times bigger, each a square block.
+    static grid scaled_cells(const grid& cells, int factor) {
+        grid big(cells.width * factor, cells.height * factor);
+        for (int row = 0; row < big.height; ++row)
+            for (int col = 0; col < big.width; ++col) big.data[row][col] = cells.data[row / factor][col / factor];
+        return big;
+    }
     static int lit_cells(const grid& cells) {
         int lit = 0;
         for (int row = 0; row < cells.height; ++row)
@@ -681,7 +703,8 @@ private:
             bool placed[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             auto keep = [&](const edge& match) {
                 if (into.contains(match.row, match.col)) placed[match.row][match.col] = true;
-                on_figures.push_back(landed_on_a_figure(match, posed_for(match.pose), into));
+                // Grown, it landed on a piece of the other grid, a figure by being one.
+                on_figures.push_back(match.scale != 1 || landed_on_a_figure(match, posed_for(match.pose), into));
                 found.push_back(match);
             };
 
@@ -728,6 +751,41 @@ private:
                             may_hang_off && (one_object.motif >= 0 ||
                                              twins_over_there(one_object.shape)),
                             -1, -1, false, allowed.poses()), false);
+
+            // Source 3 — the same shape at another size: a piece there whose shape
+            // at any size (scaled_shape) is this one's, grown a whole number of
+            // times -- the factor read off the two boxes, either way round where
+            // it may turn -- and every cell, drawn that big, lying on the piece as
+            // a match by placement asks. A dot or a filled box has no size but
+            // its own (sized_blocks), so none is ever found at another.
+            if (allowed.scale)
+                for (size_t into_index = 0; into_index < into_info.size(); ++into_index) {
+                    const auto& landing = into_info[into_index].summary;
+                    if (into_info[into_index].scaled_shape != one_object.scaled_shape) continue;
+                    if (!allowed.translate && !same_corner(landing, one_object.summary)) continue;
+                    for (const bool sideways : { false, true }) {
+                        if (sideways && !allowed.pose) continue;
+                        const int wide = sideways ? cells.height : cells.width, tall = sideways ? cells.width : cells.height;
+                        const int factor = landing.width / wide;
+                        if (factor < 2 || landing.width != wide * factor || landing.height != tall * factor) continue;
+                        const object_matches grown = find_in(scaled_cells(cells, factor), into, false, landing.row,
+                                                             landing.col, true, allowed.poses());
+                        const object_match* best = nullptr;
+                        for (const object_match& hit : grown.hits) {
+                            const auto [hit_width, hit_height] = posed_size(hit.pose, cells.width * factor,
+                                                                            cells.height * factor);
+                            if (hit_width != landing.width || hit_height != landing.height) continue;
+                            if (!allowed.recolor && !hit.exact) continue;
+                            if (!best || (hit.exact && !best->exact)) best = &hit;
+                        }
+                        if (!best) continue;
+                        auto edge = edge_from_match(*best, (int)from_index, false);
+                        edge.to = (int16_t)into_index;
+                        edge.scale = (int8_t)factor;
+                        keep(edge);
+                        break;
+                    }
+                }
 
             // Source 2 — shape: objects there with the same canonical hash (count
             // equality guards hash collisions). Skip placements source 1 found.
@@ -819,7 +877,8 @@ private:
     // than the same piece in plain sight beside it.
     static int freedom_spent(const edge& edge) {
         return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
-               (edge.pose == 0 ? 0 : 2) + (edge.outside == 0 && edge.hidden == 0 ? 0 : 1);
+               (edge.pose == 0 ? 0 : 2) + (edge.scale == 1 ? 0 : 2) +
+               (edge.outside == 0 && edge.hidden == 0 ? 0 : 1);
     }
 
     // HOW FAR A PIECE TRAVELLED to land here: a slide along one line before one

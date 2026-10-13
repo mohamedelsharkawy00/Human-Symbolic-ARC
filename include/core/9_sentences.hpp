@@ -77,7 +77,7 @@ inline string pick_words(const piece_pick& pick) {
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectAtLeastCells",
                                                  "SelectLargestObject", "SelectSmallestObject",
-                                                 "SelectRowFromMiddle", "SelectColumnFromMiddle" };
+                                                 "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     string chosen = "SelectAll InvertSelection";
     if (how < 0) {
@@ -716,7 +716,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         // Keep every cell of the pane, including its background. Panes clears
         // marks; the selector names exactly one complete drawing, then Origin
         // moves only that pane. No crop-to-ink or background restoration.
-        said.sentences.push_back("Input Panes SelectUnique Origin Union");
+        said.sentences.push_back("Input Panes " + spell("SelectUnique", (int)twin_by::drawing) + " Origin Union");
         said.background_filled = true;  // The selected pane supplies its full frame.
         return true;
     }
@@ -1207,8 +1207,8 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     // The cut as its words open the line, said again by every paint after it.
     const vector<beat> opening = beats;
 
-    for (int8_t cell : facts.tied_with_chosen) {
-        if (cell < 0 || cell >= (int8_t)facts.readings.size()) continue;
+    for (const int cell : facts.tied_with_chosen) {
+        if (cell < 0 || cell >= (int)facts.readings.size()) continue;
         if (const string segmentation = word_for_segmentation(facts.readings[cell].segmentation); !segmentation.empty())
             tied.push_back(segmentation);
     }

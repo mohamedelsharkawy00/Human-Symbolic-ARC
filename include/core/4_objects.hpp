@@ -122,6 +122,10 @@ struct object_segmentation {
         object_summary summary;
         // Canonical shape hash (orientationless, positionless)
         uint32_t shape = 0;
+        // Its shape at any size, any way round (key_of_shape): the key a piece
+        // found bigger or smaller on the other grid shares with it -- none
+        // but its own size's for a dot or a filled box (sized_blocks).
+        uint32_t scaled_shape = 0;
         // Number of matches touching this object, counted after the matches are final.
         int edges_touching = 0;
         // Whether a match identifies a partner on the other grid.
@@ -194,7 +198,7 @@ struct object_segmentation {
         // Charge an empty segmentation the full grid cost plus a position cost.
         if (objects.empty()) return (plain + place_bits) / plain;
         // A position per object, plus the cells of each shape the first time it is
-        // met. Same shape turned round is the same shape — the hash is canonical.
+        // met. Same shape turned round is the same shape — one key (key_of_shape).
         double cost = objects.size() * place_bits;
         for (size_t i = 0; i < objects.size(); ++i) {
             bool said_before = false;
@@ -272,7 +276,8 @@ private:
         static constexpr int MAX_OBJECTS = MAX_GRID_CELLS;
         // One object found: its record always, its cells when the caller keeps them.
         auto keep = [&](const object& found, int8_t color) {
-            info.push_back({ .color = color, .summary = found.summary, .shape = shape_of(found) });
+            info.push_back({ .color = color, .summary = found.summary, .shape = shape_of(found),
+                             .scaled_shape = scaled_shape_of(found) });
             if (objects) objects->push_back(found);
         };
 
@@ -324,9 +329,14 @@ private:
 
     // Canonical shape of an object: which cells of its box it fills, the same
     // number whichever way round it sits.
+    // Its shape at any size, any way round.
+    static uint32_t scaled_shape_of(const object& one) {
+        return key_of_shape(one.summary.width, one.summary.height,
+                            [&](int row, int col) { return (int)one.cells[row][col]; }, { true, true });
+    }
     static uint32_t shape_of(const object& one) {
-        return canonical_shape_hash(one.summary.width, one.summary.height,
-                                    [&](int row, int col) { return one.cells[row][col] != TRANSPARENT; });
+        return key_of_shape(one.summary.width, one.summary.height,
+                            [&](int row, int col) { return (int)one.cells[row][col]; }, ANY_WAY_ROUND);
     }
 
     // Counts differing cells when two objects are aligned at their top-left corners.

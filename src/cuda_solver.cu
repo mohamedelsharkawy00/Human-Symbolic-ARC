@@ -490,11 +490,12 @@ __device__ gpu_object_list& gpu_exec_size_rank_color_map(gpu_exec_context& ctx, 
 // (largest=true -> biggest first, else smallest first). Lossless — the list is
 // unchanged, only the rank-th object's cells get selected. Keeping only it is
 // `SelectObjectBySize[r] InvertSelection DeleteSelection`, same as Filter.
-// Add a mark to the sole distinct drawing; keep every object and prior mark.
-__device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const gpu_object_list& src) {
+// Add a mark to the one object with no twin, as `how` reads twins
+// (unique_piece); keep every object and prior mark.
+__device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const gpu_object_list& src, int8_t how) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
-    const int found = arc::unique_drawing(src.count,
+    const int found = arc::unique_piece(how, src.count,
         [&](int i) { return src.objects[i].width; },
         [&](int i) { return src.objects[i].height; },
         [&](int i, int r, int c) { return (int8_t)src.objects[i].mask[r][c]; });
@@ -505,6 +506,16 @@ __device__ gpu_object_list& gpu_exec_select_unique(gpu_exec_context& ctx, const 
 __device__ gpu_object_list& gpu_exec_select_object_by_size(gpu_exec_context& ctx, const gpu_object_list& src, int rank, bool largest) {
     auto& res = gpu_acquire(ctx);
     gpu_copy_list(res, src);
+    // Past the ranks, every object with the most -- or the fewest -- of a count (count_of).
+    if (rank >= arc::SIZE_RANKS) {
+        const int kind = rank - arc::SIZE_RANKS;
+        arc::each_extreme(res.count, largest, [&](int i) {
+            const gpu_fixed_object& obj = res.objects[i];
+            return arc::count_of(kind, min((int)obj.height, GPU_MAX_GRID), min((int)obj.width, GPU_MAX_GRID),
+                                 [&](int row, int col) { return (int)obj.mask[row][col]; });
+        }, [&](int i) { res.objects[i].selected = true; });
+        return res;
+    }
     if (rank < 0 || rank >= res.count) return res;
     int counts[GPU_KERNEL_MAX_OBJECTS], indices[GPU_KERNEL_MAX_OBJECTS];
     for (int i = 0; i < res.count; ++i) {
@@ -1008,6 +1019,13 @@ struct gpu_partner_view {
         return found;
     }
     __device__ bool painted(int i, int row, int col) const { return color_at(i, row, col) != GPU_TRANSPARENT; }
+    // The blocks object i's shape is drawn in (blocks_of), its colors aside.
+    __device__ arc::shape_blocks blocks(int i) const {
+        const arc::cell_box own = box(i);
+        return arc::blocks_of(own.width(), own.height(),
+                              [&](int row, int col) { return color_at(i, own.row0 + row, own.col0 + col); },
+                              arc::AS_IT_LIES);
+    }
     // The color object i paints at that cell of the canvas, transparent off it.
     __device__ int color_at(int i, int row, int col) const {
         const gpu_fixed_object& obj = list.objects[i];
@@ -1127,8 +1145,21 @@ __device__ gpu_object_list& gpu_exec_color_from(gpu_exec_context& ctx, const gpu
         gpu_paint_key_places(src, res);
         return res;
     }
-    if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
     const gpu_partner_view view{ src };
+    // Cell by cell, from the one piece of its shape (colors_from_its_shape).
+    if (how >= arc::COLORS_FROM_ITS_SHAPE) {
+        for (int i = 0; i < src.count; ++i) {
+            if (!src.objects[i].selected) continue;
+            auto& obj = res.objects[i];
+            arc::colors_from_its_shape(how - arc::COLORS_FROM_ITS_SHAPE, i, view, [&](int row, int col, int color) {
+                const int r = row - obj.y0, c = col - obj.x0;
+                if (r >= 0 && c >= 0 && r < obj.height && c < obj.width && arc::is_color(color))
+                    obj.mask[r][c] = (int8_t)color;
+            });
+        }
+        return res;
+    }
+    if (how < 0 || how >= (int8_t)arc::partner_by::count) return res;
     for (int i = 0; i < src.count; ++i) {
         if (!src.objects[i].selected) continue;
         const int color = view.color_from((arc::partner_by)how, i);
@@ -2605,7 +2636,75 @@ __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const g
     return res;
 }
 
+// ExtendTo PAST ITS EIGHT WAYS: every picked object grows in step with the
+// others along its track until they meet -- grow_in_step, 8b_op_math.hpp, the
+// growth the reading replays -- and hands back its body and every cell it took,
+// in its first color, as a trail hands back its body and its trail.
+__device__ gpu_object_list& gpu_exec_grow_in_step(gpu_exec_context& ctx, const gpu_object_list& src,
+                                                  arc::grown_along track) {
+    auto& res = gpu_acquire(ctx);
+    int gw = ctx.output.width  > 0 ? (int)ctx.output.width  : (int)ctx.input.width;
+    int gh = ctx.output.height > 0 ? (int)ctx.output.height : (int)ctx.input.height;
+    if (gw <= 0 || gh <= 0) return res;
+    gw = min(gw, GPU_MAX_GRID); gh = min(gh, GPU_MAX_GRID);
+
+    // Each cell's object, the first in the list that holds it.
+    int16_t* owner = ctx.grow_scratch[0];
+    const int16_t* turn = ctx.grow_scratch[1];
+    for (int at = 0; at < gw * gh; ++at) owner[at] = -1;
+    const int n = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
+    for (int i = 0; i < n; ++i) {
+        const auto& o = src.objects[i];
+        GPU_DEV_FOR_EACH_PIXEL(o, r, c, v) { (void)v;
+            const int x = o.x0 + c, y = o.y0 + r;
+            if (x >= 0 && x < gw && y >= 0 && y < gh && owner[y * gw + x] < 0) owner[y * gw + x] = (int16_t)i;
+        }
+    }
+    arc::grow_in_step(gw, gh, track, [&](int piece) { return src.objects[piece].selected; },
+                      owner, ctx.grow_scratch[1], ctx.grow_scratch[2]);
+
+    for (int i = 0; i < n && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
+        const auto& o = src.objects[i];
+        if (o.width <= 0 || o.height <= 0) continue;
+        // Only what was picked grows; the rest ride through as they are.
+        if (!o.selected) { res.objects[res.count++] = o; continue; }
+        int min_x = 1 << 30, min_y = 1 << 30, max_x = -(1 << 30), max_y = -(1 << 30);
+        auto reach = [&](int y, int x) {
+            if (x < min_x) min_x = x; if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y; if (y > max_y) max_y = y;
+        };
+        GPU_DEV_FOR_EACH_PIXEL(o, r, c, v) { (void)v; reach(o.y0 + r, o.x0 + c); }
+        for (int at = 0; at < gw * gh; ++at)
+            if (turn[at] > 0 && owner[at] == i) reach(at / gw, at % gw);
+        if (max_x < min_x) continue;
+        const int nw = min(max_x - min_x + 1, GPU_MAX_GRID);
+        const int nh = min(max_y - min_y + 1, GPU_MAX_GRID);
+
+        gpu_fixed_object& out = res.objects[res.count];
+        // The grown object is the SAME object, so it keeps the mark it was
+        // picked by, as a trail's does.
+        out.selected = o.selected;
+        out.x0 = (int16_t)min_x; out.y0 = (int16_t)min_y;
+        out.x1 = (int16_t)(min_x + nw - 1); out.y1 = (int16_t)(min_y + nh - 1);
+        out.width = (int16_t)nw; out.height = (int16_t)nh;
+        out.mask.clear();
+        GPU_DEV_FOR_EACH_PIXEL(o, r, c, v) {
+            const int lx = o.x0 + c - min_x, ly = o.y0 + r - min_y;
+            if (lx >= 0 && lx < nw && ly >= 0 && ly < nh) out.mask[ly][lx] = v;  // body keeps its color
+        }
+        const int8_t color = gpu_obj_first_color(o);
+        for (int at = 0; at < gw * gh; ++at) {
+            if (turn[at] <= 0 || owner[at] != i) continue;
+            const int lx = at % gw - min_x, ly = at / gw - min_y;
+            if (lx >= 0 && lx < nw && ly >= 0 && ly < nh) out.mask[ly][lx] = color;
+        }
+        ++res.count;
+    }
+    return res;
+}
+
 __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
+    if (dir >= arc::heading::count) return gpu_exec_grow_in_step(ctx, src, (arc::grown_along)(dir - arc::heading::count));
     auto& res = gpu_acquire(ctx);
     const arc::heading_step step = arc::step_of(dir);
     int gw = ctx.output.width  > 0 ? (int)ctx.output.width  : (int)ctx.input.width;
@@ -3219,7 +3318,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::Split:          result = last ? &gpu_exec_split(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::Colors:         result = last ? &gpu_exec_colors(ctx, *last) : &gpu_acquire(ctx); break;
             case node_type::SelectMostCommonColor: result = last ? &gpu_exec_select_most_common_color(ctx, *last) : &gpu_acquire(ctx); break;
-            case node_type::SelectUnique: result = last ? &gpu_exec_select_unique(ctx, *last) : &gpu_acquire(ctx); break;
+            case node_type::SelectUnique: result = last ? &gpu_exec_select_unique(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectLargestObject:  result = last ? &gpu_exec_select_object_by_size(ctx, *last, value, true) : &gpu_acquire(ctx); break;
             case node_type::SelectSmallestObject: result = last ? &gpu_exec_select_object_by_size(ctx, *last, value, false) : &gpu_acquire(ctx); break;
             case node_type::SortBySize:  result = last ? &gpu_exec_sort_by_size(ctx, *last, value == 0 ? 1 : 0) : &gpu_acquire(ctx); break;

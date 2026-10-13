@@ -324,6 +324,9 @@ struct gpu_exec_context {
     // access pattern"). A contiguous global buffer accessed by lane 0 is coalesced.
     // Safe to share across ops: the lane-0 op switch runs one op at a time.
     int8_t op_scratch[GPU_GRID_CELLS];
+    // Lane-0 scratch for ExtendTo grown in step (grow_in_step): the piece that
+    // took each cell, the turn it took it in, and the cells still to grow from.
+    int16_t grow_scratch[3][GPU_GRID_CELLS];
 };
 // Ops overlay a packed mask on op_scratch, so it must have room for one.
 static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(gpu_packed_mask),

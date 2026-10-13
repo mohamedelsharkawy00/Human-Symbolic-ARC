@@ -300,8 +300,9 @@ struct tile_size { int width = 0, height = 0; };
 
 // THE EIGHT WAYS, the one numbering of directions in the project: the cells
 // around a cell, and the ways a piece can go, numbered as a compass is,
-// clockwise from up, as MoveToEdge, ExtendTo and Shift take them. The way back
-// is four on, a quarter turn two on, and the sides are the even ways.
+// clockwise from up, as MoveToEdge, Shift and ExtendTo's first eight take
+// them. The way back is four on, a quarter turn two on, and the sides are the
+// even ways.
 struct heading {
     enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
 };
@@ -484,27 +485,183 @@ ARC_HOST_DEVICE inline pair<int, int> pose_source(int pose, int width, int heigh
     return { row, col };
 }
 
-// Canonical (orientationless, positionless) shape identity: the smallest
-// shape_occupancy_hash over the eight ways round -- turned either way, mirrored
-// either way -- done by index arithmetic, no pose grids built. Equal shapes have
-// equal hashes; collisions are possible. occupied(row, col) reads the original
-// shape without copying its storage. THE KEY OF THE LEARNED SHAPE TABLE: the
-// reading learns it and the ops that read the table look it up, both here, so
-// a shape the pairs showed one way round is the same shape the test shows
-// another (e8593010's L, turned).
-template <typename OccupancyAt>
-ARC_HOST_DEVICE inline uint32_t canonical_shape_hash(int width, int height, OccupancyAt occupied) {
+// Where a cell of the ORIGINAL lands once posed, so a place can be carried into
+// the frame a pair is compared in. The exact inverse of pose_source.
+ARC_HOST_DEVICE inline pair<int, int> posed_place(int pose, int width, int height,
+                                  int row, int col) {
+    const int down   = (pose & 2) ? height - 1 - row : row;
+    const int across = (pose & 4) ? width  - 1 - col : col;
+    return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
+}
+
+// THE EIGHT WAYS ROUND IN THE ORDER A SHAPE ASKS THEM, turns before flips and
+// rights before lefts: as it lies, a quarter turn right, a half turn, a
+// quarter turn left, then flipped left to right, top to bottom, and across
+// either diagonal. Where two ways lay a shape on another, the first is how it
+// lies there (103eff5b's key, which a flip lays on the azure shape too, in the
+// wrong colors). A switch and not a table, so the kernel asks the same order.
+ARC_HOST_DEVICE constexpr int pose_asked(int asked) {
+    switch (asked) {
+    case 1: return 3;
+    case 2: return 6;
+    case 3: return 5;
+    case 4: return 4;
+    case 5: return 2;
+    case 6: return 1;
+    case 7: return 7;
+    default: return 0;
+    }
+}
+
+// WHAT A SHAPE MAY CHANGE AND STILL BE THE SAME SHAPE (the user, 2026-10-13:
+// a shape is the same whatever its colors, turns, flips and size -- one owner,
+// asked across the solver). Each asker says which changes it lets go by: its
+// colors (recolor: a shape is the cells it paints, whatever their colors;
+// held, it is a drawing, colors and all), the eight ways round (turn), its
+// size by one factor both ways (scale), or by one down and another across
+// (stretch). A shape is read cell by cell, cell(row, col) from its box's
+// top-left, each a color, TRANSPARENT where it paints none.
+struct shape_freedom { bool turn = false, scale = false, stretch = false, recolor = true; };
+// A shape as it lies, a shape any way round, and a drawing: nothing may change.
+constexpr shape_freedom AS_IT_LIES{}, ANY_WAY_ROUND{ true }, DRAWING{ false, false, false, false };
+
+// Whether two cells of shapes are alike, as `free` lets their colors differ.
+ARC_HOST_DEVICE constexpr bool cells_alike(int one, int other, shape_freedom free) {
+    return free.recolor ? (one != TRANSPARENT) == (other != TRANSPARENT) : one == other;
+}
+
+// THE BLOCKS A SHAPE IS DRAWN IN: the most rows, and the most columns, its
+// cells repeat in alike, lined up with its box -- 1 where nothing repeats.
+// Shrunk by them, a shape is its smallest drawing, the one every bigger
+// drawing of it shrinks to: every factor it repeats in divides the largest,
+// so the largest shrinks it all the way.
+struct shape_blocks { int down = 1, across = 1; };
+template <class Cell>
+ARC_HOST_DEVICE inline shape_blocks blocks_of(int width, int height, Cell cell, shape_freedom free) {
+    auto repeats = [&](int factor, bool rows) {
+        if ((rows ? height : width) % factor != 0) return false;
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col)
+                if (!cells_alike(cell(row, col), cell(rows ? row - row % factor : row, rows ? col : col - col % factor),
+                                 free))
+                    return false;
+        return true;
+    };
+    shape_blocks blocks;
+    for (int factor = height; factor > 1; --factor)
+        if (repeats(factor, true)) { blocks.down = factor; break; }
+    for (int factor = width; factor > 1; --factor)
+        if (repeats(factor, false)) { blocks.across = factor; break; }
+    return blocks;
+}
+
+// A SHAPE WITH NO SIZE BUT ITS OWN: one whose smallest drawing is one cell,
+// a dot or a filled box, is every filled box at some size, so a likeness at
+// another size says nothing of it. It keeps its own size: at any size it is
+// the same only as itself. Its blocks, as a shape may shrink by them.
+ARC_HOST_DEVICE inline shape_blocks sized_blocks(shape_blocks blocks, int width, int height) {
+    return blocks.down == height && blocks.across == width ? shape_blocks{} : blocks;
+}
+
+// The blocks a shape is shrunk by, as `free` lets its size change: none
+// where it may not, nor where it has no size but its own (sized_blocks).
+template <class Cell>
+ARC_HOST_DEVICE inline shape_blocks shrunk_by(int width, int height, Cell cell, shape_freedom free) {
+    return free.scale || free.stretch ? sized_blocks(blocks_of(width, height, cell, free), width, height)
+                                      : shape_blocks{};
+}
+
+// THE KEY OF A SHAPE, as `free` lets it change: one number every drawing of
+// the same shape shares -- read off its smallest drawing where its size may
+// change (scaled, with its blocks' proportions), the smallest over the eight
+// ways round where it may turn, done by index arithmetic, no pose grids
+// built. Only which cells it paints enters a key, never their colors. Equal
+// shapes have equal keys; collisions are possible. THE KEY OF THE LEARNED
+// SHAPE TABLE: the reading learns it and the ops that read the table look it
+// up, both here, so a shape the pairs showed one way round is the same shape
+// the test shows another (e8593010's L, turned).
+template <class Cell>
+ARC_HOST_DEVICE inline uint32_t key_of_shape(int width, int height, Cell cell, shape_freedom free) {
+    const shape_blocks blocks = shrunk_by(width, height, cell, free);
+    const int small_width = width / blocks.across, small_height = height / blocks.down;
     uint32_t best = 0xFFFFFFFFu;
-    for (int pose = 0; pose < POSE_COUNT; ++pose) {
-        const auto [posed_width, posed_height] = posed_size(pose, width, height);
-        const uint32_t hash = shape_occupancy_hash(posed_width, posed_height, [&](int i) {
-            const auto [row, col] = pose_source(pose, width, height, i / posed_width,
+    for (int pose = 0; pose < (free.turn ? POSE_COUNT : 1); ++pose) {
+        const auto [posed_width, posed_height] = posed_size(pose, small_width, small_height);
+        uint32_t hash = shape_occupancy_hash(posed_width, posed_height, [&](int i) {
+            const auto [row, col] = pose_source(pose, small_width, small_height, i / posed_width,
                                                 i % posed_width);
-            return occupied(row, col);
+            return cell(row * blocks.down, col * blocks.across) != TRANSPARENT;
         });
+        if (free.scale && !free.stretch) {
+            int down = (pose & 1) ? blocks.across : blocks.down, across = (pose & 1) ? blocks.down : blocks.across;
+            for (int common = down; common > 1; --common)
+                if (down % common == 0 && across % common == 0) { down /= common; across /= common; break; }
+            hash = (hash ^ (uint32_t)(down * MAX_GRID_DIM + across)) * 16777619u;
+        }
         if (hash < best) best = hash;
     }
     return best;
+}
+
+// HOW ONE SHAPE LIES ON ANOTHER: the way round the first is turned (pose),
+// the blocks each is shrunk by, and the first's smallest drawing.
+struct shape_fit {
+    int pose = 0;
+    shape_blocks mine, theirs;
+    int small_width = 0, small_height = 0;
+};
+
+// The cell of the second shape that the first's cell (row, col) lies on,
+// read from the top-left of its block, both from their boxes' top-left.
+ARC_HOST_DEVICE inline pair<int, int> fit_place(const shape_fit& fit, int row, int col) {
+    const auto [down, across] = posed_place(fit.pose, fit.small_width, fit.small_height,
+                                            row / fit.mine.down, col / fit.mine.across);
+    return { down * fit.theirs.down, across * fit.theirs.across };
+}
+
+// WHETHER TWO SHAPES ARE THE SAME, as `free` lets them differ: the first
+// `width` by `height`, read by cell(row, col), the second `other_width` by
+// `other_height`, read by other(row, col). Where size may change, each is
+// shrunk to its smallest drawing by its blocks (`mine`, `theirs`: blocks_of,
+// read by the asker where it keeps them -- each piece's once), and a scaled
+// one's blocks keep the other's proportions; then the first, turned one of the
+// ways round it may take, in the order they are asked (pose_asked,
+// pose_source), lies on the second cell for cell alike. How it lies there is
+// handed to `fit`.
+template <class Cell, class Other>
+ARC_HOST_DEVICE inline bool same_shape_in_blocks(int width, int height, Cell cell, shape_blocks mine,
+                                                 int other_width, int other_height, Other other, shape_blocks theirs,
+                                                 shape_freedom free, shape_fit* fit = nullptr) {
+    if (!free.scale && !free.stretch) mine = theirs = shape_blocks{};
+    mine = sized_blocks(mine, width, height);
+    theirs = sized_blocks(theirs, other_width, other_height);
+    const int small_width = width / mine.across, small_height = height / mine.down;
+    for (int asked = 0; asked < (free.turn ? POSE_COUNT : 1); ++asked) {
+        const int pose = pose_asked(asked);
+        const auto [posed_width, posed_height] = posed_size(pose, small_width, small_height);
+        if (posed_width * theirs.across != other_width || posed_height * theirs.down != other_height) continue;
+        const int down = (pose & 1) ? mine.across : mine.down, across = (pose & 1) ? mine.down : mine.across;
+        if (!free.stretch && down * theirs.across != across * theirs.down) continue;
+        bool same = true;
+        for (int row = 0; row < posed_height && same; ++row)
+            for (int col = 0; col < posed_width && same; ++col) {
+                const auto [from_row, from_col] = pose_source(pose, small_width, small_height, row, col);
+                same = cells_alike(cell(from_row * mine.down, from_col * mine.across),
+                                   other(row * theirs.down, col * theirs.across), free);
+            }
+        if (!same) continue;
+        if (fit) *fit = { pose, mine, theirs, small_width, small_height };
+        return true;
+    }
+    return false;
+}
+// The same, each shape's blocks read here.
+template <class Cell, class Other>
+ARC_HOST_DEVICE inline bool same_shape(int width, int height, Cell cell, int other_width, int other_height,
+                                       Other other, shape_freedom free, shape_fit* fit = nullptr) {
+    return same_shape_in_blocks(width, height, cell, shrunk_by(width, height, cell, free),
+                                other_width, other_height, other, shrunk_by(other_width, other_height, other, free),
+                                free, fit);
 }
 
 }  // namespace arc

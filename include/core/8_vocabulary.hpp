@@ -29,8 +29,6 @@
 // Partition: cuts the parts the walls the selection marks fence off
 //   (fence_parts, the parts SelectPartition picks by); overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
-// SelectUnique: marks the one drawing with no twin (unique_drawing in
-//   8b_op_math.hpp); only the pane pick says it, for the odd pane.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
 //   painted output bounds [2] (fit_to, 8b_op_math.hpp). Pane-pick uses [0];
 //   explicit background fill uses [1] or [2]; the filled frame uses [1] on
@@ -175,16 +173,21 @@ enum class inferred_amount { none, some, all };
   /* facing it across the grid. Only the picked pieces are bridged, and only */ \
   /* the bars come back picked. Past those [9], an L from each picked piece  */ \
   /* to its one partner of each kind partner_of_kind names.                  */ \
-  X(Bridge                      , 0                 , 27                       , generate , none, true , false) \
+  X(Bridge                      , 0                 , 31                       , generate , none, true , false) \
   X(Shift                       , 0                 , 7                        , translate, none, true , false) \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
-  X(ExtendTo                    , 0                 , 7                        , generate , none, true , false) \
+  /* A trail one of the eight ways [0-7], or past them every picked piece    */ \
+  /* grown in step with the others until they meet: along its rows, along    */ \
+  /* its columns, to every side, along the canvas's edge (grown_along).      */ \
+  X(ExtendTo                    , 0                 , 11                       , generate , none, true , false) \
   /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
-  /* past those [9], the color a key drawn in the grid shows at its place.    */ \
-  X(ColorFrom                   , 0                 , 9                        , map      , none, true , false) \
+  /* past those [13], the color a key drawn in the grid shows at its place;  */ \
+  /* past that [14-19], its colors cell by cell from the one piece of its    */ \
+  /* shape each likeness finds (colors_from_its_shape, 8b_op_math.hpp).      */ \
+  X(ColorFrom                   , 0                 , 19                       , map      , none, true , false) \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
   /* partner stay picked (would_fit, 8b_op_math.hpp). A pick, so it selects. */ \
-  X(WouldFit                    , 0                 , 8                        , select   , none, true , false) \
+  X(WouldFit                    , 0                 , 12                       , select   , none, true , false) \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
   /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \
@@ -194,10 +197,15 @@ enum class inferred_amount { none, some, all };
   X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
   X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
-  X(SelectUnique                , 0                 , 0                        , select   , none, false, false) \
+  /* The one picked-from piece with no twin (unique_piece, 8b_op_math.hpp):  */ \
+  /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
+  /* or past those the same count of what count_kind names [4-16].            */ \
+  X(SelectUnique                , 0                 , 16                       , select   , none, false, false) \
   X(SelectElectedBackground     , 0                 , 0                        , select   , none, false, false) \
-  X(SelectLargestObject         , 0                 , 9                        , select   , none, false, false) \
-  X(SelectSmallestObject        , 0                 , 9                        , select   , none, false, false) \
+  /* The n-th piece by its cells [0-9]; past those, every piece with the most */ \
+  /* (fewest, SelectSmallestObject) of what count_kind names (count_of).     */ \
+  X(SelectLargestObject         , 0                 , 22                       , select   , none, false, false) \
+  X(SelectSmallestObject        , 0                 , 22                       , select   , none, false, false) \
   X(AddColor                    , 0                 , 11                       , generate , none, true , false) \
   X(MaskBy                      , 0                 , 10                       , map      , none, true , false) \
   X(MaskOut                     , 0                 , 10                       , map      , none, true , false) \
@@ -207,10 +215,10 @@ enum class inferred_amount { none, some, all };
   X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
   /* Each picked piece moves level with its partner: rows first, then columns, */ \
   /* each by every way partner_by finds one.                                   */ \
-  X(AlignTo                     , 0                 , 17                       , translate, none, true , false) \
+  X(AlignTo                     , 0                 , 25                       , translate, none, true , false) \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
   /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
-  X(MirrorAround                , 0                 , 29                       , generate , none, true , false) \
+  X(MirrorAround                , 0                 , 41                       , generate , none, true , false) \
   X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
@@ -225,7 +233,7 @@ enum class inferred_amount { none, some, all };
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
-  X(MoveToward                  , 0                 , 56                       , translate, none, true , false) \
+  X(MoveToward                  , 0                 , 68                       , translate, none, true , false) \
   /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
   /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
   X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false, false) \
@@ -238,9 +246,10 @@ enum class inferred_amount { none, some, all };
   /* the parts numbered in reading order, row by row, as rows wrap.       */ \
   X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, true , false) \
   /* Of the picked pieces, only those like a piece of the key -- every    */ \
-  /* piece not picked -- stay picked: of its shape as it lies [0], or      */ \
-  /* turned any way [1] (like_the_key, 8b_op_math.hpp).                    */ \
-  X(SelectLikeKey               , 0                 , 1                        , select   , none, true , false)
+  /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
+  /* any way, at its size [0-1], any size [2-3] or stretched [4-5]          */ \
+  /* (like_the_key, 8b_op_math.hpp).                                       */ \
+  X(SelectLikeKey               , 0                 , 5                        , select   , none, true , false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,

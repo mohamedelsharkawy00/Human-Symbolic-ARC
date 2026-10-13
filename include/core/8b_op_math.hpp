@@ -52,10 +52,30 @@ private:
 // four-connected touch, before the one it touches at a side or a corner,
 // four-connected before eight until eight is needed (b7256dcd's pair meets the
 // 3 at a side and the 4 only at a corner; 4938f0c2's shape meets its block only
-// at a corner), then one of its very shape, as it lies or turned any of the
-// eight ways round.
+// at a corner), then one of its shape (same_shape, 1_readings.hpp): as it
+// lies or turned any of the eight ways round, then the same at any size, then
+// stretched, each as it lies before turned.
 enum class partner_by : int8_t { around_it, inside_it, same_row, same_column, nearest, touching_sides,
-                                 touching, same_shape, same_shape_turned, count };
+                                 touching, same_shape, same_shape_turned, same_shape_scaled,
+                                 same_shape_scaled_turned, same_shape_stretched, same_shape_stretched_turned,
+                                 count };
+
+// THE LIKENESSES OF SHAPE, the partner ways from same_shape on, in their
+// order: as it lies, then turned, at its own size, at any size, stretched --
+// what each lets a shape change (shape_freedom), read off how far past
+// same_shape it is.
+constexpr int SHAPE_LIKENESSES = (int)partner_by::count - (int)partner_by::same_shape;
+ARC_HOST_DEVICE constexpr shape_freedom likeness_freedom(int like) {
+    return { (like & 1) != 0, like / 2 == 1, like / 2 == 2 };
+}
+// The likeness a partner way is, -1 for a way that is none.
+ARC_HOST_DEVICE constexpr int likeness_of(partner_by how) {
+    return how >= partner_by::same_shape && how < partner_by::count ? (int)how - (int)partner_by::same_shape : -1;
+}
+// Whether a likeness lets size change: at any size, or stretched.
+ARC_HOST_DEVICE constexpr bool sized_likeness(int like) { return like >= 2; }
+static_assert(SHAPE_LIKENESSES == 6 && (int)partner_by::same_shape_stretched_turned == (int)partner_by::count - 1,
+              "the likenesses are the last partner ways: as it lies or turned, at its size, any size, stretched");
 
 // The gap between two boxes, the empty rows plus the empty columns between
 // them; 0 when they touch or overlap.
@@ -97,18 +117,16 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
-    // Its paint read against another's turned by `pose`: the same cells painted.
-    auto same_paint = [&](int other, const cell_box& box, int pose) {
-        const auto [width, height] = posed_size(pose, box.width(), box.height());
-        if (height != own.height() || width != own.width()) return false;
-        for (int row = 0; row < height; ++row)
-            for (int col = 0; col < width; ++col) {
-                const auto [from_row, from_col] = pose_source(pose, box.width(), box.height(), row, col);
-                if (painted(mine, own.row0 + row, own.col0 + col) !=
-                    painted(other, box.row0 + from_row, box.col0 + from_col))
-                    return false;
-            }
-        return true;
+    // Its shape read against another's, as the likeness `like` lets them
+    // differ, each piece's blocks as the pieces keep them (blocks(i)).
+    auto same_paint = [&](int other, const cell_box& box, int like) {
+        const bool sized = sized_likeness(like);
+        return same_shape_in_blocks(
+            own.width(), own.height(),
+            [&](int row, int col) { return pieces.color_at(mine, own.row0 + row, own.col0 + col); },
+            sized ? pieces.blocks(mine) : shape_blocks{}, box.width(), box.height(),
+            [&](int row, int col) { return pieces.color_at(other, box.row0 + row, box.col0 + col); },
+            sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
     };
     int nearest = 1 << 30;
     if (how == partner_by::nearest)
@@ -138,9 +156,13 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
             case partner_by::touching_sides:
                 partner = touches(pieces, mine, other, { 0, 0 }, how == partner_by::touching_sides);
                 break;
-            case partner_by::same_shape: partner = same_paint(other, box, 0); break;
+            case partner_by::same_shape:
             case partner_by::same_shape_turned:
-                for (int pose = 0; pose < POSE_COUNT && !partner; ++pose) partner = same_paint(other, box, pose);
+            case partner_by::same_shape_scaled:
+            case partner_by::same_shape_scaled_turned:
+            case partner_by::same_shape_stretched:
+            case partner_by::same_shape_stretched_turned:
+                partner = same_paint(other, box, (int)how - (int)partner_by::same_shape);
                 break;
             default: break;
         }
@@ -266,31 +288,6 @@ ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int
 // SELECT · SelectUnique, SelectAtLeastCells, SelectObjectsWithHoles,
 // SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey
 
-// The sole drawing with no equal in the list. Compare full frames and cells,
-// including transparent cells, in local coordinates; placement does not matter.
-// Ambiguous lists (including two different objects) add no selection.
-template<class Width, class Height, class ColorAt>
-ARC_HOST_DEVICE inline int unique_drawing(int count, Width width, Height height, ColorAt color_at) {
-    if (count < 3) return -1;
-    int found = -1;
-    for (int i = 0; i < count; ++i) {
-        bool repeated = false;
-        for (int j = 0; j < count && !repeated; ++j) {
-            if (i == j || width(i) != width(j) || height(i) != height(j)) continue;
-            bool same = true;
-            for (int r = 0; r < height(i) && same; ++r)
-                for (int c = 0; c < width(i) && same; ++c)
-                    same = color_at(i, r, c) == color_at(j, r, c);
-            repeated = same;
-        }
-        if (!repeated) {
-            if (found >= 0) return -1;
-            found = i;
-        }
-    }
-    return found;
-}
-
 // WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
 // many cells of its `height` by `width` box. Counted here for the op and for
 // the reading that replays it, so the two cannot pick different pieces.
@@ -328,6 +325,110 @@ ARC_HOST_DEVICE inline int object_hole_count(int height, int width, Occupied occ
             walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
         }
     return holes;
+}
+
+// WHAT A PIECE COUNTS, the measure a pick of the most, the fewest or the odd
+// one out reads (the user, 2026-10-13: the reading could not count): its
+// cells, its colors, its holes (object_hole_count), or its cells of one
+// color, of_color + the color. color_at(row, col) reads the piece in its box,
+// TRANSPARENT where it paints none. Said once for the ops and the reading.
+enum class count_kind : int8_t { cells, colors, holes, of_color, count = of_color + COLOR_COUNT };
+template <class ColorAt>
+ARC_HOST_DEVICE inline int count_of(int kind, int height, int width, ColorAt color_at) {
+    if (kind == (int)count_kind::holes)
+        return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+    uint32_t colors = 0;
+    int cells = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const int color = color_at(row, col);
+            if (!is_color(color)) continue;
+            colors |= 1u << color;
+            cells += kind == (int)count_kind::cells || color == kind - (int)count_kind::of_color;
+        }
+    if (kind != (int)count_kind::colors) return cells;
+    int many = 0;
+    for (; colors; colors >>= 1) many += (int)(colors & 1);
+    return many;
+}
+
+// THE RANKS BY SIZE SelectLargestObject and SelectSmallestObject take, the
+// n-th piece by its cells; past them, every piece with the most -- or the
+// fewest -- of what count_kind names, value - SIZE_RANKS, ties and all.
+constexpr int SIZE_RANKS = 10;
+
+// EVERY ONE OF `count` WITH THE MOST -- or the fewest -- of what value(i)
+// counts, handed to pick(i), ties and all; none where every one counts the
+// same, which tells none apart. Said once for the op and for the reading.
+template <class Value, class Pick>
+ARC_HOST_DEVICE inline void each_extreme(int count, bool most, Value value, Pick pick) {
+    if (count <= 0) return;
+    int best = value(0), other = best;
+    for (int i = 1; i < count; ++i) {
+        const int one = value(i);
+        if (most ? one > best : one < best) best = one;
+        if (most ? one < other : one > other) other = one;
+    }
+    if (best == other) return;
+    for (int i = 0; i < count; ++i)
+        if (value(i) == best) pick(i);
+}
+
+// WHAT MAKES TWO PIECES TWINS, SelectUnique's value: the same drawing,
+// colors and all [0]; the same shape as it lies [1] or any way round [2],
+// colors aside (same_shape); the same colors, wherever they lie [3]; or past
+// those, the same count of what count_kind names, by_count + the kind.
+enum class twin_by : int8_t { drawing, shape, shape_turned, colors, by_count,
+                              count = by_count + (int)count_kind::count };
+
+// The number twins by colors or by a count share: the colors a piece wears,
+// a bit each, or what it counts (count_of); -1 for the twins by shape.
+template <class ColorAt>
+ARC_HOST_DEVICE inline int twin_key(int how, int height, int width, ColorAt color_at) {
+    if (how >= (int)twin_by::by_count) return count_of(how - (int)twin_by::by_count, height, width, color_at);
+    if (how != (int)twin_by::colors) return -1;
+    int colors = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col)
+            if (is_color(color_at(row, col))) colors |= 1 << color_at(row, col);
+    return colors;
+}
+
+// THE ONE OF `count` WITH NO TWIN, twins(i, j) saying which are: -1 where none
+// or several are without one, or where there are fewer than three -- two
+// unlike each other are each the other's odd one.
+template <class Twins>
+ARC_HOST_DEVICE inline int lone_one(int count, Twins twins) {
+    if (count < 3) return -1;
+    int found = -1;
+    for (int i = 0; i < count; ++i) {
+        bool repeated = false;
+        for (int j = 0; j < count && !repeated; ++j) repeated = i != j && twins(i, j);
+        if (!repeated) {
+            if (found >= 0) return -1;
+            found = i;
+        }
+    }
+    return found;
+}
+
+// THE ONE PIECE WITH NO TWIN in the list, as `how` reads twins (twin_by), in
+// local coordinates -- placement never matters: piece i is `width(i)` by
+// `height(i)`, read by color_at(i, row, col), TRANSPARENT where it paints
+// none (lone_one). Said once for SelectUnique and for the reading that picks
+// by it, which reads a key once a piece (twin_key) where twins share one.
+template<class Width, class Height, class ColorAt>
+ARC_HOST_DEVICE inline int unique_piece(int how, int count, Width width, Height height, ColorAt color_at) {
+    if (how < 0 || how >= (int)twin_by::count) return -1;
+    return lone_one(count, [&](int i, int j) {
+        auto cell_of = [&](int piece) { return [&, piece](int r, int c) { return (int)color_at(piece, r, c); }; };
+        if (how >= (int)twin_by::colors)
+            return twin_key(how, height(i), width(i), cell_of(i)) == twin_key(how, height(j), width(j), cell_of(j));
+        shape_freedom free;
+        free.turn = how == (int)twin_by::shape_turned;
+        free.recolor = how != (int)twin_by::drawing;
+        return same_shape(width(i), height(i), cell_of(i), width(j), height(j), cell_of(j), free);
+    });
 }
 
 // THE LINE `from` STEPS PAST THE MIDDLE OF A SPAN of lines lo..hi, the middle
@@ -499,13 +600,12 @@ ARC_HOST_DEVICE inline bool lies_in_part(const Pieces& pieces, int mine, int whi
 
 // WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --
 // every piece not picked, as the key words read it (each_key_entry) -- is of
-// its shape as it lies [0], or turned or mirrored any of the eight ways [1], as
+// its shape, by the likeness `how` names (SHAPE_LIKENESSES: as it lies or
+// turned any of the eight ways, at its size, any size or stretched), as
 // each_partner finds a piece of the same shape (63613498: the piece shaped as
 // the key in the grey corner lies turns grey, not the ones turned). The pieces
 // are asked as each_partner asks them.
-constexpr int KEY_LIKENESSES = 2;
-static_assert((int)partner_by::same_shape_turned == (int)partner_by::same_shape + 1,
-              "a likeness to the key is a partner way of the same shape, as it lies or turned");
+constexpr int KEY_LIKENESSES = SHAPE_LIKENESSES;
 template <class Pieces>
 ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces) {
     return how >= 0 && how < KEY_LIKENESSES &&
@@ -685,7 +785,7 @@ ARC_HOST_DEVICE inline uint32_t symmetry_of(int width, int height, ColorAt color
 }
 
 // WHAT A LEARNED TABLE KNOWS A PIECE BY, ShapeColorMap's value: its shape,
-// whichever way round it lies (canonical_shape_hash), or its symmetry, which
+// whichever way round it lies (key_of_shape), or its symmetry, which
 // ways round leave its drawing as it was (symmetry_of: 44f52bb0's picture, 7
 // where no turn or flip leaves it as it was, else 1). color_at(row, col) reads
 // the piece's drawing in its own box. The reading keys its table here and the
@@ -694,7 +794,7 @@ enum class shape_key : int8_t { shape, symmetry, count };
 template <class ColorAt>
 ARC_HOST_DEVICE inline uint32_t shape_key_of(int kind, int width, int height, ColorAt color_at) {
     if (kind == (int)shape_key::symmetry) return symmetry_of(width, height, color_at);
-    return canonical_shape_hash(width, height, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+    return key_of_shape(width, height, color_at, ANY_WAY_ROUND);
 }
 
 // A LEARNED TABLE OF KEYS (shape_key_of): the color each key it knows names,
@@ -839,8 +939,42 @@ ARC_HOST_DEVICE inline void each_key_cell(const Pieces& pieces, bool grounded, V
 }
 
 // ColorFrom PAST ITS PARTNER WAYS: each picked piece takes its color off a key
-// by its place (key_place_colors).
+// by its place (key_place_colors); past that, its colors cell by cell from the
+// one piece of its shape each likeness finds (colors_from_its_shape).
 constexpr int KEY_BY_PLACE = (int)partner_by::count;
+constexpr int COLORS_FROM_ITS_SHAPE = KEY_BY_PLACE + 1;
+
+// A PIECE COLORED CELL BY CELL BY ANOTHER OF ITS SHAPE, said once for ColorFrom
+// past the key by place and for the reading that replays it: the one partner
+// the likeness `like` finds among the pieces not picked (partner_of, the same
+// shape as it lies, turned, at any size or stretched), the two shapes laid one
+// on the other as same_shape lays them (shape_fit), and each cell of the piece
+// handed to paint(row, col, color) in the color of the partner's cell it lies
+// on (fit_place: 103eff5b's azure shape takes the key's colors, the key turned
+// and grown to it). False where it has no one partner. Colors never decide
+// the fit: they are what it carries over.
+template <class Pieces, class Paint>
+ARC_HOST_DEVICE inline bool colors_from_its_shape(int like, int mine, const Pieces& pieces, Paint paint) {
+    if (like < 0 || like >= SHAPE_LIKENESSES) return false;
+    const int partner = partner_of((partner_by)((int)partner_by::same_shape + like), mine, pieces);
+    if (partner < 0) return false;
+    const cell_box own = pieces.box(mine), theirs = pieces.box(partner);
+    auto own_cell = [&](int row, int col) { return pieces.color_at(mine, own.row0 + row, own.col0 + col); };
+    auto their_cell = [&](int row, int col) { return pieces.color_at(partner, theirs.row0 + row, theirs.col0 + col); };
+    shape_fit fit;
+    const bool sized = sized_likeness(like);
+    if (!same_shape_in_blocks(own.width(), own.height(), own_cell, sized ? pieces.blocks(mine) : shape_blocks{},
+                              theirs.width(), theirs.height(), their_cell,
+                              sized ? pieces.blocks(partner) : shape_blocks{}, likeness_freedom(like), &fit))
+        return false;
+    for (int row = 0; row < own.height(); ++row)
+        for (int col = 0; col < own.width(); ++col) {
+            if (own_cell(row, col) == TRANSPARENT) continue;
+            const auto [their_row, their_col] = fit_place(fit, row, col);
+            paint(own.row0 + row, own.col0 + col, their_cell(their_row, their_col));
+        }
+    return true;
+}
 
 // THE COLOR A KEY GIVES EACH PICKED PIECE BY ITS PLACE: the picked pieces in
 // reading order -- by the bands of rows they sit in, as SelectRow reads a row
@@ -1350,6 +1484,60 @@ ARC_HOST_DEVICE inline void march_trail(int row, int col, heading_step step, int
         if (own(at_row, at_col)) continue;
         if (taken(at_row, at_col)) break;
         lay(at_row, at_col);
+    }
+}
+
+// THE TRACKS ExtendTo GROWS ALONG past its eight ways, every picked piece in
+// step with the others: along its rows, along its columns, to every side
+// through the open cells, or to every side along the canvas's edge.
+enum class grown_along : int8_t { rows, columns, sides, canvas_edge, count };
+
+// GROWN IN STEP UNTIL THEY MEET, said once for ExtendTo past its eight ways and
+// for the reading that replays it. `owner` comes in holding each cell's piece,
+// -1 where none is, and `grows(piece)` says which pieces were picked. Every
+// cell of a picked piece then grows at once, a step a turn, onto the empty
+// cells its track reaches -- a cell any piece holds is none to grow onto, so a
+// piece not picked stands in the way -- each cell taken by the first piece to
+// reach it and, reached by two in one turn, by the earlier piece in the list.
+// Along the canvas's edge, a piece grows from its cells on the edge alone.
+// `owner` comes back holding the piece that took each cell and `turn` the turn
+// it was taken in: 0 for a piece's own cell, -1 for one no piece took. `turn`
+// and `queue` are scratch, width * height cells each.
+template <class Grows>
+ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along track, Grows grows,
+                                         int16_t* owner, int16_t* turn, int16_t* queue) {
+    auto on_track = [&](int row, int col) {
+        return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
+    };
+    int tail = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const int at = row * width + col;
+            turn[at] = (int16_t)(owner[at] >= 0 ? 0 : -1);
+            if (owner[at] < 0) continue;
+            if (!grows(owner[at])) owner[at] = -1;
+            else if (on_track(row, col)) queue[tail++] = (int16_t)at;
+        }
+    // Taken turn by turn, in the order reached: a cell is grown from only once
+    // every cell of the turn before has reached it, so its piece is settled.
+    for (int head = 0; head < tail; ++head) {
+        const int at = queue[head], row = at / width, col = at % width;
+        for (int way = heading::up; way < heading::count; way += 2) {
+            const heading_step step = step_of(way);
+            if ((track == grown_along::rows && step.down != 0) || (track == grown_along::columns && step.across != 0))
+                continue;
+            const int next_row = row + step.down, next_col = col + step.across;
+            if (next_row < 0 || next_col < 0 || next_row >= height || next_col >= width || !on_track(next_row, next_col))
+                continue;
+            const int next = next_row * width + next_col;
+            if (turn[next] < 0) {
+                turn[next] = (int16_t)(turn[at] + 1);
+                owner[next] = owner[at];
+                queue[tail++] = (int16_t)next;
+            } else if (turn[next] == turn[at] + 1 && owner[at] < owner[next]) {
+                owner[next] = owner[at];
+            }
+        }
     }
 }
 

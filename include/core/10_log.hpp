@@ -220,7 +220,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
     // starred, beside the cells each one's words left unsaid (- never read).
     report << "  [cuts]";
     for (size_t rank = 0; rank < correspondence.ranked.size(); ++rank) {
-        const int8_t cut = correspondence.ranked[rank];
+        const int cut = correspondence.ranked[rank];
         const int left = rank < correspondence.left_by_rank.size() ? correspondence.left_by_rank[rank] : -1;
         report << "  |" << (cut == correspondence.chosen ? "*" : " ") << "reading " << (int)cut << " "
                << segmentation_names[(int)correspondence.readings[cut].segmentation] << " ";
@@ -555,6 +555,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
             if (edge.pose & 2) report << "flipped_rows ";
             if (edge.pose & 4) report << "flipped_cols";
         }
+        if (edge.scale != 1) report << "  scaled x" << (int)edge.scale;
         report << "\n";
     }
 
@@ -584,19 +585,28 @@ inline void log_inference(const string& id, const inference& inf,
         return ground.per_grid ? string("each input's own")
              : is_color(ground.color) ? to_string((int)ground.color) : string("none");
     };
-    // What the inputs lose: the ground deleted, and what the fill takes off them as well.
-    auto deletes = [&](const ground_plan& plan) {
+    // A plan as words: what the inputs lose -- the ground deleted, and what the
+    // fill takes off them as well -- and what is filled last.
+    auto plan_said = [&](const ground_plan& plan) {
         const background_source also = plan.filled_on_input();
-        if (!also.removes_color() || also == plan.deleted) return side(plan.deleted);
-        if (!plan.deleted.removes_color()) return side(also);
-        return side(plan.deleted) + " and " + side(also);
+        const string deleted = !also.removes_color() || also == plan.deleted ? side(plan.deleted)
+                             : !plan.deleted.removes_color() ? side(also)
+                             : side(plan.deleted) + " and " + side(also);
+        return "delete " + deleted + ", fill " + side(plan.filled);
     };
-    for (const ground_plan& plan : ground_plans(inf.ground_election))
-        report << "  |" << (plan == inf.plan ? "*" : " ") << "delete " << deletes(plan)
-               << ", fill " << side(plan.filled);
+    const vector<ground_plan> plans = ground_plans(inf.ground_election);
+    for (const ground_plan& plan : plans) report << "  |" << (plan == inf.plan ? "*" : " ") << plan_said(plan);
     // Kept with words that may lay cells wrong (inference::tolerant).
     if (inf.tolerant) report << "  | words lay cells wrong";
-    report << "\n\n";
+    report << "\n";
+    // Each plan read, in order, until one said every cell with no pass after it.
+    report << "[plans read] in order, the first to say the most kept\n";
+    for (const auto& read : inf.plans_read)
+        report << "  " << ((size_t)read.plan < plans.size() ? plan_said(plans[(size_t)read.plan]) : string("?"))
+               << (read.tolerant ? ", words may lay cells wrong" : "") << ": " << read.left << " unsaid, "
+               << read.passes << (read.passes == 1 ? " pass" : " passes")
+               << (read.words.empty() ? string() : ": " + read.words) << "\n";
+    report << "\n";
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);
     report_pane_pick(report, inf.pane_pick);

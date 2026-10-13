@@ -1,4 +1,4 @@
-# Handoff, 2026-10-12
+# Handoff, 2026-10-13
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
@@ -12,21 +12,18 @@ The plan (the user, 2026-10-12): training until 2026-10-25, aiming at about
 350 right there, about 9 a day; then the last week on the evaluation set,
 which is what Kaggle scores (the last evaluation run, 2026-10-10, fit 0 of
 120). The trend, training right, the best of each day: 187 on 10-07, 199 on
-10-08, 219 on 10-10, 224 on 10-11, 231 on 10-12 -- 6 to 9 a day, slowing as
+10-08, 219 on 10-10, 224 on 10-11, 237 on 10-12 -- 5 to 13 a day, slowing as
 the easier puzzles go; it gives about 310 to 350 by 10-25. All 1000 by then
 would need about 59 a day.
 
-UNTESTED (the user, 2026-10-12): work a batch of consecutive ids at a time,
-say the next 50 in id order (the user's word was cohort), rather than the
-whole set at once or a puzzle picked here and there. A run of the batch's
-ids alone takes a minute or two, not a full run that stalls the machine, so
-a day holds many more tries; the ids are random, so a batch is a fair sample
-and its count says how the whole set goes; and a batch is a fixed list to
-get through, one unit of progress at a time. A full run now and then shows
-what a word made for one batch broke in the others. A variant: a family of
-the unsolved puzzles that lack the same word (`readouts.py missing`; the
-largest named so far, the 71 that lack only a recolor, "Smaller, open"
-below), one word made for many at once.
+THE WAY OF WORKING is AGENTS.md's (each puzzle with all of its adjacent
+concepts). Open (the user, 2026-10-12): whether a batch of 50 consecutive ids
+stays the unit of work. A run of 50 ids takes about a minute (62 s), its
+readouts byte-identical to the full run's. Ids 1-50: 38 right; 51-100: 11
+right (out/grow); out/batch2/unsolved.txt lists 51-100's unsolved before the
+growth. Families of the unsolved that lack the same word (`readouts.py
+missing`, out/grow): 72 lack only where a copy was drawn, 48 only the cells
+drawn on the ground, 45 only a recolor.
 
 ## Paper: due 2026-11-08 (the user, 2026-10-12: let's try)
 The ARC Prize paper track (kaggle.com/competitions/arc-prize-2026-paper-track),
@@ -67,6 +64,213 @@ facts, with search).
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-13: EVERY PLAN READ, IN THE READOUT; THE EVALUATION SET AGAIN (the
+  user, from the session's tips: keep the per-plan print; read the
+  evaluation set now and then, not only after 10-25). [plans read], under
+  [ground plans]: each plan read, in order, exact words or words that may lay
+  cells wrong, its cells unsaid, its passes and its line's words
+  (inference::plans_read, filled by infer; plan_said in 10_log, the one way a
+  plan is said). Results unchanged. Evaluation (ARC_DATASET=eval, out/
+  eval_1013): still 0 of 120 fit; the elected reading leaves under 5% of its
+  cells unsaid in 22, under 10% in 40, under 25% in 63 (the nearest: 8e5c0c38
+  11 cells, 88e364bc 10, 409aa875 22, 135a2760 10); today's words appear in
+  its programs (the growth in 4, the counts in 5, the one with no twin in 3)
+  without finishing one. Missing (readouts.py missing): where a copy was drawn
+  101 (8 only it), a recolor 73 (3), how a piece turned 63 (4), where it went
+  51 (3), how it changed shape 47 (2), cells drawn on the ground 11 (1).
+- 2026-10-13: COUNTING (the user: 2c0b0aff the most crosses, 358ba94e the
+  most holes, 39a8645d the most of one color -- the reading cannot count).
+  One owner of what a piece counts, count_of (8b_op_math.hpp): its cells,
+  colors, holes (object_hole_count) or cells of one color (count_kind); and
+  each_extreme, every one with the most or the fewest, ties and all, none
+  where all count the same. SelectLargestObject and SelectSmallestObject
+  keep their ranks by size [0-9] (SIZE_RANKS) and past them pick every piece
+  with the most or fewest of a count [10-22]; SelectUnique past its
+  likenesses reads twins by a count [4-16] (twin_by::by_count, twin_key,
+  lone_one: the host reads a key once a piece, the GPU pair by pair). The
+  reading asks them last of all picks (the newest last, an older pick taking
+  a tie), and a count of one color's cells only where some piece mixes that
+  color with another: among one-color pieces it is their size, and asked
+  there it peeled a61f2674's bars off one at a time and lost it (found with a
+  temporary per-plan print, since removed). 246 right, gained 358ba94e (the
+  odd one out by cell count), 54db823b (fewest 9s), 8efcae92 and e50d258f
+  (most 2s), 9a4bb226 (the odd one out by colors), de1cd16c (most holes),
+  lost 0; explained but unsolved 0 -> 0; 6 wrong, caa06a1f joined (fewest
+  holes, read off its pairs). The data on the user's three: 2c0b0aff is the
+  most green crosses in every pair and the test, not the most green cells
+  (pairs 1 and 3); 358ba94e is the odd one out by holes, not the most (pair
+  2's has the fewest); 39a8645d is the color with the most pieces. Still
+  open: a count of copies of a small shape (crosses) and of pieces a color
+  has (39a8645d, whose pick takes copies a frame must take one of). GPU
+  kernel 80 registers, 71,552 bytes stack; 71 #20014 warnings. Run
+  out/counts2, against out/unique (no timing: a game running).
+- 2026-10-13: THE ONE PIECE WITH NO TWIN, A PICK (the user: f25fbde4 is
+  plain x2 scaling, suspicious; 13 unsolved size changes whose every output
+  is one input piece as it lies, read with this session's own cut).
+  SelectUnique[how] (0-3): the one piece of the list with no twin, twins by
+  drawing [0], shape as it lies [1], any way round [2], or colors [3]
+  (unique_piece and twin_by, 8b_op_math.hpp, the op's and the reading's one
+  arithmetic; unique_drawing gone into it). A pick kind, piece_pick::only_one,
+  asked where it takes a piece in every pair, as it is and turned round, so
+  the frames, the words and the paints all read it. SelectUnique took no
+  value before: the pane rule's sentence and solutions/2dc579da, 88a62173 now
+  say SelectUnique[0]; 88a62173's saved program no longer fits by arc_spell
+  (its plan now deletes the ground, the panes cut by blanks), the puzzle
+  solved the new way. 240 right, gained 1a2e2828 (SelectUnique[3], the only
+  piece of its colors) and cd3c21df (SelectUnique[0]), lost 0; explained but
+  unsolved 0 -> 0; the same 5 wrong. An over-claim corrected: the table that
+  promised up to 11 of the 13 checked only that the output piece was one of a
+  kind, not that it was the only one; held strictly, cd3c21df alone of them
+  is (48d8fb45's marker dot is one of a kind too; its piece is the one the
+  marker touches). The rest of the 13 lack other picks. f25fbde4 still
+  wants the frames chained: a piece cut out, then scaled (choose_piece_frame
+  reads one frame at a time). Run out/unique, against out/boxrule; timing
+  not taken (a game running).
+- 2026-10-13: THE SHAPE WORK'S COST, FOUND AND CUT (the user closed the game:
+  profile, do all and anything else found). Measured with nothing beside
+  it: e681b708 alone took 283 s (49 s on 10-12), every tenth id 401 s by
+  the clock (63 s). VTune (profiling/output/cpu-20261013-025320-858): 67 of
+  300 s in blocks_of, every piece's blocks read again for every pair a
+  likeness at another size compares, and the partner asks grown with the
+  ways (ColorFrom 20 values, the L bridge's kinds, WouldFit's, the
+  likenesses). Three fixes, results unchanged by the first two: (1) each
+  piece's blocks read once (partner_pieces::blocks, the GPU's view reads them
+  when asked; same_shape_in_blocks takes them); (2) a likeness at any size or
+  stretched is asked only of a hand that holds one shape at two sizes
+  (replay_facts::shape_at_two_sizes, asks_way/asks_kind/asks_likeness, read
+  again once carry_the_hand changes the hand), and a Scale reading is read
+  only on a cut where a match at another size can be found
+  (any_match_by_size), else it is its twin without Scale; said.txt and all
+  1000 readouts byte-identical (out/speed, 834 s). (3) A shape whose smallest
+  drawing is one cell, a dot or a filled box, has no size but its own
+  (sized_blocks, the shape owner's): 528 puzzles hold filled boxes of two
+  sizes, every one asked the likenesses at another size for that alone; the
+  matching's private `scales` flag is gone into it. 238 right, gained 0,
+  lost 0; explained but unsolved 0 -> 0; 5 wrong, fea12743 left it (a key
+  "stretched" matched boxes by luck). Full run 779 s (out/boxrule; 558 s on
+  10-12). e681b708 alone 60 s, every tenth id 88.6 s by the clock and 526 s
+  of CPU (414 s on 10-12): the clock's slowest puzzle is 60 s of it, so the
+  workers seen waiting at a run's end are the tail, not a lock. Tried and
+  dropped: the two paint caches as hash maps -- alternated A/B on e681b708
+  and 92e50de0, 94.8-95.1 s against 93.4-93.5 s for the maps, 1.5% slower.
+  An earlier 150 s timing of e681b708 on this build was the machine, as
+  10-12's 142 s against 63 s was: time A/B in turn. GPU kernel unchanged (80
+  registers, 71,552 bytes stack); 71 #20014 warnings, all host pieces asked
+  through the shared helpers. Left of the cost, as on 10-12: malloc 13%,
+  the cell lists of every lay that may hold (NEXT (1) of "where the time
+  goes" below).
+- 2026-10-13: COLORS CELL BY CELL FROM A PIECE OF ITS SHAPE -- stage 4, as
+  ColorFrom (the user's pick of the owners: CopyTo fitted, ColorFrom cell by
+  cell, or small ops chained; CopyTo fitted waits for a frame to fill).
+  ColorFrom[14-19] (COLORS_FROM_ITS_SHAPE): each picked piece takes its
+  colors cell by cell from its one partner of its shape, each likeness in
+  turn (as it lies or turned, at its size, any size, stretched);
+  colors_from_its_shape (8b_op_math.hpp) is the op's and the replay's one
+  arithmetic, laying the two shapes one on the other as same_shape does and
+  reading the partner's cell each cell lies on (shape_fit, fit_place in
+  1_readings.hpp). The ways round are asked turns before flips, rights
+  before lefts (pose_asked): 103eff5b's pair 0 lays its key on the azure
+  shape by a quarter turn and by a flip, and only the turn gives its colors.
+  posed_place moved to the pose owner (1_readings.hpp). The recolor replays
+  repaint cell by cell (cells_repainted_hold; repaints_hold is the colour-map
+  case of it), and carry_the_hand carries the new values. 238 right, gained
+  103eff5b (`SelectColor[8] ColorFrom[17]`, its test right), lost 0;
+  explained but unsolved 0 -> 0; the same 6 wrong; e76a88a6, solved before,
+  is now said with ColorFrom[14]. GPU kernel 80 registers, 71,552 bytes
+  stack (+16); 61 #20014 warnings (+4, the same kind: host pieces asked
+  through the shared helpers). Full run 1947 s, a game beside it; at the
+  tail 5 to 10 of 20 workers ran and the rest waited (Windows: "Unknown",
+  most likely a lock, the allocator's by the profile's malloc share) -- to
+  confirm with VTune. Run out/cellwise, against out/scale.
+- 2026-10-13: SHAPE, stages 2 and 3 (the user: all but stage 4, and test
+  before it). (2) The rest of the shape questions ask the owner: a drawing is
+  a shape whose colors may not change (shape_freedom::recolor, DRAWING;
+  cells_alike), and key_of_shape is the one key (canonical_shape_hash gone):
+  the shape table (shape_key_of), the segmentation's cost (shape_of), the
+  interior fill's table, the panes' and a cut's same_drawing, unique_drawing
+  (SelectUnique) and the partner ways. said.txt and all 1000 readouts
+  byte-identical to stage 1 (out/shape2). (3) The matching sees size:
+  degrees_of_freedom's fifth freedom, Scale (32 readings a cut, so a
+  reading's place is correspondence_election::reading_index, 16 bits: at 8
+  bits every puzzle crashed); an edge's scale; Source 3 in gather_matches, a
+  piece of the other grid whose shape at any size (object_info::scaled_shape)
+  is this one's grown a whole number of times, checked cell by cell with its
+  footprint, only for a piece whose smallest drawing is more than one cell
+  (scales: no dot, no filled box); each_carried_cell lays a cell on its whole
+  block; landing_size owns an edge's box; the new missing word "how each
+  piece was scaled"; no act (turn, move, recolor) and no rule reading edges
+  claims a scaled piece. 237 right, gained 0, lost 0; explained but unsolved
+  0 -> 0; the same 6 wrong. Scale changed a matching in 16 puzzles (3b4c2228,
+  447fd412, 57aa92db, 60c09cac, 6aa20dc0, 6b9890af, 80af3007, 8a004b2b,
+  8a6d367c, 9172f3a0, ac0a08a4, b4a43f3b, b91ae062, d4b1c2b1, f0afb749,
+  f25fbde4); 9 elected readings name the new word, none lacks only it.
+  103eff5b is not among them: its elected plan keeps the black ground, where
+  the key's blank cells land on black, and the plan that deletes it, where
+  the scaled match is, says no more without a word for the scaled copy.
+  GPU kernel unchanged (80 registers, 71,536 bytes stack); the same 57
+  #20014 warnings. Full run 1909 s (stage 1's 1288 s, both with a game
+  running): twice the readings a cut, so likely slower in fact; to measure.
+  Run out/scale, against out/shape2.
+- 2026-10-13: SHAPE, ONE OWNER, AT ANY SIZE -- stage 1 of 4 (the user: a
+  shape is the same whatever its colors, turns, flips and size, and that runs
+  through the whole solver; stretch too). 1_readings.hpp owns it: blocks_of
+  (the most rows and columns a shape's cells repeat in; shrunk by them, its
+  smallest drawing), shape_freedom (turn, scale, stretch; colors never enter
+  a shape) and same_shape (two shapes the same as a freedom lets them
+  differ). The partner ways gain the same shape at any size and stretched,
+  each as it lies or turned (partner_by, now 13; SHAPE_LIKENESSES,
+  likeness_freedom in 8b_op_math.hpp), so ColorFrom, WouldFit, Bridge's L,
+  AlignTo, MirrorAround, MoveToward and SelectLikeKey (6 likenesses) read
+  them; the old two ways ask the owner and find what they found. Values
+  renumbered: ColorFrom 0-13 (13 the key at its place), WouldFit 0-12, Bridge
+  0-31, AlignTo 0-25, MirrorAround 0-41, MoveToward 0-68, SelectLikeKey 0-5;
+  the 7 solutions/ files that hold them renumbered, each still fits. 237
+  right, gained 0, lost 0; explained but unsolved 0 -> 0; 6 wrong: fea12743
+  joined (unsolved before: a piece like the key, stretched, fit its pairs by
+  luck). GPU kernel unchanged (80 registers, 71,536 bytes stack), the same 57
+  #20014 warnings. Run out/shape, against out/grow (1288 s, a game running).
+  NEXT, the user's order: (2) the rest of the shape questions onto the
+  owner, results unchanged -- canonical_shape_hash (the shape table, the
+  matching's shape search, the segmentation's cost), same_drawing (panes, a
+  cut's repeats), unique_drawing (SelectUnique) -- with colors a freedom of
+  the owner, a drawing being a shape whose colors may not change; (3) the
+  matching gets a scale freedom beside its turn, so the reading sees "this
+  matches that, x3" (the user: then 103eff5b is said many ways, not only by
+  a copy); (4) CopyTo fitted onto a partner of its shape (103eff5b: the key,
+  turned, grown to the azure shape, laid onto it).
+- 2026-10-12: GROWN IN STEP UNTIL THEY MEET (the user: 0f63c0b9's partial
+  program lacks an extend at the edges, a generality issue; keep it general,
+  not only grid edges). ExtendTo takes four values past its eight ways, [8-11]
+  (grown_along, 8b_op_math.hpp): every picked piece grows in step with the
+  others, a step a turn, along its rows, along its columns, to every side
+  through the open cells, or along the canvas's edge, until they meet; a cell
+  goes to the first piece to reach it, a tie to the earlier piece in the list,
+  and a cell any piece holds is none to grow onto. One owner, grow_in_step
+  (8b_op_math.hpp), run by the GPU op (gpu_exec_grow_in_step, its scratch
+  gpu_exec_context::grow_scratch) and by the replay (grown_walk, under
+  trail_walk); asked after the eight ways, which take a tie, and said "grows
+  along its rows in step with the others until they meet". Why not the other
+  owners (read off the op list): SelectColumn picks whole pieces by band, not
+  cells; one ExtendTo way runs on to the next piece, so it never splits a gap;
+  ColorFrom's nearest refuses a tie and recolors only pieces there already;
+  Bridge joins one color; rays start mid-piece. 0f63c0b9 is now its lines
+  (ExtendTo[8]) and, a pass on that picture, the border (ExtendTo[11]): the
+  copies that drew its top and bottom rows by luck (its bottom row wrong on
+  the test) are gone. 237 right, gained 0f63c0b9, 1bfc4729, 782b5218 (wrong
+  before), 9edfc990, e69241bd, fc754716, lost 0; explained but unsolved 0 ->
+  0; 5 wrong: d4f3cd78 joined -- its fill leaks out of the box's gap, up in
+  one pair and down in the other, said as "along its columns", and leaks right
+  on its test: the word it lacks is the leak through the gap -- 782b5218 left
+  solved, and 29623171 and ac0c2ac3 no longer fit. Ten programs use the new
+  values (178fcbfb, 21f83797, bdad9b1f solved before and still). GPU kernel:
+  80 registers, 71,536 bytes stack (+32); the same 57 #20014 warnings. Full
+  run 1250 s with a game running beside it, so not comparable with 558 s:
+  time old and new on a few slow puzzles when the machine is quiet. Run
+  out/grow, against out/picks_after_cold.
+  ALSO FIXED, readouts.py: its pattern for the passes after the first ate the
+  next pass's header, so it skipped every second kept pass and judged 49
+  readouts on an earlier one (`missing` and `explained`); explained but
+  unsolved is 0 either way.
 - 2026-10-12: WHERE THE TIME GOES, MEASURED (the user: speed, pure speed;
   stopped here; nothing in the reading changed). Each puzzle timed in
   arc_said -- its reading by the clock and by its thread's CPU, and the GPU
@@ -750,10 +954,11 @@ uses it, global before local. Estimates are rough.
 
 ## Next, from before (the user's order)
 0. Now (the user, 2026-10-11): the wrong ones, in id order, each a word the
-   reading lacks: 29623171, 782b5218, 833966f4, ac0c2ac3, ba26e723 (new,
-   2026-10-12), e40b9e2f and f823c43c as the 2026-10-11 passes entry names
-   them. 272f95fa and bdad9b1f are solved (2026-10-12), and 7d1f7ee8 no
-   longer fits, its word still missing.
+   reading lacks: 833966f4, ba26e723, d4f3cd78 (new, the leak through a
+   gap), e40b9e2f and f823c43c as the 2026-10-11 passes entry names them,
+   and caa06a1f (new, 2026-10-13: fewest holes fit its pairs).
+   272f95fa, bdad9b1f and 782b5218 are solved (2026-10-12); 7d1f7ee8,
+   29623171 and ac0c2ac3 no longer fit, their words still missing.
 1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
    A full run is 558 s: about 88 line readings a slow puzzle, half of them
    tolerant; each rays and repeats length is still a walk of its own (one

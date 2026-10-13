@@ -1,4 +1,4 @@
-Input Panes SelectUnique Origin Union
+Input Panes SelectUnique[0] Origin Union
 
 Puzzle:       88a62173
 Train:        Solved
