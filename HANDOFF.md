@@ -65,6 +65,105 @@ facts, with search).
   one line, without a pass for every step.
 
 ## Where it stands
+- 2026-10-13: PICKS THAT TAKE THE SAME PIECES ASKED ONCE; EVERY RAY LENGTH
+  READ OFF ONE WALK (the user: yes to NEXT (1) and (2) of the entry below).
+  (1) cut_paints::asked_picks: a draw pick that takes the same pieces as one
+  before it in every pair (takes_the_same, beside handed_pieces) is handed
+  the same pieces, draws the same and loses the tie, so no paint asks it --
+  rays, trails, copies, repeats, bars, fills and boxes; the words still ask
+  every pick. (2) The rays of a pick, one way round, are fanned out once for
+  the longest reach (rays_fan: each cell with how far along the nearest ray
+  reaches it), and every length is laid at once on a canvas
+  (lay_every_length): length by length it adds the cells one step further
+  out, counts what lands and what the output shows there, and judges each
+  pair as lay_paint does. A length tied for its color is laid off its own
+  walk, since only the order its cells landed in breaks the tie; a length is
+  walked on its own (rays_walk) only where it ties or holds, for its lists.
+  One owner each for which cells a ray reaches (each_ray_cell) and what a lay
+  lands on (landing_on, each_landing's and walk_paint's too). 246 right,
+  gained 0, lost 0; explained but unsolved 0 -> 0; the same 6 wrong;
+  said.txt and all 1000 readouts byte-identical after each step
+  (out/picks_shared, then out/rays_fanned, against out/paint_marks).
+  e681b708 and 92e50de0 on one thread, each step against the one before, in
+  turn: (1) 214 s -> 163 s (24% less; peak memory 0.91 -> 0.57 GB), the
+  machine slow then -- the same build took 2.4 times as long as an hour
+  before, by its CPU time too; (2) 66.5 s -> 61.3 s (8% less), the machine
+  fast again. This morning's build (e83ec51, before the marks) against this
+  one, in turn: 99.6 s -> 61.5 s (38% less), peak memory 3.64 -> 0.56 GB,
+  the readouts the same. Full run 563 s, 4,699 s of CPU, peak 6.98 GB (the
+  marks' this morning 717 s, 6,100 s and 7.63 GB, at a fast time; step 1's
+  749 s ran at a slow one). GPU kernel unchanged (80 registers, 71,552 bytes
+  stack; 71 #20014 warnings). The builds timed are in extras/speed_1013.
+  WHERE THE TIME IS NOW (VTune, the two puzzles, 60 s;
+  profiling/output/cpu-20261013-153554-418, not in git; inclusive): the
+  words 48% -- moves 18% (toward_holds 6%), a color from a partner 17%
+  (color_from_holds 8%, key_place_holds 6%), key swaps 13% -- with
+  key_piece_at 11% and key_color_at 12% of all; the passes after the first
+  26%; the matching's collect_edges 13%; repeats 7%, bars 6%, rays 6%.
+  THE SPEED LEFT TO DO, NOT STARTED -- the one list; the older entries point
+  here. The largest and readiest first; the shares are inclusive and overlap
+  (the passes after the first ask the same words and paints). Each keeps
+  every readout byte-identical and is timed old against new in turn on
+  e681b708 and 92e50de0:
+  (1) THE WORDS ASK EVERY PICK (48%). A pick that takes the same pieces as
+  one asked before it, in every pair, says what that one says, as the paints
+  have it now -- but a word may skip some picks (already_said, per color
+  for a recolor; a removal's may; a move's step, asked only of picks not by
+  color; the most common color's pick, once the line says anything on a
+  hand it cannot carry), so each word keeps its own record, built only from
+  the picks it asks. taken_before in extras/speed_kept_back.patch (10-12)
+  did it for every word.
+  (2) THE KEY'S MAP (key_piece_at 11%, key_color_at 12%). key_piece_at scans
+  the pieces for each key cell, and each_key_entry and each_key_cell ask it
+  cell by cell: read the key's map once for an unchanged hand and pick, the
+  same piece winning where two overlap. It is 8b_op_math.hpp, shared with
+  the GPU, so the op's arithmetic stays the one owner.
+  (3) THE MATCHING (collect_edges 13%): the strict and tolerant readings of
+  a plan share its figures and matching (NEXT (3) of 10-12); the lines they
+  read and the pictures after stay their own.
+  (4) BARS (6%): bridge_holds replays each pick and way on every canvas from
+  the start (paint_holds). Walk a bar once for the cut and lay it on each
+  canvas, as the rays are -- bridge_walk, fill_walk and box_walk in the
+  kept-back patch, own_else_one the one helper for "in its own colors, or
+  else in one" -- and the filled hollows and boxes with it.
+  (5) REPEATS (7%): each period is a walk of its own (tile_walk), counted
+  on each canvas. Periods do not nest as ray lengths do, so no fan; what is
+  left is the walk and its count.
+  (6) THE REPLAY CACHE: a std::map keyed by tuples, looked up for every
+  length, lay and pick asked (NEXT (2) of 10-12); a flat table.
+  (7) THE PASSES AFTER THE FIRST (26%) want fewer readings, not faster ones.
+  (8) Small: a ray length that holds is still walked on its own for its
+  lists (rays_walk, under 2%).
+  Not settled: the machine's speed swings (2.4 times within an hour on
+  10-13), so only runs taken in turn compare; full runs at different times
+  do not. out/ holds earlier days' runs, about 600 MB each, kept for now
+  (the user's call).
+- 2026-10-13: A PAINT WEIGHED BY MARKS, ITS LISTS MADE ONLY FOR THE ONE IT
+  OFFERS (the user: runs take too long; NEXT (1) of "where the time goes",
+  10-12, below). Rays, trails, copies and repeats keep, for each lay that may
+  hold, only marks of the cells it lays right and a count of those it lays
+  wrong (marked_paint, lay_paint<marked_paint>); the best lay of each kind is
+  laid again from its walk into full lists (heard::materialize) before it is
+  offered, for saying it and for reading ahead on its drawing. The same
+  judge, claims and ties. 246 right, gained 0, lost 0; explained but unsolved
+  0 -> 0; the same 6 wrong; said.txt and all 1000 readouts byte-identical to
+  out/counts2 apart from [plans read], which counts2 predates. e681b708 and
+  92e50de0 on one thread, old and new in turn: 99.5 s against 88.5 and 88.7
+  s (11% less), peak memory 3.63 GB against 0.91 GB (75% less; the old
+  build's first run, 105.6 s, had a build beside it). Full run 717 s, 6,100 s
+  of CPU, peak 7.63 GB over 20 threads (out/paint_marks); no full run of the
+  old build beside it (extras/paint_marks/arc_said_before.exe is that
+  build). GPU kernel unchanged (80 registers, 71,552 bytes stack; 71 #20014
+  warnings).
+  THE PROFILE IT CAME FROM (VTune, the two puzzles on the old build, 97 s;
+  profiling/output/cpu-20261013-135658-594, not in git): the lines 89%, the
+  passes after the first 24%, lay_paint 20%, the matching's collect_edges 8%,
+  key_swap_holds 6.8%, tally_walk 5.6%, picked_pieces 4.4%, the rays walk
+  4.3%, key_place_holds 3.4%, the repeats walk 2.9%, picks_to_ask 1.7%;
+  malloc 10.6% on its own.
+  NEXT from it: (1) picks that take the same pieces share one walk and lay,
+  and (2) every ray length read off one walk -- both done the same day
+  (above), which lists what is left.
 - 2026-10-13: EVERY PLAN READ, IN THE READOUT; THE EVALUATION SET AGAIN (the
   user, from the session's tips: keep the per-plan print; read the
   evaluation set now and then, not only after 10-25). [plans read], under
@@ -159,7 +258,7 @@ facts, with search).
   registers, 71,552 bytes stack); 71 #20014 warnings, all host pieces asked
   through the shared helpers. Left of the cost, as on 10-12: malloc 13%,
   the cell lists of every lay that may hold (NEXT (1) of "where the time
-  goes" below).
+  goes" below; done since, "a paint weighed by marks", above).
 - 2026-10-13: COLORS CELL BY CELL FROM A PIECE OF ITS SHAPE -- stage 4, as
   ColorFrom (the user's pick of the owners: CopyTo fitted, ColorFrom cell by
   cell, or small ops chained; CopyTo fitted waits for a frame to fill).
@@ -306,11 +405,12 @@ facts, with search).
   4.4, repeats 3, copies 1.4, trails 1); matching 13%; the key words 11%
   (key_swap_holds 7, key_place_holds 4); the passes after the first 27% of
   it all.
-  NEXT, NOT STARTED: (1) a lay weighed by marks and counts alone, its cell
-  lists made only for the paint each kind offers (the same answers by
-  construction; 20% on the slow puzzles is a guess); (2) the replay cache a
-  flat table; (3) the strict and tolerant readings of one plan share its
-  matching.
+  NEXT: (1) a lay weighed by marks and counts alone, its cell lists made only
+  for the paint each kind offers -- done 10-13 ("a paint weighed by marks",
+  above: 11% less on the slow puzzles, not the 20% guessed); (2) the replay
+  cache a flat table and (3) the strict and tolerant readings of one plan
+  sharing its matching are in the one speed list (10-13, "picks that take
+  the same pieces asked once", above).
 - 2026-10-12: PICK LISTS REUSED ON THE UNCHANGED HAND. finish_the_line keeps
   picks_on_hand, keyed by colors and fit_colors, and clears it in carry before
   carrying a word. picks_to_ask sorts each pair's sizes once per call, reused
@@ -371,7 +471,11 @@ facts, with search).
   checkpoint at a quieter time, and its memory was never measured: less CPU
   may come with more memory or thrashing (the user). Not settled: a full run
   of both, one after the other, with time and memory, would settle it (one was
-  begun and stopped at 744 of 1000, for the checkpoint).
+  begun and stopped at 744 of 1000, for the checkpoint). Of it since: the
+  pick lists reused (10-12, above) and the paints' taken_before
+  (asked_picks, 10-13) are in; the words' taken_before and the walks of
+  bars, hollows and boxes are not -- (1) and (4) of the one speed list
+  (10-13).
   THE GPU QUEUE, RULED OUT (measured that evening, "Where the time goes"
   above): arc_said's one lock on the GPU checks (run_what_it_said) was held
   1.07 s in all over the tenth sample's 63 s, the longest wait 0.16 s.
@@ -961,13 +1065,15 @@ uses it, global before local. Estimates are rough.
    272f95fa, bdad9b1f and 782b5218 are solved (2026-10-12); 7d1f7ee8,
    29623171 and ac0c2ac3 no longer fit, their words still missing.
 1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
-   A full run is 558 s: about 88 line readings a slow puzzle, half of them
-   tolerant; each rays and repeats length is still a walk of its own (one
-   walk could judge every length). A run takes every CPU thread, so the
-   machine stalls while it runs (the user). The hotspots are several now --
+   A full run took 563 s on 10-13 (out/rays_fanned; 558 s on 10-12, before
+   the shape work): about 88 line readings a slow puzzle, half of them
+   tolerant; each repeats period is still a walk of its own (the rays read
+   every length off one walk since 10-13). A run takes every CPU thread, so
+   the machine stalls while it runs (the user). The hotspots are several now --
    the passes after the first, walking paints, partner lookups, matching --
    and most of what is left needs fewer readings, not faster ones. Open:
-   the speed kept back and the GPU queue (2026-10-12, "Speed kept back").
+   the one speed list (2026-10-13, "picks that take the same pieces asked
+   once"); the GPU queue was ruled out (2026-10-12).
    Lighter runs (the user, bored by a stalled machine): a batch of ids for
    quick checks, ARC_THREADS=10 to leave half the CPU free.
 
