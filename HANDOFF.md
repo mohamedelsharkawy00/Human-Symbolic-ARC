@@ -86,9 +86,9 @@ facts, with search).
   (out/picks_shared, then out/rays_fanned, against out/paint_marks).
   e681b708 and 92e50de0 on one thread, each step against the one before, in
   turn: (1) 214 s -> 163 s (24% less; peak memory 0.91 -> 0.57 GB), the
-  machine slow then -- the same build took 2.4 times as long as an hour
-  before, by its CPU time too; (2) 66.5 s -> 61.3 s (8% less), the machine
-  fast again. This morning's build (e83ec51, before the marks) against this
+  laptop hot from runs back to back -- the same build took 2.4 times as long
+  as an hour before, by its CPU time too; (2) 66.5 s -> 61.3 s (8% less),
+  the laptop cool again. This morning's build (e83ec51, before the marks) against this
   one, in turn: 99.6 s -> 61.5 s (38% less), peak memory 3.64 -> 0.56 GB,
   the readouts the same. Full run 563 s, 4,699 s of CPU, peak 6.98 GB (the
   marks' this morning 717 s, 6,100 s and 7.63 GB, at a fast time; step 1's
@@ -134,10 +134,11 @@ facts, with search).
   (7) THE PASSES AFTER THE FIRST (26%) want fewer readings, not faster ones.
   (8) Small: a ray length that holds is still walked on its own for its
   lists (rays_walk, under 2%).
-  Not settled: the machine's speed swings (2.4 times within an hour on
-  10-13), so only runs taken in turn compare; full runs at different times
-  do not. out/ holds earlier days' runs, about 600 MB each, kept for now
-  (the user's call).
+  THE LAPTOP'S SPEED SWINGS WITH HEAT, in general (the user, 10-13): runs
+  back to back heat it and slow it, 2.4 times on 10-13. So only runs taken
+  in turn, old against new, compare; timings and full runs taken at
+  different times do not. out/ holds earlier days' runs, about 600 MB each,
+  kept for now (the user's call).
 - 2026-10-13: A PAINT WEIGHED BY MARKS, ITS LISTS MADE ONLY FOR THE ONE IT
   OFFERS (the user: runs take too long; NEXT (1) of "where the time goes",
   10-12, below). Rays, trails, copies and repeats keep, for each lay that may
@@ -386,8 +387,9 @@ facts, with search).
   takes 49.2 s alone, 54 s among 20 threads.
   THE MACHINE: the same ids and build took 142 s at 19:28 and 63 s at 19:42,
   every readout the same; e681b708 took 132 s then, its last 66 s with no
-  other puzzle running, so something outside the reading slowed it (heat or
-  another program, not known). Asking Windows not to throttle the process
+  other puzzle running, so something outside the reading slowed it: heat,
+  from runs back to back (the user, 10-13: the speed swings with it in
+  general). Asking Windows not to throttle the process
   (SetProcessInformation, ProcessPowerThrottling) changed nothing, 64 s
   against 63 s, and was taken out. One thread repeats: e681b708 49.16 s, then
   49.15 s. So the paint-sharing run Codex stopped (bars, filled hollows and
