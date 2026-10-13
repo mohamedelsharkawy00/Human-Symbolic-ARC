@@ -88,12 +88,13 @@ facts, with search).
   turn: (1) 214 s -> 163 s (24% less; peak memory 0.91 -> 0.57 GB), the
   laptop hot from runs back to back -- the same build took 2.4 times as long
   as an hour before, by its CPU time too; (2) 66.5 s -> 61.3 s (8% less),
-  the laptop cool again. This morning's build (e83ec51, before the marks) against this
-  one, in turn: 99.6 s -> 61.5 s (38% less), peak memory 3.64 -> 0.56 GB,
-  the readouts the same. Full run 563 s, 4,699 s of CPU, peak 6.98 GB (the
-  marks' this morning 717 s, 6,100 s and 7.63 GB, at a fast time; step 1's
-  749 s ran at a slow one). GPU kernel unchanged (80 registers, 71,552 bytes
-  stack; 71 #20014 warnings). The builds timed are in extras/speed_1013.
+  the laptop cool again. This morning's build (e83ec51, before the marks)
+  against this one, in turn: 99.6 s -> 61.5 s (38% less), peak memory 3.64
+  -> 0.56 GB, the readouts the same. Full run 563 s, 4,699 s of CPU, peak
+  6.98 GB (the marks' this morning 717 s, 6,100 s and 7.63 GB, the laptop
+  cool; step 1's 749 s ran hot). GPU kernel unchanged (80 registers, 71,552
+  bytes stack; 71 #20014 warnings). The builds timed are in
+  extras/speed_1013.
   WHERE THE TIME IS NOW (VTune, the two puzzles, 60 s;
   profiling/output/cpu-20261013-153554-418, not in git; inclusive): the
   words 48% -- moves 18% (toward_holds 6%), a color from a partner 17%
