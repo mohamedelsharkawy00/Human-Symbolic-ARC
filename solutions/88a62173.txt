@@ -1,6 +1,9 @@
-Input Panes SelectUnique[0] Origin Union
-
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Trim SelectAll InvertSelection SelectUnique[0] InvertSelection DeleteSelection SelectAll Origin Split[1] Withhold CurrentObjects SelectAll Trim Union Output SelectAll AddColor[0] Underlay
 Puzzle:       88a62173
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.0000
+Attempts:     0
+Nodes:        25
+Best Score:   357.0000
+Max Depth:    25

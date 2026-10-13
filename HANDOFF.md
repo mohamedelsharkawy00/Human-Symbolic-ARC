@@ -8,13 +8,14 @@ This file holds only what is current; past stages are in git history
 The user: not much time left. Prefer work that gains puzzles soon over long
 redesigns; the big ideas wait in "Parked" below.
 
-The plan (the user, 2026-10-12): training until 2026-10-25, aiming at about
-350 right there, about 9 a day; then the last week on the evaluation set,
-which is what Kaggle scores (the last evaluation run, 2026-10-10, fit 0 of
-120). The trend, training right, the best of each day: 187 on 10-07, 199 on
-10-08, 219 on 10-10, 224 on 10-11, 237 on 10-12 -- 5 to 13 a day, slowing as
-the easier puzzles go; it gives about 310 to 350 by 10-25. All 1000 by then
-would need about 59 a day.
+The plan (the user, 2026-10-12): training until 2026-10-25, then the last
+week on the evaluation set, which is what Kaggle scores (0 of 120 on 10-10
+and again on 10-13). THE AIM IS ALL 1000 of training (the user, 2026-10-13:
+350 was never the aim; an earlier entry here had it wrong). The trend,
+training right, the best of each day: 187 on 10-07, 199 on 10-08, 219 on
+10-10, 224 on 10-11, 237 on 10-12, 246 on 10-13. All 1000 by 10-25 needs
+about 63 a day from 246, so each change has to gain whole families, tens at
+a time, not one or two.
 
 THE WAY OF WORKING is AGENTS.md's (each puzzle with all of its adjacent
 concepts). Open (the user, 2026-10-12): whether a batch of 50 consecutive ids
