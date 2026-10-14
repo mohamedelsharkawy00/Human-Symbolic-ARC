@@ -93,8 +93,7 @@ struct color_facts {
 
         // Biggest first; returns how many colors this output actually has.
         auto rank_for_output = [&](const grid& out, int8_t ranking[COLOR_COUNT]) -> int {
-            int counts[COLOR_COUNT];
-            count_colors(out, counts);
+            const color_tally counts(out);
             // Only the first `present` entries are ever read, and each is written
             // before it is, so there is nothing to start them at.
             int order[COLOR_COUNT] = {}, present = 0;
@@ -148,9 +147,7 @@ private:
 
         for (const auto& ex : train) {
             // Cells of each color; a color is present where its count is not 0.
-            int in[COLOR_COUNT], out[COLOR_COUNT];
-            count_colors(ex.input, in);
-            count_colors(ex.output, out);
+            const color_tally in(ex.input), out(ex.output);
             for (int i = 0; i < COLOR_COUNT; ++i) {
                 in_every_input[i]  = in_every_input[i]  && in[i];
                 in_any_input[i]    = in_any_input[i]    || in[i];
@@ -817,8 +814,7 @@ struct diagonal_continuation_rule {
         auto redraws_every_output = [&](int8_t lean) {
             bool carried_something = false;
             for (const auto& pair : train) {
-                int counts[COLOR_COUNT];
-                count_colors(pair.input, counts, TRANSPARENT);
+                const color_tally counts(pair.input, TRANSPARENT);
                 int colors = 0;
                 for (int color = 0; color < COLOR_COUNT; ++color) colors += counts[color] > 0;
                 if (colors < 2) return false;
@@ -992,8 +988,7 @@ struct ray_extension_rule {
     bool holds() const { return !branches.empty(); }
 
     static bool rank_colors(const grid& input, ranked_colors& ranked) {
-        int counts[COLOR_COUNT];
-        count_colors(input, counts);
+        const color_tally counts(input);
         ranked.clear();
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (counts[color]) ranked.push_back((int8_t)color);
@@ -1891,8 +1886,7 @@ struct pane_gather_rule {
 // off the grid in hand, so a rule that asks for it names a color no example
 // showed as readily as one they all did.
 inline int8_t the_figure_color(const grid& one_grid, int ground) {
-    int counts[COLOR_COUNT];
-    count_colors(one_grid, counts, ground);
+    const color_tally counts(one_grid, ground);
     int8_t figure = TRANSPARENT;
     for (int color = 0; color < COLOR_COUNT; ++color) {
         if (!counts[color]) continue;
@@ -2885,8 +2879,7 @@ struct ranked_layout_rule {
         if (!holds() || pair.input.empty() || discarded_colors < 0 || discarded_colors > COLOR_COUNT ||
             cell_size < 2 || cell_size > 10 || (split_mode != 0 && split_mode != 1)) return false;
 
-        int frequencies[COLOR_COUNT];
-        count_colors(pair.input, frequencies);
+        const color_tally frequencies(pair.input);
         bool removed[COLOR_COUNT] = {};
         for (int rank = 0; rank < discarded_colors; ++rank) {
             int common = -1;
@@ -2990,8 +2983,7 @@ struct rarest_color_rule {
     bool holds() const { return held; }
 
     static bool draw(const grid& input, grid& drawn) {
-        int counts[COLOR_COUNT];
-        count_colors(input, counts);
+        const color_tally counts(input);
         int rarest = -1, colors = 0;
         bool tied = false;
         for (int color = 0; color < COLOR_COUNT; ++color) {

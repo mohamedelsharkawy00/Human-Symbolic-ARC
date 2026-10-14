@@ -629,8 +629,7 @@ private:
     // well, so a ground already deleted still counts against chance.
     // The last share is empty's, read like a color where the ground is empty.
     static void color_shares(const grid& one_grid, double share[COLOR_COUNT + 1]) {
-        int counts[COLOR_COUNT];
-        count_colors(one_grid, counts);
+        const color_tally counts(one_grid);
         const int area = one_grid.width * one_grid.height;
         int painted = 0;
         for (int i = 0; i < COLOR_COUNT; ++i) painted += counts[i];

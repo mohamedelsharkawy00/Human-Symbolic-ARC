@@ -15,29 +15,9 @@
 namespace arc {
 using namespace std;
 
-// SHARED · the color tally, partners (ColorFrom, AlignTo, MoveToward,
+// SHARED · partners (ColorFrom, AlignTo, MoveToward,
 // MirrorAround, WouldFit, SelectLikeKey) and bands (Layout, SelectRow,
 // SelectColumn)
-
-// HOW MANY CELLS WEAR EACH COLOR, counted a cell at a time -- what is no color
-// is not counted -- and the color the most of them wear, or the fewest, the
-// lowest on a tie: TRANSPARENT where nothing was counted. The one tie rule for
-// every op and every reading that asks which color leads.
-struct color_tally {
-    int counts[COLOR_COUNT] = {};
-    ARC_HOST_DEVICE void add(int color) { if (is_color(color)) ++counts[color]; }
-    ARC_HOST_DEVICE int8_t most() const { return leading(true); }
-    ARC_HOST_DEVICE int8_t least() const { return leading(false); }
-
-private:
-    ARC_HOST_DEVICE int8_t leading(bool most) const {
-        int8_t best = TRANSPARENT;
-        for (int color = 0; color < COLOR_COUNT; ++color)
-            if (counts[color] && (best < 0 || (most ? counts[color] > counts[best] : counts[color] < counts[best])))
-                best = (int8_t)color;
-        return best;
-    }
-};
 
 // WHO A PIECE TAKES ITS COLOR FROM: another piece of the same grid, found by how
 // the two sit. The rule that reads it off the pairs and the op that does it

@@ -10,27 +10,45 @@ using namespace std;
 
 // HISTOGRAM · how many cells each color has
 
-// Every cell wearing a color, in reading order, with one color left out if
-// asked. Single home of the walk: the bounds are the grid's own, held to what a
-// grid can hold, so no two readings can disagree about which cells count.
-template <class Grid, class See>
-ARC_HOST_DEVICE inline void walk_colored_cells(const Grid& one_grid, int skip, See see) {
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            const int color = one_grid.data[row][col];
-            if (is_color(color) && color != skip) see(row, col, color);
-        }
-}
+// How many cells wear each color, counted a cell at a time -- what is no color
+// is not counted -- and the color the most of them wear, or the fewest, the
+// lowest on a tie: TRANSPARENT where nothing was counted. The one tie rule for
+// every op and every reading that asks which color leads.
+struct color_tally {
+    int counts[COLOR_COUNT] = {};
 
-// How many cells of each color a grid holds. `skip` leaves one color out of the
-// tally — the background, wherever a caller wants it ignored; TRANSPARENT
-// counts all ten.
-template <class Grid>
-ARC_HOST_DEVICE inline void count_colors(const Grid& one_grid, int counts[COLOR_COUNT],
-                         int skip = TRANSPARENT) {
-    for (int i = 0; i < COLOR_COUNT; ++i) counts[i] = 0;
-    walk_colored_cells(one_grid, skip, [&](int, int, int color) { counts[color]++; });
-}
+    ARC_HOST_DEVICE constexpr color_tally() = default;
+
+    // Read off a grid, leaving out `skip` (the background, wherever a caller
+    // wants it ignored; TRANSPARENT counts all ten).
+    template <class Grid>
+    ARC_HOST_DEVICE explicit color_tally(const Grid& one_grid, int skip = TRANSPARENT) {
+        walk_colored_cells(one_grid, skip, [&](int, int, int color) { add(color); });
+    }
+
+    ARC_HOST_DEVICE int operator[](int color) const { return counts[color]; }
+    ARC_HOST_DEVICE int& operator[](int color) { return counts[color]; }
+
+    ARC_HOST_DEVICE void add(int color) { if (is_color(color)) ++counts[color]; }
+    ARC_HOST_DEVICE bool has(int color) const { return is_color(color) && counts[color] > 0; }
+    ARC_HOST_DEVICE int8_t most() const { return leading(true); }
+    ARC_HOST_DEVICE int8_t least() const { return leading(false); }
+
+    template <class Grid>
+    ARC_HOST_DEVICE static color_tally of(const Grid& one_grid, int skip = TRANSPARENT) {
+        return color_tally(one_grid, skip);
+    }
+
+private:
+    ARC_HOST_DEVICE int8_t leading(bool most) const {
+        int8_t best = TRANSPARENT;
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            if (counts[color] && (best < 0 || (most ? counts[color] > counts[best] : counts[color] < counts[best])))
+                best = (int8_t)color;
+        return best;
+    }
+};
+
 
 // BOXES · a frame around a group of cells
 

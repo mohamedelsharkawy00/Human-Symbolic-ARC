@@ -58,7 +58,7 @@ older notes still say size_rule.
 vocabulary → eight channels, each contiguous as question / struct / private
 machinery / detector → `struct inference` → `infer()` → `log_inference()`.
 
-Shared readings, used by more than one channel: `count_colors`, `color_boxes`,
+Shared readings, used by more than one channel: `color_tally`, `color_boxes`,
 `walk_out` (the one flood fill), plus `NEIGHBOUR_ROW_8/COL_8/ROW_4/COL_4` and
 `shape_occupancy_hash` in 0_core_types.hpp.
 

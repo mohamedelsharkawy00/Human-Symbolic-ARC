@@ -530,13 +530,12 @@ template <class Grid>
 ARC_HOST_DEVICE inline local_background_candidates elect_grid_background(const Grid& one_grid) {
     local_background_candidates ranked;
     if (one_grid.width <= 0 || one_grid.height <= 0) return ranked;
-    int counts[COLOR_COUNT];
-    count_colors(one_grid, counts);
+    const color_tally counts(one_grid);
     bool present[COLOR_COUNT];
-    for (int c = 0; c < COLOR_COUNT; ++c) present[c] = counts[c] > 0;
+    for (int c = 0; c < COLOR_COUNT; ++c) present[c] = counts.has(c);
     background_evidence evidence;
-    measure_area_and_reach(one_grid, counts, evidence);
-    measure_embedding(one_grid, counts, evidence);
+    measure_area_and_reach(one_grid, counts.counts, evidence);
+    measure_embedding(one_grid, counts.counts, evidence);
     close_underneath(evidence);
     finish_background_election(ranked, evidence, present);
     return ranked;
@@ -546,9 +545,8 @@ ARC_HOST_DEVICE inline local_background_candidates elect_grid_background(const G
 inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
     for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
     for (const grid* grid_ptr : grids) {
-        int counts[COLOR_COUNT];
-        count_colors(*grid_ptr, counts);
-        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && counts[i] > 0;
+        const color_tally counts(*grid_ptr);
+        for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = in_every[i] && counts.has(i);
     }
 }
 
@@ -568,10 +566,9 @@ inline vector<background_election::hypothesis> elect_side_background(
     for (const grid* grid_ptr : grids) {
         const grid& one_grid = *grid_ptr;
         if (one_grid.empty()) continue;
-        int cells_of_color[COLOR_COUNT];
-        count_colors(one_grid, cells_of_color);
-        measure_area_and_reach(one_grid, cells_of_color, evidence);
-        measure_embedding(one_grid, cells_of_color, evidence);
+        const color_tally cells_of_color(one_grid);
+        measure_area_and_reach(one_grid, cells_of_color.counts, evidence);
+        measure_embedding(one_grid, cells_of_color.counts, evidence);
     }
     close_underneath(evidence);
 
