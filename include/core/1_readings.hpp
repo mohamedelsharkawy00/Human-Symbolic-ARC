@@ -21,8 +21,7 @@ struct color_tally {
 
     // Read off a grid, leaving out `skip` (the background, wherever a caller
     // wants it ignored; TRANSPARENT counts all ten).
-    template <class Grid>
-    ARC_HOST_DEVICE explicit color_tally(const Grid& one_grid, int skip = TRANSPARENT) {
+    ARC_HOST_DEVICE explicit color_tally(const grid& one_grid, int skip = TRANSPARENT) {
         one_grid.for_each_colored_cell(skip, [&](int, int, int color) { add(color); });
     }
 
@@ -34,8 +33,7 @@ struct color_tally {
     ARC_HOST_DEVICE int8_t most() const { return leading(true); }
     ARC_HOST_DEVICE int8_t least() const { return leading(false); }
 
-    template <class Grid>
-    ARC_HOST_DEVICE static color_tally of(const Grid& one_grid, int skip = TRANSPARENT) {
+    ARC_HOST_DEVICE static color_tally of(const grid& one_grid, int skip = TRANSPARENT) {
         return color_tally(one_grid, skip);
     }
 
