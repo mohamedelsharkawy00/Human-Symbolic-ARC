@@ -686,6 +686,19 @@ private:
         // its source is drawn. Refused below, in the order found.
         vector<bool> on_figures;
 
+        // Identical drawings ask the same whole-grid placement question. Keep
+        // its answer for this target and these permissions; each source still
+        // weighs the hits and records its own edges in the original order.
+        struct placed_drawing { grid cells; bool clipped; object_matches matches; };
+        vector<placed_drawing> placements;
+        auto places_for = [&](const grid& cells, bool clipped) -> const object_matches& {
+            for (const auto& prior : placements)
+                if (prior.clipped == clipped && prior.cells == cells) return prior.matches;
+            placements.push_back({ cells, clipped,
+                find_in(cells, into, clipped, -1, -1, false, allowed.poses()) });
+            return placements.back().matches;
+        };
+
         for (size_t from_index = 0; from_index < from_objects.size(); ++from_index) {
             const auto& one_object = from_info[from_index];
             const grid cells = from_objects[from_index].drawn();
@@ -746,10 +759,8 @@ private:
             // Allow clipped matches only when copies establish the shape on either grid.
             if (allowed.translate)
                 keep_positional(
-                    find_in(cells, into,
-                            may_hang_off && (one_object.motif >= 0 ||
-                                             twins_over_there(one_object.shape)),
-                            -1, -1, false, allowed.poses()), false);
+                    places_for(cells, may_hang_off && (one_object.motif >= 0 ||
+                                                       twins_over_there(one_object.shape))), false);
 
             // Source 3 — the same shape at another size: a piece there whose shape
             // at any size (scaled_shape) is this one's, grown a whole number of

@@ -74,6 +74,37 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- 2026-10-14: MATCHING PLACEMENTS SHARED, experiment in progress. Profile of
+  25094a63, CPU 2, above-normal: profiling/output/cpu-20261014-215549-591;
+  42.6 sampled CPU seconds, matching inclusive 81%, later passes 97%
+  (overlapping), line reading 14%. Full elapsed inference about 48 s alone,
+  versus 294 s in the concurrent dataset run. collect_cpu.ps1 sets
+  above-normal priority; CPU pinning was subsequently removed at user request.
+  In 5_matching::gather_matches, identical drawn grids with the same clipping
+  permission share find_in's whole-grid placements within that call. Stationary
+  matches, chance tests, source edges and fitting stay separate and ordered.
+  Full build passed. First old/new timing on 25094a63, CPU 2, above-normal:
+  46.73/45.72 s; peak 3.35/3.36 GB. Too small to claim a reliable speedup.
+  Readouts and existing work counters identical; 0 right, 0 wrong, gained 0,
+  lost 0 (still unsolved). Old binary out/arc_said_before_shared_matches.exe;
+  runs matches_old1/matches_new1, timing JSONs extras/speed_1013.
+  Full check matches_full passed, 10 workers, above-normal: 266 right,
+  39 wrong, gained 0, lost 0 against no_color_tally_templates. All 1000
+  readouts and said.txt byte-identical; explained but unsolved 0 -> 0.
+  Whether speed justifies keeping this cache remains pending.
+  User now wants NO CPU PINNING, above-normal priority only; this supersedes
+  earlier CPU 2 instructions. Affinity setting removed from collect_cpu.ps1.
+  New profile finished with unrestricted affinity:
+  profiling/output/cpu-20261014-222051-373, 106.09 s elapsed, 105.00 s CPU.
+  Inclusive shares: matching 81%, later passes 96%, gathering matches 37%,
+  fitting 21%, find_in 17%, line reading 14% (overlapping). Timing is not
+  directly comparable to the pinned run; no clear speed gain established.
+  NEXT, discussed with user, not implemented: count matching calls, placement
+  scans and cache hits, then inspect repeated work across permission variants
+  (recolor, turn, etc.) at its matching owner. Next inspect repeated identical
+  pictures across readings/passes, then repeated walks/list construction in
+  gathering and fitting. Keep choices, ordering and readouts unchanged.
+  User wants interactive work and control returned for waits over two minutes.
 - 2026-10-14: COLOR_TALLY OWNS HISTOGRAM READING, --SOLVED IN ARC_SAID.
   In 0_core.hpp, grid::walk_colored_cells owns the shared walk; grid and
   gpu_fixed_grid expose for_each_colored_cell, with the packed GPU grid

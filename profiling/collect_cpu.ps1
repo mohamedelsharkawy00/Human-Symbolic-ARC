@@ -11,6 +11,7 @@ $scorePath = Join-Path $runDirectory 'score.txt'
 # out/profile, and what it prints is kept here beside the profile.
 $runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_said.exe" -ArgumentList (@('--as','profile') + $Ids) -WorkingDirectory "$PSScriptRoot/.." -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
 try {
+    $runner.PriorityClass = 'AboveNormal'
     # Let CUDA initialize before VTune injects its sampler. The score still
     # covers every puzzle; the profile excludes startup and attachment time.
     $startup = [Diagnostics.Stopwatch]::StartNew()
