@@ -33,6 +33,14 @@
 #include <vector>
 
 namespace arc {
+
+// Diagnostic work counts, local to the worker; never read by inference decisions.
+// arc_said resets these for each puzzle. Count calls, not cells or clock reads.
+struct inference_work_counts {
+    unsigned long long preparations = 0, readings = 0, later_readings = 0, lines = 0;
+    unsigned long long paint_replays = 0, slide_replays = 0, drop_replays = 0, walks = 0, lays = 0;
+};
+inline thread_local inference_work_counts inference_work;
 using namespace std;
 
 // Tracks which colors appear, disappear, or persist across training examples.
@@ -3561,6 +3569,17 @@ inline bool takes_the_same(const vector<partner_pieces>& one, const vector<partn
     return ranges::equal(one, other, [](const partner_pieces& a, const partner_pieces& b) { return a.picked == b.picked; });
 }
 
+// Local to one word on one unchanged hand. Record only eligible picks, so the
+// first pick allowed to ask a value keeps its tie, even if another was skipped.
+struct asked_piece_sets {
+    vector<vector<partner_pieces>> asked;
+    bool before(const vector<partner_pieces>& handed) {
+        if (ranges::any_of(asked, [&](const auto& prior) { return takes_the_same(prior, handed); })) return true;
+        asked.push_back(handed);
+        return false;
+    }
+};
+
 // Whether a pick by `colors` picks by the same colors in every pair: each pair's
 // pieces hold the same ones of them. A pick whose colors change from pair to pair
 // names each pair's own colors rather than a rule, and a test brings its own.
@@ -4523,6 +4542,7 @@ inline void each_landing(const paint_walk& walk, size_t which, const laying& how
 // ones that landed wrong, and whether it picked every piece.
 template <class Seen = replayed>
 inline optional<Seen> lay_paint(const replay_facts& facts, const paint_walk& walk, const laying& how) {
+    ++inference_work.lays;
     Seen seen;
     seen.every_piece = walk.every_piece;
     const size_t pairs = walk.pairs.size();
@@ -4677,6 +4697,7 @@ inline bool may_hold(const replay_facts& facts, const walk_tally& tally, const l
 template <class Draw>
 inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<partner_pieces>& handed, Draw draw,
                                        const laying* only = nullptr) {
+    ++inference_work.walks;
     using rule = correspondence_election::fired_rule;
     if (!facts.overlays || facts.train.empty()) return nullopt;
     paint_walk walk;
@@ -4755,6 +4776,7 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
 template <class Draw>
 inline optional<replayed> paint_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                       const laying& how, Draw draw) {
+    ++inference_work.paint_replays;
     if (how.in == laying::own_else_one) {
         const auto walk = walk_paint(facts, handed, draw);
         if (!walk) return nullopt;
@@ -5016,6 +5038,7 @@ inline bool slides_show(const example& pair, const partner_pieces& cut, bool und
 // moved. Handed the pieces its pick takes (handed_pieces).
 template <class Where>
 inline optional<replayed> slides_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Where where) {
+    ++inference_work.slide_replays;
     if (!facts.overlays) return nullopt;
     replayed seen;
     seen.left.assign(facts.train.size(), {});
@@ -5139,6 +5162,7 @@ inline vector<std::pair<int, int>> offsets_to_ask(const replay_facts& facts, con
 // a cell that shows it.
 template <class Keeps>
 inline optional<replayed> drops_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Keeps keeps) {
+    ++inference_work.drop_replays;
     if (!facts.overlays || facts.train.empty()) return nullopt;
     replayed seen;
     seen.drawn.assign(facts.train.size(), {});
@@ -6024,6 +6048,7 @@ struct cut_paints {
 // right after it (read_figures asks both ways).
 inline void finish_the_line(inference& inf, const vector<example>& train, const tiled_pieces& boundaries,
                             bool read_ahead, cut_paints& paints) {
+    ++inference_work.lines;
     using rule = correspondence_election::fired_rule;
     auto& election = inf.correspondence;
     if (election.chosen_pairs().empty()) return;
@@ -6396,8 +6421,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
+        asked_piece_sets asked;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
             for (int how = 0; how <= row_of(node_type::ColorFrom).high; ++how)
                 if (how >= COLORS_FROM_ITS_SHAPE ? !facts.asks_likeness(how - COLORS_FROM_ITS_SHAPE)
                                                  : how < KEY_BY_PLACE && !facts.asks_way((partner_by)how))
@@ -6436,28 +6463,34 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::where_it_went);
         if (!facts.hand_known || !from) return {};
         heard aligned, edged, sized, stepped, toward;
+        asked_piece_sets asked, axis_steps, diagonal_steps;
         int best_down = 0, best_across = 0;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            for (int value = 0; value < 2 * ways; ++value)
-                if (!facts.asks_way((partner_by)(value % ways))) continue;
-                else if (const auto seen = align_holds(facts, handed, value >= ways, (partner_by)(value % ways)))
-                    weigh(aligned, value, pick, *seen, move_claims(*seen));
-            for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value)
-                if (!facts.asks_kind(value % PARTNER_KINDS)) continue;
-                else if (const auto seen = toward_holds(facts, handed, value))
-                    weigh(toward, value, pick, *seen, move_claims(*seen));
-            for (int at = 0; at < heading::count; ++at) {
-                const int way = heading_asked(at);
-                if (const auto seen = to_edge_holds(facts, handed, way)) weigh(edged, way, pick, *seen, move_claims(*seen));
-                if (const auto seen = shift_holds(facts, handed, way)) weigh(sized, way, pick, *seen, move_claims(*seen));
+            if (!asked.before(handed)) {
+                for (int value = 0; value < 2 * ways; ++value)
+                    if (!facts.asks_way((partner_by)(value % ways))) continue;
+                    else if (const auto seen = align_holds(facts, handed, value >= ways, (partner_by)(value % ways)))
+                        weigh(aligned, value, pick, *seen, move_claims(*seen));
+                for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value)
+                    if (!facts.asks_kind(value % PARTNER_KINDS)) continue;
+                    else if (const auto seen = toward_holds(facts, handed, value))
+                        weigh(toward, value, pick, *seen, move_claims(*seen));
+                for (int at = 0; at < heading::count; ++at) {
+                    const int way = heading_asked(at);
+                    if (const auto seen = to_edge_holds(facts, handed, way)) weigh(edged, way, pick, *seen, move_claims(*seen));
+                    if (const auto seen = shift_holds(facts, handed, way)) weigh(sized, way, pick, *seen, move_claims(*seen));
+                }
             }
             if (pick.by_color()) continue;
+            const bool axis_before = axis_steps.before(handed);
+            const bool diagonal_before = pick.partner >= 0 || diagonal_steps.before(handed);
+            if (axis_before && diagonal_before) continue;
             for (const auto& [down, across] : offsets_to_ask(facts, handed)) {
                 // A step both ways is said as two sentences, the second picking
                 // again on the hand the first moved: a pick that reads a partner
                 // may take other pieces there, so it steps one way only.
-                if (pick.partner >= 0 && down != 0 && across != 0) continue;
+                if (down != 0 && across != 0 ? diagonal_before : axis_before) continue;
                 const auto seen = move_holds(facts, handed, down, across);
                 if (!seen) continue;
                 const int before = stepped.said;
@@ -6531,8 +6564,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::where_it_was_copied);
         if (!facts.hand_known || !from) return {};
         heard best;
+        asked_piece_sets asked;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
             for (const mirror_by mirror : mirrors_asked)
                 for (int how = 0; how < MIRROR_PARTNERS; ++how) {
                     if (how < (int)partner_by::count && !facts.asks_way((partner_by)how)) continue;
@@ -6561,8 +6596,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = colors_left(says);
         if (!facts.hand_known || !from) return {};
         heard best;
+        asked_piece_sets asked;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
-            const auto seen = outline_holds(facts, handed_pieces(facts, pick));
+            const auto handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
+            const auto seen = outline_holds(facts, handed);
             if (!seen) continue;
             weigh(best, 0, pick, *seen, [says, kept = cell_marks(seen->drawn), dropped = cell_marks(seen->left)](size_t which,
                                                                                          const left_over_cell& cell) {
@@ -6589,6 +6627,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 return group_of(read.fired[which].as) == word_group::changes_pieces; }))
             return {};
         heard best;
+        array<asked_piece_sets, COLOR_COUNT> asked;
         const uint16_t from = starts_from(missing::a_recolor);
         for (const piece_pick& pick : hand_picks.get(facts, facts.hand_known ? from : 0, from)) {
             if (pick.how == piece_pick::most_common &&
@@ -6597,6 +6636,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             for (int8_t color = 0; color < COLOR_COUNT; ++color) {
                 if (already_said(rule::recolor_picked, pick, color)) continue;
+                if (asked[(size_t)color].before(handed)) continue;
                 if (const auto seen = picked_recolor_holds(facts, handed, color))
                     weigh(best, color, pick, *seen, recolor_claims(*seen));
             }
@@ -6619,10 +6659,12 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (inf.pass > 1 || !facts.hand_known || !from || !facts.overlays || inf.shape_color_map.holds()) return {};
         heard best;
         shape_color_map_rule best_table;
+        asked_piece_sets asked;
         vector<uint16_t> shown;
         for (const example& pair : facts.train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
             for (int kind = 0; kind < (int)shape_key::count; ++kind) {
                 // Each picked piece's key and the one color it comes out in.
                 vector<shape_color_map_rule::seen_key> seen;
@@ -6680,8 +6722,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
+        asked_piece_sets asked;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
             for (int value = KEY_PAIRS_ALONG_ROWS; value <= KEY_PAIRS_ALONG_COLUMNS; ++value)
                 if (const auto seen = key_swap_holds(facts, handed, value))
                     weigh(best, value, pick, *seen, recolor_claims(*seen));
@@ -6709,6 +6753,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 if (cell.claimed_by < 0 && cell.from_input) from = (uint16_t)(from | 1u << cell.color);
         if (!from) return {};
         heard best;
+        asked_piece_sets asked;
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             bool may = true;
             if (facts.hand_known)
@@ -6725,7 +6770,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                           ranges::none_of(read.line, [&](int8_t which) { return changes(read.fired[which], color); });
             if (!may) continue;
             if (already_said(rule::removed, pick, 0)) continue;
-            const auto seen = removal_holds(facts, handed_pieces(facts, pick));
+            const auto handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
+            const auto seen = removal_holds(facts, handed);
             if (!seen || seen->every_piece) continue;
             weigh(best, 0, pick, *seen, [gone = cell_marks(seen->left)](size_t which, const left_over_cell& cell) {
                 return cell.from_input && on_cells(gone, which, cell.row, cell.col);
@@ -7658,12 +7705,9 @@ inline void read_the_rest(inference& inf, const vector<example>& train);
 // `pass` is which pass this reading is, and once its cut is chosen the rest of
 // the change is read on the picture its line draws (read_the_rest); `tolerant`
 // whether its words may lay cells wrong (inference::tolerant).
-inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}, int8_t pass = 1,
-                              bool tolerant = false, bool partners = false) {
+inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles) {
+    ++inference_work.preparations;
     inference inf;
-    inf.pass = pass;
-    inf.tolerant = tolerant;
-    inf.partners = partners;
     inf.size = output_dimension_rule::infer_rule(train);
     inf.colors = color_facts::detect(train);  // rule-independent
     // No reader is handed a ground color: the ground is empty where a plan
@@ -7712,6 +7756,18 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     // Edge level of correspondence: the figures cut up every way that competes,
     // ranked by how well the pieces match.
     inf.correspondence = correspondence_election::infer(train, tiles);
+    return inf;
+}
+
+// The facts and matching belong to the figures, before any word changes them.
+// Each reading takes its own copy; its claims, frames and later pictures stay its own.
+inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles, int8_t pass,
+                              bool tolerant, bool partners, inference inf) {
+    ++inference_work.readings;
+    inference_work.later_readings += pass > 1;
+    inf.pass = pass;
+    inf.tolerant = tolerant;
+    inf.partners = partners;
     // THE CUT IS CHOSEN HERE, just above the first word that reads it: each cut
     // in the matching's order is read to the end of its line, and the one whose
     // words say the most is said (says_the_most).
@@ -7738,6 +7794,11 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     });
     read_the_rest(best, train);
     return best;
+}
+
+inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}, int8_t pass = 1,
+                              bool tolerant = false, bool partners = false) {
+    return read_figures(train, tiles, pass, tolerant, partners, prepare_figures(train, tiles));
 }
 
 // THE PASSES A READING MAKES AT MOST: the first, and nine after it.
@@ -7925,6 +7986,13 @@ inline inference infer(const vector<example>& train) {
     // the words that would have said every cell (332efdb3's grid, every cell 1
     // at once and its holes wrong, where rays laid it right).
     const int count = (int)plans.size();
+    vector<optional<inference>> prepared((size_t)count);
+    auto read_plan = [&](int at, bool tolerant, bool partners) {
+        const vector<example> figures = figures_only(train, plans[(size_t)at]);
+        auto& facts = prepared[(size_t)at];
+        if (!facts) facts = prepare_figures(figures, {});
+        return read_figures(figures, {}, 1, tolerant, partners, *facts);
+    };
     vector<inference::plan_read> plans_read;
     // Each plan read, as the readout shows it: the words its line said.
     auto note_read = [&](int plan, const inference& read) {
@@ -7939,7 +8007,7 @@ inline inference infer(const vector<example>& train) {
     };
     inference best = says_the_most(2 * count, [&](int which) {
         const ground_plan& plan = plans[(size_t)(which % count)];
-        inference read = read_figures(figures_only(train, plan), {}, 1, which >= count);
+        inference read = read_plan(which % count, which >= count, false);
         read.plan = plan;
         note_read(which % count, read);
         return read;
@@ -7957,9 +8025,10 @@ inline inference infer(const vector<example>& train) {
     // nothing else to say, they came after picks that left the line no way on
     // (4364c1c4's bands, its first stack only).
     if (const int left = cells_left_unsaid(best); left > 0) {
-        inference with = read_figures(figures_only(train, best.plan), {}, 1, best.tolerant, true);
+        const int at = (int)(ranges::find(plans, best.plan) - plans.begin());
+        inference with = read_plan(at, best.tolerant, true);
         with.plan = best.plan;
-        note_read((int)(ranges::find(plans, best.plan) - plans.begin()), with);
+        note_read(at, with);
         if (cells_left_unsaid(with) < left) best = std::move(with);
     }
     best.ground_election = election;

@@ -10,6 +10,7 @@
 //   said.txt                  a line per puzzle whose program fits the train
 //                             pairs: id, SOLVED or WRONG, program
 //   tally.txt                 the counts, also on stderr
+//   timings.csv               elapsed milliseconds and work counts per puzzle
 //   logs/inference/<id>.txt   the readout: background, readings, fired rules,
 //                             sentences (log_inference writes it)
 // scripts\readouts.py compares two labels.
@@ -38,6 +39,7 @@
 #endif
 #include "in_parallel.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -53,7 +55,15 @@ using namespace std;
 struct said_one {
     bool spoke = false, panes = false, fitted = false, right = false;
     string program;
+    bool loaded = false;
+    double total_ms = 0, infer_ms = 0, report_ms = 0, gpu_wait_ms = 0, score_ms = 0;
+    inference_work_counts work;
 };
+
+using run_clock = chrono::steady_clock;
+static double milliseconds_since(run_clock::time_point start) {
+    return chrono::duration<double, milli>(run_clock::now() - start).count();
+}
 
 #ifndef ARC_NO_GPU
 // The first of the programs the reading spelled that draws every train pair,
@@ -122,6 +132,10 @@ int main(int argc, char** argv) {
         : filesystem::path("out") / label;
     filesystem::create_directories(out);
     filesystem::current_path(out);
+    FILE* timings = fopen("timings.csv", "w");
+    if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
+    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays\n", timings);
+    fflush(timings);
 #ifndef ARC_NO_GPU
     FILE* said_file = fopen("said.txt", "w");
     if (!said_file) { fprintf(stderr, "cannot write %s\n", (out / "said.txt").string().c_str()); return 1; }
@@ -137,18 +151,40 @@ int main(int argc, char** argv) {
         const int at = asked[(size_t)which];
         const challenge_task& entry = set.tasks[(size_t)at];
         said_one& one = said[(size_t)which];
+        const auto started = run_clock::now();
         puzzle task;
-        if (!load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id))) return;
-        infer_into_puzzle(task, { at, (int)set.tasks.size(), dataset }, true);
-        if (task.suggested_programs.empty()) return;
-        one.spoke = true;
+        one.loaded = load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id));
+        if (!one.loaded) { one.total_ms = milliseconds_since(started); return; }
+        inference_work = {};
+        const auto reading = run_clock::now();
+        inference read = infer(task.train);
+        one.infer_ms = milliseconds_since(reading);
+        one.work = inference_work;
+        const auto reporting = run_clock::now();
+        take_the_reading(task, std::move(read), { at, (int)set.tasks.size(), dataset }, true);
+        one.report_ms = milliseconds_since(reporting);
+        one.spoke = !task.suggested_programs.empty();
         one.panes = task.inf.pane_split.holds();
 #ifndef ARC_NO_GPU
-        const lock_guard on_the_gpu(gpu);
-        run_what_it_said(task, set.solutions_for(entry.id), one);
+        if (one.spoke) {
+            const auto waiting = run_clock::now();
+            const lock_guard on_the_gpu(gpu);
+            one.gpu_wait_ms = milliseconds_since(waiting);
+            const auto scoring = run_clock::now();
+            run_what_it_said(task, set.solutions_for(entry.id), one);
+            one.score_ms = milliseconds_since(scoring);
+        }
 #endif
+        one.total_ms = milliseconds_since(started);
     }, [&](int which) {
         const said_one& one = said[(size_t)which];
+        const auto& work = one.work;
+        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+                set.tasks[(size_t)asked[(size_t)which]].id.c_str(), (int)one.loaded,
+                one.total_ms, one.infer_ms, one.report_ms, one.gpu_wait_ms, one.score_ms,
+                work.preparations, work.readings, work.later_readings, work.lines,
+                work.paint_replays, work.slide_replays, work.drop_replays, work.walks, work.lays);
+        fflush(timings);
         spoke += one.spoke;
         pane_spoke += one.spoke && one.panes;
         if (!one.fitted) return;
@@ -163,6 +199,7 @@ int main(int argc, char** argv) {
         fputs(line.c_str(), said_file);
 #endif
     });
+    fclose(timings);
 
 #ifdef ARC_NO_GPU
     fprintf(stderr, "reading spoke: %d | no score: built without a GPU, readouts only\n", spoke);

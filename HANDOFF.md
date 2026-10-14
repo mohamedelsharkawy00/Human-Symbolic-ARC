@@ -74,6 +74,78 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- 2026-10-14: DUPLICATE WORD PICKS, verified. 7_infer's asked_piece_sets
+  uses takes_the_same to skip equivalent selections within one word on one
+  unchanged hand. Applied to partner colors, moves, mirrors, outlines,
+  recolors, shape colors, key swaps and removal. Recolors record per target
+  color after already_said; removal records after its eligibility checks.
+  Moves record ordinary moves separately from non-color one-axis steps and
+  non-partner two-axis steps. First eligible pick retains every tie.
+  Full build passed. Seven-puzzle sample word_picks_sample: 4 right, 1 wrong,
+  gained 0, lost 0; programs and all readouts identical to counts_full.
+  4e45f183 paint+slide replays 8,883,520 -> 4,301,742 (52% fewer), same 112
+  lines; 4364c1c4 555,357 -> 194,427. Full run word_picks_full, 10 workers,
+  above-normal priority: 266 right, 39 wrong, gained 0, lost 0; said.txt and
+  all 1000 readouts byte-identical to counts_full; explained but unsolved 0 -> 0.
+  Work totals before/after: paint replays 246,231,786 -> 158,264,614 (35.7%
+  fewer), slide replays 311,362,665 -> 158,562,892 (49.1%), drop replays
+  5,987,816 -> 2,925,575 (51.1%). Preparations 7,335, readings 9,812, later
+  readings 3,915 and lines 49,742 unchanged. Walks 305,828,197 -> 217,861,025;
+  lays 173,408,006 -> 135,522,461. Summed per-puzzle inference elapsed time
+  7,256 -> 6,271 s (13.6% less); this is not whole-run wall time or CPU time,
+  and clock/load conditions still affect it. Keep both timing baselines.
+  Old binary with counters preserved at
+  out/arc_said_before_word_picks.exe. Next proposed: draw the key's cell map
+  once per unchanged hand/pick, shared arithmetic at 8b_op_math; not started.
+- 2026-10-14: PER-PUZZLE TIME AND WORK COUNTS, verified.
+  arc_said writes timings.csv alongside said.txt, one row per puzzle including
+  unsolved ones, flushed in dataset order as results become available. Elapsed
+  milliseconds: total (load through scoring, excluding task destruction),
+  infer, report (emission and readout), GPU lock wait and score. No clock calls
+  inside inference loops. 7_infer owns thread-local work counters, reset by
+  arc_said before each puzzle: preparations (each includes matching), readings,
+  later readings, lines, paint/slide/drop replay calls, paint walks and lays.
+  Counts include calls rejected early; categories overlap and should not be
+  added as a total work unit. No inference decision reads them.
+  Full build passed. Five ids (00576224, 007bbfb7, 009d5c81, 05a7bcf2,
+  17b80ad2), one worker pinned to CPU 2 then four workers: identical counters,
+  said.txt and all readouts; 3 right, 1 wrong, gained 0, lost 0 versus hole2
+  on those ids. Runs counts_one/counts_four. Full run counts_full, 10 workers,
+  above-normal priority: 266 right, 39 wrong, gained 0, lost 0 against hole2;
+  said.txt and all 1000 readouts byte-identical, explained but unsolved 0 -> 0.
+  All 1000 timing rows present, no load failures. Keep counts_full as the work
+  count baseline for the next speed change. Slowest inference elapsed times
+  in that concurrent run: a64e4611 190.9 s, db615bd4 190.1 s, e681b708 187.0 s,
+  8a371977 147.0 s, 4e45f183 146.5 s (times include CPU scheduling effects).
+  4e45f183: 3,514,260 paint and 5,369,260 slide replay calls across 112 lines.
+  Duplicate-word replay work not started; next proposed stage.
+- 2026-10-14: PLAN PREPARATION SHARED (speed work, user approved). In
+  7_infer, prepare_figures reads the facts and matching before words; infer
+  prepares each ground plan lazily once, reused by its strict, tolerant and
+  partner readings. Each reading owns its copy. Later passes and frames
+  prepare their changed pictures separately, passed by value to avoid copying
+  fresh preparation. Full build and out/shared_plans: 266 right, 39 wrong,
+  gained 0, lost 0 against hole2; said.txt and all 1000 readouts byte-identical;
+  explained but unsolved 0 -> 0. Duplicate run retained: automatic approval
+  review blocked its cleanup command under policy.
+  Two slow puzzles (e681b708, 92e50de0), one thread, old/new in turn:
+  114.84/111.57 s, then 151.17/111.78 s; pinned to logical CPU 2:
+  165.44/136.26 s. Peak memory roughly 1.57-1.59 GB old, 1.62-1.63 GB new.
+  Machine conditions vary too much to claim a firm percentage speedup.
+  Old binary: out/arc_said_before_shared.exe; timing JSONs and helper under
+  extras/speed_1013, labels shared_*. Full check used 10 workers.
+  Profile stopped by user after 130 puzzles completed (next puzzle partly
+  sampled): profiling/output/cpu-20261014-144055-489. Approximate inclusive
+  stack shares: matching 24%, later passes 34% (overlapping), key swaps 7%,
+  bridge replay 5%; no final score tally for that stopped profile.
+  User: later add time per puzzle; work counts alongside time were discussed,
+  not implemented. Pin timing runs to logical CPU 2 (a P-core thread sharing
+  a physical core with CPU 3; E-cores are logical 12-19). Above-normal priority
+  for timed runs; helper now supports -LogicalCpu and sets AboveNormal.
+  CPU temperature was unavailable through installed WMI interfaces; Windows
+  frequency/performance counters are available, not precise live core clocks.
+  User: return control during waits longer than about two minutes; leave the
+  run going and report its status when asked. No further speed stage started.
 - 2026-10-14: SELECTPARTNER, A PICK READ THROUGH A PARTNER, A LAST RESORT (the
   user: 4364c1c4 -- each upper piece of a stack moves left, each lower one
   right -- wants a pick; the general form: the pieces whose partner passes a
