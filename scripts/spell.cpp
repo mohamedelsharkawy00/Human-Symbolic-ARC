@@ -23,7 +23,7 @@ static void show(const char* label, const grid& g) {
     printf(" %dx%d\n", g.width, g.height);
     for (int r = 0; r < g.height; ++r) {
         printf("      ");
-        for (int c = 0; c < g.width; ++c) printf("%d", g.data[r][c]);
+        for (int c = 0; c < g.width; ++c) printf("%d", (int)g.data[r][c]);
         printf("\n");
     }
 }

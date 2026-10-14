@@ -882,7 +882,7 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
                 return false;
             }
             if (over || canvas.data[row0 + row][col0 + col] == TRANSPARENT)
-                canvas.data[row0 + row][col0 + col] = color;
+                canvas.data[row0 + row][col0 + col] = (int8_t)color;
         }
     return true;
 }
@@ -1114,6 +1114,7 @@ struct ray_extension_rule {
                         return {};
                 }
             covered.emplace_back(pair.output.width, pair.output.height);
+            covered.back().fill(0);
         }
         vector<vector<candidate>> options;
         for (int rank = 0; rank < (int)ranked[0].size(); ++rank) {
@@ -1217,7 +1218,7 @@ struct pane_split_facts : pane_cut {
         grid drawn(const grid& source) const {
             grid out(width, height);
             for (int row = 0; row < height; ++row)
-                for (int col = 0; col < width; ++col) out.data[row][col] = color_at(source, row, col);
+                for (int col = 0; col < width; ++col) out.data[row][col] = (int8_t)color_at(source, row, col);
             return out;
         }
     };
@@ -1578,9 +1579,9 @@ struct pane_mask_rule {
             for (int c = 0; c < drawn.width; ++c) {
                 const answer& says = by_mask[mask_at(boxes, input, r, c, posed)];
                 if (!says.said()) return false;
-                drawn.data[r][c] = says.leaves_empty ? (int8_t)TRANSPARENT
-                                 : says.paint >= 0   ? says.paint
-                                                     : shown(boxes, says.copy_pane, input, r, c, posed);
+                drawn.data[r][c] = (int8_t)(says.leaves_empty ? TRANSPARENT
+                                     : says.paint >= 0   ? says.paint
+                                                         : shown(boxes, says.copy_pane, input, r, c, posed));
             }
         return true;
     }
@@ -1752,9 +1753,9 @@ struct pane_pick_rule {
         drawn = grid(input.width, input.height);
         for (int r = 0; r < input.height; ++r)
             for (int c = 0; c < input.width; ++c)
-                drawn.data[r][c] = input.data[r][c] == wall ? (int8_t)wall :
+                drawn.data[r][c] = (int8_t)(input.data[r][c] == wall ? wall :
                     source.color_at(input, fit_source_cell(r, source.height, input.height),
-                                           fit_source_cell(c, source.width, input.width));
+                                           fit_source_cell(c, source.width, input.width)));
         return true;
     }
 
@@ -2083,7 +2084,7 @@ struct piece_slam_rule {
                             // Two pieces landing on one cell would leave paint order to decide.
                             collision = collision || painted[row][col];
                             painted[row][col] = true;
-                            drawn.data[row][col] = color;
+                            drawn.data[row][col] = (int8_t)color;
                         });
                     if (collision) return false;
                 }
@@ -2738,7 +2739,7 @@ struct mark_lattice_rule {
         drawn = empty_grid(input.width, input.height);
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
-        auto at = [&](int row, int col) -> int& {
+        auto at = [&](int row, int col) {
             return turned ? drawn.data[col][row] : drawn.data[row][col];
         };
         for (const object& mark : marks)
@@ -2895,7 +2896,7 @@ struct ranked_layout_rule {
             for (int col = 0; col < pair.input.width; ++col) {
                 const int color = pair.input.data[row][col];
                 if (is_color(color) && !removed[color])
-                    remaining.data[row][col] = color;
+                    remaining.data[row][col] = (int8_t)color;
             }
 
         vector<object> pieces;
@@ -2950,7 +2951,7 @@ struct ranked_layout_rule {
         for (int row = 0; row < drawn.height; ++row)
             for (int col = 0; col < drawn.width; ++col) {
                 const int color = painted.data[bounds.row0 + row][bounds.col0 + col];
-                drawn.data[row][col] = color;
+                drawn.data[row][col] = (int8_t)color;
             }
         return true;
     }

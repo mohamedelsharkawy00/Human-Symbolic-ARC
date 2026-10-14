@@ -127,15 +127,18 @@ inline void write_grid(string &out, const grid &g) {
   out += to_text(" %d %d", g.width, g.height);
   for (int r = 0; r < g.height; ++r)
     for (int c = 0; c < g.width; ++c)
-      out += to_text(" %d", g.data[r][c]);
+      out += to_text(" %d", (int)g.data[r][c]);
 }
 inline void read_grid(istream &in, grid &g) {
   in >> g.width >> g.height;
   g.width = min(max(g.width, 0), MAX_GRID_DIM);
   g.height = min(max(g.height, 0), MAX_GRID_DIM);
   for (int r = 0; r < g.height; ++r)
-    for (int c = 0; c < g.width; ++c)
-      in >> g.data[r][c];
+    for (int c = 0; c < g.width; ++c) {
+      int color = TRANSPARENT;
+      in >> color;
+      g.data[r][c] = (int8_t)color;
+    }
 }
 
 // THE WATCHED SIDE: a solver_observer that writes the lines. Pictures and

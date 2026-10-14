@@ -114,11 +114,7 @@ static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
 
-// The packed cell store lives upstream in 1_readings.hpp, where both sides can
-// reach it: it holds no addresses, so the same bytes mean the same thing on the
-// host and on the device. This name is what the DSL calls it, and there is only
-// one — CPU and GPU objects hold their cells in exactly these bytes, so handing
-// an object to the device is a copy, never a conversion.
+// Core owns the packed store shared by grids and objects on the CPU and GPU.
 using gpu_packed_mask = arc::object_cells;
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
@@ -140,7 +136,7 @@ static constexpr float GPU_SCORE_W_POSITION_MATCH = 80.0f;
 
 // `selected` lives before `mask` so gpu_warp_copy_header (which copies
 // everything ahead of the mask) carries it.
-// MSVC C4324: intentional padding; see object_cells in 1_readings.hpp.
+// MSVC C4324: intentional padding; see object_cells in 0_core.hpp.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -227,25 +223,8 @@ inline ARC_HOST_DEVICE uint32_t gpu_shape_key_of_paint(const gpu_fixed_object& o
     });
 }
 
-// Cells packed exactly like an object's, so a grid and an object hold the same
-// bytes and moving between them is a copy. Lanes painting the canvas in
-// parallel must go through gpu_paint_cell, never the plain cell proxy: two
-// side-by-side cells share a byte.
-struct gpu_fixed_grid {
-    // Named `data` because that is what a grid is expected to answer to: the
-    // shared object walk in 1_readings.hpp and gpu_object_view both index a
-    // grid as data[row][col], and a packed store indexes exactly that way.
-    gpu_packed_mask data;
-    int16_t width = 0, height = 0;
-
-    template <class See>
-    ARC_HOST_DEVICE void for_each_colored_cell(int skip, See see) const {
-        arc::grid::walk_colored_cells(*this, skip, see);
-    }
-
-    ARC_HOST_DEVICE void clear_cells() { data.clear(); }
-    ARC_HOST_DEVICE void clear() { data.clear(); width = height = 0; }
-};
+// The packed grid used by the CUDA path is the same type used by inference.
+using gpu_fixed_grid = arc::grid;
 
 // --- What the DSL thinks the pieces of a grid are, read back to the CPU ---
 // The ops are the single home of "what is an object", so nothing on the CPU

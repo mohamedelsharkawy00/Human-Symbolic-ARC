@@ -4,7 +4,6 @@
 // copies that in here (30_solver_session.hpp).
 #include "13_environment.hpp"
 #include <algorithm>
-#include <cstring>
 #include <vector>
 
 namespace arc {
@@ -95,7 +94,9 @@ inline void update_display_buffer(display_grid &g, const grid &s, vector<int> &g
   g.width = s.width;
   g.height = s.height;
   int copy_h = min(s.height, MAX_GRID_DIM);
-  if (copy_h > 0) memcpy(g.data, s.data, copy_h * sizeof(g.data[0]));
+  for (int r = 0; r < copy_h; ++r)
+    for (int c = 0; c < MAX_GRID_DIM; ++c)
+      g.data[r][c] = (int8_t)s.data[r][c];
   int max_h = min(g.height, MAX_GRID_DIM);
   for (int r = 0; r < max_h; ++r) {
     int base = g.at.offset + r * g.at.stride;

@@ -23,7 +23,7 @@ using namespace std;
 
 inline grid parse_grid(const string &str, size_t &pos) {
   grid grid;
-  memset(grid.data, 0, sizeof(grid.data));
+  grid.clear_cells();
   size_t start = str.find('[', pos);
   if (start == string::npos)
     return grid;
@@ -59,7 +59,7 @@ inline grid parse_grid(const string &str, size_t &pos) {
   auto flush_number = [&]() {
     if (!in_number) return;
     if (r < MAX_GRID_DIM && c < MAX_GRID_DIM)
-      grid.data[r][c] = num_neg ? -num_val : num_val;
+      grid.data[r][c] = (int8_t)(num_neg ? -num_val : num_val);
     c++;
     num_val = 0;
     num_neg = false;

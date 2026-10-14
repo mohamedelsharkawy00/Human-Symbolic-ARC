@@ -27,13 +27,84 @@ ARC_HOST_DEVICE constexpr bool is_color(int value) {
     return value >= 0 && value < COLOR_COUNT;
 }
 
-// The ARC grid, its max size is 30 x 30.
-// grid(width, height) is a grid of that size with every cell 0.
+// The ARC grid, its max size is 30 x 30. New grids start transparent.
 constexpr int MAX_GRID_DIM = 30;
 constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
+
+// A cell's place in the largest grid as one number, counted row by row.
+ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
+ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
+ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+
+// A cell is 4 bits, so two share a byte. The aligned, padded store supports
+// safe word-wide GPU updates at the end of the storage.
+struct alignas(4) object_cells {
+    static constexpr int CELLS = MAX_GRID_CELLS;
+    static constexpr int BYTES = ((CELLS + 1) / 2 + 3) / 4 * 4;
+    uint8_t bytes[BYTES];
+
+    // A half-byte cannot be returned by reference, so cell access uses proxies.
+    struct const_cell_ref {
+        const uint8_t* byte;
+        int shift;
+
+        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
+    };
+
+    struct cell_ref {
+        uint8_t* byte;
+        int shift;
+
+        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
+
+        ARC_HOST_DEVICE void operator=(int8_t value) {
+            const uint8_t encoded = object_cells::enc(value);
+            *byte = (uint8_t)((*byte & ~(0xF << shift)) | (encoded << shift));
+        }
+
+        // Copy the cell value, not the proxy's byte pointer and bit position.
+        ARC_HOST_DEVICE void operator=(const cell_ref& other) { *this = (int8_t)other; }
+        ARC_HOST_DEVICE void operator=(const const_cell_ref& other) { *this = (int8_t)other; }
+    };
+
+    // One row proxy handles both read-only and writable cell access.
+    template <class Byte, class Cell>
+    struct row_of_cells {
+        Byte* base;
+        int row;
+
+        ARC_HOST_DEVICE Cell operator[](int col) const {
+            int index = cell_index(row, col);
+            if (index < 0 || index >= CELLS) index = 0;
+            return { base + (index >> 1), (index & 1) * 4 };
+        }
+    };
+
+    ARC_HOST_DEVICE row_of_cells<uint8_t, cell_ref> operator[](int row) { return { bytes, row }; }
+    ARC_HOST_DEVICE row_of_cells<const uint8_t, const_cell_ref> operator[](int row) const {
+        return { bytes, row };
+    }
+
+    // Store value + 1 so zero bits mean TRANSPARENT and black remains distinct.
+    ARC_HOST_DEVICE static constexpr uint8_t enc(int8_t value) {
+        return (uint8_t)(((int)value + 1) & 0xF);
+    }
+    ARC_HOST_DEVICE static constexpr int8_t dec(uint8_t byte, int shift) {
+        return (int8_t)(((byte >> shift) & 0xF) - 1);
+    }
+    ARC_HOST_DEVICE static constexpr uint8_t empty_byte() {
+        return (uint8_t)(enc(TRANSPARENT) | (enc(TRANSPARENT) << 4));
+    }
+
+    // Clear every cell, including storage outside the grid's current dimensions.
+    ARC_HOST_DEVICE void clear() {
+        for (int i = 0; i < (int)sizeof(bytes); ++i) bytes[i] = empty_byte();
+    }
+};
+
 struct grid {
     int width = 0, height = 0;
-    int data[MAX_GRID_DIM][MAX_GRID_DIM]{};
+    object_cells data{}; // Zero bytes decode as transparent.
 
     // No cells at all, so there is nothing to read off it.
     bool empty() const {
@@ -59,6 +130,9 @@ struct grid {
         walk_colored_cells(*this, skip, see);
     }
 
+    ARC_HOST_DEVICE void clear_cells() { data.clear(); }
+    ARC_HOST_DEVICE void clear() { data.clear(); width = height = 0; }
+
     bool same_size(const grid& other) const {
         return width == other.width && height == other.height;
     }
@@ -66,7 +140,7 @@ struct grid {
     void fill(int color) {
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col)
-                data[row][col] = color;
+                data[row][col] = (int8_t)color;
     }
 
     // Only the drawing counts; unused storage outside its dimensions does not.
@@ -78,14 +152,6 @@ struct grid {
         return true;
     }
 };
-
-
-// A cell's place in the largest grid as one number, counted row by row. Lists
-// of cells hold these, so a cell costs two bytes rather than a pair, and the
-// packed store of an object finds its cells the same way.
-ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
-ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
-ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
 
 // The ARC demonstration example.
 struct example {

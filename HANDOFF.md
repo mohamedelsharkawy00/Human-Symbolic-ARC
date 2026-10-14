@@ -90,10 +90,19 @@ facts, with search).
   tally_cleanup verified: 266 right, 39 wrong, gained 0, lost 0, explained
   unsolved 0 -> 0. The grid-owned walk refactor kept the solved set at 266
   right (0 wrong in that set), gained 0, lost 0.
+- 2026-10-14: ONE PACKED GRID, full training run verified. `object_cells` moved
+  to 0_core.hpp; `grid` now uses packed cells and starts transparent. The old
+  `gpu_fixed_grid` is an alias of `arc::grid`, and `grid_to_fixed` is gone.
+  The ray rule's covered cells are explicitly zeroed because that grid is a
+  0/1 mask, not a blank picture. The 1,000-puzzle run stayed at 266 right and
+  39 wrong, gained 0, lost 0; explained-unsolved stayed 0 -> 0. Grid storage
+  fell from 3,608 to 460 bytes. On the same puzzles, per-puzzle total time was
+  median 1.41x and mean 1.71x slower; inference work counts were effectively
+  unchanged, so packed cell access is the cost to watch.
 - 2026-10-14: DUPLICATE WORD PICKS, verified. 7_infer's asked_piece_sets
   uses takes_the_same to skip equivalent selections within one word on one
   unchanged hand. Applied to partner colors, moves, mirrors, outlines,
-  recolors, shape colors, key swaps and removal. Recolors record per target
+  recolors, shape colors, key swaps and removal.
   color after already_said; removal records after its eligibility checks.
   Moves record ordinary moves separately from non-color one-axis steps and
   non-partner two-axis steps. First eligible pick retains every tie.

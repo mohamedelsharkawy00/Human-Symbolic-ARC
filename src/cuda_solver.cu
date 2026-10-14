@@ -3464,7 +3464,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
 // --- Cached per-example device data (uploaded once per puzzle) ---
 static constexpr int MAX_CACHED_EXAMPLES = 16;
 
-// MSVC C4324: intentional padding; see object_cells in 1_readings.hpp.
+// MSVC C4324: intentional padding; see object_cells in 0_core.hpp.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -4507,14 +4507,14 @@ bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
     cudaStream_t s = get_exec_stream(0);  // scratch uses slot 0 (independent from main pipeline)
     gpu_exec_context* d_ctx = d_scratch_contexts + job_idx;
 
-    // Working output-canvas dims after execution (reflect rotate ops). width and
-    // height are adjacent int16_t at the end of gpu_fixed_grid, so one copy gets both.
+    // Working output-canvas dimensions after execution (including rotate ops).
+    // The shared grid stores adjacent int dimensions at its start.
     if (out_canvas_w || out_canvas_h) {
-        int16_t wh[2] = {0, 0};
+        int wh[2] = {0, 0};
         cudaMemcpyAsync(wh,
                         reinterpret_cast<char*>(d_ctx) + offsetof(gpu_exec_context, output)
                             + offsetof(gpu_fixed_grid, width),
-                        2 * sizeof(int16_t), cudaMemcpyDeviceToHost, s);
+                        sizeof(wh), cudaMemcpyDeviceToHost, s);
         cudaStreamSynchronize(s);
         if (out_canvas_w) *out_canvas_w = wh[0];
         if (out_canvas_h) *out_canvas_h = wh[1];

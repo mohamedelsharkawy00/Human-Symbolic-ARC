@@ -15,9 +15,8 @@
 namespace arc {
 
 // --- Fixed-size grid, no heap ---
-// The same struct the kernel holds a grid in, under the name the host code has
-// always used. One type, one layout: a grid crosses to the device as a copy.
-using fixed_grid = gpu_fixed_grid;
+// The grid crosses to the device as the same packed type used by inference.
+using fixed_grid = grid;
 using fixed_object = gpu_fixed_object;
 
 // Room for one object per cell, so a host list never drops one.
@@ -35,16 +34,6 @@ struct fixed_object_list {
         return true;
     }
 };
-
-// --- Convert from environment grid (int pixels) to the packed fixed_grid ---
-static inline void grid_to_fixed(const int src[][30], int w, int h, fixed_grid& dst) {
-    dst.data.clear();
-    dst.width = (int16_t)w;
-    dst.height = (int16_t)h;
-    for (int r = 0; r < h; ++r)
-        for (int c = 0; c < w; ++c)
-            dst.data[r][c] = (int8_t)src[r][c];
-}
 
 // Scan an object's mask for the first non-transparent pixel color.
 // Returns GPU_TRANSPARENT if the mask is empty.
@@ -174,8 +163,7 @@ static inline void fixed_init_context(
     const output_dimension_rule& rule,
     const bool* invariant_colors)
 {
-    // Convert input grid
-    grid_to_fixed(ex.input.data, ex.input.width, ex.input.height, ctx.input);
+    ctx.input = ex.input;
 
     // Use the same sizing contract as host replay and the execution kernel.
     int width, height;
@@ -235,8 +223,7 @@ static inline void fixed_init_context(
 
     // Seeds retain every color here: the rule below drops the largest box,
     // after removing invariant colors, rather than excluding elected background.
-    fixed_grid input_copy;
-    grid_to_fixed(ex.input.data, ex.input.width, ex.input.height, input_copy);
+    fixed_grid input_copy = ex.input;
 
     static thread_local auto all_objects_ptr = std::make_unique<fixed_object_list>();
     auto& all_objects = *all_objects_ptr;
