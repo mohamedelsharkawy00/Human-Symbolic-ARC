@@ -8,7 +8,7 @@
 namespace arc {
 using namespace std;
 
-// HISTOGRAM · how many cells each color has
+// COLORS · how many cells each color has
 
 // How many cells wear each color, counted a cell at a time -- what is no color
 // is not counted -- and the color the most of them wear, or the fewest, the
@@ -23,7 +23,7 @@ struct color_tally {
     // wants it ignored; TRANSPARENT counts all ten).
     template <class Grid>
     ARC_HOST_DEVICE explicit color_tally(const Grid& one_grid, int skip = TRANSPARENT) {
-        walk_colored_cells(one_grid, skip, [&](int, int, int color) { add(color); });
+        one_grid.for_each_colored_cell(skip, [&](int, int, int color) { add(color); });
     }
 
     ARC_HOST_DEVICE int operator[](int color) const { return counts[color]; }

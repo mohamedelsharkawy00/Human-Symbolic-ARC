@@ -168,7 +168,7 @@ private:
         bool seen[COLOR_COUNT] = {};
         output_colors_count = 0;
         for (const auto& ex : train)
-            walk_colored_cells(ex.output, TRANSPARENT, [&](int, int, int color) {
+            ex.output.for_each_colored_cell(TRANSPARENT, [&](int, int, int color) {
                 if (seen[color]) return;
                 seen[color] = true;
                 output_colors[output_colors_count++] = (int8_t)color;
@@ -822,7 +822,7 @@ struct diagonal_continuation_rule {
                 int8_t cycle[COLOR_COUNT];
                 for (int seat = 0; seat < colors; ++seat) cycle[seat] = -1;
                 bool agrees = true;
-                walk_colored_cells(pair.input, TRANSPARENT, [&](int row, int col, int color) {
+                pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                     int8_t& seated = cycle[seat_of(row, col)];
                     agrees = agrees && (seated < 0 || seated == color);
                     seated = (int8_t)color;
@@ -1964,7 +1964,7 @@ struct input_blocks_rule {
                 const auto& landing = read.output_info[edge.to].summary;
                 at.poses[landing.row / height][landing.col / width] |= edge.ways_round;
                 recoloring wears;
-                walk_colored_cells(pair.input, TRANSPARENT, [&](int, int, int was) {
+                pair.input.for_each_colored_cell(TRANSPARENT, [&](int, int, int was) {
                     wears[was] = edge.color_map.apply(was);
                 });
                 if (has_ground) wears[TRANSPARENT] = edge.color_map.apply(TRANSPARENT);
@@ -2596,7 +2596,7 @@ struct project_on_seeds_rule {
         bool one_color = true;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             drawn = empty_grid(pair.input.width, pair.input.height);
-            walk_colored_cells(pair.input, TRANSPARENT, [&](int row, int col, int color) {
+            pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                 drawn.data[row][col] = (int8_t)color;
             });
             const int stamped = stamp(pair, cut, [&](int row, int col, int8_t) {

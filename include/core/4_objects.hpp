@@ -191,7 +191,7 @@ struct object_segmentation {
         const double place_bits =
             log2((double)max(1, one_grid.width * one_grid.height));
         int colored = 0;
-        walk_colored_cells(one_grid, TRANSPARENT, [&](int, int, int) { ++colored; });
+        one_grid.for_each_colored_cell(TRANSPARENT, [&](int, int, int) { ++colored; });
         // Nothing on the grid, so there is nothing to save and nothing to lose.
         const double plain = colored * cell_bits;
         if (plain <= 0.0) return 1.0;

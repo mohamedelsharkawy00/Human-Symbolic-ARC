@@ -542,7 +542,7 @@ struct correspondence_election {
         int facts_cells = 0;
         for (const auto& train_pair : train)
             for (const grid* one : { &train_pair.input, &train_pair.output })
-                walk_colored_cells(*one, TRANSPARENT, [&](int, int, int) { ++facts_cells; });
+                one->for_each_colored_cell(TRANSPARENT, [&](int, int, int) { ++facts_cells; });
 
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
@@ -1113,7 +1113,7 @@ private:
             for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
             for (size_t i = 0; i < ours.size() && i < our_objects.size(); ++i)
                 our_objects[i].each_cell([&](int row, int col, int8_t) { object_at[row][col] = (int16_t)i; });
-            walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
+            one_grid.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                 if (carried[row][col]) return;
                 if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
                 // An uncovered cell is created or removed if its object has no partner.
@@ -1132,7 +1132,7 @@ private:
         // Count output cells covered by exact matches and those left uncovered.
         bool covered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
         mark_painted(forward, input_objects, output_objects, output, covered);
-        walk_colored_cells(output, TRANSPARENT, [&](int row, int col, int) {
+        output.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int) {
             if (covered[row][col]) pair.exact_covered_cells++;
             else                   pair.created_cells++;
         });
@@ -1297,7 +1297,7 @@ private:
             }
             for (int kind = 0; kind < kinds; ++kind) {
                 for (int side = 0; side < 2; ++side)
-                    walk_colored_cells(*on_grid[side], TRANSPARENT, [&](int row, int col, int) {
+                    on_grid[side]->for_each_colored_cell(TRANSPARENT, [&](int row, int col, int) {
                         cells[kind] += carried[kind][side][row][col]; });
                 pieces[kind] += (int)count(named[kind].begin(), named[kind].end(), true);
             }

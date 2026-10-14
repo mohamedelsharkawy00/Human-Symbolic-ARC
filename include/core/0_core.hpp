@@ -44,6 +44,21 @@ struct grid {
         return row >= 0 && row < height && col >= 0 && col < width;
     }
 
+    // Shared walk for grid-shaped storage, in reading order.
+    template <class Grid, class See>
+    ARC_HOST_DEVICE static void walk_colored_cells(const Grid& one_grid, int skip, See see) {
+        for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
+            for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
+                const int color = one_grid.data[row][col];
+                if (is_color(color) && color != skip) see(row, col, color);
+            }
+    }
+
+    template <class See>
+    ARC_HOST_DEVICE void for_each_colored_cell(int skip, See see) const {
+        walk_colored_cells(*this, skip, see);
+    }
+
     bool same_size(const grid& other) const {
         return width == other.width && height == other.height;
     }
@@ -64,17 +79,6 @@ struct grid {
     }
 };
 
-// Every cell wearing a color, in reading order, with one color left out if
-// asked. Single home of the walk: the bounds are the grid's own, held to what a
-// grid can hold, so no two readings can disagree about which cells count.
-template <class Grid, class See>
-ARC_HOST_DEVICE inline void walk_colored_cells(const Grid& one_grid, int skip, See see) {
-    for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-            const int color = one_grid.data[row][col];
-            if (is_color(color) && color != skip) see(row, col, color);
-        }
-}
 
 // A cell's place in the largest grid as one number, counted row by row. Lists
 // of cells hold these, so a cell costs two bytes rather than a pair, and the

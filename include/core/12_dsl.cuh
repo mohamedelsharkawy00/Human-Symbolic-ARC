@@ -238,6 +238,11 @@ struct gpu_fixed_grid {
     gpu_packed_mask data;
     int16_t width = 0, height = 0;
 
+    template <class See>
+    ARC_HOST_DEVICE void for_each_colored_cell(int skip, See see) const {
+        arc::grid::walk_colored_cells(*this, skip, see);
+    }
+
     ARC_HOST_DEVICE void clear_cells() { data.clear(); }
     ARC_HOST_DEVICE void clear() { data.clear(); width = height = 0; }
 };

@@ -217,7 +217,7 @@ template <class Grid>
 ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
                         int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
-    walk_colored_cells(one_grid, skip, [&](int row, int col, int color) {
+    one_grid.for_each_colored_cell(skip, [&](int row, int col, int color) {
         boxes[color].include_cell(row, col);
     });
 }
@@ -241,7 +241,7 @@ ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const i
     int touching[COLOR_COUNT] = {};
     cell_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
-    walk_colored_cells(one_grid, TRANSPARENT, [&](int row, int col, int color) {
+    one_grid.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
         for (int way = 0; way < heading::count; way += every_nth_way<4>) {
             int next_row = row + step_of(way).down;
             int next_col = col + step_of(way).across;
@@ -648,8 +648,8 @@ inline background_election elect_background(const vector<example>& train) {
     // content is consumed. Feeds the input election's tiebreak.
     bool persists[COLOR_COUNT] = {};
     for (const auto& ex : train)
-        walk_colored_cells(ex.output, TRANSPARENT,
-                           [&](int, int, int color) { persists[color] = true; });
+        ex.output.for_each_colored_cell(TRANSPARENT,
+                                        [&](int, int, int color) { persists[color] = true; });
 
     vector<const grid*> inputs, outputs, both;
     for (const auto& ex : train) {

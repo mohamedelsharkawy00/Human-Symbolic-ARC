@@ -799,8 +799,8 @@ private:
                 if (landing.color >= 0)
                     for (int i = 0; i < landing.summary.count; ++i) odds *= share[landing.color];
                 else
-                    walk_colored_cells(into, TRANSPARENT,
-                                       [&](int, int, int color) { odds *= share[color]; });
+                    into.for_each_colored_cell(TRANSPARENT,
+                                               [&](int, int, int color) { odds *= share[color]; });
                 object_matching::edge edge;
                 edge.from = (int16_t)from_index;
                 edge.to = (int16_t)into_index;

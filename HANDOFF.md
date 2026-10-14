@@ -75,19 +75,21 @@ facts, with search).
 
 ## Where it stands
 - 2026-10-14: COLOR_TALLY OWNS HISTOGRAM READING, --SOLVED IN ARC_SAID.
-  In 0_core.hpp, walk_colored_cells moved from 1_readings.hpp right below
-  grid as the shared cell-walk visitor. In 1_readings.hpp, color_tally
-  promoted from 8b_op_math.hpp to own the HISTOGRAM reading with add(),
-  has(), most(), least(), and a grid constructor/factory color_tally(grid, skip).
-  The procedural count_colors helper was folded into color_tally; all ~12 call
-  sites in 3_background.hpp, 5_matching.hpp, and 7_infer.hpp migrated to
-  color_tally counts(grid). Duplicate definition removed from 8b_op_math.hpp.
+  In 0_core.hpp, grid::walk_colored_cells owns the shared walk; grid and
+  gpu_fixed_grid expose for_each_colored_cell, with the packed GPU grid
+  delegating to that one walk. In 1_readings.hpp, color_tally promoted from
+  8b_op_math.hpp to own the HISTOGRAM reading with add(), has(), most(), least(),
+  and a grid constructor/factory color_tally(grid, skip). The procedural
+  count_colors helper was folded into color_tally; all ~12 call sites in
+  3_background.hpp, 5_matching.hpp, and 7_infer.hpp migrated to color_tally
+  counts(grid). Duplicate definition removed from 8b_op_math.hpp.
   In scripts/said.cpp, added --solved [label] flag: reads the SOLVED puzzle IDs
   from out/<label>/said.txt (defaults to out/x64-Release/said.txt) and runs only
   those (266 puzzles in ~59 seconds instead of 9 minutes for the full 1,000).
   out/x64-Release/ updated with the full 266-solved dataset. Full run
   tally_cleanup verified: 266 right, 39 wrong, gained 0, lost 0, explained
-  unsolved 0 -> 0.
+  unsolved 0 -> 0. The grid-owned walk refactor kept the solved set at 266
+  right (0 wrong in that set), gained 0, lost 0.
 - 2026-10-14: DUPLICATE WORD PICKS, verified. 7_infer's asked_piece_sets
   uses takes_the_same to skip equivalent selections within one word on one
   unchanged hand. Applied to partner colors, moves, mirrors, outlines,
