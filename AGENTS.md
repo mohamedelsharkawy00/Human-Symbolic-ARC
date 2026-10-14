@@ -43,7 +43,7 @@ language lacks.
 
 ## Build and check
 - Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
-- Score and readouts, one run: `scripts\said.bat [--as <label>] [id...]`
+- Score and readouts, one run: `scripts\said.bat [--as <label>] [--solved [label]] [id...]`
   builds arc_said and reads every training puzzle, or the ids named, into
   `out\x64-Release\`, or `out\<label>\` when a run is named to compare:
   `said.txt`, a line per puzzle whose program fits the training pairs (id,

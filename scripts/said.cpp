@@ -4,7 +4,7 @@
 // suggested_programs, run each on the train pairs, and where one fits them all,
 // ask it for the held-out test answer. No search anywhere. Run it from the repo
 // root, through scripts\said.bat, which builds it first:
-//   arc_said [--as <label>] [id...]
+//   arc_said [--as <label>] [--solved [label]] [id...]
 // Everything it writes lands beside the program (out/x64-Release, out/cloud),
 // or in out/<label>/ when a run is named to be compared with another:
 //   said.txt                  a line per puzzle whose program fits the train
@@ -99,12 +99,49 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
 
 int main(int argc, char** argv) {
     // A name only when asked for: the run is kept apart to compare against.
-    vector<string> only(argv + 1, argv + argc);
+    // --solved [label] reads only the IDs marked SOLVED in out/<label>/said.txt
+    // (defaulting to out/x64-Release/said.txt).
+    vector<string> args(argv + 1, argv + argc);
     string label;
-    if (!only.empty() && only[0] == "--as") {
-        if (only.size() < 2) { fprintf(stderr, "arc_said [--as <label>] [id...]\n"); return 2; }
-        label = only[1];
-        only.erase(only.begin(), only.begin() + 2);
+    bool only_solved = false;
+    string solved_from = "x64-Release";
+    vector<string> only;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--as") {
+            if (i + 1 >= args.size()) { fprintf(stderr, "arc_said [--as <label>] [--solved [label]] [id...]\n"); return 2; }
+            label = args[++i];
+        } else if (args[i] == "--solved") {
+            only_solved = true;
+            if (i + 1 < args.size() && !args[i + 1].starts_with("-")) {
+                solved_from = args[++i];
+            }
+        } else {
+            only.push_back(args[i]);
+        }
+    }
+    if (only_solved) {
+        filesystem::path path = filesystem::path("out") / solved_from / "said.txt";
+        if (!filesystem::exists(path)) path = filesystem::absolute(argv[0]).parent_path() / "said.txt";
+        FILE* f = fopen(path.string().c_str(), "r");
+        if (!f) {
+            fprintf(stderr, "cannot read %s to find solved puzzles\n", path.string().c_str());
+            return 1;
+        }
+        char line[2048];
+        while (fgets(line, sizeof(line), f)) {
+            char* p = line;
+            if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF)
+                p += 3;
+            char id[64] = {}, verdict[64] = {};
+            if (sscanf(p, "%63s\t%63s", id, verdict) == 2 && strcmp(verdict, "SOLVED") == 0) {
+                only.push_back(id);
+            }
+        }
+        fclose(f);
+        if (only.empty()) {
+            fprintf(stderr, "no SOLVED puzzles found in %s\n", path.string().c_str());
+            return 1;
+        }
     }
     // Training unless ARC_DATASET names the evaluation set.
     const char* named = getenv("ARC_DATASET");
