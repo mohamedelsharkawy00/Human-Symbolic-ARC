@@ -1204,6 +1204,19 @@ __device__ gpu_object_list& gpu_exec_select_like_key(gpu_exec_context& ctx, cons
     return res;
 }
 
+// SelectPartner[value]: the pick moves onto every partner each picked object
+// has, among every object, by the way and on the side `value` names
+// (each_partner_picked, 8b_op_math.hpp, which inference replays). Every
+// partner is read off the marks as they came in; an object no picked one has
+// for a partner comes out unpicked.
+__device__ gpu_object_list& gpu_exec_select_partner(gpu_exec_context& ctx, const gpu_object_list& src, int8_t value) {
+    auto& res = gpu_acquire(ctx);
+    gpu_copy_list(res, src);
+    for (int i = 0; i < res.count; ++i) res.objects[i].selected = false;
+    arc::each_partner_picked(value, gpu_partner_view{ src }, [&](int other) { res.objects[other].selected = true; });
+    return res;
+}
+
 // SelectPartition[which]: the picked objects are walls, as Partition reads them,
 // and the pick becomes every object lying in the part `which` they fence off
 // (parts_the_pick_fences and lies_in_part, 8b_op_math.hpp, which inference
@@ -2637,9 +2650,10 @@ __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const g
 }
 
 // ExtendTo PAST ITS EIGHT WAYS: every picked object grows in step with the
-// others along its track until they meet -- grow_in_step, 8b_op_math.hpp, the
-// growth the reading replays -- and hands back its body and every cell it took,
-// in its first color, as a trail hands back its body and its trail.
+// others along its track, lines or the open cells, until they meet --
+// grow_in_step, 8b_op_math.hpp, the growth the reading replays -- and hands
+// back its body and every cell it took, in its first color, as a trail hands
+// back its body and its trail.
 __device__ gpu_object_list& gpu_exec_grow_in_step(gpu_exec_context& ctx, const gpu_object_list& src,
                                                   arc::grown_along track) {
     auto& res = gpu_acquire(ctx);
@@ -2661,7 +2675,7 @@ __device__ gpu_object_list& gpu_exec_grow_in_step(gpu_exec_context& ctx, const g
         }
     }
     arc::grow_in_step(gw, gh, track, [&](int piece) { return src.objects[piece].selected; },
-                      owner, ctx.grow_scratch[1], ctx.grow_scratch[2]);
+                      owner, ctx.grow_scratch[1], ctx.grow_scratch[2], ctx.grow_ways);
 
     for (int i = 0; i < n && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];
@@ -3393,6 +3407,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
             case node_type::SelectColumnFromMiddle: result = last ? &gpu_exec_select_from_middle(ctx, *last, (int8_t)value, false) : &gpu_acquire(ctx); break;
             case node_type::SelectPartition: result = last ? &gpu_exec_select_partition(ctx, *last, value) : &gpu_acquire(ctx); break;
             case node_type::SelectLikeKey:  result = last ? &gpu_exec_select_like_key(ctx, *last, (int8_t)value) : &gpu_acquire(ctx); break;
+            case node_type::SelectPartner:  result = last ? &gpu_exec_select_partner(ctx, *last, (int8_t)value) : &gpu_acquire(ctx); break;
             // NormalizeOrientation / RestoreOrientation are handled in the warp-parallel
             // branch above; reaching here means has_current_objects was false -> empty result.
             case node_type::NormalizeOrientation:
@@ -3524,8 +3539,8 @@ static int8_t*  d_scratch_rule_type = nullptr;
 static int16_t* d_scratch_rule_params = nullptr;
 static gpu_exec_context* d_scratch_contexts = nullptr;
 static gpu_flat_op*      d_scratch_programs = nullptr;
-static int8_t*           d_scratch_prog_lengths = nullptr;
-static int8_t*           d_scratch_node_counts = nullptr;
+static int16_t*          d_scratch_prog_lengths = nullptr;
+static int16_t*          d_scratch_node_counts = nullptr;
 static float*            d_scratch_scores = nullptr;
 static int8_t*           d_scratch_solved = nullptr;
 static int8_t*           d_scratch_output_grids = nullptr;
@@ -3547,8 +3562,8 @@ static inline cudaStream_t get_exec_stream(int slot) {
 // --- Per-batch device buffers (two slots for ping-pong) ---
 static gpu_exec_context* d_exec_contexts[2] = {nullptr, nullptr};
 static gpu_flat_op*      d_exec_programs[2] = {nullptr, nullptr};
-static int8_t*           d_exec_prog_lengths[2] = {nullptr, nullptr};
-static int8_t*           d_exec_node_counts[2] = {nullptr, nullptr};
+static int16_t*          d_exec_prog_lengths[2] = {nullptr, nullptr};
+static int16_t*          d_exec_node_counts[2] = {nullptr, nullptr};
 static float*            d_exec_scores[2] = {nullptr, nullptr};
 static int8_t*           d_exec_solved[2] = {nullptr, nullptr};
 static int8_t*           d_exec_output_grids[2] = {nullptr, nullptr};
@@ -3559,7 +3574,7 @@ static int               d_exec_capacity[2] = {0, 0};
 
 static void resize_exec_buffers(int job_count, int& capacity,
                                 gpu_exec_context*& ctxs, gpu_flat_op*& progs,
-                                int8_t*& prog_lens, int8_t*& node_cnts,
+                                int16_t*& prog_lens, int16_t*& node_cnts,
                                 float*& scores, int8_t*& solved,
                                 int8_t*& out_grids, int8_t*& out_dims,
                                 uint64_t*& out_hashes, gpu_score_terms*& out_terms) {
@@ -3593,8 +3608,8 @@ static void resize_exec_buffers(int job_count, int& capacity,
     };
     chk(cudaMalloc(&ctxs,      (size_t)job_count * sizeof(gpu_exec_context)), "contexts", (size_t)job_count * sizeof(gpu_exec_context));
     chk(cudaMalloc(&progs,     (size_t)job_count * GPU_MAX_OPS * sizeof(gpu_flat_op)), "programs", (size_t)job_count * GPU_MAX_OPS * sizeof(gpu_flat_op));
-    chk(cudaMalloc(&prog_lens, (size_t)job_count * sizeof(int8_t)), "prog_lens", (size_t)job_count);
-    chk(cudaMalloc(&node_cnts, (size_t)job_count * sizeof(int8_t)), "node_cnts", (size_t)job_count);
+    chk(cudaMalloc(&prog_lens, (size_t)job_count * sizeof(int16_t)), "prog_lens", (size_t)job_count * sizeof(int16_t));
+    chk(cudaMalloc(&node_cnts, (size_t)job_count * sizeof(int16_t)), "node_cnts", (size_t)job_count * sizeof(int16_t));
     chk(cudaMalloc(&scores,    (size_t)job_count * sizeof(float)), "scores", (size_t)job_count * sizeof(float));
     chk(cudaMalloc(&solved,    (size_t)job_count * sizeof(int8_t)), "solved", (size_t)job_count);
     chk(cudaMalloc(&out_grids, (size_t)job_count * GPU_GRID_CELLS * sizeof(int8_t)), "out_grids", (size_t)job_count * GPU_GRID_CELLS);
@@ -3705,8 +3720,8 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
     gpu_exec_context* __restrict__ contexts,
     const gpu_example_template* __restrict__ templates,
     const gpu_flat_op* __restrict__ programs,
-    const int8_t* __restrict__ program_lengths,
-    const int8_t* __restrict__ node_counts,
+    const int16_t* __restrict__ program_lengths,
+    const int16_t* __restrict__ node_counts,
     const int8_t* __restrict__ rule_type,     // single value
     const int16_t* __restrict__ rule_params,  // 6 values
     float* __restrict__ scores,
@@ -3867,7 +3882,7 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
 __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
     gpu_exec_context* __restrict__ contexts,
     const gpu_example_template* __restrict__ templates,
-    const int8_t* __restrict__ node_counts,
+    const int16_t* __restrict__ node_counts,
     float* __restrict__ scores,
     int8_t* __restrict__ solved_out,
     int8_t* __restrict__ output_dims,
@@ -4326,8 +4341,8 @@ void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch, int slot) {
     cudaStream_t s = get_exec_stream(slot);
 
     cudaMemcpyAsync(d_exec_programs[slot],     batch.programs.data(),        n * GPU_MAX_OPS * sizeof(gpu_flat_op), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_exec_prog_lengths[slot], batch.program_lengths.data(), n * sizeof(int8_t),                    cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_exec_node_counts[slot],  batch.node_counts.data(),     n * sizeof(int8_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_exec_prog_lengths[slot], batch.program_lengths.data(), n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_exec_node_counts[slot],  batch.node_counts.data(),     n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
 
     int threads = 32;  // one warp per job
     int blocks = n;
@@ -4444,8 +4459,8 @@ void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
     cudaStream_t s = get_exec_stream(0);  // scratch uses slot 0 (independent from main pipeline)
 
     cudaMemcpyAsync(d_scratch_programs,     batch.programs.data(),        n * GPU_MAX_OPS * sizeof(gpu_flat_op), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_scratch_prog_lengths, batch.program_lengths.data(), n * sizeof(int8_t),                    cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_scratch_node_counts,  batch.node_counts.data(),     n * sizeof(int8_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_scratch_prog_lengths, batch.program_lengths.data(), n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_scratch_node_counts,  batch.node_counts.data(),     n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
 
     int threads = 32;
     int blocks = n;

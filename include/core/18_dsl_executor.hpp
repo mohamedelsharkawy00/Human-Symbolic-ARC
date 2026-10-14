@@ -99,8 +99,8 @@ namespace arc {
 		gpu_flat_op* dst_ops = batch.programs.data();
 		for (int o = 0; o < gpu_op_count; ++o) dst_ops[o] = gpu_ops[o];
 		for (int o = gpu_op_count; o < GPU_MAX_OPS; ++o) dst_ops[o] = {node_type::Input, 0};
-		batch.program_lengths[0] = (int8_t)gpu_op_count;
-		batch.node_counts[0] = (int8_t)node_count;
+		batch.program_lengths[0] = (int16_t)gpu_op_count;
+		batch.node_counts[0] = (int16_t)node_count;
 		batch.program_indices[0] = 0;
 
 		// Execute on GPU via scratch path — leaves main example cache intact.

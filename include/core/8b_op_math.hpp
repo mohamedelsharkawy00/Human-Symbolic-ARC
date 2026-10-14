@@ -87,6 +87,17 @@ ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
     return rows + cols;
 }
 
+// WHETHER THE BOX `to` LIES WHOLLY THAT WAY OF THE BOX `from`: past its last
+// row below it, or above it, past its last column to its right, or its left --
+// a corner way, both of its two sides. SelectPartner's side of a partner: a
+// partner below a piece stays below it however far either slides across
+// (4364c1c4's stacks, each upper piece a step left, each lower one right).
+ARC_HOST_DEVICE inline bool lies_toward(const cell_box& from, const cell_box& to, int way) {
+    const heading_step step = step_of(way);
+    return (step.down == 0 || (step.down > 0 ? to.row0 > from.row1 : to.row1 < from.row0)) &&
+           (step.across == 0 || (step.across > 0 ? to.col0 > from.col1 : to.col1 < from.col0));
+}
+
 // WHETHER THE PIECE `mine`, MOVED `by`, TOUCHES THE PIECE `other`: a cell of it
 // on a cell of the other, or beside one at a side -- or, unless `sides_only`,
 // at a corner. The pieces are asked as each_partner asks them, below.
@@ -104,16 +115,18 @@ ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, h
     return false;
 }
 
-// Every partner the piece `mine` has by `how` among the pieces not picked,
-// handed to `visit(other)` -- for the nearest, only the ones no other is nearer
-// than. THE PIECES ARE ASKED, so one walk serves a grid's pieces and the op's
-// alike: `count()`; `box(i)`, the box piece i's paint fills on the grid;
-// `painted(i, row, col)`, whether it paints that cell of the grid, false off
-// it; `is_picked(i)`; and, for the color questions below, `color(i)`, the color
-// an op reads off its first cell, and `holds(i, color)`, whether it holds a
-// cell of that color.
+// Every partner the piece `mine` has by `how` among the pieces not picked --
+// or, `among_all`, among every piece but itself (SelectPartner, whose pick of
+// every piece leaves none unpicked) -- handed to `visit(other)`; for the
+// nearest, only the ones no other is nearer than. THE PIECES ARE ASKED, so one
+// walk serves a grid's pieces and the op's alike: `count()`; `box(i)`, the box
+// piece i's paint fills on the grid; `painted(i, row, col)`, whether it paints
+// that cell of the grid, false off it; `is_picked(i)`; and, for the color
+// questions below, `color(i)`, the color an op reads off its first cell, and
+// `holds(i, color)`, whether it holds a cell of that color.
 template <class Pieces, class Visit>
-ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit) {
+ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
+                                         bool among_all = false) {
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
@@ -128,17 +141,18 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
             [&](int row, int col) { return pieces.color_at(other, box.row0 + row, box.col0 + col); },
             sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
     };
+    auto may_partner = [&](int other) { return other != mine && (among_all || !pieces.is_picked(other)); };
     int nearest = 1 << 30;
     if (how == partner_by::nearest)
         for (int other = 0; other < pieces.count(); ++other) {
-            if (other == mine || pieces.is_picked(other)) continue;
+            if (!may_partner(other)) continue;
             const cell_box box = pieces.box(other);
             if (box.empty()) continue;
             const int gap = box_gap(own, box);
             if (gap < nearest) nearest = gap;
         }
     for (int other = 0; other < pieces.count(); ++other) {
-        if (other == mine || pieces.is_picked(other)) continue;
+        if (!may_partner(other)) continue;
         const cell_box box = pieces.box(other);
         if (box.empty()) continue;
         bool partner = false;
@@ -286,7 +300,7 @@ ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int
 }
 
 // SELECT · SelectUnique, SelectAtLeastCells, SelectObjectsWithHoles,
-// SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey
+// SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey, SelectPartner
 
 // WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
 // many cells of its `height` by `width` box. Counted here for the op and for
@@ -610,6 +624,33 @@ template <class Pieces>
 ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces) {
     return how >= 0 && how < KEY_LIKENESSES &&
            any_partner((partner_by)((int)partner_by::same_shape + how), mine, pieces);
+}
+
+// WHERE SelectPartner[value] MOVES THE PICK: onto every partner each picked
+// piece has by the way `value` % partner_by::count names, among every piece,
+// picked or not (each_partner), lying on the side of it `value` /
+// partner_by::count names -- any side [0], or past it wholly that way of it,
+// each of the eight headings from up clockwise (lies_toward). Each one handed
+// to `mark(other)`: the pick becomes those, and a piece no picked piece has for
+// a partner comes out unpicked (4364c1c4: of every piece, the partners above
+// each, the upper piece of each stack). The pieces are asked as each_partner
+// asks them.
+constexpr int PARTNER_SIDES = 1 + heading::count;
+constexpr int SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)partner_by::count;
+ARC_HOST_DEVICE constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
+// The side a SelectPartner value names: -1 for any, else the heading.
+ARC_HOST_DEVICE constexpr int partner_side_of(int value) { return value / (int)partner_by::count - 1; }
+template <class Pieces, class Mark>
+ARC_HOST_DEVICE inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
+    if (value < 0 || value >= SELECT_PARTNER_VALUES) return;
+    const partner_by way = partner_way_of(value);
+    const int side = partner_side_of(value);
+    for (int mine = 0; mine < pieces.count(); ++mine) {
+        if (!pieces.is_picked(mine)) continue;
+        each_partner(way, mine, pieces, [&](int other) {
+            if (side < 0 || lies_toward(pieces.box(mine), pieces.box(other), side)) mark(other);
+        }, true);
+    }
 }
 
 // TRANSLATE · NormalizeOrientation, ScaleDown, Shift, MoveToEdge, MoveToward,
@@ -1488,9 +1529,42 @@ ARC_HOST_DEVICE inline void march_trail(int row, int col, heading_step step, int
 }
 
 // THE TRACKS ExtendTo GROWS ALONG past its eight ways, every picked piece in
-// step with the others: along its rows, along its columns, to every side
-// through the open cells, or to every side along the canvas's edge.
-enum class grown_along : int8_t { rows, columns, sides, canvas_edge, count };
+// step with the others. Along lines: its rows, its columns, its diagonals down
+// to the right, its diagonals up to the right, both diagonals, its rows and
+// columns, or every way, straight and diagonal. Or through the open cells: to
+// every side, to every side along the canvas's edge, or to every side and
+// corner. The order is ExtendTo's, so a value said once keeps its meaning.
+enum class grown_along : int8_t {
+    rows, columns, sides, canvas_edge,
+    diagonals_down_right, diagonals_up_right, diagonals, rows_and_columns, every_way, sides_and_corners,
+    count
+};
+
+// The ways a track grows, one bit for each heading (1_readings.hpp): a line
+// both ways along it, or the sides, the corners, or both, of every cell.
+ARC_HOST_DEVICE constexpr uint8_t grown_ways(grown_along track) {
+    auto both = [](int one, int other) { return (uint8_t)(1u << one | 1u << other); };
+    const uint8_t sides = (uint8_t)(both(heading::up, heading::down) | both(heading::right, heading::left));
+    const uint8_t corners =
+        (uint8_t)(both(heading::down_right, heading::up_left) | both(heading::up_right, heading::down_left));
+    switch (track) {
+    case grown_along::rows:                 return both(heading::right, heading::left);
+    case grown_along::columns:              return both(heading::up, heading::down);
+    case grown_along::diagonals_down_right: return both(heading::down_right, heading::up_left);
+    case grown_along::diagonals_up_right:   return both(heading::up_right, heading::down_left);
+    case grown_along::diagonals:            return corners;
+    case grown_along::every_way:
+    case grown_along::sides_and_corners:    return (uint8_t)(sides | corners);
+    default:                                return sides;
+    }
+}
+
+// Whether a track spreads: every cell taken grows every way of the track, so
+// the piece floods the open cells. Otherwise the track is lines, rays that
+// keep their heading.
+ARC_HOST_DEVICE constexpr bool grown_spreads(grown_along track) {
+    return track == grown_along::sides || track == grown_along::canvas_edge || track == grown_along::sides_and_corners;
+}
 
 // GROWN IN STEP UNTIL THEY MEET, said once for ExtendTo past its eight ways and
 // for the reading that replays it. `owner` comes in holding each cell's piece,
@@ -1501,43 +1575,103 @@ enum class grown_along : int8_t { rows, columns, sides, canvas_edge, count };
 // reach it and, reached by two in one turn, by the earlier piece in the list.
 // Along the canvas's edge, a piece grows from its cells on the edge alone.
 // `owner` comes back holding the piece that took each cell and `turn` the turn
-// it was taken in: 0 for a piece's own cell, -1 for one no piece took. `turn`
-// and `queue` are scratch, width * height cells each.
+// it was taken in: 0 for a piece's own cell, -1 for one no piece took. `turn`,
+// `queue` and `ways` are scratch, width * height cells each.
+//
+// THROUGH THE OPEN CELLS a piece floods: every cell it takes grows every way
+// of the track. ALONG LINES every cell of a picked piece sends a ray each way
+// of the track, and two rays meet where they reach one cell in one turn -- the
+// earlier piece's goes on, the other stops -- or where one runs into a cell a
+// ray along its own line took before it, head-on or behind; a ray of another
+// line taken before it is crossed, as a line drawn across another goes on
+// (21f83797's lines cross; 1190bc91's rays meet in one turn and stop).
 template <class Grows>
 ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along track, Grows grows,
-                                         int16_t* owner, int16_t* turn, int16_t* queue) {
+                                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways) {
     auto on_track = [&](int row, int col) {
         return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
     };
+    const uint8_t every = grown_ways(track);
+    // The cells grown from: every picked cell on the track, and as the piece
+    // floods, each cell it takes. Along lines, a picked cell's `ways` are its
+    // rays still going, and a taken cell's the ways of the rays that took it.
     int tail = 0;
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
             const int at = row * width + col;
             turn[at] = (int16_t)(owner[at] >= 0 ? 0 : -1);
+            ways[at] = 0;
             if (owner[at] < 0) continue;
             if (!grows(owner[at])) owner[at] = -1;
-            else if (on_track(row, col)) queue[tail++] = (int16_t)at;
+            else if (on_track(row, col)) { queue[tail++] = (int16_t)at; ways[at] = every; }
         }
-    // Taken turn by turn, in the order reached: a cell is grown from only once
-    // every cell of the turn before has reached it, so its piece is settled.
-    for (int head = 0; head < tail; ++head) {
-        const int at = queue[head], row = at / width, col = at % width;
-        for (int way = heading::up; way < heading::count; way += 2) {
-            const heading_step step = step_of(way);
-            if ((track == grown_along::rows && step.down != 0) || (track == grown_along::columns && step.across != 0))
-                continue;
-            const int next_row = row + step.down, next_col = col + step.across;
-            if (next_row < 0 || next_col < 0 || next_row >= height || next_col >= width || !on_track(next_row, next_col))
-                continue;
-            const int next = next_row * width + next_col;
-            if (turn[next] < 0) {
-                turn[next] = (int16_t)(turn[at] + 1);
-                owner[next] = owner[at];
-                queue[tail++] = (int16_t)next;
-            } else if (turn[next] == turn[at] + 1 && owner[at] < owner[next]) {
-                owner[next] = owner[at];
+    if (grown_spreads(track)) {
+        // Taken turn by turn, in the order reached: a cell is grown from only
+        // once every cell of the turn before has reached it, so its piece is
+        // settled.
+        for (int head = 0; head < tail; ++head) {
+            const int at = queue[head], row = at / width, col = at % width;
+            for (int way = heading::up; way < heading::count; ++way) {
+                if (!(every >> way & 1u)) continue;
+                const heading_step step = step_of(way);
+                const int next_row = row + step.down, next_col = col + step.across;
+                if (next_row < 0 || next_col < 0 || next_row >= height || next_col >= width ||
+                    !on_track(next_row, next_col))
+                    continue;
+                const int next = next_row * width + next_col;
+                if (turn[next] < 0) {
+                    turn[next] = (int16_t)(turn[at] + 1);
+                    owner[next] = owner[at];
+                    queue[tail++] = (int16_t)next;
+                } else if (turn[next] == turn[at] + 1 && owner[at] < owner[next]) {
+                    owner[next] = owner[at];
+                }
             }
         }
+        return;
+    }
+    for (int16_t step_number = 1; ; ++step_number) {
+        bool going = false;
+        for (int i = 0; i < tail; ++i) {
+            const int from = queue[i], from_row = from / width, from_col = from % width;
+            for (int way = heading::up; way < heading::count; ++way) {
+                const uint8_t ray = (uint8_t)(1u << way);
+                if (!(ways[from] & ray)) continue;
+                const heading_step step = step_of(way);
+                const int row = from_row + step.down * step_number, col = from_col + step.across * step_number;
+                if (row < 0 || col < 0 || row >= height || col >= width) {
+                    ways[from] = (uint8_t)(ways[from] & ~ray);
+                    continue;
+                }
+                const int at = row * width + col;
+                const uint8_t own_line = (uint8_t)(ray | 1u << (way + heading::count / 2) % heading::count);
+                bool stops = false;
+                if (turn[at] < 0) {
+                    turn[at] = step_number;
+                    owner[at] = owner[from];
+                    ways[at] = ray;
+                } else if (turn[at] == step_number && owner[from] < owner[at]) {
+                    // Met in this turn by an earlier piece: the rays that took it stop.
+                    for (int took = heading::up; took < heading::count; ++took) {
+                        if (!(ways[at] >> took & 1u)) continue;
+                        const heading_step back = step_of(took);
+                        const int start = (row - back.down * step_number) * width + col - back.across * step_number;
+                        ways[start] = (uint8_t)(ways[start] & ~(1u << took));
+                    }
+                    owner[at] = owner[from];
+                    ways[at] = ray;
+                } else if (turn[at] == step_number && owner[from] == owner[at]) {
+                    ways[at] = (uint8_t)(ways[at] | ray);
+                } else {
+                    // A body, a later piece's ray met in this turn, or a ray
+                    // along its own line before it; another line's is crossed.
+                    stops = turn[at] == 0 || turn[at] == step_number || (ways[at] & own_line) != 0;
+                }
+                if (stops) ways[from] = (uint8_t)(ways[from] & ~ray);
+                else going = true;
+            }
+        }
+        if (!going) return;
     }
 }
 

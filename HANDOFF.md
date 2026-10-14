@@ -1,4 +1,4 @@
-# Handoff, 2026-10-13
+# Handoff, 2026-10-14
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
@@ -13,18 +13,21 @@ week on the evaluation set, which is what Kaggle scores (0 of 120 on 10-10
 and again on 10-13). THE AIM IS ALL 1000 of training (the user, 2026-10-13:
 350 was never the aim; an earlier entry here had it wrong). The trend,
 training right, the best of each day: 187 on 10-07, 199 on 10-08, 219 on
-10-10, 224 on 10-11, 237 on 10-12, 246 on 10-13. All 1000 by 10-25 needs
-about 63 a day from 246, so each change has to gain whole families, tens at
-a time, not one or two.
+10-10, 224 on 10-11, 237 on 10-12, 258 on 10-13, 266 on 10-14. All 1000 by
+10-25 needs about 67 a day from 266, so each change has to gain whole
+families, tens at a time, not one or two.
 
 THE WAY OF WORKING is AGENTS.md's (each puzzle with all of its adjacent
-concepts). Open (the user, 2026-10-12): whether a batch of 50 consecutive ids
-stays the unit of work. A run of 50 ids takes about a minute (62 s), its
-readouts byte-identical to the full run's. Ids 1-50: 38 right; 51-100: 11
-right (out/grow); out/batch2/unsolved.txt lists 51-100's unsolved before the
-growth. Families of the unsolved that lack the same word (`readouts.py
-missing`, out/grow): 72 lack only where a copy was drawn, 48 only the cells
-drawn on the ground, 45 only a recolor.
+concepts), and the user's lately in id order: the next unsolved id, its
+missing word built in the op that owns it. Ids 1-50: 40 right; 51-100: 12
+right (out/hole2). The first unsolved in id order: 05a7bcf2 (a hand program
+only, about half its cells unsaid), then 1190e5a7, 11dc524f, 11e1fe23 --
+1190bc91 and 4364c1c4 are solved now. A run of 50 ids takes about a minute,
+its readouts byte-identical to the full run's. Families of the unsolved that
+lack the same word (`readouts.py missing`, out/hole2): 59 lack only where a
+copy was drawn, 54 only a recolor, 41 only the cells drawn on the ground, 37
+only where a piece went. out\ was wiped on 2026-10-13: the runs older entries
+name before then are gone.
 
 ## Paper: due 2026-11-08 (the user, 2026-10-12: let's try)
 The ARC Prize paper track (kaggle.com/competitions/arc-prize-2026-paper-track),
@@ -63,8 +66,195 @@ facts, with search).
   and many readouts move. The passes after the first (below, 2026-10-11) now
   do this a whole pass at a time, one change each; this is the same inside
   one line, without a pass for every step.
+- ONE OWNER FOR RAYS AND REPEATS (the user, 2026-10-13: the dryness later).
+  Rays live in two ops -- ExtendTo (a trail one way from every cell; past its
+  eight ways, grown in step until they meet) and ExtendDiagonal and
+  ExtendOrthogonal (rays of a set length from one seed cell) -- and repeats
+  in several: TileX, TileY, Tile, DiagTile. One ray op whose value says how
+  far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- 2026-10-14: SELECTPARTNER, A PICK READ THROUGH A PARTNER, A LAST RESORT (the
+  user: 4364c1c4 -- each upper piece of a stack moves left, each lower one
+  right -- wants a pick; the general form: the pieces whose partner passes a
+  pick; named SelectPartner). The op (8_vocabulary, value 0-116): the pick
+  moves onto every partner each picked piece has, among every piece, by a
+  partner_by way, on any side [0-12] or wholly on one of the eight headings
+  past it (each_partner_picked, 8b_op_math.hpp; each_partner learned
+  `among_all`, since a pick of every piece leaves none unpicked; the side is
+  lies_toward, the box wholly that way, so a partner below stays below
+  however far either slides across -- by heading_toward it turned diagonal
+  after a one-step slide). The reading: piece_pick::partner, applied after
+  part and before but_those (picked_pieces), spelled SelectPartner after
+  SelectPartition (pick_words; a base of every color now spells SelectAll);
+  mark_after knows it moves the marks (it read as one more additive select,
+  so a sentence closed without SelectAll and the pieces it did not pick
+  vanished: 0d87d2a6, its upper pieces drawn nowhere); named "Every Piece's
+  Partners up (the piece it shares a side with)"; the stepped move word asks
+  every pick not by color alone (by_color(); was how >= 0), a partner pick a
+  step one way only (a step both ways is two sentences, the second picking on
+  a moved hand). partner_picks (7_infer): of every piece and of each color
+  every pair holds, each way, touching ways first (4364c1c4's test: once the
+  upper pieces stepped left, "a piece in its columns" took a piece of the
+  other stack too), on any side and then each heading, asked where they take
+  a piece in every pair and leave one in some, deduplicated; each way's
+  partners found once a pair. 4364c1c4: `SelectAll SelectPartner[18]
+  MoveRow[-1]` then every piece but those `MoveRow[1]`, test right (once the
+  counting hole below was closed).
+  ASKED WITH EVERY OTHER PICK (out/partner, deleted): 262 right, gained 10
+  (4364c1c4, 48d8fb45, 7d1f7ee8, 868de0fa, 9720b24f, bf699163, d282b262,
+  e73095fd, ecdecbb3, f5aa3634), LOST 6 (22168020, 272f95fa, 62b74c02,
+  9344f635, a61f2674, f823c43c: partner picks said more at once in lines the
+  other picks finish), 46 wrong, 3553 s. Corner sides appeared only in wrong
+  or lost programs. Asked only once a line had nothing else to say: the
+  losses came back but most gains went (4364c1c4's bands were said first and
+  left its line no way on). KEPT: A LAST RESORT FOR THE READING (infer,
+  inference::partners, carried to its passes and framed reading as tolerant
+  is): where the reading kept leaves cells unsaid, its plan is read again
+  with every word, paint and frame asked with the partner picks too, kept
+  only where it leaves fewer; so a reading that says every cell is never read
+  with them, and no solved puzzle can be lost to them. [plans read] shows
+  that reading ("with the partner picks"). 264 right, gained 6 (48d8fb45,
+  bf699163, d282b262, e73095fd, ecdecbb3, f5aa3634), lost 0; explained but
+  unsolved 1 -> 1 (4364c1c4); 38 wrong, 10 new and allowed (17b80ad2,
+  1f876c06, 321b1fc6, 39a8645d, 3bd292e8, 3befdf3e, 56ff96f3, 7447852a,
+  7c8af763, 7e0986d6); 701 readouts changed, each unsolved one by its extra
+  [plans read] line; 104 readings kept the partner reading. Full run 2486 s
+  against 1228 s (not timed in turn: the extra reading of every unsolved
+  puzzle, about three times a plain one). GPU kernel unchanged (80
+  registers, 71,552 bytes stack); 88 #20014 warnings (71 before), the same
+  kind. Run out/partner_tier, against out/limit512.
+  THEN THE COUNTING HOLE, CLOSED (the user: close the hole; the speedups
+  parked, (9) of the speed list): 4364c1c4's plain reading said it left 0
+  cells while its program was 2 off, so its last resort was never read. In
+  its last pass the picture's 6 block was nine cells (its trail cell beside
+  it), and the output's block of eight was found inside it from the output
+  side, a step to the left -- a landing naming no input piece. The matching
+  counts the input cells under such a landing as carried (unexplained, mark
+  _painted on the landings), and write_down_what_changed set only its output
+  cells waiting on "where each copy was drawn", so the column the block left,
+  drawn where the output shows the ground, was in no list at all. Now both
+  ends wait (each_end), on the input only where the cell shows the piece
+  itself: first both ends wholly, and b8825c91 was lost -- its hidden parts
+  found recolored over its 4 blocks put 4 among the colors its copies are
+  picked by, and a 4-connected cut said it wrong. Tried and dropped: the
+  partner reading through says_the_most (kept where as few cells unsaid in
+  fewer passes) -- e73095fd came back, 62b74c02 and f823c43c were lost, each
+  said in fewer passes with partner picks and wrong on its test; the tie on
+  passes weighs readings of the same picks. 266 right; against out/limit512
+  gained 8 (4364c1c4, 48d8fb45, 7d1f7ee8, 9720b24f, bf699163, d282b262,
+  ecdecbb3, f5aa3634), lost 0, explained but unsolved 1 -> 0; against
+  out/partner_tier gained 4364c1c4, 7d1f7ee8, 9720b24f (each plain reading's
+  count honest now, so a plan's partner reading is read) and e73095fd went
+  (its plain reading, honest, now says every cell in four passes, wrong on
+  its test, so its partner reading is never read); 39 wrong. 705 readouts
+  changed. Full run 942 s (the laptop cool; 1598 s for the first, wider
+  fix). Run out/hole2, against out/partner_tier and out/limit512.
+  OPEN: 868de0fa needs the partner picks under another plan than the plain
+  reading's best; reading every plan with them would find it, at more time.
+- 2026-10-13: THE PROGRAM LIMIT, 512 OPS (the user). GPU_MAX_OPS 127 -> 512;
+  a program's length and node count are int16_t in the batch and on the
+  device (program_lengths, node_counts, resize_exec_buffers, both kernels'
+  parameters, the host writers). 258 right, gained 0, lost 0; explained but
+  unsolved 3 -> 1: 1d61978c (130 ops) and fea12743 (156) run now, fit their
+  pairs and are wrong on their tests (28 wrong); every readout the same. GPU
+  kernel unchanged. Run out/limit512, against out/finished4.
+- 2026-10-13: A FINISHED PAIR LETS A WORD OFF; ONE TABLE, THE FIRST PASS'S;
+  THE GROUND ELECTED ON THE INPUT AS GIVEN (the user: the marker fill's
+  blocker is the every-pair rule, not the pick; suggest changes to that rule;
+  "a finished pair" -- let's try). A FINISHED PAIR: one whose grid read is
+  already its output (replay_facts::done, finished(which)). No word can gain
+  a cell there, so the judge (brings_nearer, now handed the pair) asks only
+  that a word lays nothing wrong there, a move or removal included (pair_tally
+  ::acted, the "a piece moved" check folded into the judge; drops_hold now
+  asks one piece changed overall, as slides_hold did); a paint is weighed
+  without a cell to explain there (weigh_paint); and no word is credited with
+  a cell there (weigh wraps every claim; the cells left over in a finished
+  pair are the line's to draw). Where every pair is finished, none lets a word
+  off: cd3c21df's framed pieces, each already its output, were redrawn by a
+  mirror that took the line's cells and was lost until then. 1190bc91 solved:
+  pass 1 the rays (`SelectAtLeastCells[2] InvertSelection ExtendTo[14]`),
+  pass 2 on the picture "pieces under 3 cells grow to every side"
+  (`SelectAtLeastCells[3] InvertSelection ExtendTo[10]`), pair 2 finished
+  after pass 1. The pick was never the blocker (the user was right).
+  ONE TABLE, THE FIRST PASS'S: a later pass learned its own shape table and
+  said ShapeColorMap with it (e760a62e), but the program carries the first
+  pass's table only (fill_puzzle_level); the table is now read and its word
+  asked in the first pass only (read_the_cut, shape_word). No program used a
+  table in a later pass before.
+  THE GROUND, AN OLD BUG (3_background.hpp, figures_only): under "delete each
+  input's own, fill each input's own" the fill's color on the input was
+  elected on the input already stripped of its ground, so a figure's color
+  won and was deleted too: 4364c1c4's third input lost its 8s, which its
+  program keeps. Both colors are now elected on the input as given, as the
+  comment there always said. Gained 292dd178 and a09f6c25 by itself.
+  258 right, gained 12 (1190bc91, 253bf280, 292dd178, 44d8ac46, 516b51b7,
+  62b74c02, 6cdd2623, 9344f635, a09f6c25, a1570a43, d492a647, f823c43c --
+  f823c43c was wrong), lost 0; 26 wrong: 5 from before (833966f4, ba26e723,
+  caa06a1f, d4f3cd78, e40b9e2f) and 21 new, allowed (2072aba6, 22a4bbc2,
+  29623171, 3ac3eb23, 67a423a3, 6bcdb01e, 7acdf6d3, 8fbca751, a5f85a15,
+  ac0c2ac3, ae4f1146, d2abd087, d5d6de2d, db3e9e38, e179c5f4, e734a0e8,
+  e760a62e, ecb67b6d, f1bcbc2c, f5b8619d, fe9372f3); explained but
+  unsolved 0 -> 3, NOT YET CLEAN: 1d61978c and fea12743 read every cell but
+  their programs run past the 127 ops a program may hold (130 and 156; arc_
+  spell "TOO LONG"), so they cannot run at all; 4364c1c4 ends 2 cells off in
+  its third pair, where a pass after the first counts a matching act's cells
+  ("Move 0 pieces, 16 cells", no word under it) as said -- an accounting hole
+  the passes reach now that a finished pair no longer stops them. Tried: a
+  pair lets a word off only while two pairs at least are open (one open pair
+  alone is a coincidence of that pair) -- it cleared all three but lost
+  62b74c02, d492a647 and f823c43c, right on their tests; dropped, the user's
+  call. GPU kernel unchanged (80 registers, 71,552 bytes stack; the same 71
+  #20014 warnings). Run out/finished4 (881 s), against out/diag2.
+  THEN A PROGRAM MAY HOLD 512 OPS (the user: raise the limit first, the rest
+  later). GPU_MAX_OPS 127 -> 512 (12_dsl.cuh); the batch's program length and
+  node count widened from int8_t to int16_t, host and device (cuda_dsl_exec_
+  batch, resize_exec_buffers, both kernels, the copies; 18_dsl_executor and
+  19_solver_executor write them). 258 right, gained 0, lost 0; every readout
+  byte-identical; 1d61978c and fea12743 now run, fit their pairs and are wrong
+  on their tests, so 28 wrong; explained but unsolved 3 -> 1, 4364c1c4 alone
+  (the accounting hole above, open). GPU kernel unchanged (80 registers,
+  71,552 bytes stack). Run out/limit512 (1228 s, hot, back to back).
+- 2026-10-13: GROWN IN STEP ALONG THE DIAGONALS, AND EVERY LINE BESIDE IT
+  (the user: what is next in id order; read the whole op list). out\ had
+  been wiped (builds and runs): ids 1-100 read again, 51 right (39 of 1-50,
+  12 of 51-100), 0 wrong. The first unsolved in id order is 05a7bcf2 (a hand
+  program only, about half its cells unsaid), then 1190bc91: every cell of a
+  line sends rays along both diagonals, all in step, a ray stopping where it
+  meets another (a tie to the earlier cell); then each marker fills the part
+  the rays fence it into (checked in Python on every pair and the test). The
+  owner, off the op list: ExtendTo past its eight ways, grown in step until
+  they meet -- not ExtendDiagonal, rays of a set length from one seed cell,
+  nothing in step. ExtendTo[12-17] (grown_along): along its diagonals down to
+  the right, up to the right, both, its rows and columns, every way straight
+  and diagonal -- lines -- and to every side and corner, a flood.
+  grow_in_step tells a flood from lines (grown_ways, grown_spreads): a flood
+  grows every way from every cell it takes, as before; along lines every
+  picked cell sends a ray each way of the track, and two rays meet where they
+  reach one cell in one turn (the earlier piece's goes on) or where one runs
+  into a cell a ray along its own line took before; a ray of another line
+  taken before is crossed. The first version stopped at any cell taken before
+  and lost 21f83797, whose two dots' lines cross: ExtendTo[15] said the most
+  at once, left the far side of each crossing, and a mirror pass drew those
+  in its pairs, wrong on its test (245 right; that run deleted). Rows and
+  columns grow as before: one line has nothing to cross. GPU:
+  gpu_exec_context::grow_ways (900 bytes, global); kernel unchanged (80
+  registers, 71,552 bytes stack); the same 71 #20014 warnings. 246 right,
+  gained 0, lost 0; explained but
+  unsolved 0 -> 0; the same 6 wrong. 23 readouts changed: 8 leave fewer cells
+  unsaid (1190bc91 84 -> 43, its rays all said and its marker fills left;
+  3ad05f52 248 -> 179, aba27056 30 -> 16, b782dc8a 58 -> 42, 8e5a5113 19 ->
+  8, 8a6d367c 40 -> 30, 78e78cff 97 -> 86, 05a7bcf2 619 -> 612), 2 more
+  (256b0a75 455 -> 543; 444801d8 15 -> 25, where "every way" says the most in
+  one word and crowds out a better set of trails), 13 the same; 21f83797 is
+  said with ExtendTo[15] now, 23581191 another way. Runs out/before_diag (758
+  s) and out/diag2 (1083 s, back to back with others, hot: not comparable).
+  Timed in turn, e681b708 and 92e50de0 on one thread, old (extras/speed_1013/
+  arc_said_fans.exe) and new: 80.2 / 61.4 s old, 60.9 / 61.0 s new, peak
+  memory 0.52 GB each; no cost seen. Their readouts match the full runs.
+  The marker fill was left: in pair 2 the marker's part is only itself, so
+  the fill acts on no cell there, and "at work in every pair" refused it
+  (the entry above).
 - 2026-10-13: PICKS THAT TAKE THE SAME PIECES ASKED ONCE; EVERY RAY LENGTH
   READ OFF ONE WALK (the user: yes to NEXT (1) and (2) of the entry below).
   (1) cut_paints::asked_picks: a draw pick that takes the same pieces as one
@@ -135,6 +325,18 @@ facts, with search).
   (7) THE PASSES AFTER THE FIRST (26%) want fewer readings, not faster ones.
   (8) Small: a ray length that holds is still walked on its own for its
   lists (rays_walk, under 2%).
+  (9) THE PARTNER READING (2026-10-14, parked by the user): the full run went
+  1228 s -> 2486 s once every unsolved puzzle read its plan again with the
+  partner picks (partner_picks, inference::partners), not yet timed in turn.
+  From memory, not measured: about 740 unsolved puzzles each read once more;
+  dozens of partner picks, every word and paint asked with every one (asked
+  in every reading they took 3553 s, about three times a plain run); the
+  reading starts from scratch, its cut and matching read again, and its
+  passes and framed reading ask them too; the slowest puzzles, unsolved, set
+  the clock. Ready: time it in turn first (heat); no corner sides asked
+  (they appeared only in wrong or lost programs); the plain reading's
+  matching and cut reused; partner picks that take the same pieces as a
+  plain pick in every pair dropped for the words, as the paints already do.
   THE LAPTOP'S SPEED SWINGS WITH HEAT, in general (the user, 10-13): runs
   back to back heat it and slow it, 2.4 times on 10-13. So only runs taken
   in turn, old against new, compare; timings and full runs taken at
@@ -249,9 +451,10 @@ facts, with search).
   sizes, every one asked the likenesses at another size for that alone; the
   matching's private `scales` flag is gone into it. 238 right, gained 0,
   lost 0; explained but unsolved 0 -> 0; 5 wrong, fea12743 left it (a key
-  "stretched" matched boxes by luck). Full run 779 s (out/boxrule; 558 s on
-  10-12). e681b708 alone 60 s, every tenth id 88.6 s by the clock and 526 s
-  of CPU (414 s on 10-12): the clock's slowest puzzle is 60 s of it, so the
+  "stretched" matched boxes in its pairs only). Full run 779 s
+  (out/boxrule; 558 s on 10-12). e681b708 alone 60 s, every tenth id 88.6 s
+  by the clock and 526 s of CPU (414 s on 10-12): the clock's slowest puzzle
+  is 60 s of it, so the
   workers seen waiting at a run's end are the tail, not a lock. Tried and
   dropped: the two paint caches as hash maps -- alternated A/B on e681b708
   and 92e50de0, 94.8-95.1 s against 93.4-93.5 s for the maps, 1.5% slower.
@@ -328,9 +531,10 @@ facts, with search).
   0-31, AlignTo 0-25, MirrorAround 0-41, MoveToward 0-68, SelectLikeKey 0-5;
   the 7 solutions/ files that hold them renumbered, each still fits. 237
   right, gained 0, lost 0; explained but unsolved 0 -> 0; 6 wrong: fea12743
-  joined (unsolved before: a piece like the key, stretched, fit its pairs by
-  luck). GPU kernel unchanged (80 registers, 71,536 bytes stack), the same 57
-  #20014 warnings. Run out/shape, against out/grow (1288 s, a game running).
+  joined (unsolved before: a piece like the key, stretched, fit its pairs and
+  not its test). GPU kernel unchanged (80 registers, 71,536 bytes stack), the
+  same 57 #20014 warnings. Run out/shape, against out/grow (1288 s, a game
+  running).
   NEXT, the user's order: (2) the rest of the shape questions onto the
   owner, results unchanged -- canonical_shape_hash (the shape table, the
   matching's shape search, the segmentation's cost), same_drawing (panes, a
@@ -357,8 +561,8 @@ facts, with search).
   ColorFrom's nearest refuses a tie and recolors only pieces there already;
   Bridge joins one color; rays start mid-piece. 0f63c0b9 is now its lines
   (ExtendTo[8]) and, a pass on that picture, the border (ExtendTo[11]): the
-  copies that drew its top and bottom rows by luck (its bottom row wrong on
-  the test) are gone. 237 right, gained 0f63c0b9, 1bfc4729, 782b5218 (wrong
+  copies that drew its top and bottom rows in its pairs (its bottom row wrong
+  on the test) are gone. 237 right, gained 0f63c0b9, 1bfc4729, 782b5218 (wrong
   before), 9edfc990, e69241bd, fc754716, lost 0; explained but unsolved 0 ->
   0; 5 wrong: d4f3cd78 joined -- its fill leaks out of the box's gap, up in
   one pair and down in the other, said as "along its columns", and leaks right
@@ -570,7 +774,7 @@ facts, with search).
   SelectLikeKey on every pick that turns its pieces round, where it keeps
   one piece in every pair and drops one in some, a fenced key first (the
   surer key: unfenced, 63613498 said "off the column 3 left of the middle",
-  which left its key and an 8 besides, right on its test by luck).
+  which left its key and an 8 besides; its test came out right all the same).
   63613498: `SelectColor[5] SelectPartition[0] InvertSelection
   SelectLikeKey[0] Recolor[5]`. 224 right, gained 31aa019c (a pass after
   the first deletes part 0 of the 2 ring it drew), 332efdb3 (rays from part
@@ -1062,11 +1266,16 @@ uses it, global before local. Estimates are rough.
 
 ## Next, from before (the user's order)
 0. Now (the user, 2026-10-11): the wrong ones, in id order, each a word the
-   reading lacks: 833966f4, ba26e723, d4f3cd78 (new, the leak through a
-   gap), e40b9e2f and f823c43c as the 2026-10-11 passes entry names them,
-   and caa06a1f (new, 2026-10-13: fewest holes fit its pairs).
-   272f95fa, bdad9b1f and 782b5218 are solved (2026-10-12); 7d1f7ee8,
-   29623171 and ac0c2ac3 no longer fit, their words still missing.
+   reading lacks -- 39 on 2026-10-14 (out/hole2): 17b80ad2, 1d61978c,
+   1f876c06, 2072aba6, 22a4bbc2, 29623171, 321b1fc6, 332202d5, 39a8645d,
+   3ac3eb23, 3bd292e8, 3bdb4ada, 56ff96f3, 67a423a3, 6bcdb01e, 7acdf6d3,
+   7c8af763, 7e0986d6, 833966f4, 8fbca751, a5f85a15, ac0c2ac3, ae4f1146,
+   ba26e723, caa06a1f (fewest holes fit its pairs), d2abd087, d4f3cd78 (the
+   leak through a gap), d5d6de2d, db3e9e38, e179c5f4, e40b9e2f (turned
+   around its body's middle, not its box), e73095fd, e734a0e8, e760a62e,
+   ecb67b6d, f1bcbc2c, f5b8619d, fe9372f3, fea12743. And unsolved, open:
+   868de0fa, the partner picks wanted under another plan than the plain
+   reading's best.
 1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
    A full run took 563 s on 10-13 (out/rays_fanned; 558 s on 10-12, before
    the shape work): about 88 line readings a slow puzzle, half of them

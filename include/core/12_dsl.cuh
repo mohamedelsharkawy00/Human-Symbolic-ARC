@@ -102,12 +102,13 @@ public:
 static constexpr int GPU_MAX_GRID = arc::MAX_GRID_DIM;
 static constexpr int GPU_GRID_CELLS = arc::MAX_GRID_CELLS;
 // How long one program may be. The batch stores a program's length and its node
-// count in an int8_t apiece (resize_exec_buffers, cuda_solver.cu), so 127 is as
-// far as this may go before those two widen -- and it is the ONLY thing binding
-// program length now that the object pool is a ring (gpu_acquire) rather than
-// one slot per producing op. A written program is what spends this; the search
-// stops at MAX_SEARCH_DEPTH, far below.
-static constexpr int GPU_MAX_OPS = 127;
+// count in an int16_t apiece (resize_exec_buffers, cuda_solver.cu) -- an int8_t
+// held them to 127, and a reading's passes outgrew it (1d61978c's 130 ops,
+// fea12743's 156; the user: 512) -- and it is the ONLY thing binding program
+// length now that the object pool is a ring (gpu_acquire) rather than one slot
+// per producing op. A written program is what spends this; the search stops at
+// MAX_SEARCH_DEPTH, far below.
+static constexpr int GPU_MAX_OPS = 512;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 // A grid cut both ways leaves at most this many panes worth carrying.
 static constexpr int GPU_MAX_PANES = 32;
@@ -325,8 +326,10 @@ struct gpu_exec_context {
     // Safe to share across ops: the lane-0 op switch runs one op at a time.
     int8_t op_scratch[GPU_GRID_CELLS];
     // Lane-0 scratch for ExtendTo grown in step (grow_in_step): the piece that
-    // took each cell, the turn it took it in, and the cells still to grow from.
+    // took each cell, the turn it took it in, and the cells still to grow from;
+    // and the ways each cell was reached, which a ray grows on.
     int16_t grow_scratch[3][GPU_GRID_CELLS];
+    uint8_t grow_ways[GPU_GRID_CELLS];
 };
 // Ops overlay a packed mask on op_scratch, so it must have room for one.
 static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(gpu_packed_mask),
@@ -409,8 +412,8 @@ struct cuda_dsl_exec_batch {
 
     // Per-job program ops: [job_count * GPU_MAX_OPS]
     pinned_vector<gpu_flat_op> programs;
-    pinned_vector<int8_t>      program_lengths;
-    pinned_vector<int8_t>      node_counts;
+    pinned_vector<int16_t>     program_lengths;
+    pinned_vector<int16_t>     node_counts;
 
     // Which candidate index each job belongs to
     pinned_vector<int16_t> program_indices;

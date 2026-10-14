@@ -279,6 +279,7 @@ inline void take_the_reading(puzzle& task, inference read, const puzzle_label& l
     task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick.fits >= 0; });
     task.dead_ops[(int)node_type::SelectPartition] = !line_says([](const auto& rule) { return rule.pick.part >= 0; });
     task.dead_ops[(int)node_type::SelectLikeKey] = !line_says([](const auto& rule) { return rule.pick.like >= 0; });
+    task.dead_ops[(int)node_type::SelectPartner] = !line_says([](const auto& rule) { return rule.pick.partner >= 0; });
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one

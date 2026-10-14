@@ -178,8 +178,10 @@ enum class inferred_amount { none, some, all };
   X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
   /* A trail one of the eight ways [0-7], or past them every picked piece    */ \
   /* grown in step with the others until they meet: along its rows, along    */ \
-  /* its columns, to every side, along the canvas's edge (grown_along).      */ \
-  X(ExtendTo                    , 0                 , 11                       , generate , none, true , false) \
+  /* its columns, to every side, along the canvas's edge [8-11]; along its   */ \
+  /* diagonals one way or the other, both, its rows and columns, every way,  */ \
+  /* to every side and corner [12-17] (grown_along).                        */ \
+  X(ExtendTo                    , 0                 , 17                       , generate , none, true , false) \
   /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
   /* past those [13], the color a key drawn in the grid shows at its place;  */ \
   /* past that [14-19], its colors cell by cell from the one piece of its    */ \
@@ -249,7 +251,11 @@ enum class inferred_amount { none, some, all };
   /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
   /* any way, at its size [0-1], any size [2-3] or stretched [4-5]          */ \
   /* (like_the_key, 8b_op_math.hpp).                                       */ \
-  X(SelectLikeKey               , 0                 , 5                        , select   , none, true , false)
+  X(SelectLikeKey               , 0                 , 5                        , select   , none, true , false) \
+  /* The pick moves onto every partner each picked piece has, the way       */ \
+  /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
+  /* the eight headings, from up clockwise (each_partner_picked, 8b).       */ \
+  X(SelectPartner               , 0                 , 116                      , select   , none, true , false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, pick, clears) id,

@@ -757,9 +757,13 @@ inline vector<example> figures_only(const vector<example>& train, const ground_p
                 if (one.data[row][col] == color) one.data[row][col] = TRANSPARENT;
     };
     for (example& pair : figures) {
-        const int8_t deleted = plan.deleted.on(pair.input), filled = plan.filled.on(pair.input);
+        // Each elected on the input as given, before any is taken off it: elected
+        // again on what is left, the ground lost, a figure's color won (4364c1c4's
+        // third input lost its 8s, which its program keeps).
+        const int8_t deleted = plan.deleted.on(pair.input), filled = plan.filled.on(pair.input),
+                     filled_here = plan.filled_on_input().on(pair.input);
         empty(pair.input, deleted);
-        empty(pair.input, plan.filled_on_input().on(pair.input));
+        empty(pair.input, filled_here);
         empty(pair.output, filled);
     }
     return figures;

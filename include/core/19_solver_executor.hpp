@@ -1118,7 +1118,7 @@ namespace arc {
     for (int ci = 0; ci < chunk.size(); ++ci) {
       gpu_flat_op gpu_ops[GPU_MAX_OPS];
       int gpu_op_count = convert_program_to_gpu_ops(chunk.flat_programs[ci], gpu_ops);
-      int8_t nc = (int8_t)min(chunk.node_counts[ci], 127);
+      const int16_t nc = (int16_t)min(chunk.node_counts[ci], GPU_MAX_OPS);
 
       for (int ei = 0; ei < active; ++ei) {
         int j = ci * active + ei;
@@ -1126,7 +1126,7 @@ namespace arc {
         gpu_flat_op* dst_ops = batch.programs.data() + j * GPU_MAX_OPS;
         for (int o = 0; o < gpu_op_count; ++o) dst_ops[o] = gpu_ops[o];
         for (int o = gpu_op_count; o < GPU_MAX_OPS; ++o) dst_ops[o] = {node_type::Input, 0};
-        batch.program_lengths[j] = (int8_t)gpu_op_count;
+        batch.program_lengths[j] = (int16_t)gpu_op_count;
         batch.node_counts[j] = nc;
         batch.program_indices[j] = (int16_t)ci;
       }

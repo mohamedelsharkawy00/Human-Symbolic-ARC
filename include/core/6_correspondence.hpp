@@ -40,7 +40,8 @@ struct tiled_pieces {
 // Which pieces a word or frame takes. A color mask picks any piece wearing
 // one of its colors; `how` instead names a pick by shape, size or place.
 // `part` optionally takes those as walls and picks the pieces lying in that
-// part of what they fence off instead (SelectPartition). `but_those` turns it
+// part of what they fence off instead (SelectPartition), and `partner` the
+// partners those have, on a side or any (SelectPartner). `but_those` turns it
 // round, every piece but the ones it names, as InvertSelection says it. `fits`
 // optionally keeps only pieces that fit their partner (WouldFit), and `like`
 // only pieces like a piece of the key, the ones not picked (SelectLikeKey).
@@ -52,18 +53,19 @@ struct piece_pick {
     uint16_t colors = 0;
     int8_t how = -1, value = 0, fits = -1;
     bool but_those = false;
-    int8_t part = -1, like = -1;
+    int8_t part = -1, like = -1, partner = -1;
 
     static constexpr piece_pick all() { return { (uint16_t)((1u << COLOR_COUNT) - 1) }; }
     static constexpr piece_pick of_color(int color) { return { (uint16_t)(1u << color) }; }
     bool every() const { return by_color() && colors == all().colors && fits < 0 && like < 0; }
     // Whether it picks pieces by the colors they wear alone, before any filter.
-    bool by_color() const { return how < 0 && part < 0 && !but_those; }
+    bool by_color() const { return how < 0 && part < 0 && partner < 0 && !but_those; }
     // A pick by shape, size or place may take any color.
     bool may_take_color(int color) const { return !by_color() || (colors >> color & 1) != 0; }
     bool operator==(const piece_pick& other) const {
         return how == other.how && fits == other.fits && part == other.part && like == other.like &&
-               but_those == other.but_those && (how >= 0 ? value == other.value : colors == other.colors);
+               partner == other.partner && but_those == other.but_those &&
+               (how >= 0 ? value == other.value : colors == other.colors);
     }
 };
 
@@ -1615,7 +1617,16 @@ private:
             // what is drawn there came from somewhere else. Found elsewhere or
             // turned, its cells wait on the word for that as surely: 18286ef8's 9,
             // found one step up and to the left and partly hidden, was otherwise
-            // said by nothing, and the line drew it nowhere.
+            // said by nothing, and the line drew it nowhere. Both ends of it, as
+            // every edge's (each_end): the cells it came from on the input, which
+            // the matching counts as carried, wait on that word too where they
+            // show the piece itself, so where no word says it they are left over
+            // (4364c1c4's last pass: its block, found inside a piece of nine
+            // cells and a step to the left, left the column it stood on drawn
+            // where the output shows the ground, and no cell said so). A cell it
+            // was found over in another color waits on the recolor as before,
+            // not the copy (b8825c91's 4s, the hidden parts of its picture found
+            // in them, would have joined the colors its copies are picked by).
             for (const auto& link : pair.edges) {
                 if (link.from_input || !link.same_shape || pair.input_piece_of(link) >= 0) continue;
                 const object_info* source = pair.source_of(link);
@@ -1624,9 +1635,10 @@ private:
                 const bool copied = facts.allowed.translate && (down != 0 || across != 0);
                 const bool turned = facts.allowed.pose && link.pose != 0;
                 if (!copied && !turned) continue;
-                (*pieces[false])[link.from].each_cell([&](int row, int col, int8_t color) {
-                    if (copied) wait(missing::where_it_was_copied, false, row, col, -1, color);
-                    if (turned) wait(missing::how_it_turned, false, row, col, -1, color);
+                each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
+                    if (from_input && was != now) return;
+                    if (copied) wait(missing::where_it_was_copied, from_input, row, col, -1, now);
+                    if (turned) wait(missing::how_it_turned, from_input, row, col, -1, now);
                 });
             }
 

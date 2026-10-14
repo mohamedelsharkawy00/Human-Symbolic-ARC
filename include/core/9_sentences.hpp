@@ -65,14 +65,16 @@ inline string foreground_input(const ground_plan& plan) {
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, at least so many cells, the first so many by size,
 // the ones on a row or a column from the middle -- when `how` names one, else by
-// its colors; then, when `part` names one, SelectPartition takes those as walls
-// and the pieces in that part instead; turned round by InvertSelection for
-// every piece but those; then, when `fits` names a partner way, WouldFit keeps
-// the ones that would fit into a gap of their partner, and when `like` names a
-// likeness, SelectLikeKey the ones like a piece of the key.
+// its colors, SelectAll where it takes every color; then, when `part` names
+// one, SelectPartition takes those as walls and the pieces in that part
+// instead; when `partner` names one, SelectPartner their partners; turned round
+// by InvertSelection for every piece but those; then, when `fits` names a
+// partner way, WouldFit keeps the ones that would fit into a gap of their
+// partner, and when `like` names a likeness, SelectLikeKey the ones like a
+// piece of the key.
 inline string pick_words(const piece_pick& pick) {
     if (pick.every()) return "SelectAll";
-    const auto& [colors, how, value, fits, but_those, part, like] = pick;
+    const auto& [colors, how, value, fits, but_those, part, like, partner] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectAtLeastCells",
@@ -80,7 +82,8 @@ inline string pick_words(const piece_pick& pick) {
                                                  "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     string chosen = "SelectAll InvertSelection";
-    if (how < 0) {
+    if (how < 0 && colors == piece_pick::all().colors) chosen = "SelectAll";
+    else if (how < 0) {
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (colors >> color & 1) chosen += " " + spell("SelectColor", color);
     } else {
@@ -93,6 +96,7 @@ inline string pick_words(const piece_pick& pick) {
         else chosen += " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
     }
     if (part >= 0) chosen += " " + spell("SelectPartition", part);
+    if (partner >= 0) chosen += " " + spell("SelectPartner", partner);
     if (but_those) chosen += " InvertSelection";
     if (fits >= 0) chosen += " " + spell("WouldFit", fits);
     if (like >= 0) chosen += " " + spell("SelectLikeKey", like);
@@ -190,6 +194,11 @@ inline the_mark mark_after(const string& words) {
         }
         else if (op == node_type::SelectPartition)
             mark = mark == the_mark::all ? the_mark::none : the_mark::some;
+        // SelectPartner moves the marks onto the marked pieces' partners: some
+        // of the pieces, where any were marked.
+        else if (op == node_type::SelectPartner) {
+            if (mark != the_mark::none) mark = the_mark::some;
+        }
         else if (is_select_op(op)) {
             if (mark != the_mark::all) mark = the_mark::some;
         }
