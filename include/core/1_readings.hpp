@@ -203,31 +203,6 @@ struct object {
 #pragma warning(pop)
 #endif
 
-// What counts as one object. The walk answers all four the same way, so no
-// two readings can disagree about which cells belong together.
-enum class grouping : int8_t {
-    // Cells that touch, all of them the same color. The usual object.
-    touching_same_color,
-    // Cells that touch, whatever their colors. One object may be many colors.
-    touching_any_color,
-    // Every cell of a color at once, touching or not. One object per color.
-    all_of_one_color,
-    // Cells that share a side, all of them the same color: the usual object cut
-    // finer, a corner joining nothing (aedd82e4's lone cells).
-    touching_sides_same_color,
-};
-
-// Caller-owned so host and device can lend memory they already hold.
-struct object_walk_scratch {
-    bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
-    int16_t queue_row[MAX_GRID_CELLS];
-    int16_t queue_col[MAX_GRID_CELLS];
-    int16_t cells[MAX_GRID_CELLS];
-};
-
-// Boundaries for reading copies separately; zero means one whole picture.
-struct tile_size { int width = 0, height = 0; };
-
 // THE EIGHT WAYS, the one numbering of directions in the project: the cells
 // around a cell, and the ways a piece can go, numbered as a compass is,
 // clockwise from up, as MoveToEdge, Shift and ExtendTo's first eight take
@@ -294,6 +269,31 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
     }
     return tail;
 }
+
+// What counts as one object. The walk answers all four the same way, so no
+// two readings can disagree about which cells belong together.
+enum class grouping : int8_t {
+    // Cells that touch, all of them the same color. The usual object.
+    touching_same_color,
+    // Cells that touch, whatever their colors. One object may be many colors.
+    touching_any_color,
+    // Every cell of a color at once, touching or not. One object per color.
+    all_of_one_color,
+    // Cells that share a side, all of them the same color: the usual object cut
+    // finer, a corner joining nothing (aedd82e4's lone cells).
+    touching_sides_same_color,
+};
+
+// Caller-owned so host and device can lend memory they already hold.
+struct object_walk_scratch {
+    bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
+    int16_t queue_row[MAX_GRID_CELLS];
+    int16_t queue_col[MAX_GRID_CELLS];
+    int16_t cells[MAX_GRID_CELLS];
+};
+
+// Boundaries for reading copies separately; zero means one whole picture.
+struct tile_size { int width = 0, height = 0; };
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
 // and length. Grid is anything with width, height and data[row][col], so host
