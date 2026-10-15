@@ -287,7 +287,7 @@ struct correspondence_election {
         // pieces of one color or the hollows filled, in `paint` or their own for -1;
         // or hollowed to the outline; or the pieces a pick by holes or by size takes,
         // recolored to `value`; or the picked pieces removed, slid to the edge,
-        // moved their own size or grown a trail the way heading `value` names,
+        // moved their own size or grown a trail the direction `value` names,
         // their boxes filled in `paint`,
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
         // repeated down their columns for `value` past 32 and otherwise along

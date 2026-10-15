@@ -368,11 +368,11 @@ facts, with search).
   right -- wants a pick; the general form: the pieces whose partner passes a
   pick; named SelectPartner). The op (8_vocabulary, value 0-116): the pick
   moves onto every partner each picked piece has, among every piece, by a
-  partner_by way, on any side [0-12] or wholly on one of the eight headings
+  partner_by way, on any side [0-12] or wholly on one of the eight directions
   past it (each_partner_picked, 8b_op_math.hpp; each_partner learned
   `among_all`, since a pick of every piece leaves none unpicked; the side is
   lies_toward, the box wholly that way, so a partner below stays below
-  however far either slides across -- by heading_toward it turned diagonal
+  however far either slides across -- by direction_toward it turned diagonal
   after a one-step slide). The reading: piece_pick::partner, applied after
   part and before but_those (picked_pieces), spelled SelectPartner after
   SelectPartition (pick_words; a base of every color now spells SelectAll);
@@ -1392,7 +1392,7 @@ facts, with search).
   cuda_solver.cu -18). The GPU kernel's stack 29,536 -> 29,488 bytes.
   - One box: object_summary::box() and cell_box::include; box_of is gone.
   - One numbering of directions: walk_out, on_object_edge and 3_background's
-    side loops step through heading (every_nth_way<4> for the sides); the
+    side loops step through directions (every_nth_way<4> for the sides); the
     neighbour_row/col_4/8 helpers are gone. touches() is the one touch test
     (each_partner, move_toward); a cell on the other piece counts as touching.
   - color_tally: "most cells, lowest color on a tie, none where nothing was
@@ -1426,9 +1426,9 @@ facts, with search).
   source lines, every step a full build and a score: 199 right, 0 wrong,
   every program and all 1000 readouts byte-for-byte unchanged, but where a
   step renumbered on purpose:
-  - Directions are numbered as a compass is, clockwise from up (heading),
+  - Directions are numbered as a compass is, clockwise from up (direction),
     for MoveToEdge, ExtendTo and Shift alike, and asked sides first, then
-    the diagonals (heading_asked). Partner ways are numbered in the order
+    the diagonals (direction_asked). Partner ways are numbered in the order
     they are asked (partner_by). The stored solutions were renumbered. Four
     unsolved readouts changed: a tie between two directions goes the new
     asking order's way (1190bc91, 3345333e, 444801d8, a2d730bd).
@@ -1648,7 +1648,7 @@ Smaller, open:
   (partner_by): around it, inside it, its rows, its columns, the nearest, the
   touch at a side, the touch at a side or a corner, the same shape, turned
   or not. Directions are numbered as a compass is, clockwise from up
-  (heading), asked sides first (heading_asked). A tie goes to the first
+  (direction), asked sides first (direction_asked). A tie goes to the first
   asked.
 - The partner helpers (each_partner and kin, 8b_op_math.hpp) ask one pieces
   object, so the op and the replay find the same partners; move_toward and

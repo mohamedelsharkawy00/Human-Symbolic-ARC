@@ -242,7 +242,7 @@ ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const i
     cell_box box[COLOR_COUNT];
     color_boxes(one_grid, box);
     one_grid.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
-        for (int way = 0; way < heading::count; way += every_nth_way<4>) {
+        for (int way = 0; way < direction::count; way += every_nth_way<4>) {
             int next_row = row + step_of(way).down;
             int next_col = col + step_of(way).across;
             if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
@@ -376,7 +376,7 @@ ARC_HOST_DEVICE inline void measure_embedding(const Grid& one_grid, const int ce
         for (int nth = 0; nth < objects.size[this_object]; ++nth) {
             int row = cell_row(objects.cells[objects.first_cell[this_object] + nth]);
             int col = cell_col(objects.cells[objects.first_cell[this_object] + nth]);
-            for (int way = 0; way < heading::count; way += every_nth_way<4>) {
+            for (int way = 0; way < direction::count; way += every_nth_way<4>) {
                 int next_row = row + step_of(way).down;
                 int next_col = col + step_of(way).across;
                 if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;

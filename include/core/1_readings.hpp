@@ -208,22 +208,22 @@ struct object {
 // clockwise from up, as MoveToEdge, Shift and ExtendTo's first eight take
 // them. The way back is four on, a quarter turn two on, and the sides are the
 // even ways.
-struct heading {
+struct direction {
     enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
 };
 
 // One step that way. A switch and not a table, so the kernel reads the same
-// steps the host does; a heading out of range goes up.
-struct heading_step { int down, across; };
-ARC_HOST_DEVICE inline heading_step step_of(int way) {
+// steps the host does; a direction out of range goes up.
+struct direction_step { int down, across; };
+ARC_HOST_DEVICE inline direction_step step_of(int way) {
     switch (way) {
-    case heading::up_right:   return { -1,  1 };
-    case heading::right:      return {  0,  1 };
-    case heading::down_right: return {  1,  1 };
-    case heading::down:       return {  1,  0 };
-    case heading::down_left:  return {  1, -1 };
-    case heading::left:       return {  0, -1 };
-    case heading::up_left:    return { -1, -1 };
+    case direction::up_right:   return { -1,  1 };
+    case direction::right:      return {  0,  1 };
+    case direction::down_right: return {  1,  1 };
+    case direction::down:       return {  1,  0 };
+    case direction::down_left:  return {  1, -1 };
+    case direction::left:       return {  0, -1 };
+    case direction::up_left:    return { -1, -1 };
     default:                  return { -1,  0 };
     }
 }
@@ -259,7 +259,7 @@ ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int
         const int row = queue_row[head], col = queue_col[head];
         ++head;
         see(row, col);
-        for (int way = 0; way < heading::count; way += every_nth_way<Directions>) {
+        for (int way = 0; way < direction::count; way += every_nth_way<Directions>) {
             const int next_row = row + step_of(way).down, next_col = col + step_of(way).across;
             if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
             if (!claim(next_row, next_col)) continue;

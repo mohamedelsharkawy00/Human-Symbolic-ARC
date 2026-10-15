@@ -1312,7 +1312,7 @@ __device__ gpu_object_list& gpu_exec_move_toward(gpu_exec_context& ctx, const gp
         if (!src.objects[i].selected) continue;
         const int partner = view.partner_of_kind(kind, i);
         if (partner < 0) continue;
-        const arc::heading_step by = arc::move_toward(far, i, partner, view, ctx.output.width, ctx.output.height);
+        const arc::direction_step by = arc::move_toward(far, i, partner, view, ctx.output.width, ctx.output.height);
         auto& obj = res.objects[i];
         obj.x0 += (int16_t)by.across; obj.x1 += (int16_t)by.across;
         obj.y0 += (int16_t)by.down;   obj.y1 += (int16_t)by.down;
@@ -1894,8 +1894,8 @@ __device__ gpu_object_list& gpu_exec_shift(gpu_exec_context& ctx, const gpu_obje
         // Move only selected objects; the rest ride through in place. No
         // selection means Shift moves nothing — acts never fall back to "all".
         if (!obj.selected) { res.count++; continue; }
-        // Its own size away, the way heading `dir` names (shift_by, 8b_op_math.hpp).
-        const arc::heading_step by = arc::shift_by(dir, obj.width, obj.height);
+        // Its own size away, the direction `dir` names (shift_by, 8b_op_math.hpp).
+        const arc::direction_step by = arc::shift_by(dir, obj.width, obj.height);
         const int dx = by.across, dy = by.down;
         obj.x0 += (int16_t)dx; obj.y0 += (int16_t)dy;
         obj.x1 += (int16_t)dx; obj.y1 += (int16_t)dy;
@@ -2553,7 +2553,7 @@ __device__ gpu_object_list& gpu_exec_tile(gpu_exec_context& ctx, const gpu_objec
 }
 
 // For each object: find the center cell, draw rays in 4 directions (the
-// headings from dir_first, arc::heading) for `radius` steps using the center
+// directions from dir_first, arc::direction) for `radius` steps using the center
 // cell's color. Output is one combined object per input.
 __device__ gpu_object_list& gpu_exec_extend_rays(gpu_exec_context& ctx, const gpu_object_list& src, int8_t radius, int dir_first) {
     auto& res = gpu_acquire(ctx);
@@ -2630,7 +2630,7 @@ __device__ inline bool gpu_obj_contains(const gpu_fixed_object& o, int x, int y)
 // slide stops at whichever edge it meets first.
 __device__ gpu_object_list& gpu_exec_move_to_edge(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
     auto& res = gpu_acquire(ctx);
-    const arc::heading_step step = arc::step_of(dir);
+    const arc::direction_step step = arc::step_of(dir);
     res.count = min((int)src.count, GPU_KERNEL_MAX_OBJECTS);
     for (int i = 0; i < res.count; ++i) {
         res.objects[i] = src.objects[i];
@@ -2718,9 +2718,9 @@ __device__ gpu_object_list& gpu_exec_grow_in_step(gpu_exec_context& ctx, const g
 }
 
 __device__ gpu_object_list& gpu_exec_extend_to(gpu_exec_context& ctx, const gpu_object_list& src, int8_t dir) {
-    if (dir >= arc::heading::count) return gpu_exec_grow_in_step(ctx, src, (arc::grown_along)(dir - arc::heading::count));
+    if (dir >= arc::direction::count) return gpu_exec_grow_in_step(ctx, src, (arc::grown_along)(dir - arc::direction::count));
     auto& res = gpu_acquire(ctx);
-    const arc::heading_step step = arc::step_of(dir);
+    const arc::direction_step step = arc::step_of(dir);
     int gw = ctx.output.width  > 0 ? (int)ctx.output.width  : (int)ctx.input.width;
     int gh = ctx.output.height > 0 ? (int)ctx.output.height : (int)ctx.input.height;
     if (gw <= 0 || gh <= 0) return res;

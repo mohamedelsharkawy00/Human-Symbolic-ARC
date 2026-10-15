@@ -766,8 +766,8 @@ inline bool say_corner_crop(const inference& inf, said_reading& said) {
     if (!crop.holds()) return false;
     if (inf.pane_pick.holds() && inf.pane_pick.way != pane_pick_rule::AtIndex) return false;
     string words = "Input SelectAll";
-    if (crop.down) words += " " + spell("MoveToEdge", heading::down);
-    if (crop.right) words += " " + spell("MoveToEdge", heading::right);
+    if (crop.down) words += " " + spell("MoveToEdge", direction::down);
+    if (crop.right) words += " " + spell("MoveToEdge", direction::right);
     say_closed(said, words, "Union");
     return true;
 }

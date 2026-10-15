@@ -73,7 +73,7 @@ ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
 // partner below a piece stays below it however far either slides across
 // (4364c1c4's stacks, each upper piece a step left, each lower one right).
 ARC_HOST_DEVICE inline bool lies_toward(const cell_box& from, const cell_box& to, int way) {
-    const heading_step step = step_of(way);
+    const direction_step step = step_of(way);
     return (step.down == 0 || (step.down > 0 ? to.row0 > from.row1 : to.row1 < from.row0)) &&
            (step.across == 0 || (step.across > 0 ? to.col0 > from.col1 : to.col1 < from.col0));
 }
@@ -82,14 +82,14 @@ ARC_HOST_DEVICE inline bool lies_toward(const cell_box& from, const cell_box& to
 // on a cell of the other, or beside one at a side -- or, unless `sides_only`,
 // at a corner. The pieces are asked as each_partner asks them, below.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, heading_step by, bool sides_only) {
+ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, direction_step by, bool sides_only) {
     const cell_box own = pieces.box(mine);
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) {
             if (!pieces.painted(mine, row, col)) continue;
             const int at_row = row + by.down, at_col = col + by.across;
             if (pieces.painted(other, at_row, at_col)) return true;
-            for (int way = 0; way < heading::count; way += sides_only ? every_nth_way<4> : every_nth_way<8>)
+            for (int way = 0; way < direction::count; way += sides_only ? every_nth_way<4> : every_nth_way<8>)
                 if (pieces.painted(other, at_row + step_of(way).down, at_col + step_of(way).across)) return true;
         }
     return false;
@@ -254,7 +254,7 @@ ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
 // The caller supplies occupancy, including false outside its own frame.
 template <class Occupied>
 ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) {
-    for (int way = 0; way < heading::count; ++way)
+    for (int way = 0; way < direction::count; ++way)
         if (!occupied(row + step_of(way).down, col + step_of(way).across)) return true;
     return false;
 }
@@ -610,15 +610,15 @@ ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces
 // piece has by the way `value` % partner_by::count names, among every piece,
 // picked or not (each_partner), lying on the side of it `value` /
 // partner_by::count names -- any side [0], or past it wholly that way of it,
-// each of the eight headings from up clockwise (lies_toward). Each one handed
+// each of the eight directions from up clockwise (lies_toward). Each one handed
 // to `mark(other)`: the pick becomes those, and a piece no picked piece has for
 // a partner comes out unpicked (4364c1c4: of every piece, the partners above
 // each, the upper piece of each stack). The pieces are asked as each_partner
 // asks them.
-constexpr int PARTNER_SIDES = 1 + heading::count;
+constexpr int PARTNER_SIDES = 1 + direction::count;
 constexpr int SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)partner_by::count;
 ARC_HOST_DEVICE constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
-// The side a SelectPartner value names: -1 for any, else the heading.
+// The side a SelectPartner value names: -1 for any, else the direction.
 ARC_HOST_DEVICE constexpr int partner_side_of(int value) { return value / (int)partner_by::count - 1; }
 template <class Pieces, class Mark>
 ARC_HOST_DEVICE inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
@@ -659,9 +659,9 @@ ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
 // WHERE SHIFT MOVES A BOX, its own size away: one step that way (step_of), its
 // height a step down or up and its width a step across. The kernel and the
 // reading that replays it take the move from here; a way out of range stays.
-ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
-    if (way < 0 || way >= heading::count) return { 0, 0 };
-    const heading_step step = step_of(way);
+ARC_HOST_DEVICE inline direction_step shift_by(int way, int width, int height) {
+    if (way < 0 || way >= direction::count) return { 0, 0 };
+    const direction_step step = step_of(way);
     return { step.down * height, step.across * width };
 }
 
@@ -669,7 +669,7 @@ ARC_HOST_DEVICE inline heading_step shift_by(int way, int width, int height) {
 // this size, as MoveToEdge takes it: negative when that side already lies past
 // the edge, and on a diagonal whichever edge comes first.
 ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
-    const heading_step step = step_of(way);
+    const direction_step step = step_of(way);
     const int room_down = step.down > 0 ? height - 1 - box.row1 : box.row0;
     const int room_across = step.across > 0 ? width - 1 - box.col1 : box.col0;
     if (step.across == 0) return room_down;
@@ -677,13 +677,13 @@ ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int hei
     return room_down < room_across ? room_down : room_across;
 }
 
-// THE WAY FROM ONE BOX TOWARD ANOTHER: the one of the eight headings whose
+// THE WAY FROM ONE BOX TOWARD ANOTHER: the one of the eight directions whose
 // compass sector the line between their middles points into, each sector 45
 // degrees wide, its edges 22.5 degrees off the axes. A line steeper than that
 // off the rows goes up or down, and one flatter than that off the columns goes
 // across; tan 22.5 is sqrt 2 - 1, irrational, so with whole cells no line lies
 // on an edge, and the test needs no fractions. -1 when the middles coincide.
-ARC_HOST_DEVICE inline int heading_toward(const cell_box& from, const cell_box& to) {
+ARC_HOST_DEVICE inline int direction_toward(const cell_box& from, const cell_box& to) {
     // Twice the middles' distance, so a middle between two cells is whole.
     const int down = (to.row0 + to.row1) - (from.row0 + from.row1);
     const int across = (to.col0 + to.col1) - (from.col0 + from.col1);
@@ -692,7 +692,7 @@ ARC_HOST_DEVICE inline int heading_toward(const cell_box& from, const cell_box& 
     const int vertical = reach > 2 * wide * wide ? (down > 0 ? 1 : -1) : 0;
     const int horizontal = reach > 2 * tall * tall ? (across > 0 ? 1 : -1) : 0;
     if (vertical == 0 && horizontal == 0) return -1;
-    for (int way = 0; way < heading::count; ++way)
+    for (int way = 0; way < direction::count; ++way)
         if (step_of(way).down == vertical && step_of(way).across == horizontal) return way;
     return -1;
 }
@@ -701,7 +701,7 @@ ARC_HOST_DEVICE inline int heading_toward(const cell_box& from, const cell_box& 
 // it touches the partner.
 enum class toward_by : int8_t { a_step, its_size, touching, count };
 
-// WHERE MoveToward MOVES A PIECE: that way toward its partner (heading_toward,
+// WHERE MoveToward MOVES A PIECE: that way toward its partner (direction_toward,
 // between their boxes), by `far` -- one step; its own height or width each way
 // it goes; or step by step until a cell of it touches a cell of the partner, at
 // a side or a corner, as partner_by::touching asks, on a canvas `width` by
@@ -709,12 +709,12 @@ enum class toward_by : int8_t { a_step, its_size, touching, count };
 // stays. Hands back how far down and across; the kernel and the reading's replay
 // both take the move from here. The pieces are asked as each_partner asks them.
 template <class Pieces>
-ARC_HOST_DEVICE inline heading_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
+ARC_HOST_DEVICE inline direction_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
                                                 int width, int height) {
     const cell_box own = pieces.box(mine);
-    const int way = heading_toward(own, pieces.box(partner));
+    const int way = direction_toward(own, pieces.box(partner));
     if (way < 0 || own.empty()) return { 0, 0 };
-    const heading_step step = step_of(way);
+    const direction_step step = step_of(way);
     if (far == toward_by::a_step) return step;
     if (far == toward_by::its_size) return { step.down * own.height(), step.across * own.width() };
     for (int steps = 0;; ++steps) {
@@ -1497,7 +1497,7 @@ ARC_HOST_DEVICE inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bo
 // through the piece's own cells -- `own(row, col)` and `taken(row, col)` say
 // which -- and each cell passed that is not its own handed to `lay(row, col)`.
 template <class Own, class Taken, class Lay>
-ARC_HOST_DEVICE inline void march_trail(int row, int col, heading_step step, int width, int height,
+ARC_HOST_DEVICE inline void march_trail(int row, int col, direction_step step, int width, int height,
                                         Own own, Taken taken, Lay lay) {
     for (int at_row = row + step.down, at_col = col + step.across;
          at_row >= 0 && at_row < height && at_col >= 0 && at_col < width;
@@ -1524,14 +1524,14 @@ enum class grown_along : int8_t {
 // both ways along it, or the sides, the corners, or both, of every cell.
 ARC_HOST_DEVICE constexpr uint8_t grown_ways(grown_along track) {
     auto both = [](int one, int other) { return (uint8_t)(1u << one | 1u << other); };
-    const uint8_t sides = (uint8_t)(both(heading::up, heading::down) | both(heading::right, heading::left));
+    const uint8_t sides = (uint8_t)(both(direction::up, direction::down) | both(direction::right, direction::left));
     const uint8_t corners =
-        (uint8_t)(both(heading::down_right, heading::up_left) | both(heading::up_right, heading::down_left));
+        (uint8_t)(both(direction::down_right, direction::up_left) | both(direction::up_right, direction::down_left));
     switch (track) {
-    case grown_along::rows:                 return both(heading::right, heading::left);
-    case grown_along::columns:              return both(heading::up, heading::down);
-    case grown_along::diagonals_down_right: return both(heading::down_right, heading::up_left);
-    case grown_along::diagonals_up_right:   return both(heading::up_right, heading::down_left);
+    case grown_along::rows:                 return both(direction::right, direction::left);
+    case grown_along::columns:              return both(direction::up, direction::down);
+    case grown_along::diagonals_down_right: return both(direction::down_right, direction::up_left);
+    case grown_along::diagonals_up_right:   return both(direction::up_right, direction::down_left);
     case grown_along::diagonals:            return corners;
     case grown_along::every_way:
     case grown_along::sides_and_corners:    return (uint8_t)(sides | corners);
@@ -1591,9 +1591,9 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
         // settled.
         for (int head = 0; head < tail; ++head) {
             const int at = queue[head], row = at / width, col = at % width;
-            for (int way = heading::up; way < heading::count; ++way) {
+            for (int way = direction::up; way < direction::count; ++way) {
                 if (!(every >> way & 1u)) continue;
-                const heading_step step = step_of(way);
+                const direction_step step = step_of(way);
                 const int next_row = row + step.down, next_col = col + step.across;
                 if (next_row < 0 || next_col < 0 || next_row >= height || next_col >= width ||
                     !on_track(next_row, next_col))
@@ -1614,17 +1614,17 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
         bool going = false;
         for (int i = 0; i < tail; ++i) {
             const int from = queue[i], from_row = from / width, from_col = from % width;
-            for (int way = heading::up; way < heading::count; ++way) {
+            for (int way = direction::up; way < direction::count; ++way) {
                 const uint8_t ray = (uint8_t)(1u << way);
                 if (!(ways[from] & ray)) continue;
-                const heading_step step = step_of(way);
+                const direction_step step = step_of(way);
                 const int row = from_row + step.down * step_number, col = from_col + step.across * step_number;
                 if (row < 0 || col < 0 || row >= height || col >= width) {
                     ways[from] = (uint8_t)(ways[from] & ~ray);
                     continue;
                 }
                 const int at = row * width + col;
-                const uint8_t own_line = (uint8_t)(ray | 1u << (way + heading::count / 2) % heading::count);
+                const uint8_t own_line = (uint8_t)(ray | 1u << (way + direction::count / 2) % direction::count);
                 bool stops = false;
                 if (turn[at] < 0) {
                     turn[at] = step_number;
@@ -1632,9 +1632,9 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
                     ways[at] = ray;
                 } else if (turn[at] == step_number && owner[from] < owner[at]) {
                     // Met in this turn by an earlier piece: the rays that took it stop.
-                    for (int took = heading::up; took < heading::count; ++took) {
+                    for (int took = direction::up; took < direction::count; ++took) {
                         if (!(ways[at] >> took & 1u)) continue;
-                        const heading_step back = step_of(took);
+                        const direction_step back = step_of(took);
                         const int start = (row - back.down * step_number) * width + col - back.across * step_number;
                         ways[start] = (uint8_t)(ways[start] & ~(1u << took));
                     }
@@ -1683,8 +1683,8 @@ template <class Paint>
 ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
                                                Paint paint) {
     if (seed.row < 0) return;
-    for (int way = diagonal ? 1 : 0; way < heading::count; way += 2) {
-        const heading_step step = step_of(way);
+    for (int way = diagonal ? 1 : 0; way < direction::count; way += 2) {
+        const direction_step step = step_of(way);
         for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along);
     }
 }

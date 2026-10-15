@@ -455,16 +455,16 @@ struct partner_pieces {
     // HOW FAR PIECE i GOES, as the partner moves take it (the kernel's AlignTo and
     // MoveToward, through the same helpers), or false when it has no one partner.
     // Level with its partner's rows -- or, with `columns`, columns:
-    bool goes_level(int i, bool columns, partner_by how, heading_step& by) const {
+    bool goes_level(int i, bool columns, partner_by how, direction_step& by) const {
         const int other = partner(how, i);
         if (other < 0) return false;
-        by = columns ? heading_step{ 0, boxes[other].col0 - boxes[i].col0 }
-                     : heading_step{ boxes[other].row0 - boxes[i].row0, 0 };
+        by = columns ? direction_step{ 0, boxes[other].col0 - boxes[i].col0 }
+                     : direction_step{ boxes[other].row0 - boxes[i].row0, 0 };
         return true;
     }
     // Toward its partner of the kind `value` % PARTNER_KINDS names, by what
     // `value` / PARTNER_KINDS names (move_toward), on a canvas `width` by `height`:
-    bool goes_toward(int i, int value, int width, int height, heading_step& by) const {
+    bool goes_toward(int i, int value, int width, int height, direction_step& by) const {
         const int other = partner_of_kind(value % PARTNER_KINDS, i);
         if (other < 0) return false;
         by = move_toward((toward_by)(value / PARTNER_KINDS), i, other, *this, width, height);
@@ -901,7 +901,7 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
 template <class By>
 inline bool draw_the_hand(grid& canvas, const vector<object>& hand, bool under, bool clip, By by) {
     for (size_t i = 0; i < hand.size(); ++i) {
-        const heading_step step = by(i);
+        const direction_step step = by(i);
         if (!paint_piece(canvas, hand[i], hand[i].summary.row + step.down, hand[i].summary.col + step.across,
                          !under, clip))
             return false;
@@ -2315,7 +2315,7 @@ struct slide_to_touch_rule {
 // THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two that say as
 // much is broken in: the four sides before the diagonals, the plainer move
 // first, each clockwise from up.
-constexpr int heading_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 1; }
+constexpr int direction_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 1; }
 
 // PIECES THAT SLIDE TO AN EDGE, AND THE REST LEFT WHERE IT LIES. Every piece,
 // or one color's pieces, go one of the eight ways until they meet the edge of
@@ -2337,7 +2337,7 @@ struct edge_slide_rule {
     segmentation_methods segmentation = segmentation_methods::unset;
     // The color whose pieces slide, or -1 when every piece does.
     int8_t color = -1;
-    int8_t way = heading::up;
+    int8_t way = direction::up;
     // Laid over what stays, as Union lays it, or under it, as Underlay does.
     bool over = true;
     bool held = false;
@@ -2354,7 +2354,7 @@ struct edge_slide_rule {
             for (const object& piece : pieces)
                 if (!slides(piece) && !paint_piece(canvas, piece, piece.summary.row, piece.summary.col))
                     return false;
-            const heading_step step = step_of(way);
+            const direction_step step = step_of(way);
             for (const object& piece : pieces) {
                 if (!slides(piece)) continue;
                 const int steps = steps_to_edge(piece.summary.box(), canvas.width, canvas.height, way);
@@ -2394,11 +2394,11 @@ struct edge_slide_rule {
             if (as_they_lie) continue;
             for (int color = -1; color < COLOR_COUNT; ++color) {
                 if (color >= 0 && !(colors >> color & 1)) continue;
-                for (int at = 0; at < heading::count; ++at)
+                for (int at = 0; at < direction::count; ++at)
                     for (bool over : { true, false }) {
                         // With every piece sliding nothing stays to lie under.
                         if (!over && color < 0) continue;
-                        const edge_slide_rule trying{ cut, (int8_t)color, (int8_t)heading_asked(at), over, true };
+                        const edge_slide_rule trying{ cut, (int8_t)color, (int8_t)direction_asked(at), over, true };
                         bool every = true;
                         for (size_t i = 0; i < train.size() && every; ++i) {
                             grid drawn;
@@ -3038,8 +3038,8 @@ struct corner_crop_rule {
         return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
             // The input is one piece as big as itself, so its cells are its box.
             const cell_box whole{ 0, 0, input.height - 1, input.width - 1 };
-            const int top = down ? steps_to_edge(whole, canvas.width, canvas.height, heading::down) : 0;
-            const int left = right ? steps_to_edge(whole, canvas.width, canvas.height, heading::right) : 0;
+            const int top = down ? steps_to_edge(whole, canvas.width, canvas.height, direction::down) : 0;
+            const int left = right ? steps_to_edge(whole, canvas.width, canvas.height, direction::right) : 0;
             for (int r = 0; r < input.height; ++r)
                 for (int c = 0; c < input.width; ++c)
                     if (canvas.contains(top + r, left + c)) canvas.data[top + r][left + c] = input.data[r][c];
@@ -3362,7 +3362,7 @@ static_assert(row_of(node_type::WouldFit).high + 1 == (int)partner_by::count,
 static_assert(row_of(node_type::SelectLikeKey).high + 1 == KEY_LIKENESSES,
               "SelectLikeKey takes one value for each likeness to the key");
 static_assert(row_of(node_type::SelectPartner).high + 1 == SELECT_PARTNER_VALUES,
-              "SelectPartner takes each partner way on any side, then on each of the eight headings");
+              "SelectPartner takes each partner way on any side, then on each of the eight directions");
 
 // THE PIECES A PICK TAKES, as its words take them on a canvas the size of
 // `canvas`, in the order pick_words says them: its colors or its kind; the
@@ -3595,7 +3595,7 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
 
 // THE PARTNERS OF A PICK (SelectPartner): of every piece, and of each color
 // every pair holds, every partner each has by a way partner_by finds one -- on
-// any side, then wholly on each side and each corner in turn (heading_asked) --
+// any side, then wholly on each side and each corner in turn (direction_asked) --
 // and every piece but those, each asked only where it takes a piece in every
 // pair and leaves one in some, and takes other pieces somewhere than its base
 // and every partner pick asked before it (4364c1c4: of every piece, the
@@ -3608,7 +3608,7 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
 // them wrong (22168020, 272f95fa, 62b74c02, 9344f635, a61f2674, f823c43c).
 inline vector<piece_pick> partner_picks(const replay_facts& facts) {
     vector<piece_pick> picks;
-    // Each partner found with the sides of its piece it lies on, a bit a heading.
+    // Each partner found with the sides of its piece it lies on, a bit for each direction.
     struct found_partner { int mine, other; uint8_t sides; };
     vector<vector<vector<found_partner>>> partners_by_way((size_t)partner_by::count);
     for (int way = 0; way < (int)partner_by::count; ++way) {
@@ -3619,7 +3619,7 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
             for (int mine = 0; mine < every.count(); ++mine)
                 each_partner((partner_by)way, mine, every, [&](int other) {
                     uint8_t sides = 0;
-                    for (int side = 0; side < heading::count; ++side)
+                    for (int side = 0; side < direction::count; ++side)
                         if (lies_toward(every.box(mine), every.box(other), side)) sides = (uint8_t)(sides | 1u << side);
                     found.push_back({ mine, other, sides });
                 }, true);
@@ -3646,8 +3646,8 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
         for (const vector<object>& cut : facts.cuts) base_taken.push_back(picked_pieces(cut, piece_pick{ base }));
         for (const int way : ways_asked) {
             if (partners_by_way[(size_t)way].empty()) continue;
-            for (int at = -1; at < heading::count; ++at) {
-                const int side = at < 0 ? -1 : heading_asked(at);
+            for (int at = -1; at < direction::count; ++at) {
+                const int side = at < 0 ? -1 : direction_asked(at);
                 vector<vector<bool>> taken;
                 bool every = true, splits = false;
                 for (size_t which = 0; which < facts.cuts.size(); ++which) {
@@ -4996,9 +4996,9 @@ inline bool slides_show(const example& pair, const partner_pieces& cut, bool und
                         vector<cell_color>& wrong, int& pieces_moved) {
     grid drawn = empty_grid(pair.output.width, pair.output.height), was = drawn;
     if (!draw_the_hand(drawn, cut.pieces, under, /*clip=*/false,
-                       [&](size_t i) { return heading_step{ down[i], across[i] }; }))
+                       [&](size_t i) { return direction_step{ down[i], across[i] }; }))
         return false;
-    draw_the_hand(was, cut.pieces, under, /*clip=*/true, [](size_t) { return heading_step{ 0, 0 }; });
+    draw_the_hand(was, cut.pieces, under, /*clip=*/true, [](size_t) { return direction_step{ 0, 0 }; });
     auto gains = [&](int row, int col) {
         return drawn.data[row][col] != was.data[row][col] && drawn.data[row][col] == pair.output.data[row][col];
     };
@@ -5048,7 +5048,7 @@ inline optional<replayed> slides_hold(const replay_facts& facts, const vector<pa
         vector<int> downs(cut.pieces.size(), 0), acrosses(cut.pieces.size(), 0);
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
-            heading_step by{ 0, 0 };
+            direction_step by{ 0, 0 };
             if (!where(which, cut, i, by)) return nullopt;
             downs[i] = by.down;
             acrosses[i] = by.across;
@@ -5069,7 +5069,7 @@ inline optional<replayed> slides_hold(const replay_facts& facts, const vector<pa
 // `columns`, the column -- its one partner's box starts on (goes_level).
 inline optional<replayed> align_holds(const replay_facts& facts, const vector<partner_pieces>& handed, bool columns,
                                       partner_by how) {
-    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, heading_step& by) {
+    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, direction_step& by) {
         return cut.goes_level(i, columns, how, by);
     });
 }
@@ -5082,7 +5082,7 @@ static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
 // names: one step, its own size, or until it touches it (goes_toward,
 // move_toward in 8b_op_math.hpp, the move the op makes).
 inline optional<replayed> toward_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int value) {
-    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, heading_step& by) {
+    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
         const grid& output = facts.train[which].output;
         return cut.goes_toward(i, value, output.width, output.height, by);
     });
@@ -5094,7 +5094,7 @@ static_assert(row_of(node_type::MoveToward).high + 1 == (int)toward_by::count * 
 // the MoveColumn and MoveRow a pick by holes or by size is said with.
 inline optional<replayed> move_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int down,
                                      int across) {
-    return slides_hold(facts, handed, [&](size_t, const partner_pieces&, int, heading_step& by) {
+    return slides_hold(facts, handed, [&](size_t, const partner_pieces&, int, direction_step& by) {
         by = { down, across };
         return true;
     });
@@ -5103,8 +5103,8 @@ inline optional<replayed> move_holds(const replay_facts& facts, const vector<par
 // A PICKED PIECE SLID TO THE EDGE OF THE GRID, replayed: that way, until its box
 // meets the edge (steps_to_edge, 8b_op_math.hpp, the walk MoveToEdge takes).
 inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
-    const heading_step step = step_of(way);
-    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, heading_step& by) {
+    const direction_step step = step_of(way);
+    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
         const grid& output = facts.train[which].output;
         const int steps = steps_to_edge(cut.boxes[i], output.width, output.height, way);
         by = { steps * step.down, steps * step.across };
@@ -5112,10 +5112,10 @@ inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<
     });
 }
 
-// A PICKED PIECE MOVED ITS OWN SIZE, replayed: the way heading `way` names
+// A PICKED PIECE MOVED ITS OWN SIZE, replayed: the direction `way` names
 // (shift_by, 8b_op_math.hpp, the step the op takes).
 inline optional<replayed> shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
-    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, heading_step& by) {
+    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, direction_step& by) {
         by = shift_by(way, cut.boxes[i].width(), cut.boxes[i].height());
         return true;
     });
@@ -5350,8 +5350,8 @@ inline optional<paint_walk> grown_walk(const replay_facts& facts, const vector<p
 // whose trail then drew it back). Past the eight ways, the pieces grow in step
 // until they meet (grown_walk).
 inline optional<paint_walk> trail_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
-    if (way >= heading::count) return grown_walk(facts, handed, (grown_along)(way - heading::count));
-    const heading_step step = step_of(way);
+    if (way >= direction::count) return grown_walk(facts, handed, (grown_along)(way - direction::count));
+    const direction_step step = step_of(way);
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -5878,7 +5878,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             }
             constexpr int ways = (int)partner_by::count;
             vector<int> found(hand.size(), -1);
-            vector<heading_step> by(hand.size(), heading_step{ 0, 0 });
+            vector<direction_step> by(hand.size(), direction_step{ 0, 0 });
             const bool by_place = rule.as == said::color_from && rule.value == KEY_BY_PLACE;
             const vector<int8_t> places = by_place ? cut.key_places() : vector<int8_t>{};
             for (int i = 0; i < cut.count(); ++i) {
@@ -5897,7 +5897,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
         }
         case said::to_edge:
         case said::shifted: {
-            const heading_step step = step_of(rule.value);
+            const direction_step step = step_of(rule.value);
             for (size_t i = 0; i < hand.size(); ++i) {
                 if (!picked[i]) continue;
                 const cell_box box = hand[i].painted_box();
@@ -5905,7 +5905,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
                     const int steps = steps_to_edge(box, pair.output.width, pair.output.height, rule.value);
                     moved(hand[i], steps * step.down, steps * step.across);
                 } else {
-                    const heading_step by = shift_by(rule.value, box.width(), box.height());
+                    const direction_step by = shift_by(rule.value, box.width(), box.height());
                     moved(hand[i], by.down, by.across);
                 }
             }
@@ -5994,7 +5994,7 @@ struct paint_value {
 };
 
 // The ways' names, as the reading says them in words.
-inline constexpr const char* const heading_names[heading::count] = {
+inline constexpr const char* const direction_names[direction::count] = {
     "up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left" };
 
 // The one pose that does `first` and then `then`. Read off where the corners of
@@ -6336,7 +6336,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     if (best.pick.colors >> color & 1) name += " " + to_string(color);
                 name += "'";
             }
-            name += string(" Partners ") + (side < 0 ? "Any Side" : heading_names[side]) + " (" +
+            name += string(" Partners ") + (side < 0 ? "Any Side" : direction_names[side]) + " (" +
                     partners[(int)partner_way_of(best.pick.partner)] + ")";
         }
         else {
@@ -6452,8 +6452,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // going in that order -- a move toward a partner, the newest word, after every
     // older one. It accounts for the cells each piece left and the cells it landed
     // on.
-    static_assert(heading::count == row_of(node_type::MoveToEdge).high + 1 &&
-                  heading::count == row_of(node_type::Shift).high + 1);
+    static_assert(direction::count == row_of(node_type::MoveToEdge).high + 1 &&
+                  direction::count == row_of(node_type::Shift).high + 1);
     static constexpr const char* how_far[] = { "one step", "its own size", "until it touches" };
     static_assert(size(how_far) == (size_t)toward_by::count);
     auto move_word = [&]() -> offer {
@@ -6473,8 +6473,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     if (!facts.asks_kind(value % PARTNER_KINDS)) continue;
                     else if (const auto seen = toward_holds(facts, handed, value))
                         weigh(toward, value, pick, *seen, move_claims(*seen));
-                for (int at = 0; at < heading::count; ++at) {
-                    const int way = heading_asked(at);
+                for (int at = 0; at < direction::count; ++at) {
+                    const int way = direction_asked(at);
                     if (const auto seen = to_edge_holds(facts, handed, way)) weigh(edged, way, pick, *seen, move_claims(*seen));
                     if (const auto seen = shift_holds(facts, handed, way)) weigh(sized, way, pick, *seen, move_claims(*seen));
                 }
@@ -6503,9 +6503,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                           string("moves level with the ") + (aligned.value >= ways ? "columns" : "rows") + " of " +
                               partners[aligned.value % ways], moves));
             else if (edged.said == most)
-                carry(say(edged, rule::to_edge, string("slides ") + heading_names[edged.value] + " to the edge", moves));
+                carry(say(edged, rule::to_edge, string("slides ") + direction_names[edged.value] + " to the edge", moves));
             else if (sized.said == most)
-                carry(say(sized, rule::shifted, string("moves its own size ") + heading_names[sized.value], moves));
+                carry(say(sized, rule::shifted, string("moves its own size ") + direction_names[sized.value], moves));
             else if (stepped.said < most) {
                 const int kind = toward.value % PARTNER_KINDS;
                 carry(say(toward, rule::move_toward,
@@ -6854,7 +6854,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const grid& output = facts.train[which].output;
             grid drawn = empty_grid(output.width, output.height);
             draw_the_hand(drawn, facts.cuts[which], facts.laid_under, /*clip=*/true,
-                          [](size_t) { return heading_step{ 0, 0 }; });
+                          [](size_t) { return direction_step{ 0, 0 }; });
             line_drawn.push_back(std::move(drawn));
         }
     };
@@ -7099,7 +7099,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // grown in step with the others along its track until they meet, the eight
     // ways asked first and taking a tie -- asked again, like the rays, while a
     // trail accounts for any cell, laid each way a paint may be.
-    static_assert(heading::count + (int)grown_along::count == row_of(node_type::ExtendTo).high + 1);
+    static_assert(direction::count + (int)grown_along::count == row_of(node_type::ExtendTo).high + 1);
     static constexpr const char* grown_names[] = { "along its rows", "along its columns", "to every side",
                                                    "along the grid's edge", "along its diagonals down to the right",
                                                    "along its diagonals up to the right", "along both its diagonals",
@@ -7112,7 +7112,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         for (const size_t at : asked_now)
             for (const int8_t lay : lays())
                 for (int asked = 0; asked <= row_of(node_type::ExtendTo).high; ++asked) {
-                    const int way = asked < heading::count ? heading_asked(asked) : asked;
+                    const int way = asked < direction::count ? direction_asked(asked) : asked;
                     const auto& seen = laid_once(1, at, lay, way, laying::as_drawn, [&] {
                         return trail_walk(opened, handed_by_pick[at], way); });
                     if (!seen) continue;
@@ -7122,9 +7122,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
-            const string grows = best.value < heading::count
-                ? string("grows a trail ") + heading_names[best.value] + " until it meets something"
-                : string("grows ") + grown_names[best.value - heading::count] + " in step with the others until they meet";
+            const string grows = best.value < direction::count
+                ? string("grows a trail ") + direction_names[best.value] + " until it meets something"
+                : string("grows ") + grown_names[best.value - direction::count] + " in step with the others until they meet";
             const int8_t said = say_paint(best, rule::trailed, grows + laid_words(best_lay));
             read.fired[said].lay = best_lay;
         }, laid_by(best.seen) };

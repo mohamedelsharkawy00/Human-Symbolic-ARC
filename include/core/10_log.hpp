@@ -665,7 +665,7 @@ inline void log_inference(const string& id, const inference& inf,
         report << "  cut " << segmentation_names[(int)inf.edge_slide.segmentation]
                << "  pieces " << (is_color(inf.edge_slide.color) ? "of color " + to_string(inf.edge_slide.color)
                                                                   : string("all"))
-               << "  way " << heading_names[inf.edge_slide.way]
+               << "  way " << direction_names[inf.edge_slide.way]
                << "  laid " << (inf.edge_slide.over ? "over" : "under");
     report << "\n\n";
     report << "[corner_crop] holds " << inf.corner_crop.holds();

@@ -254,7 +254,7 @@ enum class inferred_amount { none, some, all };
   X(SelectLikeKey               , 0                 , 5                        , select   , none, true , false) \
   /* The pick moves onto every partner each picked piece has, the way       */ \
   /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
-  /* the eight headings, from up clockwise (each_partner_picked, 8b).       */ \
+  /* the eight directions, from up clockwise (each_partner_picked, 8b).       */ \
   X(SelectPartner               , 0                 , 116                      , select   , none, true , false)
 
 enum class node_type : uint8_t {
