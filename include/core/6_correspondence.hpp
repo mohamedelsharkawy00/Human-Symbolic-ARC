@@ -12,6 +12,7 @@
 // and choose the grouping and allowed changes that best explain them.
 #pragma once
 #include "5_matching.hpp"
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -596,6 +597,7 @@ struct correspondence_election {
         for (const auto& prepared : preparations) {
             int best = -1;
             const bool by_size = any_match_by_size(prepared);
+            matching_placements placements(train.size());
             for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
                 const int cell = (int)prepared.look.segmentation * degrees_of_freedom::COMBINATIONS + packed;
                 reading& scored = facts.readings[cell];
@@ -605,7 +607,7 @@ struct correspondence_election {
                 if (allowed.scale && !by_size) {
                     scored = facts.readings[cell - degrees_of_freedom::SCALE_BIT];
                     scored.allowed = allowed;
-                } else scored = detect_correspondence(train, prepared, allowed);
+                } else scored = detect_correspondence(train, prepared, allowed, placements);
                 if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
             }
             facts.best_of[(size_t)prepared.look.segmentation] = (int16_t)best;
@@ -682,6 +684,7 @@ struct correspondence_election {
     }
 
 private:
+    using matching_placements = vector<array<object_matching::placement_cache, 2>>;
     // Objects and grid-only scores shared by every permission combination.
     struct prepared_segmentation {
         correspondence_election::reading look;
@@ -778,15 +781,16 @@ private:
     // One reading: match each example, reconcile their evidence, then describe what survived.
     static reading detect_correspondence(const vector<example>& train,
                                                        const prepared_segmentation& prepared,
-                                                       degrees_of_freedom allowed) {
+                                                       degrees_of_freedom allowed,
+                                                       matching_placements& placements) {
         reading facts = prepared.look;
         facts.allowed = allowed;
         if (train.empty()) return facts;
         for (const auto& pair : prepared.pairs) facts.pairs.push_back(pair.info);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read)
-                match_one_pair(train, prepared, allowed, facts, i, nullptr);
-        reconcile_examples(train, prepared, allowed, facts);
+                match_one_pair(train, prepared, allowed, facts, i, nullptr, placements);
+        reconcile_examples(train, prepared, allowed, facts, placements);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read) summarize_pair(train, prepared, facts, i);
         add_up_the_pairs(facts);
@@ -818,7 +822,8 @@ private:
     static void match_one_pair(const vector<example>& train,
                                const prepared_segmentation& prepared, degrees_of_freedom allowed,
                                reading& facts, size_t pair_index,
-                               const what_the_pairs_agreed* agreed) {
+                               const what_the_pairs_agreed* agreed,
+                               matching_placements& placements) {
         const bool pattern_reading =
             facts.segmentation == segmentation_methods::minimal_repeating_set ||
             facts.segmentation == segmentation_methods::smallest_of_two_grids;
@@ -851,7 +856,8 @@ private:
             } else {
                 verdict = object_matching::collect_edges(from_info, from_objects, into_info,
                                         into_objects, into, from_input, allowed.hang_off,
-                                        edges, &discarded, allowed, agreed);
+                                        edges, &discarded, allowed, agreed,
+                                        &placements[pair_index][from_input ? 0 : 1]);
                 object_matching::sit_on_top(from_info, from_objects, into_info, into_objects, edges);
             }
             for (auto& edge : edges) edge.from_input = from_input;
@@ -939,7 +945,7 @@ private:
     // Let movements supported by all examples constrain ambiguous matches.
     static void reconcile_examples(const vector<example>& train,
                                    const prepared_segmentation& prepared, degrees_of_freedom allowed,
-                                   reading& facts) {
+                                   reading& facts, matching_placements& placements) {
         // Use a color to constrain matches only when every read pair has one shared,
         // nonzero movement for it. The movement may differ between pairs.
         // Return null when this pair has no such movement or has several.
@@ -980,7 +986,7 @@ private:
                     const object_info* source = pair.source_of(link);
                     return source && object_matching::the_pairs_disagree(agreed[which], link, *source);
                 });
-                if (any_disagrees) match_one_pair(train, prepared, allowed, facts, which, &agreed[which]);
+                if (any_disagrees) match_one_pair(train, prepared, allowed, facts, which, &agreed[which], placements);
             }
 
     }

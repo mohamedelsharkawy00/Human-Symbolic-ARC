@@ -1,4 +1,4 @@
-# Handoff, 2026-10-14
+# Handoff, 2026-10-15
 
 Read AGENTS.md first: the rules, how to build and check, where things are.
 This file holds only what is current; past stages are in git history
@@ -74,6 +74,167 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- COMPLETED READING REUSE implemented at user's request, focused check passed.
+  figure_readings is explicitly owned by infer and passed through read_figures,
+  read_the_cut and read_the_rest. read_figures_once uses exact figures_key
+  (input/output cells, dimensions, tile sizes) plus pass/tolerant/partners.
+  Completed results are shared_ptr<const inference>; callers retain separate
+  mutable claims and ground-plan annotations. FIFO retention of eight entries
+  per puzzle; existing rest/framed ownership may retain descendants longer.
+  Cache entries are installed only on completion; no in-progress reuse.
+  Existing initial preparation reuse per ground plan remains. Audit runner
+  uses the same figures_key owner instead of a second serialization.
+  Release build passed. reading_reuse_sample completed,
+  same 13 ids as prep_audit_sample, all available workers, AboveNormal, no
+  affinity, ARC_PREP_AUDIT unset. Logs out/reading_reuse_sample.stdout.txt and
+  .stderr.txt. All 13 readouts and programs identical to permission_places_full:
+  4 right, 1 wrong, 8 unsolved, gained 0, lost 0. Across the sample:
+  preparations 612 -> 172; readings 647 -> 205; matching calls 206720 -> 53632;
+  fitting edges 32711257 -> 28222058; paint replays 10464279 -> 3722107;
+  slide replays 8834287 -> 3758919. 79cce52d readings 281 -> 28;
+  25094a63, db615bd4 and a64e4611 readings unchanged. Do not attribute their
+  lower elapsed times to reuse: CPU conditions vary. Observed process working
+  set about 3.6 GB after ten completed cases, not a final peak measurement.
+  Nothing running. NEXT: preserve this substantial work reduction; full score
+  check remains due for this architectural change when resuming. Last full
+  baseline permission_places_full is 266 right / 39 wrong, not a claim that
+  completed-reading reuse has passed all 1000. Then follow the profiler branch
+  upstream on expensive cases that did not reuse readings; no more speculative
+  storage tuning. User explicitly
+  asked to stop adding measurements and analyze code; no new audit added here.
+- 2026-10-15: user explicitly dropped contiguous fitting storage and wants
+  the biggest optimization overall, not another local tweak or a restriction
+  to matching. Storage experiment reverted ONLY; verified cross-permission
+  placement reuse and counters retained. Revert release rebuild passed.
+  Prior full baseline remains permission_places_full,
+  266 right / 39 wrong, no new score run for the revert yet.
+  Broad timing audit of that run: summed infer_ms 17104798, report_ms 90759,
+  gpu_wait_ms 978, score_ms 18950: inference 99.4% of those totals. Top
+  10/50/100 puzzles contribute 20.5/56.4/72.5% of summed inference elapsed
+  time; these are concurrent per-puzzle times, NOT CPU cycle shares.
+  Investigate whole-work avoidance across repeated pictures/preparations,
+  permission variants, and diagnostic evidence copying. 7335 preparations,
+  9812 readings, 3915 later readings, 2.65 million matching calls in full run.
+  Rejection records/dropped counts appear consumed by diagnostics, but
+  preserving readouts matters; do not silently disable them. read_figures
+  copies full inference per ranked cut; later read_the_rest calls prepare
+  again for each changed picture. Repetition rate not yet measured.
+  Next gather representative evidence beyond only 25094a63 before selecting
+  the largest intervention; CPU/GPU migration and scheduling remain options,
+  not assumed solutions. No rejection-list micro-optimization implemented.
+- PREPARATION AUDIT added, opt-in ARC_PREP_AUDIT=1, release build passed.
+  Focused prep_audit_sample completed, all workers, AboveNormal, no pinning;
+  logs out/prep_audit_sample.stdout.txt and .stderr.txt.
+  7_infer's optional thread-local observer times each
+  prepare_figures, recording matching calls and fitting-edge deltas. Runner
+  compares exact serialized input/output cells, dimensions and per-pair tile
+  sizes; writes preparations/<id>.csv with preparation, first_identical,
+  elapsed_ms, matching_calls, fitting_edges. No hash collision or reuse, only
+  measurement. Normal runs leave observer disabled. Next focused audit ids:
+  25094a63, db615bd4, a64e4611, 79cce52d, 3979b1a8, 8719f442, 2ccd9fef,
+  fb791726, 00576224, 007bbfb7, 009d5c81, 17b80ad2, 06df4c85.
+  79cce52d made 276 preparations in baseline, 3979b1a8 90, 8719f442 72;
+  repetition and avoidable time not yet measured. Compare focused readouts,
+  scores and work counts against permission_places_full before drawing a
+  conclusion. User wants profiler-led investigation as far upstream as useful.
+  AUDIT RESULT: 4 right, 1 wrong, 8 unsolved, gained 0, lost 0; all 13
+  readouts/programs and recorded work counts identical to permission_places_full.
+  Repeat preparations / total: 25094a63 2/13, 79cce52d 253/276,
+  8719f442 58/72, db615bd4 4/12, a64e4611 0/18. Repeated preparation
+  elapsed time as percent of WHOLE inference: respectively 17.5%, 9.6%,
+  35.1%, 6.4%, 0%. fb791726 29.8%, 2ccd9fef 12.1%, 3979b1a8 8.5%.
+  These concurrent measurements estimate opportunity, not proven speedup.
+  Preparation caching alone is not yet the biggest target: on 79cce52d
+  preparation is only 10.7% of inference; a64e4611 32.9%. Next measure
+  repeated entire read_figures calls, including word reading/later passes,
+  keyed also by pass, tolerant, partners and exact inputs/outputs/tile sizes.
+  Nested elapsed spans overlap: do not sum parent/child time as separate
+  savings. No result cache implemented; no process running.
+- User preference: focused checks after small changes; full runs only after
+  a substantial batch or a wider-risk change. Keep permission_places_full
+  as the last full baseline (266 right, 39 wrong).
+- 2026-10-15: CONTIGUOUS FITTING CELLS implemented, checks pending.
+  candidate stores offsets/counts into fitting's visible_cells/hidden_cells
+  pools instead of allocating two vectors per candidate. Cell order, work
+  increments, budget, sorting and decisions unchanged. Previous executable
+  saved as out/arc_said_before_cell_pools.exe for timing/memory comparisons.
+  Release build passed. Focused cell_pools_sample completed,
+  all available workers, AboveNormal, no affinity: 00576224,
+  007bbfb7, 009d5c81, 17b80ad2, 06df4c85 plus the eight highest candidate
+  counts (db615bd4, 1d0a4b61, a64e4611, 25094a63, 484b58aa, 50a16a69,
+  6ffe8f07, 551d5bf1). All 13 readouts and programs identical to
+  permission_places_full, all recorded work counters identical: 4 right,
+  1 wrong, 8 unsolved, gained 0, lost 0. No full run planned.
+  First timing wrapper stopped after successful cell_pools_old1 because it
+  checked LASTEXITCODE after a PowerShell script rather than the recorded
+  process exit. Old1 succeeded: 40.757 s wall, 40.609 s CPU, 3.503 GB peak.
+  Completed a fresh sequential ABBA batch on 25094a63, via
+  extras/speed_1013/time.ps1, AboveNormal, no LogicalCpu, validating JSON
+  ExitCode: cell_pools_old3, cell_pools_new3, cell_pools_new4, cell_pools_old4.
+  New binary snapshot out/arc_said_cell_pools.exe; old snapshot above.
+  Timing JSONs in extras/speed_1013; readouts under out/<label>.
+  Wall seconds in ABBA order: 50.988, 82.450, 82.095, 91.646. Peak bytes:
+  3495706624, 3504398336, 3497205760, 3501301760. All four readouts and
+  recorded work counters identical to permission_places_full's 25094a63.
+  No reliable speed win: same old binary varies from 51 to 92 seconds;
+  new runs near 82 seconds. No meaningful peak-memory reduction either.
+  Storage change remains uncommitted and unproven as a speed improvement;
+  no timing process running. Next decision: profile its allocation/checking
+  cost or drop this experiment before tackling rejection-list copies.
+  Rejection-list copying not changed yet.
+- 2026-10-15: PLACEMENTS ACROSS PERMISSIONS implemented, full check passed.
+  object_matching::placement_cache owns raw whole-grid placement results;
+  the correspondence election keeps one per pair/direction for one
+  segmentation's permission variants and rematches. Key: drawn cells,
+  clipping, pose count; changing the target clears results. Fixed-position
+  and grown-piece scans, chance tests, rejection/edge order and fitting
+  unchanged. No reuse between segmentations or later pictures. Release build
+  passed. permission_places_sample: 00576224, 007bbfb7, 009d5c81, 17b80ad2;
+  3 right, 1 wrong, gained 0, lost 0, all four readouts byte-identical.
+  Whole-grid scans 752->352, 960->352, 600->176, 8864->3450 respectively;
+  fitting edge counts unchanged. Full permission_places_full passed,
+  all 20 threads (ARC_THREADS unset), AboveNormal, no affinity: 266 right,
+  39 wrong, gained 0, lost 0 against matching_counts_full. All 1000 readouts
+  and said.txt byte-identical; explained but unsolved 0 -> 0.
+  Whole-grid scans 4933177 -> 1722494 (-65.1%); fixed scans 20144011 and
+  fitting edges 170951309 unchanged. Slow puzzle scans 54164 -> 19848;
+  inference 151.4 s vs 108.0 s in previous full run, NOT comparable because
+  worker count changed from 10 to 20. Peak working set observed 10.25 GB,
+  later 3.72 GB with 12 GB free; run was progressing normally.
+  Fresh scripts/profile.bat 25094a63 completed: cpu-20261015-151246-146;
+  logs out/permission_places_profile.stdout.txt and .stderr.txt. AboveNormal,
+  no affinity; single puzzle uses one worker as before. Elapsed 91.142 s,
+  CPU 89.976 s versus prior 106.09/105.00; not a controlled repeated timing.
+  Top self hotspot: fitting's cells_are_free lambda 17.1%; rejection vector
+  push_back 7.5%, rejection insert 3.0%, malloc 4.8%. These are self shares,
+  not the earlier inclusive matching shares. Nothing running.
+  Proposed next stage: contiguous candidate cell storage in fitting, instead
+  of separate small vectors per candidate, retaining cell iteration order,
+  work increments/budget and all decisions. Then remove redundant rejection
+  list copies at their owner. Do not deduplicate candidates casually: their
+  count and checking order affect fitting's budget. Not implemented yet.
+- User preference, 2026-10-15: use the whole machine for full runs (all 20
+  logical CPU threads; leave ARC_THREADS unset), AboveNormal, no pinning.
+  matching_counts_full finished with its original 10 workers. Single-puzzle
+  profiler still uses one worker.
+- 2026-10-15: MATCHING COUNTERS added, full check passed (uncommitted).
+  5_matching.hpp counts matching calls/rematches, gathers, fixed and whole-grid
+  scans, placement-cache hits and edges sent to fitting; said.cpp appends them
+  to each puzzle's timings.csv. No matching decisions changed. Release build
+  passed. Sample matching_counts_sample completed, four workers, AboveNormal,
+  no affinity: 25094a63 plus 00576224, 007bbfb7, 009d5c81 and 17b80ad2.
+  All five readouts byte-identical to matches_full; 3 right, 1 wrong,
+  1 unsolved, gained 0, lost 0. Slow puzzle inference 107.915 s: 2528 matching
+  calls (32 rematches), 272644 fixed scans, 54164 whole-grid scans, 85840
+  placement-cache hits, 6283294 edges sent to fitting (cumulative, not unique).
+  Full regression matching_counts_full finished, 10 workers, AboveNormal,
+  no affinity: 266 right, 39 wrong, gained 0, lost 0 against matches_full.
+  All 1000 readouts and said.txt byte-identical; explained but unsolved
+  0 -> 0. This completes the counters stage. Next investigate sharing placement
+  results across the 32 permission combinations at the matching owner;
+  preserve target, pose count, clipping and fixed-position distinctions,
+  and leave chance tests, edge order and fitting unchanged. This remains
+  the following implementation stage, recorded above.
 - 2026-10-14: MATCHING PLACEMENTS SHARED, experiment in progress. Profile of
   25094a63, CPU 2, above-normal: profiling/output/cpu-20261014-215549-591;
   42.6 sampled CPU seconds, matching inclusive 81%, later passes 97%

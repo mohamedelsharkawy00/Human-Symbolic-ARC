@@ -16,6 +16,15 @@
 namespace arc {
 using namespace std;
 
+// Diagnostic calls and volumes, reset per puzzle by arc_said. Matching never
+// reads these counters when making a decision.
+struct matching_work_counts {
+    unsigned long long calls = 0, rematches = 0, gathers = 0;
+    unsigned long long fixed_scans = 0, whole_grid_scans = 0, placement_cache_hits = 0;
+    unsigned long long fitting_edges = 0;
+};
+inline thread_local matching_work_counts matching_work;
+
 // WHICH COLOR EACH COLOR BECAME: UNSET for a color that was never seen. Two
 // colors may become one, so this is a table, not a swap. Empty is a value it
 // names too, both ways -- a cell that was empty, a color that became empty --
@@ -96,6 +105,7 @@ struct degrees_of_freedom {
 
 // A match links an object to another object or a position on the other grid.
 struct object_matching {
+    class placement_cache;
     using object_info = object_segmentation::object_info;
 
     // Connects a source object to a target object or position, with its match details.
@@ -226,9 +236,12 @@ struct object_matching {
                               vector<edge>& edges,
                               vector<rejection>* discarded = nullptr,
                               degrees_of_freedom allowed = {},
-                              const what_the_pairs_agreed* agreed = nullptr) {
+                              const what_the_pairs_agreed* agreed = nullptr,
+                              placement_cache* placements = nullptr) {
+        ++matching_work.calls;
+        matching_work.rematches += agreed != nullptr;
         vector<edge> found =
-            gather_matches(from_info, from_objects, into_info, into, may_hang_off, discarded, allowed);
+            gather_matches(from_info, from_objects, into_info, into, may_hang_off, discarded, allowed, placements);
         for (auto& edge : found) edge.from_input = from_input;
 
         // Remove conflicting matches before fitting so their alternatives can still be chosen.
@@ -242,6 +255,7 @@ struct object_matching {
             }
 
         const fitting laid_out = set_up_the_fitting(found, from_objects, into_objects, into);
+        matching_work.fitting_edges += found.size();
 
         vector<int> chosen;
         const fit_verdict searched =
@@ -436,6 +450,21 @@ private:
         // Placements summed over the poses that are actually different
         int places = 0;
     };
+public:
+    // Owned by one segmentation's reading, separately for each pair and direction.
+    // Only raw whole-grid placements are shared, never acceptance or fitting.
+    class placement_cache {
+        friend struct object_matching;
+        struct drawing {
+            grid cells;
+            bool clipped;
+            int poses;
+            object_matches matches;
+        };
+        grid target;
+        vector<drawing> drawings;
+    };
+private:
     // An object's cells drawn out in one of the eight ways round (1_readings.hpp).
     static grid posed_cells(const grid& cells, int pose) {
         const auto [posed_width, posed_height] = posed_size(pose, cells.width, cells.height);
@@ -558,6 +587,8 @@ private:
         object_matches found;
         if (cells.empty()) return found;
         const bool fixed = fixed_row >= 0 && fixed_col >= 0;
+        if (fixed) ++matching_work.fixed_scans;
+        else ++matching_work.whole_grid_scans;
         const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : POSE_COUNT);
 
         // Whether the grid searched has a ground at all: empty cells, where a plan
@@ -669,7 +700,9 @@ private:
             const vector<object>& from_objects,
             const vector<object_info>& into_info,
             const grid& into, bool may_hang_off,
-            vector<rejection>* discarded, degrees_of_freedom allowed) {
+            vector<rejection>* discarded, degrees_of_freedom allowed,
+            placement_cache* shared_placements) {
+        ++matching_work.gathers;
         double share[COLOR_COUNT + 1];
         color_shares(into, share);
 
@@ -686,17 +719,24 @@ private:
         // its source is drawn. Refused below, in the order found.
         vector<bool> on_figures;
 
-        // Identical drawings ask the same whole-grid placement question. Keep
-        // its answer for this target and these permissions; each source still
-        // weighs the hits and records its own edges in the original order.
-        struct placed_drawing { grid cells; bool clipped; object_matches matches; };
-        vector<placed_drawing> placements;
+        // A caller can retain these answers across permission variants. Include
+        // poses in the key and invalidate on target changes; recolor and scale
+        // do not affect find_in. Each source still accepts hits in its own order.
+        placement_cache local_placements;
+        auto& placements = shared_placements ? *shared_placements : local_placements;
+        if (!(placements.target == into)) {
+            placements.drawings.clear();
+            placements.target = into;
+        }
         auto places_for = [&](const grid& cells, bool clipped) -> const object_matches& {
-            for (const auto& prior : placements)
-                if (prior.clipped == clipped && prior.cells == cells) return prior.matches;
-            placements.push_back({ cells, clipped,
+            for (const auto& prior : placements.drawings)
+                if (prior.clipped == clipped && prior.poses == allowed.poses() && prior.cells == cells) {
+                    ++matching_work.placement_cache_hits;
+                    return prior.matches;
+                }
+            placements.drawings.push_back({ cells, clipped, allowed.poses(),
                 find_in(cells, into, clipped, -1, -1, false, allowed.poses()) });
-            return placements.back().matches;
+            return placements.drawings.back().matches;
         };
 
         for (size_t from_index = 0; from_index < from_objects.size(); ++from_index) {

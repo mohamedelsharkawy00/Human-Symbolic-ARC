@@ -58,6 +58,7 @@ struct said_one {
     bool loaded = false;
     double total_ms = 0, infer_ms = 0, report_ms = 0, gpu_wait_ms = 0, score_ms = 0;
     inference_work_counts work;
+    matching_work_counts matching;
 };
 
 using run_clock = chrono::steady_clock;
@@ -169,9 +170,11 @@ int main(int argc, char** argv) {
         : filesystem::path("out") / label;
     filesystem::create_directories(out);
     filesystem::current_path(out);
+    const bool audit_preparations = getenv("ARC_PREP_AUDIT") != nullptr;
+    if (audit_preparations) filesystem::create_directories("preparations");
     FILE* timings = fopen("timings.csv", "w");
     if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
-    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays\n", timings);
+    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges\n", timings);
     fflush(timings);
 #ifndef ARC_NO_GPU
     FILE* said_file = fopen("said.txt", "w");
@@ -193,10 +196,38 @@ int main(int argc, char** argv) {
         one.loaded = load_task_from_content(entry.content, entry.id, task, set.solutions_for(entry.id));
         if (!one.loaded) { one.total_ms = milliseconds_since(started); return; }
         inference_work = {};
+        matching_work = {};
+        struct preparation_record {
+            string key;
+            size_t first;
+            double ms;
+            unsigned long long calls, edges;
+        };
+        vector<preparation_record> preparations;
+        if (audit_preparations) preparation_audit = [&](const vector<example>& pairs,
+                const tiled_pieces& tiles, double ms, unsigned long long calls, unsigned long long edges) {
+            string key = figures_key(pairs, tiles);
+            size_t first = 0;
+            while (first < preparations.size() && preparations[first].key != key) ++first;
+            preparations.push_back({ std::move(key), first, ms, calls, edges });
+        };
         const auto reading = run_clock::now();
         inference read = infer(task.train);
         one.infer_ms = milliseconds_since(reading);
+        preparation_audit = {};
+        if (audit_preparations) {
+            const string path = "preparations/" + entry.id + ".csv";
+            if (FILE* audit = fopen(path.c_str(), "w")) {
+                fputs("preparation,first_identical,elapsed_ms,matching_calls,fitting_edges\n", audit);
+                for (size_t i = 0; i < preparations.size(); ++i) {
+                    const auto& row = preparations[i];
+                    fprintf(audit, "%zu,%zu,%.3f,%llu,%llu\n", i, row.first, row.ms, row.calls, row.edges);
+                }
+                fclose(audit);
+            } else fprintf(stderr, "cannot write preparation audit: %s\n", path.c_str());
+        }
         one.work = inference_work;
+        one.matching = matching_work;
         const auto reporting = run_clock::now();
         take_the_reading(task, std::move(read), { at, (int)set.tasks.size(), dataset }, true);
         one.report_ms = milliseconds_since(reporting);
@@ -216,11 +247,14 @@ int main(int argc, char** argv) {
     }, [&](int which) {
         const said_one& one = said[(size_t)which];
         const auto& work = one.work;
-        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+        const auto& matching = one.matching;
+        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
                 set.tasks[(size_t)asked[(size_t)which]].id.c_str(), (int)one.loaded,
                 one.total_ms, one.infer_ms, one.report_ms, one.gpu_wait_ms, one.score_ms,
                 work.preparations, work.readings, work.later_readings, work.lines,
-                work.paint_replays, work.slide_replays, work.drop_replays, work.walks, work.lays);
+                work.paint_replays, work.slide_replays, work.drop_replays, work.walks, work.lays,
+                matching.calls, matching.rematches, matching.gathers, matching.fixed_scans,
+                matching.whole_grid_scans, matching.placement_cache_hits, matching.fitting_edges);
         fflush(timings);
         spoke += one.spoke;
         pane_spoke += one.spoke && one.panes;

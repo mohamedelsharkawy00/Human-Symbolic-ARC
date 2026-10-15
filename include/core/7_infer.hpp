@@ -19,6 +19,7 @@
 #include <array>
 #include <bit>
 #include <bitset>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -41,6 +42,9 @@ struct inference_work_counts {
     unsigned long long paint_replays = 0, slide_replays = 0, drop_replays = 0, walks = 0, lays = 0;
 };
 inline thread_local inference_work_counts inference_work;
+// Optional runner-owned audit; not consulted by any inference decision.
+inline thread_local std::function<void(const std::vector<example>&, const tiled_pieces&,
+                                      double, unsigned long long, unsigned long long)> preparation_audit;
 using namespace std;
 
 // Tracks which colors appear, disappear, or persist across training examples.
@@ -7687,8 +7691,44 @@ inline said_most says_the_most(int count, Read read) {
     return most;
 }
 
-inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles);
-inline void read_the_rest(inference& inf, const vector<example>& train);
+// Exact, self-delimiting picture data; tile boundaries affect segmentation too.
+inline string figures_key(const vector<example>& train, const tiled_pieces& tiles) {
+    string key;
+    for (const auto& pair : train) {
+        for (const grid* picture : { &pair.input, &pair.output }) {
+            key.push_back((char)picture->width);
+            key.push_back((char)picture->height);
+            for (int row = 0; row < picture->height; ++row)
+                for (int col = 0; col < picture->width; ++col)
+                    key.push_back((char)picture->data[row][col]);
+        }
+        const auto tile = tiles.of(pair);
+        key.push_back((char)tile.width);
+        key.push_back((char)tile.height);
+    }
+    return key;
+}
+
+// One puzzle owns completed results, not in-progress readings or mutable claims.
+// Eviction changes reuse only; readers still owning a result keep it alive.
+struct figure_readings {
+    map<string, shared_ptr<const inference>> completed;
+    vector<string> oldest_first;
+    void keep(string key, shared_ptr<const inference> read) {
+        constexpr size_t capacity = 8;
+        if (completed.contains(key)) return;
+        if (oldest_first.size() == capacity) {
+            completed.erase(oldest_first.front());
+            oldest_first.erase(oldest_first.begin());
+        }
+        oldest_first.push_back(key);
+        completed.emplace(std::move(key), std::move(read));
+    }
+};
+
+inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles,
+                         figure_readings& readings);
+inline void read_the_rest(inference& inf, const vector<example>& train, figure_readings& readings);
 
 // THE READING OF FIGURES: pairs with no ground in them -- a plan deleted it,
 // or keeps every color as a figure -- read with no election and no ground in
@@ -7699,6 +7739,9 @@ inline void read_the_rest(inference& inf, const vector<example>& train);
 // the change is read on the picture its line draws (read_the_rest); `tolerant`
 // whether its words may lay cells wrong (inference::tolerant).
 inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles) {
+    const auto started = preparation_audit ? std::chrono::steady_clock::now()
+                                          : std::chrono::steady_clock::time_point{};
+    const auto matching_before = matching_work;
     ++inference_work.preparations;
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);
@@ -7749,13 +7792,18 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
     // Edge level of correspondence: the figures cut up every way that competes,
     // ranked by how well the pieces match.
     inf.correspondence = correspondence_election::infer(train, tiles);
+    if (preparation_audit)
+        preparation_audit(train, tiles,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+            matching_work.calls - matching_before.calls,
+            matching_work.fitting_edges - matching_before.fitting_edges);
     return inf;
 }
 
 // The facts and matching belong to the figures, before any word changes them.
 // Each reading takes its own copy; its claims, frames and later pictures stay its own.
 inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles, int8_t pass,
-                              bool tolerant, bool partners, inference inf) {
+                              bool tolerant, bool partners, inference inf, figure_readings& readings) {
     ++inference_work.readings;
     inference_work.later_readings += pass > 1;
     inf.pass = pass;
@@ -7766,14 +7814,14 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     // words say the most is said (says_the_most).
     const vector<correspondence_election::reading_index> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
-        read_the_cut(inf, train, tiles);
-        read_the_rest(inf, train);
+        read_the_cut(inf, train, tiles, readings);
+        read_the_rest(inf, train, readings);
         return inf;
     }
     said_most said = says_the_most((int)ranked.size(), [&](int rank) {
         inference read = inf;
         read.correspondence.choose((size_t)rank);
-        read_the_cut(read, train, tiles);
+        read_the_cut(read, train, tiles, readings);
         return read;
     });
     inference best = std::move(said.reading);
@@ -7785,13 +7833,26 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
         const int left = at == ranked.end() ? -1 : said.left[(size_t)(at - ranked.begin())];
         return left > said.left[(size_t)said.kept];
     });
-    read_the_rest(best, train);
+    read_the_rest(best, train, readings);
     return best;
 }
 
-inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles = {}, int8_t pass = 1,
-                              bool tolerant = false, bool partners = false) {
-    return read_figures(train, tiles, pass, tolerant, partners, prepare_figures(train, tiles));
+inline shared_ptr<const inference> read_figures_once(const vector<example>& train, const tiled_pieces& tiles,
+        int8_t pass, bool tolerant, bool partners, figure_readings& readings,
+        optional<inference>* prepared = nullptr) {
+    string key = figures_key(train, tiles);
+    key.push_back((char)pass);
+    key.push_back((char)tolerant);
+    key.push_back((char)partners);
+    if (const auto found = readings.completed.find(key); found != readings.completed.end())
+        return found->second;
+    optional<inference> local;
+    auto& facts = prepared ? *prepared : local;
+    if (!facts) facts = prepare_figures(train, tiles);
+    auto read = make_shared<const inference>(read_figures(train, tiles, pass, tolerant, partners,
+        prepared ? *facts : std::move(*facts), readings));
+    readings.keep(std::move(key), read);
+    return read;
 }
 
 // THE PASSES A READING MAKES AT MOST: the first, and nine after it.
@@ -7805,7 +7866,7 @@ constexpr int8_t MOST_PASSES = 10;
 // alone; a pass that draws nothing new ends the passes, as the tenth does.
 // Every word is read on the picture the program hands it, so a pass after the
 // first says one change (finish_the_line).
-inline void read_the_rest(inference& inf, const vector<example>& train) {
+inline void read_the_rest(inference& inf, const vector<example>& train, figure_readings& readings) {
     if (inf.pass >= MOST_PASSES || inf.picture.size() != train.size() || cells_left_unsaid(inf) == 0) return;
     vector<example> rest = train;
     bool drew = false;
@@ -7814,15 +7875,15 @@ inline void read_the_rest(inference& inf, const vector<example>& train) {
         drew = drew || !(inf.picture[which] == train[which].input);
     }
     if (!drew) return;
-    inference next = read_figures(rest, {}, (int8_t)(inf.pass + 1), inf.tolerant, inf.partners);
-    inf.rest_says_more = cells_left_unsaid(next) < cells_left_unsaid(inf);
-    inf.rest = std::make_shared<const inference>(std::move(next));
+    inf.rest = read_figures_once(rest, {}, (int8_t)(inf.pass + 1), inf.tolerant, inf.partners, readings);
+    inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
 
 // THE WORDS THAT READ THE CUT, asked of the one `inf` reads on: the rules read
 // off its pieces, then -- once every rule is known -- the rivals, the rest of
 // its line, what no rule on it says, and a size change read through its frame.
-inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles) {
+inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles,
+                         figure_readings& readings) {
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
     // because a repeating box is the plainer claim and should get first refusal.
@@ -7959,7 +8020,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
             // Split before Tile: each copy keeps the original input's boundaries.
             const tiled_pieces copies = inf.frame.kind == kind::tiled
                 ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
-            inf.framed = std::make_shared<const inference>(read_figures(framed, copies, 1, inf.tolerant, inf.partners));
+            inf.framed = read_figures_once(framed, copies, 1, inf.tolerant, inf.partners, readings);
         }
     }
 }
@@ -7970,6 +8031,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
 // whose words say the most is said (says_the_most), in the order the plans are
 // named. Nothing after this knows a ground but the plan.
 inline inference infer(const vector<example>& train) {
+    figure_readings readings;
     const background_election election = elect_background(train);
     const vector<ground_plan> plans = ground_plans(election);
     // EVERY PLAN READ WITH WORDS THAT LAY NO CELL WRONG FIRST, then with words
@@ -7982,9 +8044,7 @@ inline inference infer(const vector<example>& train) {
     vector<optional<inference>> prepared((size_t)count);
     auto read_plan = [&](int at, bool tolerant, bool partners) {
         const vector<example> figures = figures_only(train, plans[(size_t)at]);
-        auto& facts = prepared[(size_t)at];
-        if (!facts) facts = prepare_figures(figures, {});
-        return read_figures(figures, {}, 1, tolerant, partners, *facts);
+        return *read_figures_once(figures, {}, 1, tolerant, partners, readings, &prepared[(size_t)at]);
     };
     vector<inference::plan_read> plans_read;
     // Each plan read, as the readout shows it: the words its line said.
