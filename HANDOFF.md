@@ -1781,3 +1781,13 @@ Smaller, open:
   loader fix, was never submitted. A local evaluation of 120 tasks scored 0.
   Source upload: `python scripts/kaggle_push.py -m "..."`; smoke run with
   `--smoke`. Scoring rules and links are in README.md.
+- 2026-10-16, KAGGLE CLEARED (the user: all of it old and stale): the
+  notebooks arc-build, arc-smoke-check, arc-cloud-check and arc-l4-probe and
+  the dataset solver-source-code deleted; the code only Kaggle had is in
+  kaggle/src/diagnostics (cloud_check, smoke_check). The 5 submissions stay
+  (no way to delete them). The next `-m` push creates the dataset anew.
+- SCORED RUNS ON KAGGLE'S GPU, for the cloud sessions, which have none:
+  `kaggle_push.py --run train [id...]`, into its own dataset arc-run-source
+  and notebook arc-run (README, Kaggle). The same build.py as the submission,
+  told by ARC_DATASET which set to read: training or evaluation builds
+  arc_said and hands back what it writes as said.tar.gz.

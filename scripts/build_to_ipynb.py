@@ -29,6 +29,7 @@ notebook = {
     "nbformat_minor": 5,
 }
 
-with open(NB, "w", encoding="utf-8") as fh:
+# CRLF on every machine, as the repo keeps it, so a run on Linux changes nothing.
+with open(NB, "w", encoding="utf-8", newline="\r\n") as fh:
     json.dump(notebook, fh, indent=1)
 print(f"regenerated {os.path.relpath(NB)} from build.py ({len(src)} lines)")

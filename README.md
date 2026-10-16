@@ -64,8 +64,8 @@ NVCC builds, which define nothing, keep the API.
 3. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
 
 # 7. Kaggle
-1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp` and `src\cuda_solver.cu` as a Kaggle dataset; nothing from `include\gui` goes.
-2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it on Kaggle's GPU and starts one `arc_headless` per GPU. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`.
+1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp`, `src\cuda_solver.cu` and `scripts\said.cpp` with `in_parallel.hpp` as a Kaggle dataset, and `commit.txt`, the commit they came from; nothing from `include\gui` goes.
+2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it on Kaggle's GPU and starts one `arc_headless` per GPU. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`. Told to read training or evaluation (`ARC_DATASET`), it builds `arc_said` instead: a scored run (below).
 3. Kaggle uses inference only: `ARC_INFERENCE_ONLY=1`. It emits programs, accepts the first that exactly reproduces every training output, and predicts the test outputs. No search runs. Run the same path locally with `arc_headless.exe`, `ARC_INFERENCE_ONLY=1`, and `ARC_DATASET` set to test, eval, train or custom. Optional controls are `ARC_PUZZLE_LIMIT` and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`. One task can be run with `arc_headless --task ID --datasets MASK --infer-only --out FILE`. The older search path is still available when inference-only is not set.
 
 Before a full Kaggle run, upload the current source and run the private smoke notebook:
@@ -84,6 +84,20 @@ The separate `arc-build` notebook keeps its full-run settings. To start that
 notebook on the uploaded source, use `python scripts/kaggle_push.py --kernel`.
 Check the accelerator and time budget before a full run. Starting a notebook
 does not submit it to the competition.
+
+A scored run reads training or evaluation on Kaggle's GPU, for a machine with
+none. It has its own dataset (`arc-run-source`) and notebook (`arc-run`),
+which the submission never reads, so any folder may push it:
+
+```text
+python scripts/kaggle_push.py --run train [id...]
+kaggle kernels status mohamedelsharkawy0/arc-run
+kaggle kernels output mohamedelsharkawy0/arc-run -p out/<label>
+tar -xzf out/<label>/said.tar.gz -C out/<label>
+```
+
+`out\<label>\` then holds what `scripts\said.bat --as <label>` writes, and
+`commit.txt`, so `scripts\readouts.py` compares it the same way.
 
 ## Kaggle output and scoring (checked 2026-10-03)
 
