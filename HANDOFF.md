@@ -1787,7 +1787,9 @@ Smaller, open:
   kaggle/src/diagnostics (cloud_check, smoke_check). The 5 submissions stay
   (no way to delete them). The next `-m` push creates the dataset anew.
 - SCORED RUNS ON KAGGLE'S GPU, for the cloud sessions, which have none:
-  `kaggle_push.py --run train [id...]`, into its own dataset arc-run-source
-  and notebook arc-run (README, Kaggle). The same build.py as the submission,
-  told by ARC_DATASET which set to read: training or evaluation builds
-  arc_said and hands back what it writes as said.tar.gz.
+  `kaggle_push.py --run train [id...]` (README, Kaggle). ONE DATASET AND ONE
+  NOTEBOOK FOR EVERYTHING (the user: one, the main one), solver-source-code
+  and arc-build, pushed from any folder; the "only ARC pushes" guard is gone.
+  build.py is told by ARC_DATASET which set to read: training or evaluation
+  builds arc_said and hands back what it writes as said.tar.gz; a run builds
+  whatever was pushed last, and its commit.txt says which commit.

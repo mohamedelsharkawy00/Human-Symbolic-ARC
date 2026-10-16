@@ -3,8 +3,8 @@
 # cells for the kernel.)
 import os, json, glob, shutil, subprocess, sys, time
 
-# A separate private notebook sets this for a short end-to-end check.
-# The submission notebook always leaves it off.
+# The smoke check (kaggle_push.py --smoke) sets this for a short end-to-end
+# check. The submission always leaves it off.
 QUICK_CHECK = os.environ.get("ARC_SMOKE_CHECK") == "1"
 
 # WHICH SET TO READ. The test set makes the submission, and the notebook as
@@ -162,7 +162,7 @@ def submission():
     # all 240 tasks on whatever hardware we land on (L4x4 -> 4 fast shards; T4x2 -> 2
     # slower shards, still complete).
     os.chdir("/kaggle/working")
-    # The private smoke notebook runs inference on three tasks. It checks
+    # The smoke check runs inference on three tasks. It checks
     # build, execution and output format; it does not measure solve rate.
     NGPU = len(gpu_arches)
     SHARDS = 1 if QUICK_CHECK else NGPU
