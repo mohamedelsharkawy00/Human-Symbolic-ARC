@@ -1,6 +1,6 @@
 # Handoff, 2026-10-15
 
-Read AGENTS.md first: the rules, how to build and check, where things are.
+Read AGENTS.md first: the rules.
 This file holds only what is current; past stages are in git history
 (`git log`, and this file's own history).
 
@@ -74,6 +74,23 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- WORD AND OPERATOR, ONE NAME EACH (2026-10-16, the user: a word is one
+  operator). The same noun carries three sizes in the code. A program
+  token is one op (operation_named, "Read a word's operation name";
+  spell("Recolor", 3)). An act the reading fires is a pick plus an op
+  (rule::outlined; pick_words spells one pick as up to six ops). A whole
+  program is what word_group::whole_program holds -- diagonal_tile,
+  piece_slam, corner_chain, slide_to_touch, project_on_seeds,
+  snap_to_anchors, own_sentences -- "These rules redraw the whole output
+  and spell their own programs". The act already has a noun of its own,
+  fired_rule / said_as / rule::, so only the name is wrong: word_group is
+  an act group, and the nine *_word lambdas in 7_infer (color_from_word,
+  move_word, mirror_word, outline_word, recolor_word, shape_word,
+  key_word, removal_word, picture_word) offer acts, not words. The ops'
+  own list stands as it is: WORDS THE READING CANNOT SAY YET names ops.
+  AGENTS.md 2.6 is the one doc line that breaks the rule -- "New words
+  are compositions of existing ops where possible" says a word can be
+  several ops, where it means a reading's line. Not started.
 - OWN-COLOR PAINT GATE (2026-10-16): based on restored fed27b2. Later memory,
   GUI and cache experiments were stashed at the user's request; main/origin
   were already fed27b2. Do not reapply that stash as part of this work.
@@ -1619,6 +1636,55 @@ Smaller, open:
 - The freedoms inside a cut are still chosen by the matching, not the words;
   do it if the data asks. FitInto (would_fit answered with the place) when a
   puzzle needs it; WouldFit's gap is "for now" (the user: not general).
+
+## Where things are
+- `include/core`. Inference lives in `3_background.hpp` (background
+  election and the ground plan: the one owner of the background).
+- `6_correspondence.hpp` (readings, fired rules, the line, missing
+  words, ranking the cuts).
+- `7_infer.hpp` (replays `*_holds` on three templates, `paint_holds`,
+  `slides_hold` and `drops_hold`; picks, frames, `carry_the_hand`,
+  `finish_the_line`, `says_the_most`, `read_figures`, `read_the_cut`,
+  `read_the_rest`, `infer`).
+- `9_sentences.hpp` (the line spelled as programs, `say_the_rest`,
+  `say_the_plan`).
+- `10_log.hpp` (readouts).
+- The passes: once a reading's cut is chosen, `read_the_rest` reads what
+  its line leaves unsaid on the picture the line drew, as a puzzle of
+  its own, up to 10 passes, stopping when a pass draws nothing new. Each
+  pass after the first says one change, read on that picture as the
+  program has it (`Output`); `say_the_rest` spells the passes after the
+  line, and the readout shows each as `[rest N]`.
+- The background: `infer` asks the election for plans (delete what
+  first, fill what last), reads each plan's figures with `read_figures`
+  (no detector sees a background; empty cells are nothing), keeps the
+  plan that explains most, and `say_the_plan` writes its delete and fill
+  once.
+- Every choice the reading makes (the ground plan, the cut, whether the
+  line opens with the matching's acts or the words say every change,
+  whether a word may lay cells wrong) has one owner, `says_the_most`.
+- Each candidate is read to the end of its words, in the order given,
+  and the one leaving the fewest cells unsaid is kept, of those the one
+  said in the fewest passes.
+- The order only breaks a tie, and once one leaves none with no pass
+  after its own no later one is read.
+- Each choice is made just above the first word that reads it.
+- A word is kept where, in every pair, it makes more cells right than it
+  lays wrong (`brings_nearer`, the one judge of every word); the cells
+  it lays wrong are left unsaid for a later word or pass. Every plan is
+  read with words that lay none wrong first (`inference::tolerant`).
+- `include/core/8_vocabulary.hpp`: the ops. Its top comment lists the
+  words the reading cannot say yet and how to unlock one.
+- `include/core/8b_op_math.hpp`: what each op does to the cells, called
+  by the GPU op and by its replay in `7_infer.hpp`. `1_readings.hpp` is
+  only how to read a grid (histogram, boxes, objects, shapes).
+- Place: a piece's row band and column band (`overlapping_bands`:
+  Layout, `SelectRow`, `SelectColumn`), or the part walls fence it in
+  (`fence_parts`: Partition, `SelectPartition`, numbered in reading
+  order). A key is every piece a pick leaves unpicked (the key words,
+  `SelectLikeKey`).
+- `src/cuda_solver.cu`: the GPU ops.
+- `README.md`: Kaggle preparation and the private smoke run.
 
 ## How the reading works now (decisions to keep)
 - The ground is owned once (3_background.hpp): a plan deletes its ground
