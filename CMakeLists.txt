@@ -28,6 +28,7 @@ add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32 WIN32_LEAN_AND_MEAN)
 
 if(MSVC)
     string(REGEX REPLACE "/Ob[0-9]" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/bigobj>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/MP>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # source and exec charset agree
