@@ -74,6 +74,27 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- OWN-COLOR PAINT GATE (2026-10-16): based on restored fed27b2. Later memory,
+  GUI and cache experiments were stashed at the user's request; main/origin
+  were already fed27b2. Do not reapply that stash as part of this work.
+  New change only in 7_infer: selected source palettes retained per cut/pick;
+  each round reads actual output colors at unclaimed, not-line-shown cells.
+  If any unfinished pair has no shared source/target color, exclude that pick
+  from trails/growth, copies and repeats, plus the all-piece turned copy.
+  Source colors come from opened pieces, not the recolored hand. Recolored
+  paints/rays are untouched. Existing geometry/replay caches and tie order
+  stay intact. Full replay still judges survivors. Release build passed.
+  Focused 19-puzzle check RUNNING: paint_color_gate_sample, PID 14964,
+  20 threads, AboveNormal, no affinity. stdout/stderr in out with that label.
+  Compare scores and all readouts to direction_rename_full, same 19 ids:
+  baseline 8 right / 2 wrong / 9 unsolved. New right/wrong/gained/lost pending.
+  User asked for an estimate: rough low-confidence expectation 5-15% overall
+  time reduction, NOT measured. Initial a64e4611 plan has only introduced3
+  changes but source colors1/2/8, proving whole own-color families futile
+  there; profile does not isolate their cost in that plan. After correctness,
+  use the same profiler setup against original cpu-20261015-212823-600
+  (89.313 s elapsed, 88.391 s CPU), not parallel Release sample timing.
+  No new profile/full run yet. Return control during long checks.
 - COMPLETED READING REUSE implemented at user's request, focused check passed.
   figure_readings is explicitly owned by infer and passed through read_figures,
   read_the_cut and read_the_rest. read_figures_once uses exact figures_key
@@ -1688,11 +1709,9 @@ Smaller, open:
 - MoveToward[value]: value / PARTNER_KINDS is how far, value % PARTNER_KINDS
   the partner (each partner way, then each color).
 
-## Kaggle and cloud
+## Kaggle
 - Only one-shot inference is tested on Kaggle (ARC_INFERENCE_ONLY=1, no
   search). Submission 56790276 (notebook v37) scored 0.00; v38, with the
   loader fix, was never submitted. A local evaluation of 120 tasks scored 0.
   Source upload: `python scripts/kaggle_push.py -m "..."`; smoke run with
   `--smoke`. Scoring rules and links are in README.md.
-- Linux cloud: `python3 scripts/cloud_setup.py` builds the readouts only (no
-  GPU); never run in an actual Claude cloud session.

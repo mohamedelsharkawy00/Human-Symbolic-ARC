@@ -101,26 +101,6 @@ with zero child failures and zero search. Saved locally in `out/eval-one-shot/`
 (`run.log`, `kaggle/working/submission.json`, `score.py`, `score.json`).
 No solver rules were changed using evaluation feedback.
 
-## Claude Code cloud
-
-Use `python3 scripts/cloud_setup.py` as the environment setup command, run from
-the repository root. It needs Python 3 and a C++20 compiler (`g++`, or set
-`CXX=clang++`). It builds `arc_said` without a GPU and fetches missing puzzle
-data using the existing public-data script. For an offline build, add
-`--build-only`. The checkout must contain these setup files.
-
-```text
-out/cloud/arc_said 00576224
-```
-
-It writes the readouts to `out/first/logs/inference`. Omit the puzzle ID to
-write all training readouts. This target uses neither CUDA
-nor Vulkan. It supports work on the reading and program emission; it does not
-run the emitted programs or replace GPU score and CopyTo checks. `AGENTS.md`
-holds the rules for agents.
-
-Configure the command in Claude's [cloud environment setup script](https://code.claude.com/docs/en/cloud-environments#setup-scripts).
-
 # 7. Logs
 1. Nothing in `logs/` accumulates. Each file is the current one of its kind, cleared by whatever starts the next.
 

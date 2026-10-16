@@ -15,8 +15,8 @@
   python scripts/readouts.py solved <before> <after>
       The puzzles solved before and not after, and the other way round.
 
-A run built without a GPU (the Linux cloud) writes no said.txt: every puzzle
-counts as unsolved there.
+A run that writes no said.txt (one built without a GPU) counts every puzzle as
+unsolved there.
 """
 import os
 import re
