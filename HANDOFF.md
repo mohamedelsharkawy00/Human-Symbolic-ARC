@@ -1792,4 +1792,4 @@ Smaller, open:
   and arc-build, pushed from any folder; the "only ARC pushes" guard is gone.
   build.py is told by ARC_DATASET which set to read: training or evaluation
   builds arc_said and hands back what it writes as said.tar.gz; a run builds
-  whatever was pushed last, and its commit.txt says which commit.
+  whatever was pushed last, each version's message the commit it came from.

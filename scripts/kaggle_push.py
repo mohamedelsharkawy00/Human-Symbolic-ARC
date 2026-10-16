@@ -12,7 +12,7 @@ folder can be deleted safely; sync() rebuilds it from scratch.
 
 ONE DATASET AND ONE NOTEBOOK (arc-build) for everything -- the submission, its
 smoke check and the scored runs -- pushed from any folder. A run builds whatever
-was pushed last, and commit.txt beside the source says which commit that was.
+was pushed last; each version's message is the commit it came from.
 
 Usage:
     python scripts/kaggle_push.py [-m "message"]        push the source
@@ -20,7 +20,7 @@ Usage:
     python scripts/kaggle_push.py --smoke               run it on three test tasks
     python scripts/kaggle_push.py --run train [id...]   push the source and run it scored
 """
-import argparse, json, os, shutil, subprocess, sys, tempfile, time
+import argparse, json, os, shutil, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET = "mohamedelsharkawy0/solver-source-code"
@@ -54,7 +54,7 @@ FOLDERS = {
 def git(*args):
     return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True).stdout.strip()
 
-# Which commit the upload is made from; the notebook prints it and keeps it.
+# Which commit the upload is made from, the version's message by default.
 def commit():
     head = git("rev-parse", "--short", "HEAD")
     return head + " with uncommitted changes" if git("status", "--porcelain") else head
@@ -77,8 +77,6 @@ def sync():
                 os.remove(stale)
     with open(os.path.join(PKG, "dataset-metadata.json"), "w") as fh:
         json.dump(DATASET_METADATA, fh, indent=2)
-    with open(os.path.join(PKG, "commit.txt"), "w") as fh:
-        fh.write(commit() + "\n")
     print(f"synced {sum(len(files) for _, files in FOLDERS.values())} files -> {os.path.relpath(PKG, ROOT)}")
 
 def push(msg):
@@ -90,22 +88,18 @@ def push(msg):
     if r.returncode != 0:
         print(r.stderr.strip()); sys.exit(1)
 
-def wait_ready(timeout_s=300):
-    """Until Kaggle serves the commit just pushed: a run started sooner builds
-    the version before it, which says "ready" all along."""
-    want = commit()
-    print("waiting for Kaggle to serve it...", end="", flush=True)
+def wait_ready(timeout_s=180):
+    print("waiting for dataset to be ready...", end="", flush=True)
     t0 = time.time()
-    with tempfile.TemporaryDirectory() as tmp:
-        served = os.path.join(tmp, "commit.txt")
-        while time.time() - t0 < timeout_s:
-            subprocess.run(["kaggle", "datasets", "download", DATASET, "-f", "commit.txt",
-                            "-p", tmp, "--force", "-q"], capture_output=True)
-            if os.path.exists(served) and open(served).read().strip() == want:
-                print(" ready.")
-                return True
-            print(".", end="", flush=True)
-            time.sleep(5)
+    while time.time() - t0 < timeout_s:
+        r = subprocess.run(["kaggle", "datasets", "status", DATASET],
+                           capture_output=True, text=True)
+        status = (r.stdout or "").strip().lower()
+        if "ready" in status:
+            print(" ready.")
+            return True
+        print(".", end="", flush=True)
+        time.sleep(5)
     print(" TIMEOUT (still processing -- check before running the kernel).")
     return False
 

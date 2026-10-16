@@ -77,9 +77,6 @@ assert src_cands, "could not find src/kaggle_main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
 INC = SRC_ROOT + "/include"
 print("source root:", SRC_ROOT)
-# The commit the upload was made from, which kaggle_push.py writes beside it.
-COMMIT = open(SRC_ROOT + "/commit.txt").read().strip()
-print("source commit:", COMMIT)
 
 # --- compile -------------------------------------------------------------
 # Compile for the GPUs actually assigned, including T4 fallback machines.
@@ -119,15 +116,10 @@ def scored_run():
     compile_to(run + "/arc_said", SRC_ROOT + "/scripts/said.cpp", SRC_ROOT + "/src/cuda_solver.cu")
     print(f"reading {len(RUN_IDS) or 'every'} {DATASET} puzzle(s) on {os.cpu_count()} CPU threads")
     t0 = time.time()
-    # "/" holds kaggle/input, where arc_said finds the puzzles. What it says goes
-    # into the archive too: Kaggle's log keeps only a rolling window.
-    with open(run + "/run_log.txt", "w") as log:
-        r = subprocess.run([run + "/arc_said", *RUN_IDS], cwd="/", stdout=log, stderr=subprocess.STDOUT)
+    # "/" holds kaggle/input, where arc_said finds the puzzles.
+    r = subprocess.run([run + "/arc_said", *RUN_IDS], cwd="/")
     print(f"run took {time.time()-t0:.1f}s, exit={r.returncode}")
-    print(open(run + "/run_log.txt").read()[-2000:])
     os.remove(run + "/arc_said")
-    with open(run + "/commit.txt", "w") as fh:
-        fh.write(COMMIT + "\n")
     shutil.make_archive(run, "gztar", run)
     shutil.rmtree(run)
     assert r.returncode == 0, "arc_said failed; said.tar.gz holds what it wrote"

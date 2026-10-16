@@ -126,6 +126,6 @@
    3. Worth taking seriously: this caught the agent twice in one session, both times while testing a guard it had just written, and the second time it pushed to Kaggle because the guard it was testing was not there yet.
 5. Already per folder, nothing to arrange: `out/`, `logs/`, `settings/`, the puzzle data, the build lock, the backup pool.
 6. Ports are machine-wide, so apps in different worktrees walk up from 2026.
-7. Every folder pushes to one Kaggle dataset and one notebook (`solver-source-code`, `arc-build`), the submission and the scored runs alike, through `scripts\kaggle_push.py`, never `kaggle kernels push` by hand. A run builds whatever was pushed last, and its `commit.txt` says which commit.
+7. Every folder pushes to one Kaggle dataset and one notebook (`solver-source-code`, `arc-build`), the submission and the scored runs alike, through `scripts\kaggle_push.py`, never `kaggle kernels push` by hand. A run builds whatever was pushed last, each version's message the commit it came from.
 8. Share work by committing, never by reaching into the other folder.
 9. The worktree session merges main into its own branch FIRST and resolves conflicts there, whoever caused the divergence resolves it, then the main session's merge is trivial.
