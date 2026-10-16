@@ -6028,6 +6028,7 @@ struct cut_paints {
     optional<replay_facts> opened;
     vector<piece_pick> draw_picks;
     vector<vector<partner_pieces>> handed_by_pick;
+    vector<vector<uint16_t>> colors_by_pick;
     // The draw picks asked, and past them the partner picks a line asks last
     // (partner_picks): indices into draw_picks.
     vector<size_t> asked_picks, asked_partner_picks;
@@ -7008,9 +7009,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         weigh(best, value, pick, seen, std::move(unshown));
     };
 
+    // Own-color paints cannot claim a target color absent from their sources.
+    // Read actual output colors: an input-side leftover carries its old color.
+    vector<uint16_t> paint_colors(read.pairs.size());
+    auto colors_of_pick = [](const vector<partner_pieces>& handed) {
+        vector<uint16_t> colors(handed.size());
+        for (size_t which = 0; which < handed.size(); ++which)
+            for (int i = 0; i < handed[which].count(); ++i)
+                if (handed[which].picked[i])
+                    colors[which] |= palette(handed[which].pieces[i]);
+        return colors;
+    };
+    auto paint_has_color = [&](const vector<uint16_t>& colors) {
+        for (size_t which = 0; which < read.pairs.size(); ++which)
+            if (!opened.finished(which) && !(colors[which] & paint_colors[which])) return false;
+        return true;
+    };
     vector<vector<partner_pieces>>& handed_by_pick = paints.handed_by_pick;
     if (!cut_opened)
-        for (const piece_pick& pick : draw_picks) handed_by_pick.push_back(handed_pieces(opened, pick));
+        for (const piece_pick& pick : draw_picks) {
+            handed_by_pick.push_back(handed_pieces(opened, pick));
+            paints.colors_by_pick.push_back(colors_of_pick(handed_by_pick.back()));
+        }
     // THE DRAW PICKS A PAINT ASKS, in order. A pick that takes the same pieces
     // as one before it, in every pair, is handed the same pieces: every paint
     // draws for it what it drew for that one, which keeps a tie, so it is not
@@ -7025,6 +7045,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // The draw picks a paint is asked with now: the partner picks too, once the
     // line has turned to its last resort (partner_picks).
     vector<size_t> asked_now = asked_picks;
+    vector<size_t> own_color_picks;
 
     // RAYS A PIECE GROWS: up, down and to the sides, or along the diagonals, as
     // long as every pair bears out, painted in one color, its own or one the line
@@ -7109,7 +7130,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto trail_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
-        for (const size_t at : asked_now)
+        for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
                 for (int asked = 0; asked <= row_of(node_type::ExtendTo).high; ++asked) {
                     const int way = asked < direction::count ? direction_asked(asked) : asked;
@@ -7137,7 +7158,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto copy_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
-        for (const size_t at : asked_now)
+        for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
                 for (int anchor = 0; anchor < (int)size(lined_up); ++anchor) {
                     const auto& seen = laid_once(2, at, lay, anchor, laying::as_drawn, [&] {
@@ -7174,7 +7195,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto repeat_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
-        for (const size_t at : asked_now)
+        for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
                 for (const bool down : { false, true })
                     for (int period = tiles.low; period <= tiles.high && period < narrowest[down]; ++period) {
@@ -7208,8 +7229,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                                                   { pose_of(node_type::TurnLeft), "a quarter turn left" } };
     const piece_pick figure = piece_pick::all();
     const vector<partner_pieces> figure_handed = handed_pieces(opened, figure);
+    const vector<uint16_t> figure_colors = colors_of_pick(figure_handed);
     auto turned_paint = [&]() -> offer {
-        if (!still()) return {};
+        if (!still() || !paint_has_color(figure_colors)) return {};
         heard best;
         for (const auto& [pose, name] : turns) {
             if (const auto& seen = replayed_once(replays, 4, 0, rule::laid_over, pose, [&] {
@@ -7505,6 +7527,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     while (true) {
         opened.tolerant = facts.tolerant;
         lay_the_canvas();
+        ranges::fill(paint_colors, (uint16_t)0);
+        for (size_t which = 0; which < read.pairs.size(); ++which) {
+            const grid& output = opened.train[which].output;
+            for (const auto& cell : read.pairs[which].left_over)
+                if (cell.claimed_by < 0 && !line_shows(which, cell) && output.contains(cell.row, cell.col)) {
+                    const int color = output.data[cell.row][cell.col];
+                    if (is_color(color)) paint_colors[which] |= (uint16_t)(1u << color);
+                }
+        }
+        own_color_picks.clear();
+        for (const size_t at : asked_now)
+            if (paint_has_color(paints.colors_by_pick[at])) own_color_picks.push_back(at);
         int recolors_left = 0;
         for (const auto& pair : read.pairs)
             for (const auto& cell : pair.left_over)
