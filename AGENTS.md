@@ -13,10 +13,12 @@
 2. Prefer solving for the general case rather than the specific puzzle given.
 3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the word it lacks, built in the op that owns it (read the whole op list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
-5. A word is said only after it is replayed on every training pair on the host, with the arithmetic the GPU op runs (a shared `ARC_HOST_DEVICE` helper in `8b_op_math.hpp` the op calls), and seen to change something in every pair: anything less would let the language say a word the pairs don't back.
+5. A word is said only after it is replayed on every training pair on the host, and seen to change something in every pair.
+   1. The replay runs the arithmetic the GPU op runs: a shared `ARC_HOST_DEVICE` helper in `8b_op_math.hpp` the op calls.
+   2. Anything less would let the language say a word the pairs don't back.
 6. New words are compositions of existing ops where possible. Add an op only when none exists.
 7. No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
-8. You have priority over the old code: change it when it is wrong, and say so.
+8. The agent has priority over the old code: change it when it is wrong, and say so.
 9. Finish one stage completely and consistently before starting the next.
    1. Complete the work fully from message to message, never stop mid work on half states.
 10. A case that breaks an abstraction calls for reviewing the break, not abandoning the abstraction. Find the implementation bug or missing general distinction and fix it at its owner, without puzzle-specific exceptions. Revert unsafe code when needed, but keep the abstraction under investigation; reject it only when the evidence contradicts its shared definition.
@@ -83,7 +85,7 @@
 36. Progressing is not converging, watch for the asymptotic crawl.
 37. When a mechanism fights the problem, ask what a human does, then implement that order.
 38. Check the code first, always.
-39. Be very careful and precise in what you say, the user does NOT miss a word.
+39. Be very careful and precise in what the agent says, the user does NOT miss a word.
 40. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing words block the unsolved puzzles).
 41. A change is good when no solved puzzle is lost and no new "explained but unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
 42. The rules above are a result of the user being lazy-smart.
