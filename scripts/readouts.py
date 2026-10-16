@@ -14,9 +14,6 @@
 
   python scripts/readouts.py solved <before> <after>
       The puzzles solved before and not after, and the other way round.
-
-A run that writes no said.txt (one built without a GPU) counts every puzzle as
-unsolved there.
 """
 import os
 import re
@@ -50,9 +47,6 @@ def elected_block(readout):
 
 def said(label, verdict='SOLVED'):
     path = os.path.join('out', label, 'said.txt')
-    if not os.path.exists(path):
-        print('%s has no score (no %s)' % (label, path), file=sys.stderr)
-        return set()
     with open(path, encoding='utf-8-sig') as f:
         return {line.split('\t')[0] for line in f if '\t%s\t' % verdict in line}
 

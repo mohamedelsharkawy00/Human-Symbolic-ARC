@@ -5,7 +5,7 @@
 // ask it for the held-out test answer. No search anywhere. Run it from the repo
 // root, through scripts\said.bat, which builds it first:
 //   arc_said [--as <label>] [--solved [label]] [id...]
-// Everything it writes lands beside the program (out/x64-Release, out/cloud),
+// Everything it writes lands beside the program (out/x64-Release),
 // or in out/<label>/ when a run is named to be compared with another:
 //   said.txt                  a line per puzzle whose program fits the train
 //                             pairs: id, SOLVED or WRONG, program
@@ -29,14 +29,9 @@
 // the GPU goes through its one scratch slot, and every program is parsed into
 // one pool. The lines come out in the dataset's order, as they did one puzzle at
 // a time.
-//
-// WITHOUT A GPU -- built with ARC_NO_GPU, as the Linux cloud builds it -- it
-// runs nothing: it writes the readouts, and no score.
 #include "16_solver_beam.hpp"
 #include "14_puzzle_loader.hpp"
-#ifndef ARC_NO_GPU
 #include "20_cuda_solver.cuh"
-#endif
 #include "in_parallel.hpp"
 #include <algorithm>
 #include <chrono>
@@ -66,7 +61,6 @@ static double milliseconds_since(run_clock::time_point start) {
     return chrono::duration<double, milli>(run_clock::now() - start).count();
 }
 
-#ifndef ARC_NO_GPU
 // The first of the programs the reading spelled that draws every train pair,
 // and whether it draws the test answers too.
 static void run_what_it_said(const puzzle& task, const vector<grid>* answers, said_one& one) {
@@ -96,7 +90,6 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
         environment::remove(tree);
     }
 }
-#endif
 
 int main(int argc, char** argv) {
     // A name only when asked for: the run is kept apart to compare against.
@@ -149,9 +142,7 @@ int main(int argc, char** argv) {
     const int dataset = named ? dataset_from_name(named) : DS_TRAIN;
     if (dataset != DS_TRAIN && dataset != DS_EVAL) { fprintf(stderr, "ARC_DATASET must be train or eval\n"); return 2; }
     task_set set = load_task_set(dataset);
-#ifndef ARC_NO_GPU
     if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
-#endif
     // Each puzzle asked, by its place in the dataset, which its readout names.
     vector<int> asked;
     for (int at = 0; at < (int)set.tasks.size(); ++at)
@@ -176,17 +167,13 @@ int main(int argc, char** argv) {
     if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
     fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges\n", timings);
     fflush(timings);
-#ifndef ARC_NO_GPU
     FILE* said_file = fopen("said.txt", "w");
     if (!said_file) { fprintf(stderr, "cannot write %s\n", (out / "said.txt").string().c_str()); return 1; }
-#endif
 
     int spoke = 0, fitted = 0, right = 0, wrong = 0;
     int pane_spoke = 0, pane_fitted = 0, pane_right = 0, pane_wrong = 0;
     vector<said_one> said(asked.size());
-#ifndef ARC_NO_GPU
     mutex gpu;
-#endif
     in_parallel((int)asked.size(), [&](int which) {
         const int at = asked[(size_t)which];
         const challenge_task& entry = set.tasks[(size_t)at];
@@ -233,7 +220,6 @@ int main(int argc, char** argv) {
         one.report_ms = milliseconds_since(reporting);
         one.spoke = !task.suggested_programs.empty();
         one.panes = task.inf.pane_split.holds();
-#ifndef ARC_NO_GPU
         if (one.spoke) {
             const auto waiting = run_clock::now();
             const lock_guard on_the_gpu(gpu);
@@ -242,7 +228,6 @@ int main(int argc, char** argv) {
             run_what_it_said(task, set.solutions_for(entry.id), one);
             one.score_ms = milliseconds_since(scoring);
         }
-#endif
         one.total_ms = milliseconds_since(started);
     }, [&](int which) {
         const said_one& one = said[(size_t)which];
@@ -263,18 +248,13 @@ int main(int argc, char** argv) {
         pane_fitted += one.panes;
         (one.right ? right : wrong)++;
         if (one.panes) (one.right ? pane_right : pane_wrong)++;
-#ifndef ARC_NO_GPU
         const string line = set.tasks[(size_t)asked[(size_t)which]].id + "\t" + (one.right ? "SOLVED" : "WRONG") +
                             "\t" + one.program + "\n";
         fputs(line.c_str(), stdout);
         fputs(line.c_str(), said_file);
-#endif
     });
     fclose(timings);
 
-#ifdef ARC_NO_GPU
-    fprintf(stderr, "reading spoke: %d | no score: built without a GPU, readouts only\n", spoke);
-#else
     fclose(said_file);
     char tally[256];
     snprintf(tally, sizeof tally,
@@ -286,7 +266,6 @@ int main(int argc, char** argv) {
         fputs(tally, tally_file);
         fclose(tally_file);
     }
-#endif
     fprintf(stderr, "written to %s\n", out.string().c_str());
     return found_every_id ? 0 : 2;
 }

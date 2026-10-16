@@ -116,8 +116,7 @@ target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
 # every puzzle's inference readout, in one run into out/<label>. The guard on
 # say_the_reading: a sentence it spells that draws the wrong thing is reported
 # here and nowhere else. scripts\said.bat builds it and runs it, and
-# scripts\readouts.py compares two runs. Built with ARC_NO_GPU (the Linux
-# cloud), it writes the readouts alone.
+# scripts\readouts.py compares two runs.
 add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
