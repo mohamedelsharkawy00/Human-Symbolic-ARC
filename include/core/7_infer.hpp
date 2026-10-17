@@ -8146,23 +8146,10 @@ inline inference infer(const vector<example>& train) {
     // (4364c1c4's bands, its first stack only).
     if (const int left = cells_left_unsaid(best); left > 0) {
         const int at = (int)(ranges::find(plans, best.plan) - plans.begin());
-        // ON THE CUT THE PLAIN READING CHOSE: the last resort asks more picks of
-        // the same plan and the same cut, not of every cut again.
-        const vector<example> figures = figures_only(train, plans[(size_t)at]);
-        auto& prepared_plan = prepared[(size_t)at];
-        if (!prepared_plan) prepared_plan = prepare_figures(figures, {});
-        inference facts = *prepared_plan;
-        auto& election = facts.correspondence;
-        if (const auto chosen = ranges::find(election.ranked, best.correspondence.chosen);
-            chosen != election.ranked.end()) {
-            const size_t rank = (size_t)(chosen - election.ranked.begin());
-            election.ranked = { election.ranked[rank] };
-            election.ties_of_ranked = { election.ties_of_ranked[rank] };
-        }
         inference with;
         {
             const time_into clock{ inference_time.ms[inference_times::partners] };
-            with = read_figures(figures, {}, 1, best.tolerant, true, std::move(facts), readings);
+            with = read_plan(at, best.tolerant, true);
         }
         with.plan = best.plan;
         note_read(at, with);
