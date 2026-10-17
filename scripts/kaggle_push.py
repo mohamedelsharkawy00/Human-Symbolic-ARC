@@ -20,7 +20,7 @@ Usage:
     python scripts/kaggle_push.py --smoke               run it on three test tasks
     python scripts/kaggle_push.py --run train [id...]   push the source and run it scored
 """
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET = "mohamedelsharkawy0/solver-source-code"
@@ -60,11 +60,15 @@ def commit():
     return head + " with uncommitted changes" if git("status", "--porcelain") else head
 
 def sync():
+    digest = hashlib.sha1()
     for name, (origin, files) in FOLDERS.items():
         folder = os.path.join(PKG, name)
         os.makedirs(folder, exist_ok=True)
         for f in files:
             shutil.copy2(os.path.join(origin, f), os.path.join(folder, f))
+            digest.update(f"{name}/{f}".encode())
+            with open(os.path.join(folder, f), "rb") as fh:
+                digest.update(fh.read())
         # Anything else in there is left from an older push (a header since
         # moved to include/gui or renamed, an old folder) and would be uploaded
         # with the rest. Named by what it is rather than one by one, so the
@@ -77,6 +81,9 @@ def sync():
                 os.remove(stale)
     with open(os.path.join(PKG, "dataset-metadata.json"), "w") as fh:
         json.dump(DATASET_METADATA, fh, indent=2)
+    # What the push waits to see Kaggle serve: the commit, and a digest of the files.
+    with open(os.path.join(PKG, "commit.txt"), "w") as fh:
+        fh.write(f"{commit()} {digest.hexdigest()[:12]}\n")
     print(f"synced {sum(len(files) for _, files in FOLDERS.values())} files -> {os.path.relpath(PKG, ROOT)}")
 
 def push(msg):
@@ -92,18 +99,26 @@ def push(msg):
     if r.returncode != 0:
         print(r.stderr.strip()); sys.exit(1)
 
-def wait_ready(timeout_s=180):
-    print("waiting for dataset to be ready...", end="", flush=True)
+def wait_ready(timeout_s=300):
+    """Until Kaggle serves the commit.txt just pushed. Its status says ready while
+    a new version is still processing, and a run started then builds the one
+    before (seen 2026-10-17)."""
+    with open(os.path.join(PKG, "commit.txt")) as fh:
+        want = fh.read()
+    print("waiting for Kaggle to serve it...", end="", flush=True)
     t0 = time.time()
-    while time.time() - t0 < timeout_s:
-        r = subprocess.run(["kaggle", "datasets", "status", DATASET],
-                           capture_output=True, text=True)
-        status = (r.stdout or "").strip().lower()
-        if "ready" in status:
-            print(" ready.")
-            return True
-        print(".", end="", flush=True)
-        time.sleep(5)
+    with tempfile.TemporaryDirectory() as tmp:
+        served = os.path.join(tmp, "commit.txt")
+        while time.time() - t0 < timeout_s:
+            subprocess.run(["kaggle", "datasets", "download", DATASET, "-f", "commit.txt",
+                            "-p", tmp, "--force", "-q"], capture_output=True)
+            if os.path.exists(served):
+                with open(served) as fh:
+                    if fh.read() == want:
+                        print(" ready.")
+                        return True
+            print(".", end="", flush=True)
+            time.sleep(10)
     print(" TIMEOUT (still processing -- check before running the kernel).")
     return False
 
