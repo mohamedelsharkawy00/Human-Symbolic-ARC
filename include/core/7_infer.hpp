@@ -42,6 +42,24 @@ struct inference_work_counts {
     unsigned long long paint_replays = 0, slide_replays = 0, drop_replays = 0, walks = 0, lays = 0;
 };
 inline thread_local inference_work_counts inference_work;
+// TEMPORARY, to find where the slowest puzzles spend their reading: elapsed
+// milliseconds by reading, by stage, and by each kind of word and paint a line
+// asks, in finish_the_line's order. Nested: a reading holds its stages.
+struct inference_times {
+    static constexpr const char* names[] = { "strict", "tolerant", "partners", "preparing",
+        "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
+        "recolor", "shape", "key", "removal", "ray", "trail", "copy", "repeat", "turned", "bar",
+        "fill", "box", "symmetry", "picture" };
+    enum at { strict, tolerant, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
+    double ms[size(names)] = {};
+};
+inline thread_local inference_times inference_time;
+// Adds the time from here to the end of the scope to `total`.
+struct time_into {
+    double& total;
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    ~time_into() { total += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(); }
+};
 // Optional runner-owned audit; not consulted by any inference decision.
 inline thread_local std::function<void(const std::vector<example>&, const tiled_pieces&,
                                       double, unsigned long long, unsigned long long)> preparation_audit;
@@ -6047,6 +6065,7 @@ struct cut_paints {
 inline void finish_the_line(inference& inf, const vector<example>& train, const tiled_pieces& boundaries,
                             bool read_ahead, cut_paints& paints) {
     ++inference_work.lines;
+    const time_into clock{ inference_time.ms[inf.pass > 1 ? inference_times::lines_later : inference_times::lines_first] };
     using rule = correspondence_election::fired_rule;
     auto& election = inf.correspondence;
     if (election.chosen_pairs().empty()) return;
@@ -7477,6 +7496,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },
                             { symmetry_paint, true, false }, { picture_word, true, false } };
+    static_assert(size(kinds) == size(inference_times::names) - inference_times::first_kind);
     // Whether a paint said reads what is down: laid under it or onto it, or the
     // whole figure where it lies.
     auto reads_what_is_down = [](const rule& said) {
@@ -7550,10 +7570,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             if ((!kinds[kind].paint && (words[kind] >= rounds || picture_read)) ||
                 (frozen && kinds[kind].changes_pieces) || (one_change && kinds[kind].paint && hand_said()))
                 continue;
-            offer one = kinds[kind].offers();
+            offer one;
+            {
+                const time_into clock{ inference_time.ms[inference_times::first_kind + kind] };
+                one = kinds[kind].offers();
+            }
             const bool may_unlock = read_ahead && one.said > 0 && !one.drawn.empty() &&
                                     one.said + recolors_left > best_worth;
-            const int unlocks = may_unlock ? read_off_the_picture(one.drawn).said : 0;
+            int unlocks = 0;
+            if (may_unlock) {
+                const time_into clock{ inference_time.ms[inference_times::reading_ahead] };
+                unlocks = read_off_the_picture(one.drawn).said;
+            }
             if (one.said + unlocks > best_worth) {
                 best = std::move(one);
                 best_worth = best.said + unlocks;
@@ -7773,6 +7801,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // the change is read on the picture its line draws (read_the_rest); `tolerant`
 // whether its words may lay cells wrong (inference::tolerant).
 inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles) {
+    const time_into clock{ inference_time.ms[inference_times::preparing] };
     const auto started = preparation_audit ? std::chrono::steady_clock::now()
                                           : std::chrono::steady_clock::time_point{};
     const auto matching_before = matching_work;
@@ -8094,7 +8123,11 @@ inline inference infer(const vector<example>& train) {
     };
     inference best = says_the_most(2 * count, [&](int which) {
         const ground_plan& plan = plans[(size_t)(which % count)];
-        inference read = read_plan(which % count, which >= count, false);
+        inference read;
+        {
+            const time_into clock{ inference_time.ms[which >= count ? inference_times::tolerant : inference_times::strict] };
+            read = read_plan(which % count, which >= count, false);
+        }
         read.plan = plan;
         note_read(which % count, read);
         return read;
@@ -8113,7 +8146,11 @@ inline inference infer(const vector<example>& train) {
     // (4364c1c4's bands, its first stack only).
     if (const int left = cells_left_unsaid(best); left > 0) {
         const int at = (int)(ranges::find(plans, best.plan) - plans.begin());
-        inference with = read_plan(at, best.tolerant, true);
+        inference with;
+        {
+            const time_into clock{ inference_time.ms[inference_times::partners] };
+            with = read_plan(at, best.tolerant, true);
+        }
         with.plan = best.plan;
         note_read(at, with);
         if (cells_left_unsaid(with) < left) best = std::move(with);

@@ -5,7 +5,6 @@
 #pragma once
 #include "4_objects.hpp"
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <numeric>
@@ -23,13 +22,6 @@ struct matching_work_counts {
     unsigned long long calls = 0, rematches = 0, gathers = 0;
     unsigned long long fixed_scans = 0, whole_grid_scans = 0, placement_cache_hits = 0;
     unsigned long long fitting_edges = 0;
-    // TEMPORARY, to choose between a cache of fittings and a human order: the
-    // time finding matches and fitting them, lists fitted again as they were
-    // in the same pair, and where the matches found and kept came from.
-    double gather_ms = 0, fit_ms = 0;
-    unsigned long long repeated_lists = 0, repeated_edges = 0;
-    unsigned long long found_same_place = 0, found_look_alike = 0, found_scanned = 0;
-    unsigned long long kept_same_place = 0, kept_look_alike = 0, kept_scanned = 0, kept_scanned_on_a_piece = 0;
 };
 inline thread_local matching_work_counts matching_work;
 
@@ -155,7 +147,6 @@ struct object_matching {
             return !exact && is_color(source_color) && is_color(color_map[source_color])
                  ? color_map[source_color] : (int8_t)-1;
         }
-        bool operator==(const edge&) const = default;
     };
     // Why a match that was found did not survive.
     enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_object,
@@ -249,7 +240,6 @@ struct object_matching {
                               placement_cache* placements = nullptr) {
         ++matching_work.calls;
         matching_work.rematches += agreed != nullptr;
-        const auto started = chrono::steady_clock::now();
         vector<edge> found =
             gather_matches(from_info, from_objects, into_info, into, may_hang_off, discarded, allowed, placements);
         for (auto& edge : found) edge.from_input = from_input;
@@ -264,44 +254,18 @@ struct object_matching {
                 found.erase(found.begin() + i);
             }
 
-        const auto gathered = chrono::steady_clock::now();
-        matching_work.gather_ms += chrono::duration<double, milli>(gathered - started).count();
-        for (const edge& one : found)
-            ++(one.to >= 0 ? matching_work.found_look_alike : one.stayed_put ? matching_work.found_same_place
-                                                                             : matching_work.found_scanned);
-        if (placements) {
-            if (ranges::find(placements->fitted, found) != placements->fitted.end()) {
-                ++matching_work.repeated_lists;
-                matching_work.repeated_edges += found.size();
-            } else placements->fitted.push_back(found);
-        }
-        const size_t kept_before = edges.size();
-
         const fitting laid_out = set_up_the_fitting(found, from_objects, into_objects, into);
         matching_work.fitting_edges += found.size();
 
         vector<int> chosen;
         const fit_verdict searched =
             fit_the_objects_together(laid_out, chosen);
-        if (searched == fit_verdict::fitted)
+        if (searched == fit_verdict::fitted) {
             keep_what_fitted(chosen, laid_out, found, edges, discarded);
-        else
-            fall_back_to_greedy(found, laid_out, edges, discarded);
-        for (size_t i = kept_before; i < edges.size(); ++i) {
-            const edge& one = edges[i];
-            if (one.to >= 0) { ++matching_work.kept_look_alike; continue; }
-            if (one.stayed_put) { ++matching_work.kept_same_place; continue; }
-            ++matching_work.kept_scanned;
-            // A whole piece of the other grid where it landed: a look-alike after all.
-            const auto& source = from_info[one.from].summary;
-            const auto [width, height] = landing_size(one, source);
-            matching_work.kept_scanned_on_a_piece += ranges::any_of(into_info, [&](const object_info& piece) {
-                return piece.summary.row == one.row && piece.summary.col == one.col &&
-                       piece.summary.width == width && piece.summary.height == height &&
-                       piece.summary.count == source.count;
-            });
+            return fit_verdict::fitted;
         }
-        matching_work.fit_ms += chrono::duration<double, milli>(chrono::steady_clock::now() - gathered).count();
+
+        fall_back_to_greedy(found, laid_out, edges, discarded);
         return searched;
     }
 
@@ -499,8 +463,6 @@ public:
         };
         grid target;
         vector<drawing> drawings;
-        // TEMPORARY: every list fitted here, to count the ones fitted again.
-        vector<vector<edge>> fitted;
     };
 private:
     // An object's cells drawn out in one of the eight ways round (1_readings.hpp).
@@ -764,7 +726,6 @@ private:
         auto& placements = shared_placements ? *shared_placements : local_placements;
         if (!(placements.target == into)) {
             placements.drawings.clear();
-            placements.fitted.clear();
             placements.target = into;
         }
         auto places_for = [&](const grid& cells, bool clipped) -> const object_matches& {

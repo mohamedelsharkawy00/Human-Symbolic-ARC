@@ -54,6 +54,7 @@ struct said_one {
     double total_ms = 0, infer_ms = 0, report_ms = 0, gpu_wait_ms = 0, score_ms = 0;
     inference_work_counts work;
     matching_work_counts matching;
+    inference_times times;
 };
 
 using run_clock = chrono::steady_clock;
@@ -165,7 +166,9 @@ int main(int argc, char** argv) {
     if (audit_preparations) filesystem::create_directories("preparations");
     FILE* timings = fopen("timings.csv", "w");
     if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
-    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges,gather_ms,fit_ms,repeated_lists,repeated_edges,found_same_place,found_look_alike,found_scanned,kept_same_place,kept_look_alike,kept_scanned,kept_scanned_on_a_piece\n", timings);
+    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges", timings);
+    for (const char* name : inference_times::names) fprintf(timings, ",%s_ms", name);
+    fputs("\n", timings);
     fflush(timings);
     FILE* said_file = fopen("said.txt", "w");
     if (!said_file) { fprintf(stderr, "cannot write %s\n", (out / "said.txt").string().c_str()); return 1; }
@@ -184,6 +187,7 @@ int main(int argc, char** argv) {
         if (!one.loaded) { one.total_ms = milliseconds_since(started); return; }
         inference_work = {};
         matching_work = {};
+        inference_time = {};
         struct preparation_record {
             string key;
             size_t first;
@@ -215,6 +219,7 @@ int main(int argc, char** argv) {
         }
         one.work = inference_work;
         one.matching = matching_work;
+        one.times = inference_time;
         const auto reporting = run_clock::now();
         take_the_reading(task, std::move(read), { at, (int)set.tasks.size(), dataset }, true);
         one.report_ms = milliseconds_since(reporting);
@@ -233,17 +238,15 @@ int main(int argc, char** argv) {
         const said_one& one = said[(size_t)which];
         const auto& work = one.work;
         const auto& matching = one.matching;
-        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
+        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu",
                 set.tasks[(size_t)asked[(size_t)which]].id.c_str(), (int)one.loaded,
                 one.total_ms, one.infer_ms, one.report_ms, one.gpu_wait_ms, one.score_ms,
                 work.preparations, work.readings, work.later_readings, work.lines,
                 work.paint_replays, work.slide_replays, work.drop_replays, work.walks, work.lays,
                 matching.calls, matching.rematches, matching.gathers, matching.fixed_scans,
-                matching.whole_grid_scans, matching.placement_cache_hits, matching.fitting_edges,
-                matching.gather_ms, matching.fit_ms, matching.repeated_lists, matching.repeated_edges,
-                matching.found_same_place, matching.found_look_alike, matching.found_scanned,
-                matching.kept_same_place, matching.kept_look_alike, matching.kept_scanned,
-                matching.kept_scanned_on_a_piece);
+                matching.whole_grid_scans, matching.placement_cache_hits, matching.fitting_edges);
+        for (const double ms : one.times.ms) fprintf(timings, ",%.3f", ms);
+        fputs("\n", timings);
         fflush(timings);
         spoke += one.spoke;
         pane_spoke += one.spoke && one.panes;
