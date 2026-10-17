@@ -1,4 +1,4 @@
-# Handoff, 2026-10-15
+# Handoff, 2026-10-17
 
 Read AGENTS.md first: the rules.
 This file holds only what is current; past stages are in git history
@@ -79,6 +79,45 @@ facts, with search).
   far (a length, or until it meets something), and one for repeats.
 
 ## Where it stands
+- 2026-10-17: SPEED, THE 8x (the user: the 8-minute laptop run "should have
+  been 1 min on my machine or lower"; "i know claude loves to narrow the
+  scope from the 8x": each step is weighed against 8x, and a small gain is
+  not the aim). WHERE THE TIME IS (Kaggle, T4, 4 threads): the full run at
+  a4b3a9b, 10,021 s summed over its puzzles, 96.5% of it outside the 266
+  solved, the 100 slowest 75%. TEMPORARY TIMERS, still in (368f0be:
+  inference_times and time_into in 7_infer.hpp, their columns in said.cpp's
+  timings.csv; nothing reads them; remove them once they have served), on
+  the 5 slowest (256b0a75, 8a371977, a64e4611, 4e45f183, db615bd4: 1,275
+  s): by reading, strict 24%, tolerant 31%, partners 44%; by stage,
+  preparing (the matching) 12%, the line in the first pass 34%, in the
+  passes after it 54%, reading ahead under 1%; THE KINDS' OFFERS 84% --
+  color_from 18%, move 17%, key 10%, bar 9%, ray 6%, recolor 5%, repeat 5%,
+  mirror 4%, the rest under 4% each. 256b0a75 alone: 100 lines, 2.1 million
+  paint replays, 2.0 million slide replays, 2.75 million walks, 2.2 million
+  lays. Of the 266 solved, 250 keep the plain strict reading (8 tolerant, 7
+  strict with the partner picks, 1 tolerant with them) and 249 one pass; of
+  the 1,777 plans read both ways, 1,207 end the same strict as tolerant
+  (cells unsaid, passes and words).
+  TRIED AND DROPPED: the partner reading on the plain reading's cut alone,
+  not on every cut again (b16882b, reverted by ca76267, the user's call).
+  Lost 9720b24f and d282b262: their partner picks say every cell on a cut
+  the plain reading did not choose (9720b24f the monochrome cut, where the
+  plain reading chose the multicolor one; d282b262 the other way round). The
+  partner picks are words, and the words choose the cut. 1.16x on the 5
+  slowest (1,275 -> 1,103 s) and 1.08x on the 266 solved (348 -> 322 s),
+  part of it the run itself: their strict readings, unchanged, came out
+  5-7% faster too (other puzzles ran beside them; a64e4611's tolerant one
+  31%). Explained but unsolved 0 -> 0. Checked on the 266 solved and the 5
+  slowest, `kaggle_push.py --run train <ids>`: 607 s with the compile
+  (out/one_cut, this cloud session only).
+  STATE: the code is a2ad22a's, the timers in; no full run since a4b3a9b.
+  NEXT, AND WHY: a time profile by function of the offers (84%), on the 5
+  slowest: too many replays, or slow ones. The stage timers cannot tell the
+  two apart, and the fix guessed from them gave 1.16x and lost two. On the
+  laptop, `scripts\profile.bat 256b0a75 8a371977 a64e4611 4e45f183
+  db615bd4` (VTune, one thread, as the profiles of 10-12 and 10-13 below);
+  the cloud has none set up. Then the fix at its owner, checked on the 266
+  solved and the 5 slowest, and weighed against 8x.
 - WORD AND OPERATOR, ONE NAME EACH (2026-10-16, the user: a word is one
   operator). The same noun carries three sizes in the code. A program
   token is one op (operation_named, "Read a word's operation name";
@@ -1608,7 +1647,9 @@ uses it, global before local. Estimates are rough.
    ecb67b6d, f1bcbc2c, f5b8619d, fe9372f3, fea12743. And unsolved, open:
    868de0fa, the partner picks wanted under another plan than the plain
    reading's best.
-1. Speed: read the cuts and plans of one puzzle in parallel (low priority).
+1. Speed, now the first (the user, 2026-10-17: the 8x, "Where it stands"
+   has the state and the next step). From before: read the cuts and plans
+   of one puzzle in parallel (low priority).
    A full run took 563 s on 10-13 (out/rays_fanned; 558 s on 10-12, before
    the shape work): about 88 line readings a slow puzzle, half of them
    tolerant; each repeats period is still a walk of its own (the rays read
