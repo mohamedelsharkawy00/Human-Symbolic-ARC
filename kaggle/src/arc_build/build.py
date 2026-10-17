@@ -77,6 +77,8 @@ assert src_cands, "could not find src/kaggle_main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
 INC = SRC_ROOT + "/include"
 print("source root:", SRC_ROOT)
+# The code this run builds, as kaggle_push.py stamped it: the proof it is the code pushed.
+print("source commit:", open(SRC_ROOT + "/commit.txt").read().strip())
 
 # --- compile -------------------------------------------------------------
 # Compile for the GPUs actually assigned, including T4 fallback machines.
