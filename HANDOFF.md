@@ -145,10 +145,9 @@ facts, with search).
   Source colors come from opened pieces, not the recolored hand. Recolored
   paints/rays are untouched. Existing geometry/replay caches and tie order
   stay intact. Full replay still judges survivors. Release build passed.
-  Focused 19-puzzle check RUNNING: paint_color_gate_sample, PID 14964,
-  20 threads, AboveNormal, no affinity. stdout/stderr in out with that label.
-  Compare scores and all readouts to direction_rename_full, same 19 ids:
-  baseline 8 right / 2 wrong / 9 unsolved. New right/wrong/gained/lost pending.
+  The focused 19-puzzle check was superseded by the full training run below.
+  That run covered the current paint-color gate: 266 right, 39 wrong, matching
+  the handoff's prior full-run counts. No puzzle-by-puzzle comparison is needed.
   User asked for an estimate: rough low-confidence expectation 5-15% overall
   time reduction, NOT measured. Initial a64e4611 plan has only introduced3
   changes but source colors1/2/8, proving whole own-color families futile
@@ -177,12 +176,13 @@ facts, with search).
   25094a63, db615bd4 and a64e4611 readings unchanged. Do not attribute their
   lower elapsed times to reuse: CPU conditions vary. Observed process working
   set about 3.6 GB after ten completed cases, not a final peak measurement.
-  Nothing running. NEXT: preserve this substantial work reduction; full score
-  check remains due for this architectural change when resuming. Last full
-  baseline permission_places_full is 266 right / 39 wrong, not a claim that
-  completed-reading reuse has passed all 1000. Then follow the profiler branch
-  upstream on expensive cases that did not reuse readings; no more speculative
-  storage tuning. User explicitly
+  Full training check completed on 2026-10-17: 604 s wall time, 1,000 readouts
+  and timing rows, 266 right / 39 wrong, matching the prior full-run counts.
+  This checks reading reuse across the full set; no puzzle-by-puzzle comparison
+  is needed. Results: out/handoff_full_20261017. This is not the fastest
+  recorded full run: out/rays_fanned took 563 s on 10-13. Then follow the
+  profiler branch upstream on expensive cases that did not reuse readings; no
+  more speculative storage tuning. User explicitly
   asked to stop adding measurements and analyze code; no new audit added here.
 - 2026-10-15: user explicitly dropped contiguous fitting storage and wants
   the biggest optimization overall, not another local tweak or a restriction
@@ -1842,6 +1842,6 @@ Smaller, open:
 - THE FIRST FULL RUN THERE (2026-10-17, a4b3a9b, whose arc_said is main's
   ac3f883): 266 right, 39 wrong, the same 39 wrong as hole2's list above;
   2,515 s on 4 CPU threads (T4), compile 166 s. The first full run since
-  permission_places_full, so the reading reuse and the own-color gate kept the
-  counts; whether the 266 solved are the same ids needs the laptop's
-  said.txt. Its readouts (579 MB) were in that cloud session's out/ only.
+  permission_places_full. The local full training run on 2026-10-17 also had
+  266 right and 39 wrong; no puzzle-by-puzzle comparison is needed. Its local
+  readouts are in out/handoff_full_20261017.
