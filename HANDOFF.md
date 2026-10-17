@@ -1793,3 +1793,9 @@ Smaller, open:
   build.py is told by ARC_DATASET which set to read: training or evaluation
   builds arc_said and hands back what it writes as said.tar.gz; a run builds
   whatever was pushed last, each version's message the commit it came from.
+- THE FIRST FULL RUN THERE (2026-10-17, a4b3a9b, whose arc_said is main's
+  ac3f883): 266 right, 39 wrong, the same 39 wrong as hole2's list above;
+  2,515 s on 4 CPU threads (T4), compile 166 s. The first full run since
+  permission_places_full, so the reading reuse and the own-color gate kept the
+  counts; whether the 266 solved are the same ids needs the laptop's
+  said.txt. Its readouts (579 MB) were in that cloud session's out/ only.
