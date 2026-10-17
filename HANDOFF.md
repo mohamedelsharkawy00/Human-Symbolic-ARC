@@ -185,10 +185,57 @@ facts, with search).
   storage tuning. User explicitly
   asked to stop adding measurements and analyze code; no new audit added here.
 
-## Still live, carried up from the cut
-- The laptop's clock moves with heat (2.4x seen back to back on 10-13): compare builds old, new, old, new, in turn; runs at different times do not compare.
-- `out/` holds a run's `said.txt` and logs, about 600 MB each; delete one once compared (the user's call).
-- The speed list of 10-13 (items 1-9, the partner reading's cost among them) is in git; the 10-17 entry above holds the next step.
+  THE SPEED LEFT TO DO, NOT STARTED -- the one list; the older entries point
+  here. The largest and readiest first; the shares are inclusive and overlap
+  (the passes after the first ask the same words and paints). Each keeps
+  every readout byte-identical and is timed old against new in turn on
+  e681b708 and 92e50de0:
+  (1) THE WORDS ASK EVERY PICK (48%). A pick that takes the same pieces as
+  one asked before it, in every pair, says what that one says, as the paints
+  have it now -- but a word may skip some picks (already_said, per color
+  for a recolor; a removal's may; a move's step, asked only of picks not by
+  color; the most common color's pick, once the line says anything on a
+  hand it cannot carry), so each word keeps its own record, built only from
+  the picks it asks. taken_before in extras/speed_kept_back.patch (10-12)
+  did it for every word.
+  (2) THE KEY'S MAP (key_piece_at 11%, key_color_at 12%). key_piece_at scans
+  the pieces for each key cell, and each_key_entry and each_key_cell ask it
+  cell by cell: read the key's map once for an unchanged hand and pick, the
+  same piece winning where two overlap. It is 8b_op_math.hpp, shared with
+  the GPU, so the op's arithmetic stays the one owner.
+  (3) THE MATCHING (collect_edges 13%): the strict and tolerant readings of
+  a plan share its figures and matching (NEXT (3) of 10-12); the lines they
+  read and the pictures after stay their own.
+  (4) BARS (6%): bridge_holds replays each pick and way on every canvas from
+  the start (paint_holds). Walk a bar once for the cut and lay it on each
+  canvas, as the rays are -- bridge_walk, fill_walk and box_walk in the
+  kept-back patch, own_else_one the one helper for "in its own colors, or
+  else in one" -- and the filled hollows and boxes with it.
+  (5) REPEATS (7%): each period is a walk of its own (tile_walk), counted
+  on each canvas. Periods do not nest as ray lengths do, so no fan; what is
+  left is the walk and its count.
+  (6) THE REPLAY CACHE: a std::map keyed by tuples, looked up for every
+  length, lay and pick asked (NEXT (2) of 10-12); a flat table.
+  (7) THE PASSES AFTER THE FIRST (26%) want fewer readings, not faster ones.
+  (8) Small: a ray length that holds is still walked on its own for its
+  lists (rays_walk, under 2%).
+  (9) THE PARTNER READING (2026-10-14, parked by the user): the full run went
+  1228 s -> 2486 s once every unsolved puzzle read its plan again with the
+  partner picks (partner_picks, inference::partners), not yet timed in turn.
+  From memory, not measured: about 740 unsolved puzzles each read once more;
+  dozens of partner picks, every word and paint asked with every one (asked
+  in every reading they took 3553 s, about three times a plain run); the
+  reading starts from scratch, its cut and matching read again, and its
+  passes and framed reading ask them too; the slowest puzzles, unsolved, set
+  the clock. Ready: time it in turn first (heat); no corner sides asked
+  (they appeared only in wrong or lost programs); the plain reading's
+  matching and cut reused; partner picks that take the same pieces as a
+  plain pick in every pair dropped for the words, as the paints already do.
+  THE LAPTOP'S SPEED SWINGS WITH HEAT, in general (the user, 10-13): runs
+  back to back heat it and slow it, 2.4 times on 10-13. So only runs taken
+  in turn, old against new, compare; timings and full runs taken at
+  different times do not. out/ holds earlier days' runs, about 600 MB each,
+  kept for now (the user's call).
 
 ## How to check a refactor
 - Keep choosing changes upstream, in numbered file order. Once chosen, wire
