@@ -18,8 +18,13 @@ training right, the best of each day: 187 on 10-07, 199 on 10-08, 219 on
 families, tens at a time, not one or two.
 
 THE WAY OF WORKING is AGENTS.md's (each puzzle with all of its adjacent
-concepts), and the user's lately in id order: the next unsolved id, its
-missing word built in the op that owns it. Ids 1-50: 40 right; 51-100: 12
+concepts), and the user's (2026-10-17): THE SLOWEST PUZZLES FIRST, NOT ID
+ORDER, each its missing word built in the op that owns it. 43 take over a
+minute each and hold 56% of a full run's reading (Kaggle, T4, 4 threads,
+a4b3a9b), and 41 of them are unsolved (no program fits). The slowest:
+256b0a75 312 s, 8a371977 292 s, a64e4611 288 s, 4e45f183 254 s, db615bd4
+247 s, 5c2c9af4 247 s, e681b708 235 s, 890034e9 172 s, e2092e0c 156 s,
+97239e3d 150 s. In id order, ids 1-50: 40 right; 51-100: 12
 right (out/hole2). The first unsolved in id order: 05a7bcf2 (a hand program
 only, about half its cells unsaid), then 1190e5a7, 11dc524f, 11e1fe23 --
 1190bc91 and 4364c1c4 are solved now. A run of 50 ids takes about a minute,
