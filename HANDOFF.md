@@ -179,10 +179,10 @@ facts, with search).
   Full training check completed on 2026-10-17: 604 s wall time, 1,000 readouts
   and timing rows, 266 right / 39 wrong, matching the prior full-run counts.
   This checks reading reuse across the full set; no puzzle-by-puzzle comparison
-  is needed. Results: out/handoff_full_20261017. This is not the fastest
-  recorded full run: out/rays_fanned took 563 s on 10-13. Then follow the
-  profiler branch upstream on expensive cases that did not reuse readings; no
-  more speculative storage tuning. User explicitly
+  is needed. Results: out/handoff_full_20261017. Its time is not compared with
+  earlier runs because their scores differ. Then follow the profiler branch
+  upstream on expensive cases that did not reuse readings; no more speculative
+  storage tuning. User explicitly
   asked to stop adding measurements and analyze code; no new audit added here.
 - 2026-10-15: user explicitly dropped contiguous fitting storage and wants
   the biggest optimization overall, not another local tweak or a restriction
