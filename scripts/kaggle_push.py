@@ -80,9 +80,13 @@ def sync():
     print(f"synced {sum(len(files) for _, files in FOLDERS.values())} files -> {os.path.relpath(PKG, ROOT)}")
 
 def push(msg):
-    # A dataset not there yet, or deleted, is made anew, private.
-    there = subprocess.run(["kaggle", "datasets", "status", DATASET], capture_output=True).returncode == 0
-    command = ["kaggle", "datasets", "version", "-m", msg] if there else ["kaggle", "datasets", "create"]
+    # A dataset not there yet, or deleted, is made anew, private. Asked of the
+    # list of our own: a refused question (too many requests) is not "not there".
+    mine = subprocess.run(["kaggle", "datasets", "list", "--mine"], capture_output=True, text=True)
+    if mine.returncode != 0:
+        print((mine.stderr or mine.stdout).strip()); sys.exit(1)
+    command = (["kaggle", "datasets", "version", "-m", msg] if DATASET in mine.stdout
+               else ["kaggle", "datasets", "create"])
     r = subprocess.run(command + ["-p", PKG, "--dir-mode", "zip"], capture_output=True, text=True)
     print(r.stdout.strip())
     if r.returncode != 0:
