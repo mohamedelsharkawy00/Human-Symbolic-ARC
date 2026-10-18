@@ -73,30 +73,24 @@ inline constexpr grouping grouping_of(segmentation_methods segmentation) {
                                                                              grouping::touching_same_color;
 }
 
-// Find the smallest repeating width and height; use the grid size if none repeats.
-// Ignore background cells when matching; pass -2 to compare every cell.
-// `must_fit_twice` requires two full copies along each repeating direction.
+// The unit Pattern cuts: the smallest repeating width and height, or the grid's
+// own. Every cell counts, an empty one too; one copy and a matching fragment do.
 template <typename Grid>
-ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int background,
-                                           int& width, int& height,
-                                           bool must_fit_twice = true) {
+ARC_HOST_DEVICE inline void repeat_periods(const Grid& g, int& width, int& height) {
     // Does the grid repeat every `period` cells along one axis? `across` asks
     // about columns, otherwise rows. One test for both, so they cannot drift.
     auto repeats_every = [&](int period, bool across) {
         for (int r = across ? 0 : period; r < g.height; ++r)
             for (int c = across ? period : 0; c < g.width; ++c) {
-                const int here = g.data[r][c];
-                if (here == background) continue;
                 const int folded_row = across ? r : r % period;
                 const int folded_col = across ? c % period : c;
-                if (here != g.data[folded_row][folded_col]) return false;
+                if (g.data[r][c] != g.data[folded_row][folded_col]) return false;
             }
         return true;
     };
     // Find the shortest valid period, or use the full size if none repeats.
     auto smallest_period = [&](int size, bool across) {
-        const int longest = must_fit_twice ? size / 2 : size - 1;
-        for (int period = 1; period <= longest; ++period)
+        for (int period = 1; period < size; ++period)
             if (repeats_every(period, across)) return period;
         return size;
     };
@@ -228,11 +222,10 @@ struct object_segmentation {
                                                                         : from_input;
     }
 
-    // The block Pattern cuts a grid into. Background cells are evidence too, and
-    // a complete copy plus a matching fragment can establish a period.
+    // The block Pattern cuts a grid into (repeat_periods).
     static pair<int, int> pattern_block_of(const grid& one_grid) {
         int width, height;
-        repeat_periods(one_grid, -2, width, height, /*must_fit_twice=*/false);
+        repeat_periods(one_grid, width, height);
         return { width, height };
     }
 

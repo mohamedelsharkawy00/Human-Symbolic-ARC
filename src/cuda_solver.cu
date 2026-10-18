@@ -1038,6 +1038,13 @@ struct gpu_partner_view {
         GPU_DEV_FOR_EACH_PIXEL(list.objects[i], r, c, v) { (void)r; (void)c; if (v == color) return true; }
         return false;
     }
+    // What each_partner asks (touches, shapes_alike).
+    __device__ bool touching(int mine, int other, bool sides_only) const {
+        return arc::touches(*this, mine, other, { 0, 0 }, sides_only);
+    }
+    __device__ bool alike(int mine, int other, int like) const { return arc::shapes_alike(*this, mine, other, like); }
+    // The object that shows a cell of the key's drawing (key_piece_at).
+    __device__ int key_piece(int row, int col) const { return arc::key_piece_at(*this, row, col); }
     // Object i's one partner by `how` among the objects not picked, or -1.
     __device__ int partner(arc::partner_by how, int i) const { return arc::partner_of(how, i, *this); }
     // Object i's one partner of `kind` (partner_of_kind) among the objects not picked, or -1.
@@ -2186,12 +2193,9 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         // Only what was picked is reduced to its unit; the rest ride through.
         if (!obj_src.selected) { res.objects[res.count++] = obj_src; continue; }
         int best_w, best_h;
-        // One finder for everyone (4_objects.hpp). Loose evidence on purpose:
-        // naming the unit to continue with is a different question from proving
-        // a grid repeats, and a motif that fits once and a bit is still the
-        // motif -- 017c7c7b pair 1 is 6 tall with a 4-tall unit.
+        // One finder for everyone (4_objects.hpp).
         const gpu_object_view view{ obj_src.mask, obj_src.width, obj_src.height };
-        arc::repeat_periods(view, GPU_TRANSPARENT, best_w, best_h, /*must_fit_twice=*/false);
+        arc::repeat_periods(view, best_w, best_h);
         gpu_fixed_object obj;
         // The unit is the same object, so it keeps its mark. A fresh
         // gpu_fixed_object starts unmarked and would drop the pick silently.
@@ -2200,22 +2204,9 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         obj.width = (int16_t)best_w; obj.height = (int16_t)best_h;
         obj.x1 = obj.x0 + (int16_t)best_w - 1; obj.y1 = obj.y0 + (int16_t)best_h - 1;
         obj.mask.clear();
-        // Reconstruct each tile cell by majority vote over all source cells in
-        // its period class, ignoring holes -- so a hole in the top-left tile is
-        // filled from a repetition elsewhere. Clean patterns vote unanimously,
-        // reproducing the old top-left copy.
+        // Every copy agrees with the top-left one, so the unit is that copy.
         for (int r = 0; r < best_h; ++r)
-            for (int c = 0; c < best_w; ++c) {
-                int counts[GPU_MAX_COLORS]; memset(counts, 0, sizeof(counts));
-                int best_v = GPU_TRANSPARENT, best_n = 0;
-                for (int sr = r; sr < obj_src.height; sr += best_h)
-                    for (int sc = c; sc < obj_src.width; sc += best_w) {
-                        int8_t v = obj_src.mask[sr][sc];
-                        if (!arc::is_color(v)) continue;       // skip holes/transparent
-                        if (++counts[v] > best_n) { best_n = counts[v]; best_v = v; }
-                    }
-                obj.mask[r][c] = (int8_t)best_v;
-            }
+            for (int c = 0; c < best_w; ++c) obj.mask[r][c] = obj_src.mask[r][c];
         res.objects[res.count++] = obj;
     }
     return res;
@@ -2675,7 +2666,7 @@ __device__ gpu_object_list& gpu_exec_grow_in_step(gpu_exec_context& ctx, const g
         }
     }
     arc::grow_in_step(gw, gh, track, [&](int piece) { return src.objects[piece].selected; },
-                      owner, ctx.grow_scratch[1], ctx.grow_scratch[2], ctx.grow_ways);
+                      owner, ctx.grow_scratch[1], ctx.grow_scratch[2], ctx.grow_ways, [](int, int, int) {});
 
     for (int i = 0; i < n && res.count < GPU_KERNEL_MAX_OBJECTS; ++i) {
         const auto& o = src.objects[i];

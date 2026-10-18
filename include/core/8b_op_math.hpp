@@ -95,32 +95,34 @@ ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, d
     return false;
 }
 
+// Whether pieces mine and other are one shape, as the likeness `like` lets them differ.
+template <class Pieces>
+ARC_HOST_DEVICE inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
+    const cell_box own = pieces.box(mine), box = pieces.box(other);
+    const bool sized = sized_likeness(like);
+    return same_shape_in_blocks(
+        own.width(), own.height(),
+        [&](int row, int col) { return pieces.color_at(mine, own.row0 + row, own.col0 + col); },
+        sized ? pieces.blocks(mine) : shape_blocks{}, box.width(), box.height(),
+        [&](int row, int col) { return pieces.color_at(other, box.row0 + row, box.col0 + col); },
+        sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
+}
+
 // Every partner the piece `mine` has by `how` among the pieces not picked --
 // or, `among_all`, among every piece but itself (SelectPartner, whose pick of
 // every piece leaves none unpicked) -- handed to `visit(other)`; for the
 // nearest, only the ones no other is nearer than. THE PIECES ARE ASKED, so one
 // walk serves a grid's pieces and the op's alike: `count()`; `box(i)`, the box
 // piece i's paint fills on the grid; `painted(i, row, col)`, whether it paints
-// that cell of the grid, false off it; `is_picked(i)`; and, for the color
-// questions below, `color(i)`, the color an op reads off its first cell, and
-// `holds(i, color)`, whether it holds a cell of that color.
+// that cell of the grid, false off it; `is_picked(i)`; `touching(i, j, sides_only)`
+// and `alike(i, j, like)` (touches, shapes_alike), which a reading may keep; and,
+// for the color questions below, `color(i)`, the color an op reads off its first
+// cell, and `holds(i, color)`, whether it holds a cell of that color.
 template <class Pieces, class Visit>
 ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
                                          bool among_all = false) {
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
-    auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
-    // Its shape read against another's, as the likeness `like` lets them
-    // differ, each piece's blocks as the pieces keep them (blocks(i)).
-    auto same_paint = [&](int other, const cell_box& box, int like) {
-        const bool sized = sized_likeness(like);
-        return same_shape_in_blocks(
-            own.width(), own.height(),
-            [&](int row, int col) { return pieces.color_at(mine, own.row0 + row, own.col0 + col); },
-            sized ? pieces.blocks(mine) : shape_blocks{}, box.width(), box.height(),
-            [&](int row, int col) { return pieces.color_at(other, box.row0 + row, box.col0 + col); },
-            sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
-    };
     auto may_partner = [&](int other) { return other != mine && (among_all || !pieces.is_picked(other)); };
     int nearest = 1 << 30;
     if (how == partner_by::nearest)
@@ -148,7 +150,7 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
                 break;
             case partner_by::touching:
             case partner_by::touching_sides:
-                partner = touches(pieces, mine, other, { 0, 0 }, how == partner_by::touching_sides);
+                partner = pieces.touching(mine, other, how == partner_by::touching_sides);
                 break;
             case partner_by::same_shape:
             case partner_by::same_shape_turned:
@@ -156,7 +158,7 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
             case partner_by::same_shape_scaled_turned:
             case partner_by::same_shape_stretched:
             case partner_by::same_shape_stretched_turned:
-                partner = same_paint(other, box, (int)how - (int)partner_by::same_shape);
+                partner = pieces.alike(mine, other, (int)how - (int)partner_by::same_shape);
                 break;
             default: break;
         }
@@ -855,8 +857,9 @@ struct shape_table {
 // lie, read together as one drawing, a later piece over an earlier one as
 // Union lays them; each entry in it names what a property of a piece maps to,
 // and each way of reading it below is one property. The pieces are asked as
-// each_partner asks them, and `color_at(i, row, col)`, the color piece i paints
-// at that cell of the grid.
+// each_partner asks them, `color_at(i, row, col)`, the color piece i paints at
+// that cell of the grid, and `key_piece(row, col)` (key_piece_at, which a
+// reading may keep).
 // The piece that shows a cell of the key's drawing, the last not picked to
 // paint it, or -1 where none does.
 template <class Pieces>
@@ -869,7 +872,7 @@ ARC_HOST_DEVICE inline int key_piece_at(const Pieces& pieces, int row, int col) 
 // The color the key's drawing shows at a cell, TRANSPARENT where it shows none.
 template <class Pieces>
 ARC_HOST_DEVICE inline int key_color_at(const Pieces& pieces, int row, int col) {
-    const int i = key_piece_at(pieces, row, col);
+    const int i = pieces.key_piece(row, col);
     return i < 0 ? (int)TRANSPARENT : (int)pieces.color_at(i, row, col);
 }
 
@@ -886,7 +889,7 @@ ARC_HOST_DEVICE inline void each_key_entry(const Pieces& pieces, bool along_rows
         if (box.empty()) continue;
         for (int row = box.row0; row <= box.row1; ++row)
             for (int col = box.col0; col <= box.col1; ++col) {
-                if (key_piece_at(pieces, row, col) != i) continue;
+                if (pieces.key_piece(row, col) != i) continue;
                 const int first = key_at(row, col), second = key_at(row + down, col + across);
                 if (!is_color(key_at(row - down, col - across)) && is_color(second) && second != first &&
                     !is_color(key_at(row + 2 * down, col + 2 * across)))
@@ -1564,10 +1567,11 @@ ARC_HOST_DEVICE constexpr bool grown_spreads(grown_along track) {
 // earlier piece's goes on, the other stops -- or where one runs into a cell a
 // ray along its own line took before it, head-on or behind; a ray of another
 // line taken before it is crossed, as a line drawn across another goes on
-// (21f83797's lines cross; 1190bc91's rays meet in one turn and stop).
-template <class Grows>
+// (21f83797's lines cross; 1190bc91's rays meet in one turn and stop). `met(cell,
+// way, piece)` hears of each ray stopped by meeting another.
+template <class Grows, class Met>
 ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along track, Grows grows,
-                                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways) {
+                                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways, Met met) {
     auto on_track = [&](int row, int col) {
         return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
     };
@@ -1637,6 +1641,7 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
                         const direction_step back = step_of(took);
                         const int start = (row - back.down * step_number) * width + col - back.across * step_number;
                         ways[start] = (uint8_t)(ways[start] & ~(1u << took));
+                        met(at, took, owner[at]);
                     }
                     owner[at] = owner[from];
                     ways[at] = ray;
@@ -1646,6 +1651,7 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
                     // A body, a later piece's ray met in this turn, or a ray
                     // along its own line before it; another line's is crossed.
                     stops = turn[at] == 0 || turn[at] == step_number || (ways[at] & own_line) != 0;
+                    if (stops && turn[at] > 0) met(at, way, owner[from]);
                 }
                 if (stops) ways[from] = (uint8_t)(ways[from] & ~ray);
                 else going = true;
