@@ -443,14 +443,7 @@ ARC_HOST_DEVICE constexpr int pose_asked(int asked) {
     }
 }
 
-// WHAT A SHAPE MAY CHANGE AND STILL BE THE SAME SHAPE (the user, 2026-10-13:
-// a shape is the same whatever its colors, turns, flips and size -- one owner,
-// asked across the solver). Each asker says which changes it lets go by: its
-// colors (recolor: a shape is the cells it paints, whatever their colors;
-// held, it is a drawing, colors and all), the eight ways round (turn), its
-// size by one factor both ways (scale), or by one down and another across
-// (stretch). A shape is read cell by cell, cell(row, col) from its box's
-// top-left, each a color, TRANSPARENT where it paints none.
+// What a shape may change and still be the same shape: colors, turns, flips, size.
 struct shape_freedom { bool turn = false, scale = false, stretch = false, recolor = true; };
 // A shape as it lies, a shape any way round, and a drawing: nothing may change.
 constexpr shape_freedom AS_IT_LIES{}, ANY_WAY_ROUND{ true }, DRAWING{ false, false, false, false };

@@ -57,9 +57,10 @@
 20. Never launch the app until the user accepts.
 21. Keep the console silent, all diagnostics and metrics go to files in `logs/`.
 22. Keep the build warning-free, give the compiler what it asks for.
-23. Comments are load-bearing one-liners only.
-   1. Placed above the line, never trailing, in the user's words first.
+23. Comments are for the person reading the code, never for the agent. Keep only the comments that person needs to understand the code.
+   1. Placed above the line, never trailing.
    2. Prose, design stories, and experiment records live in `notes/`, in the note whose topic they belong to, not in code comments.
+   3. A comment the reader does not need is bloat, read by every person and every agent who opens the file, every time.
 24. Do not steer the conversation.
    1. Answer what was asked, then stop, the user sets the pace and the topic.
    2. Match the user's granularity, one small step per exchange.
