@@ -114,8 +114,6 @@ static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
 
-// Core owns the packed store shared by grids and objects on the CPU and GPU.
-using gpu_packed_mask = arc::object_cells;
 // --- Scoring weights & penalties: single source of truth for all scoring ---
 // Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
 // debug/analysis breakdown in 13_environment.hpp.
@@ -136,7 +134,7 @@ static constexpr float GPU_SCORE_W_POSITION_MATCH = 80.0f;
 
 // `selected` lives before `mask` so gpu_warp_copy_header (which copies
 // everything ahead of the mask) carries it.
-// MSVC C4324: intentional padding; see object_cells in 0_core.hpp.
+// MSVC C4324: intentional padding; see arc::cells in 0_core.hpp.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -146,7 +144,7 @@ struct gpu_fixed_object {
     int16_t x1 = 0, y1 = 0;
     int16_t width = 0, height = 0;
     bool selected = false;
-    gpu_packed_mask mask;
+    arc::cells mask;
 
     ARC_HOST_DEVICE void clear() {
         x0 = y0 = x1 = y1 = width = height = 0;
@@ -316,7 +314,7 @@ struct gpu_exec_context {
     uint8_t grow_ways[GPU_GRID_CELLS];
 };
 // Ops overlay a packed mask on op_scratch, so it must have room for one.
-static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(gpu_packed_mask),
+static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(arc::cells),
               "op_scratch must hold a packed mask");
 
 // Per-example data uploaded once per puzzle (not per batch).
@@ -337,9 +335,9 @@ struct gpu_object_summary {
 
 struct cuda_dsl_example_data {
     int count = 0;
-    gpu_packed_mask input_grids[MAX_UPLOAD_EXAMPLES];
+    arc::cells input_grids[MAX_UPLOAD_EXAMPLES];
     int8_t input_dims[MAX_UPLOAD_EXAMPLES * 2];
-    gpu_packed_mask target_grids[MAX_UPLOAD_EXAMPLES];
+    arc::cells target_grids[MAX_UPLOAD_EXAMPLES];
     int8_t target_dims[MAX_UPLOAD_EXAMPLES * 2];
     int8_t distance_maps[MAX_UPLOAD_EXAMPLES * GPU_MAX_COLORS * GPU_GRID_CELLS];
     gpu_object_list seed_lists[MAX_UPLOAD_EXAMPLES];

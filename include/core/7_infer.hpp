@@ -552,7 +552,7 @@ struct partner_pieces {
                 const object& piece = pieces[i];
                 (*made)[i] = nearest_ray_seed(piece.summary.height, piece.summary.width, (piece.summary.height - 1) / 2,
                                               (piece.summary.width - 1) / 2,
-                                              [&](int row, int col) { return piece.cells[row][col]; });
+                                              [&](int row, int col) { return piece.data[row][col]; });
             }
             seeds_once = std::move(made);
         }
@@ -716,7 +716,7 @@ struct shape_color_map_rule : shape_table {
     // the ops look up).
     static uint32_t key_of(shape_key kind, const object& piece) {
         return shape_key_of((int)kind, piece.summary.width, piece.summary.height,
-                            [&](int row, int col) { return piece.cells[row][col]; });
+                            [&](int row, int col) { return piece.data[row][col]; });
     }
     // The color the table names for a piece's key, as the ops look it up.
     using shape_table::color_of;
@@ -945,7 +945,7 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
                         bool over = true, bool clip = false) {
     for (int row = 0; row < piece.summary.height; ++row)
         for (int col = 0; col < piece.summary.width; ++col) {
-            const int color = piece.cells[row][col];
+            const int color = piece.data[row][col];
             if (color == TRANSPARENT) continue;
             if (!canvas.contains(row0 + row, col0 + col)) {
                 if (clip) continue;
@@ -2147,7 +2147,7 @@ struct piece_slam_rule {
                 for (const object& piece : pieces) {
                     bool collision = false;
                     moved |= slam_cells(piece.summary.width, piece.summary.height, rows, step,
-                        [&](int row, int col) { return (int)piece.cells[row][col]; },
+                        [&](int row, int col) { return (int)piece.data[row][col]; },
                         [&](int row, int col, int color) {
                             row += piece.summary.row;
                             col += piece.summary.col;
@@ -2632,7 +2632,7 @@ struct project_on_seeds_rule {
                 for (int r = 0; r < tpl.summary.height; ++r)
                     for (int c = 0; c < tpl.summary.width; ++c) {
                         const int row = at_row + r, col = at_col + c;
-                        if (tpl.cells[r][c] != TRANSPARENT && pair.input.contains(row, col))
+                        if (tpl.data[r][c] != TRANSPARENT && pair.input.contains(row, col))
                             land(row, col, marker.color);
                     }
                 ++stamped;
@@ -2817,7 +2817,7 @@ struct mark_lattice_rule {
             each_lattice_row(top(mark), turned ? mark.summary.width : mark.summary.height, period, rows,
                              [&](int row, int source) {
                 // The line wears the mark's first column, as TileX[1] spreads it.
-                const int8_t color = turned ? mark.cells[0][source] : mark.cells[source][0];
+                const int8_t color = turned ? mark.data[0][source] : mark.data[source][0];
                 if (color == TRANSPARENT) return;
                 for (int col = 0; col < across; ++col) at(row, col) = color;
             });
@@ -2869,7 +2869,7 @@ struct interior_spread_rule {
                     ++pieces;
                     const object piece = object::from_cells(pair.input, box, cells, count);
                     const int8_t color = object_paint_color(box.height, box.width, COLOR_COUNT,
-                        [&](int row, int col) { return (int8_t)piece.cells[row][col]; });
+                        [&](int row, int col) { return (int8_t)piece.data[row][col]; });
                     piece.each_cell([&](int row, int col, int8_t was) {
                         if (on_object_edge(row, col, [&](int r, int c) { return piece.holds(r, c); })) return;
                         drawn.data[row][col] = color;
@@ -2905,13 +2905,13 @@ struct interior_fill_rule {
                     const object piece = object::from_cells(pair.input, box, cells, count);
                     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
                     mark_outside(box.height, box.width,
-                        [&](int r, int c) { return is_color(piece.cells[r][c]); }, outside);
+                        [&](int r, int c) { return is_color(piece.data[r][c]); }, outside);
                     // Separate marker objects inside a hole keep their own
                     // colors. They are not evidence for the interior's fill.
                     for (int r = 0; r < box.height; ++r)
                         for (int c = 0; c < box.width; ++c) {
                             const int y = box.row + r, x = box.col + c;
-                            if (is_color(piece.cells[r][c]) || outside[r][c] ||
+                            if (is_color(piece.data[r][c]) || outside[r][c] ||
                                 pair.input.data[y][x] != TRANSPARENT) continue;
                             const int fill = pair.output.data[y][x];
                             if (!is_color(fill) || (rule.holds() && rule.color != fill)) {
@@ -2926,8 +2926,8 @@ struct interior_fill_rule {
                     for (int r = 0; r < box.height; ++r)
                         for (int c = 0; c < box.width; ++c) {
                             const int y = box.row + r, x = box.col + c;
-                            if (is_color(piece.cells[r][c]))
-                                drawn.data[y][x] = piece.cells[r][c];
+                            if (is_color(piece.data[r][c]))
+                                drawn.data[y][x] = piece.data[r][c];
                             else if (!outside[r][c] && rule.holds())
                                 drawn.data[y][x] = rule.color;
                         }
@@ -2991,7 +2991,7 @@ struct ranked_layout_rule {
 
         object arranged;
         arranged.summary = {0, 0, (int8_t)width, (int8_t)height, 0};
-        arranged.cells.clear();
+        arranged.data.clear();
         for (int i = 0; i < (int)pieces.size(); ++i) {
             const object& piece = pieces[i];
             const int top = row_of[i] * cell_size;
@@ -3000,8 +3000,8 @@ struct ranked_layout_rule {
                 for (int col = 0; col < piece.summary.width && col < cell_size; ++col) {
                     const int destination_row = top + row, destination_col = left + col;
                     if (destination_row < height && destination_col < width &&
-                        piece.cells[row][col] != TRANSPARENT)
-                        arranged.cells[destination_row][destination_col] = piece.cells[row][col];
+                        piece.data[row][col] != TRANSPARENT)
+                        arranged.data[destination_row][destination_col] = piece.data[row][col];
                 }
         }
 
@@ -3010,7 +3010,7 @@ struct ranked_layout_rule {
         grid painted = empty_grid(MAX_GRID_DIM, MAX_GRID_DIM);
         for (int row = 0; row < reduced_height; ++row)
             for (int col = 0; col < reduced_width; ++col)
-                painted.data[row][col] = majority_vote(arranged.cells, row, col, cell_size, height, width);
+                painted.data[row][col] = majority_vote(arranged.data, row, col, cell_size, height, width);
 
         cell_box bounds;
         for (int row = 0; row < reduced_height; ++row)
@@ -3340,7 +3340,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         vector<int> keys;
         for (const object& piece : pieces)
             keys.push_back(key(piece.summary.height, piece.summary.width,
-                               [&](int row, int col) { return (int)piece.cells[row][col]; }));
+                               [&](int row, int col) { return (int)piece.data[row][col]; }));
         return keys;
     };
     if (how == piece_pick::only_one) {
@@ -3356,7 +3356,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
             found = unique_piece(value, (int)pieces.size(),
                 [&](int i) { return (int)pieces[(size_t)i].summary.width; },
                 [&](int i) { return (int)pieces[(size_t)i].summary.height; },
-                [&](int i, int row, int col) { return (int)pieces[(size_t)i].cells[row][col]; });
+                [&](int i, int row, int col) { return (int)pieces[(size_t)i].data[row][col]; });
         if (found >= 0) picked[(size_t)found] = true;
         return picked;
     }
@@ -3386,7 +3386,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
             picked[i] = paints_at_least(piece.summary.height, piece.summary.width, [&](int row, int col) {
-                return piece.cells[row][col] != (int8_t)TRANSPARENT; }, value);
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }, value);
         }
         return picked;
     }
@@ -3405,7 +3405,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
             picked[i] = object_hole_count(piece.summary.height, piece.summary.width, [&](int row, int col) {
-                return piece.cells[row][col] != (int8_t)TRANSPARENT; }) == value;
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }) == value;
         }
         return picked;
     }
@@ -3600,7 +3600,7 @@ struct replay_facts {
                     vector<uint32_t> keys;
                     for (const object& piece : cut)
                         keys.push_back(key_of_shape(piece.summary.width, piece.summary.height,
-                                                    [&](int row, int col) { return (int)piece.cells[row][col]; }, free));
+                                                    [&](int row, int col) { return (int)piece.data[row][col]; }, free));
                     for (size_t i = 0; i < cut.size(); ++i)
                         for (size_t j = i + 1; j < cut.size(); ++j)
                             if (keys[i] == keys[j] && (cut[i].summary.width != cut[j].summary.width ||
@@ -4036,9 +4036,9 @@ struct picks_on_hand {
 // Whether two pieces draw the same thing: the same cells in the same colors,
 // wherever each lies.
 inline bool same_drawing(const object& one, const object& other) {
-    return same_shape(one.summary.width, one.summary.height, [&](int row, int col) { return (int)one.cells[row][col]; },
+    return same_shape(one.summary.width, one.summary.height, [&](int row, int col) { return (int)one.data[row][col]; },
                       other.summary.width, other.summary.height,
-                      [&](int row, int col) { return (int)other.cells[row][col]; }, DRAWING);
+                      [&](int row, int col) { return (int)other.data[row][col]; }, DRAWING);
 }
 
 // WHETHER A CANVAS SHOWS WHAT IT FRAMES: all of `drawing`, or the corner of it
@@ -4153,13 +4153,13 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
         const object& piece = *kept[i];
         grid drawing(piece.summary.width, piece.summary.height);
         for (int row = 0; row < piece.summary.height; ++row)
-            for (int col = 0; col < piece.summary.width; ++col) drawing.data[row][col] = piece.cells[row][col];
+            for (int col = 0; col < piece.summary.width; ++col) drawing.data[row][col] = piece.data[row][col];
         if (!shows_what_it_frames(drawing, cell_height, cell_width)) return false;
         const int top = row_band[i] * cell_height, left = col_band[i] * cell_width;
         for (int row = 0; row < cell_height && row < piece.summary.height; ++row)
             for (int col = 0; col < cell_width && col < piece.summary.width; ++col) {
                 const int at_row = top + row, at_col = left + col;
-                const int8_t color = piece.cells[row][col];
+                const int8_t color = piece.data[row][col];
                 if (at_row < paper_height && at_col < paper_width && color != (int8_t)TRANSPARENT)
                     paper.data[at_row][at_col] = color;
             }
@@ -5315,14 +5315,14 @@ inline object outlined(const object& piece) {
     object rim = piece;
     auto occupied = [&](int row, int col) {
         return row >= 0 && col >= 0 && row < piece.summary.height && col < piece.summary.width &&
-               piece.cells[row][col] != (int8_t)TRANSPARENT;
+               piece.data[row][col] != (int8_t)TRANSPARENT;
     };
     rim.summary.count = 0;
     for (int row = 0; row < piece.summary.height; ++row)
         for (int col = 0; col < piece.summary.width; ++col) {
             if (!occupied(row, col)) continue;
             if (on_object_edge(row, col, occupied)) ++rim.summary.count;
-            else rim.cells[row][col] = (int8_t)TRANSPARENT;
+            else rim.data[row][col] = (int8_t)TRANSPARENT;
         }
     return rim;
 }
@@ -5335,7 +5335,7 @@ inline optional<replayed> outline_holds(const replay_facts& facts, const vector<
         const object& piece = cut.pieces[i];
         return on_object_edge(row - piece.summary.row, col - piece.summary.col, [&](int down, int across) {
             return down >= 0 && across >= 0 && down < piece.summary.height && across < piece.summary.width &&
-                   piece.cells[down][across] != (int8_t)TRANSPARENT;
+                   piece.data[down][across] != (int8_t)TRANSPARENT;
         });
     });
 }
@@ -5347,11 +5347,11 @@ inline object posed(const object& piece, int pose) {
     const auto [width, height] = posed_size(pose, piece.summary.width, piece.summary.height);
     turned.summary.width = (int8_t)width;
     turned.summary.height = (int8_t)height;
-    turned.cells.clear();
+    turned.data.clear();
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
             const auto [from_row, from_col] = pose_source(pose, piece.summary.width, piece.summary.height, row, col);
-            turned.cells[row][col] = piece.cells[from_row][from_col];
+            turned.data[row][col] = piece.data[from_row][from_col];
         }
     return turned;
 }
@@ -5529,7 +5529,7 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
                 if (source < 0) continue;
                 for (int other = 0; other < (down ? box.width : box.height); ++other) {
                     const int row = down ? at : box.row + other, col = down ? box.col + other : at;
-                    const int8_t color = down ? piece.cells[source][other] : piece.cells[other][source];
+                    const int8_t color = down ? piece.data[source][other] : piece.data[other][source];
                     if (color == (int8_t)TRANSPARENT || !output.contains(row, col)) continue;
                     if (!put(row, col, color)) return false;
                 }
@@ -5834,7 +5834,7 @@ inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<p
 template <class See>
 inline void each_hollow(const object& piece, See see) {
     const int height = piece.summary.height, width = piece.summary.width;
-    auto occupied = [&](int row, int col) { return piece.cells[row][col] != (int8_t)TRANSPARENT; };
+    auto occupied = [&](int row, int col) { return piece.data[row][col] != (int8_t)TRANSPARENT; };
     bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
     mark_outside(height, width, occupied, outside);
     for (int row = 0; row < height; ++row)
@@ -5975,7 +5975,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
                     if (cut.picked[i])
                         colors_from_its_shape(rule.value - COLORS_FROM_ITS_SHAPE, i, cut, [&](int row, int col, int color) {
                             object& piece = laid[(size_t)i];
-                            if (is_color(color)) piece.cells[row - piece.summary.row][col - piece.summary.col] = (int8_t)color;
+                            if (is_color(color)) piece.data[row - piece.summary.row][col - piece.summary.col] = (int8_t)color;
                         });
                 hand = std::move(laid);
                 break;
@@ -7493,12 +7493,12 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         for (size_t which = 0; which < as_one.cuts().size(); ++which) {
             const grid& picture = pictures[which];
             object piece;
-            piece.cells.clear();
+            piece.data.clear();
             int count = 0;
             for (int row = 0; row < picture.height; ++row)
                 for (int col = 0; col < picture.width; ++col)
                     if (picture.data[row][col] != (int8_t)TRANSPARENT) {
-                        piece.cells[row][col] = (int8_t)picture.data[row][col];
+                        piece.data[row][col] = (int8_t)picture.data[row][col];
                         ++count;
                     }
             piece.summary = { 0, 0, (int8_t)picture.width, (int8_t)picture.height, (int16_t)count };

@@ -1028,7 +1028,7 @@ private:
                         bool equal = true;
                         for (int r = 0; r < part.summary.height; ++r)
                             for (int c = 0; c < part.summary.width; ++c)
-                                if (part.cells[r][c] != whole.cells[r][c]) equal = false;
+                                if (part.data[r][c] != whole.data[r][c]) equal = false;
                         if (equal) info[i].instance_of = (int16_t)rep;
                     }
                 }

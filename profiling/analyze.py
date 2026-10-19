@@ -278,7 +278,7 @@ def build_area_breakdown(hotspots: list[tuple[str, float, float, int]]) -> list[
     area_patterns = [
         ("word_replay", ["_holds", "replay", "partner_pieces"]),
         ("matching", ["matching", "correspondence", "segmentation"]),
-        ("object_cells", ["arc::object::", "arc::object_cells::", "arc::pose_source"]),
+        ("object_cells", ["arc::object::", "arc::cells::", "arc::pose_source"]),
         ("dsl_emission", ["say_the_", "sentence", "spell"]),
         ("inference", ["infer", "read_figures", "read_the_cut", "finish_the_line", "carry_the_hand", "says_the_most"]),
         ("beam_search",     ["step", "generate_phase", "generate_binary",

@@ -287,13 +287,13 @@ private:
                 const int block_width  = min(step_width,  one_grid.width  - block_left);
                 const int block_height = min(step_height, one_grid.height - block_top);
                 object piece;
-                piece.cells.clear();  // every cell TRANSPARENT until the block claims it
+                piece.data.clear();  // every cell TRANSPARENT until the block claims it
                 int lit = 0;
                 for (int row = 0; row < block_height; ++row)
                     for (int col = 0; col < block_width; ++col) {
                         const int color = one_grid.data[block_top + row][block_left + col];
                         const bool is_colored = is_color(color);
-                        if (is_colored) piece.cells[row][col] = (int8_t)color;
+                        if (is_colored) piece.data[row][col] = (int8_t)color;
                         lit += is_colored;
                     }
                 if (!lit) continue;
@@ -325,11 +325,11 @@ private:
     // Its shape at any size, any way round.
     static uint32_t scaled_shape_of(const object& one) {
         return key_of_shape(one.summary.width, one.summary.height,
-                            [&](int row, int col) { return (int)one.cells[row][col]; }, { true, true });
+                            [&](int row, int col) { return (int)one.data[row][col]; }, { true, true });
     }
     static uint32_t shape_of(const object& one) {
         return key_of_shape(one.summary.width, one.summary.height,
-                            [&](int row, int col) { return (int)one.cells[row][col]; }, ANY_WAY_ROUND);
+                            [&](int row, int col) { return (int)one.data[row][col]; }, ANY_WAY_ROUND);
     }
 
     // Counts differing cells when two objects are aligned at their top-left corners.

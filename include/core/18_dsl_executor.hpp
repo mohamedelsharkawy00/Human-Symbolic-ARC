@@ -28,7 +28,7 @@ namespace arc {
 		data.input_dims[ei * 2 + 0] = (int8_t)init_ctx->input.width;
 		data.input_dims[ei * 2 + 1] = (int8_t)init_ctx->input.height;
 
-		gpu_packed_mask& tg = data.target_grids[ei];
+		cells& tg = data.target_grids[ei];
 		tg.clear();
 		for (int r = 0; r < ex.output.height; ++r)
 			for (int c = 0; c < ex.output.width; ++c)

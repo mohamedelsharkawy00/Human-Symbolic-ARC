@@ -107,8 +107,8 @@ ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count)
              (int16_t)count };
 }
 
-// MSVC C4324: the device only grabs memory 4 bytes at a time, so object_cells
-// has to start where the 4s start. Lining it up leaves 2 bytes empty. The
+// MSVC C4324: the device only grabs memory 4 bytes at a time, so an object's
+// cells have to start where the 4s start. Lining it up leaves 2 bytes empty. The
 // compiler says "you left 2 empty". We say "yes, on purpose".
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -117,7 +117,7 @@ ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count)
 struct object {
     object_summary summary;
     // Stored relative to the box's top-left.
-    object_cells cells;
+    cells data;
 
     // Build from the grid-cell indices returned by each_object.
     // Cells outside the group stay transparent, including holes in its box.
@@ -125,10 +125,10 @@ struct object {
                              const int16_t* indices, int count) {
         object made;
         made.summary = box;
-        made.cells.clear();
+        made.data.clear();
         for (int i = 0; i < count; ++i) {
             const int row = cell_row(indices[i]), col = cell_col(indices[i]);
-            made.cells[row - box.row][col - box.col] = (int8_t)source.data[row][col];
+            made.data[row - box.row][col - box.col] = (int8_t)source.data[row][col];
         }
         return made;
     }
@@ -140,7 +140,7 @@ struct object {
         const int local_col = col - summary.col;
         if (local_row < 0 || local_row >= summary.height ||
             local_col < 0 || local_col >= summary.width) return (int8_t)TRANSPARENT;
-        return cells[local_row][local_col];
+        return data[local_row][local_col];
     }
 
     ARC_HOST_DEVICE bool holds(int row, int col) const {
@@ -153,7 +153,7 @@ struct object {
     ARC_HOST_DEVICE int8_t first_color() const {
         for (int row = 0; row < summary.height; ++row)
             for (int col = 0; col < summary.width; ++col)
-                if (cells[row][col] != (int8_t)TRANSPARENT) return cells[row][col];
+                if (data[row][col] != (int8_t)TRANSPARENT) return data[row][col];
         return (int8_t)TRANSPARENT;
     }
 
@@ -163,7 +163,7 @@ struct object {
     void each_cell(See see) const {
         for (int row = 0; row < summary.height; ++row)
             for (int col = 0; col < summary.width; ++col) {
-                const int8_t color = cells[row][col];
+                const int8_t color = data[row][col];
                 if (color != TRANSPARENT) see(summary.row + row, summary.col + col, color);
             }
     }
@@ -181,7 +181,7 @@ struct object {
     void repaint(ColorOf color_of) {
         for (int row = 0; row < summary.height; ++row)
             for (int col = 0; col < summary.width; ++col)
-                if (cells[row][col] != (int8_t)TRANSPARENT) cells[row][col] = (int8_t)color_of((int8_t)cells[row][col]);
+                if (data[row][col] != (int8_t)TRANSPARENT) data[row][col] = (int8_t)color_of((int8_t)data[row][col]);
     }
 
     // The object on its own, as a grid just big enough to hold it: its own
@@ -193,7 +193,7 @@ struct object {
         grid out(summary.width, summary.height);
         for (int row = 0; row < summary.height; ++row)
             for (int col = 0; col < summary.width; ++col)
-                out.data[row][col] = cells[row][col];
+                out.data[row][col] = data[row][col];
         return out;
     }
 };
