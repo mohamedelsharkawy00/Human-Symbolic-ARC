@@ -135,7 +135,7 @@ sessions. **Do not re-attempt any of these without new evidence.** Grouped by ca
 ### B. Memory traffic / data placement (kernel is already cache-warm: L1 86%, DRAM 9%)
 9. ❌ **Read `distance_maps` from template instead of per-job copy** (cut 18MB/launch) — **WORSE (~127K)**: the per-job copy was warming L1; shared read is colder. Counterintuitive but firm.
 10. ❌ **Stage output grid in `__shared__` (sgrid)** for the scorer's repeated reads — grid already 86% L1-hot; byte-addressed shared → bank conflicts. Neutral.
-11. ❌ **Un-pack the 4-bit mask** (kill the PRMT nibble-decode tax) — prior session: inflates registers/context → worse occupancy. Decode tax << occupancy cost. KEEP packing.
+11. ❌ **Un-pack the 4-bit mask** (kill the PRMT nibble-decode tax) — prior session: inflates registers/context → worse occupancy. Decode tax << occupancy cost. KEEP packing. (Unpacked anyway 2026-10-19, the user's call: Solver Optimization Handoff 2026-06-04.md, section 5.)
 12. ⚠️ **"Touch less VRAM / shrink working set"** — DEAD as a concept here: DRAM 9%, L2 99.5% hit. We are NOT bandwidth-bound. Don't pursue smaller-context-for-L2 ideas.
 
 ### C. Algorithm-level (the hotspots)

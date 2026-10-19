@@ -134,11 +134,6 @@ static constexpr float GPU_SCORE_W_POSITION_MATCH = 80.0f;
 
 // `selected` lives before `mask` so gpu_warp_copy_header (which copies
 // everything ahead of the mask) carries it.
-// MSVC C4324: intentional padding; see arc::cells in 0_core.hpp.
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
 struct gpu_fixed_object {
     int16_t x0 = 0, y0 = 0;
     int16_t x1 = 0, y1 = 0;
@@ -152,9 +147,6 @@ struct gpu_fixed_object {
         mask.clear();
     }
 };
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 struct gpu_flat_op {
     node_type type;
@@ -165,9 +157,9 @@ struct gpu_flat_op {
 // GPU-side execution types (reduced limits for VRAM)
 // =====================================================================
 
-// The per-job gpu_exec_context is dominated by pool[POOL_SIZE] *
-// gpu_object_list(MAX_OBJECTS * 912B): with a list as long as a grid has cells
-// (MAX_OBJECTS_IN_A_LIST), about 0.8 MB a list.
+// The per-job gpu_exec_context is dominated by pool[POOL_SIZE] gpu_object_lists:
+// with a list as long as a grid has cells (MAX_OBJECTS_IN_A_LIST), about 0.8 MB
+// a list.
 //
 // POOL_SIZE must cover the object-lists that are LIVE AT ONCE, which is two --
 // the list an op reads and the list it writes -- not the number a program
@@ -221,7 +213,7 @@ inline ARC_HOST_DEVICE uint32_t gpu_shape_key_of_paint(const gpu_fixed_object& o
     });
 }
 
-// The packed grid used by the CUDA path is the same type used by inference.
+// The grid used by the CUDA path is the same type used by inference.
 using gpu_fixed_grid = arc::grid;
 
 // --- What the DSL thinks the pieces of a grid are, read back to the CPU ---
@@ -257,7 +249,6 @@ void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
 #endif
 
 // Per-job execution context living in device global memory.
-// ~2MB per job with current limits.
 struct gpu_exec_context {
     gpu_fixed_grid input;
     gpu_fixed_grid output;
@@ -313,9 +304,9 @@ struct gpu_exec_context {
     int16_t grow_scratch[3][GPU_GRID_CELLS];
     uint8_t grow_ways[GPU_GRID_CELLS];
 };
-// Ops overlay a packed mask on op_scratch, so it must have room for one.
+// Ops overlay a mask on op_scratch, so it must have room for one.
 static_assert(sizeof(gpu_exec_context::op_scratch) >= sizeof(arc::cells),
-              "op_scratch must hold a packed mask");
+              "op_scratch must hold a mask");
 
 // Per-example data uploaded once per puzzle (not per batch).
 static constexpr int MAX_UPLOAD_EXAMPLES = 16;

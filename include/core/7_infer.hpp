@@ -444,15 +444,13 @@ struct partner_pieces {
     // again as it was is no work (paint_holds). Drawn the first time a replay
     // asks and kept, for every length and lay a word is asked with: neither the
     // pieces, the pick nor their grid change under it.
-    struct drawing { int8_t at[MAX_GRID_DIM][MAX_GRID_DIM]; };
-    const drawing& shown(int width, int height) const {
+    const cells& shown(int width, int height) const {
         if (!shown_once) {
-            auto made = std::make_shared<drawing>();
-            for (auto& row : made->at) ranges::fill(row, (int8_t)TRANSPARENT);
+            auto made = std::make_shared<cells>();
             for (size_t i = 0; i < pieces.size(); ++i)
                 if (picked[i])
                     pieces[i].each_cell([&](int row, int col, int8_t color) {
-                        if (row >= 0 && col >= 0 && row < height && col < width) made->at[row][col] = color;
+                        if (row >= 0 && col >= 0 && row < height && col < width) (*made)[row][col] = color;
                     });
             shown_once = std::move(made);
         }
@@ -561,7 +559,7 @@ struct partner_pieces {
     // What shown, ray_seeds and key_piece keep, shared by a copy of the cut.
     struct key_drawing { int16_t at[MAX_GRID_DIM][MAX_GRID_DIM]; };
     static constexpr int16_t NOT_ASKED = -2;
-    mutable std::shared_ptr<const drawing> shown_once;
+    mutable std::shared_ptr<const cells> shown_once;
     mutable std::shared_ptr<const vector<ray_seed>> seeds_once;
     mutable std::shared_ptr<key_drawing> keys_once;
 };
@@ -930,13 +928,6 @@ bool redraws_every_output(const vector<example>& train, Draw draw) {
     return true;
 }
 
-// A grid that size with nothing on it yet.
-inline grid empty_grid(int width, int height) {
-    grid made(width, height);
-    made.fill(TRANSPARENT);
-    return made;
-}
-
 // Paint at an absolute grid position. Transparent cells leave the canvas alone.
 // Laid under rather than over, as Underlay lays it, a cell only fills what
 // nothing has painted yet. Unless clipping is requested, false means some paint
@@ -986,7 +977,7 @@ bool draw_on_canvas(const grid& input, const output_dimension_rule& size, grid& 
     const bool closes = size.Chosen == output_dimension_rule::BoundingBox;
     int width = MAX_GRID_DIM, height = MAX_GRID_DIM;
     if (!size.canvas_size_for(input.width, input.height, width, height)) return false;
-    grid canvas = empty_grid(width, height);
+    grid canvas(width, height);
     if (!paint(canvas)) return false;
     const cell_box kept = fit_frame((int)(closes ? fit_to::painted : fit_to::canvas), input.width, input.height, canvas);
     if (kept.empty()) return false;
@@ -1100,7 +1091,7 @@ struct ray_extension_rule {
         bool drew = false;
         each_object(layer, TRANSPARENT, grouping::touching_same_color, scratch,
                     [&](const object_summary& box, const int16_t* cells, int count) {
-            grid object = empty_grid(box.width, box.height);
+            grid object(box.width, box.height);
             for (int i = 0; i < count; ++i) {
                 const int row = cell_row(cells[i]), col = cell_col(cells[i]);
                 object.data[row - box.row][col - box.col] = color;
@@ -2142,7 +2133,7 @@ struct piece_slam_rule {
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
             return redraws_every_output(train, [&](const example& pair, grid& drawn) {
                 const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
-                drawn = empty_grid(pair.output.width, pair.output.height);
+                drawn = grid(pair.output.width, pair.output.height);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
                     bool collision = false;
@@ -2261,7 +2252,7 @@ struct overlap_corner_rule {
             // Tied corners leave the order to the op's list, which we can't see.
             for (size_t i = 1; i < chain.size(); ++i)
                 if (same_corner(chain[i]->summary, chain[i - 1]->summary)) return false;
-            drawn = empty_grid(pair.output.width, pair.output.height);
+            drawn = grid(pair.output.width, pair.output.height);
             // The head of the chain sits in the corner; each piece after it puts
             // its top-left on the last one's bottom-right and paints over it,
             // which is the paint order the closing Union gives them for free.
@@ -2340,7 +2331,7 @@ struct slide_to_touch_rule {
                 object_segmentation::segment_for_correspondence(pair.input,
                                                                 correspondence.segmentation, info, &pieces,
                                                                 0, 0, tiles.of(pair));
-                drawn = empty_grid(pair.output.width, pair.output.height);
+                drawn = grid(pair.output.width, pair.output.height);
                 // WHAT THE OP SEES OF THE CANVAS is the box around everything
                 // already painted, read once, before the first piece slides --
                 // so what slides is measured against the pieces that stay, and
@@ -2666,7 +2657,7 @@ struct project_on_seeds_rule {
         int8_t worn = TRANSPARENT;
         bool one_color = true;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            drawn = empty_grid(pair.input.width, pair.input.height);
+            drawn = grid(pair.input.width, pair.input.height);
             pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                 drawn.data[row][col] = (int8_t)color;
             });
@@ -2735,7 +2726,7 @@ struct bridge_rule {
                     // One list is all the op is handed, and the bars take one place
                     // more in it, all of them one drawing.
                     if (pieces.empty() || pieces.size() >= MAX_OBJECTS_IN_A_LIST) return false;
-                    drawn = empty_grid(pair.output.width, pair.output.height);
+                    drawn = grid(pair.output.width, pair.output.height);
                     bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                     for (const object& piece : pieces)
                         piece.each_cell([&](int row, int col, int8_t color) {
@@ -2807,10 +2798,10 @@ struct mark_lattice_rule {
         const int period = mark_lattice_period((int)marks.size(),
                                                [&](int i) { return (int)top(marks[i]); });
         if (period <= 0) return false;
-        drawn = empty_grid(input.width, input.height);
+        drawn = grid(input.width, input.height);
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
-        auto at = [&](int row, int col) {
+        auto at = [&](int row, int col) -> int8_t& {
             return turned ? drawn.data[col][row] : drawn.data[row][col];
         };
         for (const object& mark : marks)
@@ -2894,7 +2885,7 @@ struct interior_fill_rule {
         interior_fill_rule rule;
         bool changed = false;
         const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-            drawn = empty_grid(pair.input.width, pair.input.height);
+            drawn = grid(pair.input.width, pair.input.height);
             object_walk_scratch scratch;
             bool consistent = true;
             int pieces = 0;
@@ -2962,7 +2953,7 @@ struct ranked_layout_rule {
             if (common >= 0) removed[common] = true;
         }
 
-        grid remaining = empty_grid(pair.input.width, pair.input.height);
+        grid remaining(pair.input.width, pair.input.height);
         for (int row = 0; row < pair.input.height; ++row)
             for (int col = 0; col < pair.input.width; ++col) {
                 const int color = pair.input.data[row][col];
@@ -2991,7 +2982,6 @@ struct ranked_layout_rule {
 
         object arranged;
         arranged.summary = {0, 0, (int8_t)width, (int8_t)height, 0};
-        arranged.data.clear();
         for (int i = 0; i < (int)pieces.size(); ++i) {
             const object& piece = pieces[i];
             const int top = row_of[i] * cell_size;
@@ -3007,7 +2997,7 @@ struct ranked_layout_rule {
 
         const int reduced_width = max((width + cell_size - 1) / cell_size, 1);
         const int reduced_height = max((height + cell_size - 1) / cell_size, 1);
-        grid painted = empty_grid(MAX_GRID_DIM, MAX_GRID_DIM);
+        grid painted(MAX_GRID_DIM, MAX_GRID_DIM);
         for (int row = 0; row < reduced_height; ++row)
             for (int col = 0; col < reduced_width; ++col)
                 painted.data[row][col] = majority_vote(arranged.data, row, col, cell_size, height, width);
@@ -4105,7 +4095,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
     }
     several = taken > 1;
     if (taken == 0 || size_pick_ties(pieces, pick, one)) return false;
-    grid drawing = empty_grid(box.width(), box.height());
+    grid drawing(box.width(), box.height());
     for (size_t i = 0; i < pieces.size(); ++i)
         if (picked[i])
             pieces[i].each_cell([&](int row, int col, int8_t color) {
@@ -4148,7 +4138,7 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
     const int rows = bands_of(count, true, kept_box, row_band.data());
     const int cols = bands_of(count, false, kept_box, col_band.data());
     const int paper_width = min(cols * cell_width, MAX_GRID_DIM), paper_height = min(rows * cell_height, MAX_GRID_DIM);
-    grid paper = empty_grid(paper_width, paper_height);
+    grid paper(paper_width, paper_height);
     for (int i = 0; i < count; ++i) {
         const object& piece = *kept[i];
         grid drawing(piece.summary.width, piece.summary.height);
@@ -4482,19 +4472,14 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
 }
 
 // WHAT IS DOWN, pair by pair, where a paint lands: the color each cell shows
-// already, TRANSPARENT where nothing is.
-struct cells_down {
-    int8_t at[MAX_GRID_DIM][MAX_GRID_DIM];
-    cells_down() { for (auto& row : at) ranges::fill(row, (int8_t)TRANSPARENT); }
-};
-
-// The pieces `facts` hands over, where they lie, as what is down.
-inline vector<cells_down> pieces_down(const replay_facts& facts) {
-    vector<cells_down> down(facts.cuts().size());
+// already, TRANSPARENT where nothing is -- here the pieces `facts` hands over,
+// where they lie.
+inline vector<cells> pieces_down(const replay_facts& facts) {
+    vector<cells> down(facts.cuts().size());
     for (size_t which = 0; which < facts.cuts().size(); ++which)
         for (const object& piece : facts.cuts()[which])
             piece.each_cell([&](int row, int col, int8_t color) {
-                if (facts.train[which].input.contains(row, col)) down[which].at[row][col] = color;
+                if (facts.train[which].input.contains(row, col)) down[which][row][col] = color;
             });
     return down;
 }
@@ -4520,7 +4505,7 @@ inline bool lands(int8_t lay, int8_t down) {
 // colors it draws where the output agrees, and else in one.
 struct laying {
     int8_t lay = correspondence_election::fired_rule::laid_over;
-    const vector<cells_down>* canvas = nullptr;
+    const vector<cells>* canvas = nullptr;
     enum colors : int8_t { as_drawn, in_one, own_else_one } in = as_drawn;
 };
 
@@ -4601,9 +4586,9 @@ struct marked_paint {
 // What a paint laid `how` reads where it lands on pair `which`: nothing, laid
 // over what is down, where it lands everywhere; else its canvas's pair, and
 // nothing down where there is no canvas.
-inline const cells_down* landing_on(const laying& how, size_t which) {
+inline const cells* landing_on(const laying& how, size_t which) {
     using rule = correspondence_election::fired_rule;
-    static const cells_down nothing_down;
+    static const cells nothing_down;
     return how.lay == rule::laid_over ? nullptr : how.canvas ? &(*how.canvas)[which] : &nothing_down;
 }
 
@@ -4616,10 +4601,10 @@ inline const cells_down* landing_on(const laying& how, size_t which) {
 template <class See>
 inline void each_landing(const paint_walk& walk, size_t which, const laying& how, See see) {
     using rule = correspondence_election::fired_rule;
-    const cells_down* down = landing_on(how, which);
+    const cells* down = landing_on(how, which);
     const bool first_wins = how.lay == rule::laid_under;
     for (const paint_walk::cell& cell : walk.pairs[which])
-        if (!down || lands(how.lay, down->at[cell.row][cell.col]))
+        if (!down || lands(how.lay, (*down)[cell.row][cell.col]))
             see(cell, first_wins ? cell.first : cell.last, !first_wins && cell.torn);
 }
 
@@ -4700,14 +4685,14 @@ struct walk_tally {
     };
     vector<of_pair> pairs;
 };
-inline walk_tally tally_walk(const replay_facts& facts, const paint_walk& walk, const vector<cells_down>& canvas) {
+inline walk_tally tally_walk(const replay_facts& facts, const paint_walk& walk, const vector<cells>& canvas) {
     walk_tally tally;
     tally.pairs.resize(walk.pairs.size());
     for (size_t which = 0; which < walk.pairs.size(); ++which) {
         walk_tally::of_pair& counted = tally.pairs[which];
         const grid& output = facts.train[which].output;
         for (const paint_walk::cell& cell : walk.pairs[which]) {
-            const int8_t down = which < canvas.size() ? canvas[which].at[cell.row][cell.col] : (int8_t)TRANSPARENT;
+            const int8_t down = which < canvas.size() ? canvas[which][cell.row][cell.col] : (int8_t)TRANSPARENT;
             const int at = down == (int8_t)TRANSPARENT ? 0 : 1 + down;
             const int shows = output.data[cell.row][cell.col];
             ++counted.cells[at];
@@ -4802,7 +4787,7 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
         walk.every_piece = walk.every_piece && cut.every_piece_picked();
         // What the picked pieces show, where they lie: drawn again as it is, a
         // cell of them is no work.
-        const auto& before = cut.shown(pair.input.width, pair.input.height).at;
+        const auto& before = cut.shown(pair.input.width, pair.input.height);
         // Each cell's place in the walk, -1 for none yet: every cell, since a
         // piece the words moved may lay one past the grid's edge.
         int16_t index[MAX_GRID_DIM][MAX_GRID_DIM];
@@ -4810,8 +4795,8 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
         auto& cells = walk.pairs[which];
         // Laid only one way, what is down where it lands (landing_on); laid
         // under, its own cells go down as they land, on a copy of its own.
-        optional<cells_down> under;
-        const cells_down* down = only ? landing_on(*only, which) : nullptr;
+        optional<arc::cells> under;
+        const arc::cells* down = only ? landing_on(*only, which) : nullptr;
         if (only && only->lay == rule::laid_under) {
             under.emplace(*down);
             down = &*under;
@@ -4830,9 +4815,9 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
                 cell.torn = cell.torn || cell.last != color;
                 cell.last = color;
             }
-            if (!only || (down && !lands(only->lay, down->at[row][col]))) return holds;
+            if (!only || (down && !lands(only->lay, (*down)[row][col]))) return holds;
             // Under what is down, its own cell is down now: something, whatever its color.
-            if (under) under->at[row][col] = is_color(color) ? color : (int8_t)0;
+            if (under) (*under)[row][col] = is_color(color) ? color : (int8_t)0;
             const int8_t shows = (int8_t)pair.output.data[row][col];
             if (exact) {
                 if (only->in == laying::as_drawn) holds = shows == color;
@@ -5042,7 +5027,7 @@ inline optional<replayed> size_rank_holds(const replay_facts& facts, const color
             const grid& input = ranked.train[which].input;
             vector<object> split;
             for (const object& piece : ranked.cuts()[which]) {
-                grid layer = empty_grid(input.width, input.height);
+                grid layer(input.width, input.height);
                 paint_piece(layer, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
                 object_walk_scratch scratch;
                 each_object(layer, -1, grouping::touching_any_color, scratch,
@@ -5088,7 +5073,7 @@ inline bool slides_show(const example& pair, const partner_pieces& cut, bool und
                         const vector<int>& down, const vector<int>& across, pair_tally& tally,
                         vector<std::pair<int, int>>& left, vector<std::pair<int, int>>& landed,
                         vector<cell_color>& wrong, int& pieces_moved) {
-    grid drawn = empty_grid(pair.output.width, pair.output.height), was = drawn;
+    grid drawn(pair.output.width, pair.output.height), was = drawn;
     if (!draw_the_hand(drawn, cut.pieces, under, /*clip=*/false,
                        [&](size_t i) { return direction_step{ down[i], across[i] }; }))
         return false;
@@ -5598,7 +5583,7 @@ inline optional<ray_fan> rays_fan(const replay_facts& facts, const vector<partne
         const example& pair = facts.train[which];
         const partner_pieces& cut = handed[which];
         fan.every_piece = fan.every_piece && cut.every_piece_picked();
-        const auto& before = cut.shown(pair.input.width, pair.input.height).at;
+        const auto& before = cut.shown(pair.input.width, pair.input.height);
         // How far along the nearest ray reaches each cell, 0 where none does.
         int8_t nearest[MAX_GRID_DIM][MAX_GRID_DIM] = {};
         each_ray_cell(facts, which, cut, diagonal, reach, [&](int row, int col, int along) {
@@ -5647,11 +5632,11 @@ inline vector<optional<marked_paint>> lay_every_length(const replay_facts& facts
             const ray_fan::of_pair& fanned = fan.pairs[which];
             if ((size_t)length + 1 >= fanned.starts.size()) continue;
             const grid& output = facts.train[which].output;
-            const cells_down* down = landing_on(how, which);
+            const cells* down = landing_on(how, which);
             landed_so_far& so_far = landed[which];
             for (int at = fanned.starts[(size_t)length]; at < fanned.starts[(size_t)length + 1]; ++at) {
                 const ray_fan::cell& cell = fanned.cells[(size_t)at];
-                if (down && !lands(how.lay, down->at[cell.row][cell.col])) continue;
+                if (down && !lands(how.lay, (*down)[cell.row][cell.col])) continue;
                 ++so_far.cells;
                 const int shows = output.data[cell.row][cell.col];
                 if (!is_color(shows)) continue;
@@ -5708,8 +5693,7 @@ inline optional<replayed> turned_holds(const replay_facts& facts, const vector<p
         for (int i = 0; i < cut.count(); ++i)
             if (cut.picked[i]) figure.include(cut.boxes[i]);
         if (figure.empty()) return false;
-        int8_t copy[MAX_GRID_DIM][MAX_GRID_DIM];
-        for (auto& row : copy) ranges::fill(row, (int8_t)TRANSPARENT);
+        cells copy;
         for (int i = 0; i < cut.count(); ++i)
             if (cut.picked[i])
                 cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
@@ -5753,7 +5737,7 @@ inline optional<replayed> symmetric_holds(const replay_facts& facts, const vecto
     return paint_holds(facts, handed, {}, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         if (cut.count() != 1) return false;
-        grid drawn = empty_grid(output.width, output.height);
+        grid drawn(output.width, output.height);
         cut.pieces[0].each_cell([&](int row, int col, int8_t color) {
             if (drawn.contains(row, col)) drawn.data[row][col] = color;
         });
@@ -5761,7 +5745,7 @@ inline optional<replayed> symmetric_holds(const replay_facts& facts, const vecto
             if (pose < 0) break;
             const auto [width, height] = posed_size(pose, output.width, output.height);
             if (width != output.width || height != output.height) return false;
-            grid layer = empty_grid(width, height);
+            grid layer(width, height);
             for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col) {
                     const auto [from_row, from_col] = pose_source(pose, output.width, output.height, row, col);
@@ -5782,7 +5766,7 @@ inline optional<replayed> symmetric_holds(const replay_facts& facts, const vecto
 // piece's box in its one color -- laid under what is down (paint_holds), so it
 // fills only what the piece and every paint before it leave empty.
 inline optional<replayed> box_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                    const vector<cells_down>& canvas) {
+                                    const vector<cells>& canvas) {
     using rule = correspondence_election::fired_rule;
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::in_one },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
@@ -5807,7 +5791,7 @@ inline optional<replayed> box_holds(const replay_facts& facts, const vector<part
 // said no wider than the pairs show it (833966f4's column of cells, where the
 // top one ran straight down to the 6 in every pair, a coincidence).
 inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                       const vector<cells_down>& canvas, int way) {
+                                       const vector<cells>& canvas, int way) {
     using rule = correspondence_election::fired_rule;
     bool turned = false;
     auto seen = paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
@@ -5847,7 +5831,7 @@ inline void each_hollow(const object& piece, See see) {
 // marker sitting in a hollow keeps its own -- in each piece's own color, or all
 // of them in one.
 inline optional<replayed> fill_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                     const vector<cells_down>& canvas) {
+                                     const vector<cells>& canvas) {
     using rule = correspondence_election::fired_rule;
     return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
@@ -5896,7 +5880,7 @@ inline optional<replayed> inside_holds(const replay_facts& facts, const vector<p
 // Sees the cells it fills and how many pieces it filled.
 inline optional<replayed> interior_fills_hold(const replay_facts& facts, const shape_color_map_rule& table) {
     using rule = correspondence_election::fired_rule;
-    const vector<cells_down> hand = pieces_down(facts);
+    const vector<cells> hand = pieces_down(facts);
     int pieces_filled = 0;
     auto seen = paint_holds(facts, handed_pieces(facts, piece_pick::all()), { rule::laid_under, &hand },
                        [&](size_t, const partner_pieces& cut, auto&& put) {
@@ -6939,7 +6923,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // there. Laid under it or only onto it, a paint reads it, so those ways are
     // asked only where it is known; laid over it, a paint needs nothing of it.
     // Laid again before every word is asked, and counted each time it changes.
-    vector<cells_down> canvas(opened.cuts().size());
+    vector<cells> canvas(opened.cuts().size());
     // WHAT THE PAINTS SAID LAY, in the order said: each cell in what it laid
     // there, right or wrong.
     colors_by_pair painted(opened.cuts().size());
@@ -6958,7 +6942,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (!facts.hand_known || !facts.overlays) return;
         for (size_t which = 0; which < facts.cuts().size(); ++which) {
             const grid& output = facts.train[which].output;
-            grid drawn = empty_grid(output.width, output.height);
+            grid drawn(output.width, output.height);
             draw_the_hand(drawn, facts.cuts()[which], facts.laid_under, /*clip=*/true,
                           [](size_t) { return direction_step{ 0, 0 }; });
             line_drawn.push_back(std::move(drawn));
@@ -6970,24 +6954,24 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
     auto lay_the_canvas = [&] {
         draw_the_line();
-        vector<cells_down> now = pieces_down(still() ? opened : facts);
+        vector<cells> now = pieces_down(still() ? opened : facts);
         for (size_t which = 0; which < now.size() && which < line_drawn.size(); ++which)
             for (int row = 0; row < line_drawn[which].height; ++row)
                 for (int col = 0; col < line_drawn[which].width; ++col)
-                    if (now[which].at[row][col] != (int8_t)TRANSPARENT &&
+                    if (now[which][row][col] != (int8_t)TRANSPARENT &&
                         line_drawn[which].data[row][col] != TRANSPARENT)
-                        now[which].at[row][col] = (int8_t)line_drawn[which].data[row][col];
+                        now[which][row][col] = (int8_t)line_drawn[which].data[row][col];
         for (size_t which = 0; which < painted.size() && which < now.size(); ++which)
-            for (const cell_color& cell : painted[which]) now[which].at[cell.row][cell.col] = cell.color;
-        if (now.size() != canvas.size() || memcmp(now.data(), canvas.data(), now.size() * sizeof(cells_down)) != 0) {
+            for (const cell_color& cell : painted[which]) now[which][cell.row][cell.col] = cell.color;
+        if (now.size() != canvas.size() || memcmp(now.data(), canvas.data(), now.size() * sizeof(cells)) != 0) {
             // Laid under or onto anything, a paint reads only where something
             // is, so it is read again only where that changed.
             bool moved = now.size() != canvas.size();
             for (size_t which = 0; which < now.size() && !moved; ++which)
                 for (int row = 0; row < MAX_GRID_DIM && !moved; ++row)
                     for (int col = 0; col < MAX_GRID_DIM && !moved; ++col)
-                        moved = (now[which].at[row][col] != (int8_t)TRANSPARENT) !=
-                                (canvas[which].at[row][col] != (int8_t)TRANSPARENT);
+                        moved = (now[which][row][col] != (int8_t)TRANSPARENT) !=
+                                (canvas[which][row][col] != (int8_t)TRANSPARENT);
             occupancies += moved;
             canvas = std::move(now);
             ++canvases;
@@ -7025,8 +7009,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         ways.insert(ways.end(), { rule::laid_under, rule::laid_onto });
         if (line_drawn.size() != facts.train.size()) return ways;
         for (int color = 0; color < COLOR_COUNT; ++color)
-            if (ranges::all_of(canvas, [&](const cells_down& down) {
-                    return ranges::any_of(down.at, [&](const auto& row) { return ranges::find(row, (int8_t)color) != ranges::end(row); });
+            if (ranges::all_of(canvas, [&](const cells& down) {
+                    return ranges::find(down.values, (int8_t)color) != ranges::end(down.values);
                 }))
                 ways.insert(ways.end(), { (int8_t)(rule::laid_onto_color + color), (int8_t)(rule::laid_off_color + color) });
         return ways;
@@ -7493,7 +7477,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         for (size_t which = 0; which < as_one.cuts().size(); ++which) {
             const grid& picture = pictures[which];
             object piece;
-            piece.data.clear();
             int count = 0;
             for (int row = 0; row < picture.height; ++row)
                 for (int col = 0; col < picture.width; ++col)

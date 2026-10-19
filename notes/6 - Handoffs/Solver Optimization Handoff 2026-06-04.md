@@ -96,6 +96,10 @@ chunk's program op-types is what pinned it.
 ---
 
 ## 5. DEAD ENDS — measured, do NOT repeat (idx8, same-puzzle)
+- **2026-10-19: unpacked anyway (the user's call)**, one byte per cell on the GPU and the
+  CPU. Readouts identical on all 1000 training puzzles; the reading about 4% faster on the
+  5 slowest; peak memory +3%; the evaluator's spill stores 52.6 -> 108.4 KB at the same 80
+  registers. GPU checking is about 16 s of a 6,600 s inference run.
 - **Un-pack the mask** (remove 4-bit packing to kill the ~15% decode tax): would inflate
   registers/context → **worse occupancy** (the dominant lever). NCU `--set full` confirmed
   occupancy >> the decode tax. Don't.

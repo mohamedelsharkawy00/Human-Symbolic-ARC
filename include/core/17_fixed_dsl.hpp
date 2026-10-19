@@ -15,7 +15,7 @@
 namespace arc {
 
 // --- Fixed-size grid, no heap ---
-// The grid crosses to the device as the same packed type used by inference.
+// The grid crosses to the device as the same type used by inference.
 using fixed_grid = grid;
 using fixed_object = gpu_fixed_object;
 
@@ -92,7 +92,6 @@ static inline void fixed_segment_color_layers(const fixed_grid& g, fixed_object_
         obj.x0 = x0; obj.y0 = y0; obj.x1 = x1; obj.y1 = y1;
         obj.width = (int16_t)std::min((int)(x1 - x0 + 1), (int)GPU_MAX_GRID);
         obj.height = (int16_t)std::min((int)(y1 - y0 + 1), (int)GPU_MAX_GRID);
-        obj.mask.clear();
 
         for (int r = 0; r < g.height; ++r) {
             for (int c = 0; c < g.width; ++c) {
@@ -134,8 +133,8 @@ static inline void sort_objects_by_area_asc(fixed_object_list& list) {
 }
 
 // fixed_object_list (CPU) -> gpu_object_list (GPU kernel), both as long as a
-// grid has cells. Both sides hold their cells in the same packed bytes, so the
-// mask moves across as a plain copy -- into `dst` where it lies, since a list
+// grid has cells. Both sides hold their cells in the same bytes, so the mask
+// moves across as a plain copy -- into `dst` where it lies, since a list
 // that long is too big to hand back on the stack.
 static inline void to_gpu_object_list(const fixed_object_list& src, gpu_object_list& dst) {
     dst.count = std::min(src.count, GPU_KERNEL_MAX_OBJECTS);

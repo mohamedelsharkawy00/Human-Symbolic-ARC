@@ -80,33 +80,6 @@ __device__ int8_t gpu_get_pixel(const gpu_fixed_object& obj, int r, int c) {
     return obj.mask[r][c];
 }
 
-// Write one cell of a packed store from a lane that may be racing another lane
-// on the SAME BYTE. Two side-by-side cells share a byte, so the plain proxy
-// write is a read-modify-write that can lose the neighbour's nibble. The device
-// has no byte-wide atomic, so this compare-and-swaps the 32-bit word the byte
-// sits in; arc::cells is aligned and padded to keep that word inside the
-// store. Only for lane-striped painting -- serial code should use the proxy,
-// which costs nothing.
-//
-// This loop is what packing the canvas costs: one puzzle went 8.6 -> 9.0,
-// about 4.7% slower, measured 2026-09-09. Taken deliberately, for one cell
-// type across host and device instead of two and a conversion between them.
-// If it is ever wanted back, it is contained: only the union paint, the
-// overlay paint, the intersection clear and the canvas transpose call this.
-__device__ inline void gpu_paint_cell(arc::cells& m, int r, int c, int8_t value) {
-    const int index = r * GPU_MAX_GRID + c;
-    if (index < 0 || index >= arc::MAX_GRID_CELLS) return;
-    const int shift = arc::cells::shift_in_word(index);
-    unsigned int* word = reinterpret_cast<unsigned int*>(m.bytes) + index / arc::cells::CELLS_PER_BYTE / arc::cells::WORD_BYTES;
-    const unsigned int keep = ~((unsigned int)arc::cells::CELL_MASK << shift);
-    const unsigned int put = (unsigned int)arc::cells::enc(value) << shift;
-    unsigned int old = *word, assumed;
-    do {
-        assumed = old;
-        old = atomicCAS(word, assumed, (assumed & keep) | put);
-    } while (assumed != old);
-}
-
 __device__ int gpu_count_pixels(const gpu_fixed_object& obj) {
     int n = 0;
     GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) { (void)r; (void)c; (void)v; ++n; }
@@ -656,9 +629,7 @@ __device__ inline void gpu_each_picked_cell_warp(const gpu_exec_context& ctx, co
 // 3.6KB `covered[30][30]` local array. Here `covered` lives in per-job global
 // scratch (ctx.op_scratch, 900B, unused during ops); the 32 lanes stripe both
 // the mark phase (src pixels -> covered, all writes set 1 so conflicts benign)
-// and the clear phase (output cells). The canvas is packed, so two side-by-side
-// cells share a byte and the clear goes through gpu_paint_cell rather than the
-// plain proxy. Mirrors gpu_exec_union_warp.
+// and the clear phase (output cells). Mirrors gpu_exec_union_warp.
 __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
@@ -676,7 +647,7 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
     // Clear phase: drop canvas cells not covered by any src object.
     for (int p = lane; p < oh * ow; p += 32) {
         int r = p / ow, c = p - r * ow;
-        if (!covered[r * GPU_MAX_GRID + c]) gpu_paint_cell(ctx.output.data, r, c, GPU_TRANSPARENT);
+        if (!covered[r * GPU_MAX_GRID + c]) ctx.output.data[r][c] = GPU_TRANSPARENT;
     }
     __syncwarp();
 
@@ -690,17 +661,17 @@ __device__ void gpu_exec_intersection_warp(gpu_exec_context& ctx, int lane) {
 // overlapping objects resolve later-wins because the warp syncs after each one.
 // Without that sync, later-wins held only when both objects put the cell on the
 // same lane, which untrimmed full-grid frames happen to do; a trimmed dot and
-// the square around it put one cell on two lanes, and the CAS retry let the
-// earlier object land last (00dbd492 lost its markers under the fill). Union
-// must NOT collapse src into one object (that's UnionList); keeping src intact lets
-// a downstream per-object op still see each object. Mirrors gpu_exec_*_warp.
+// the square around it put one cell on two lanes, and either could land last
+// (00dbd492 lost its markers under the fill). Union must NOT collapse src into
+// one object (that's UnionList); keeping src intact lets a downstream
+// per-object op still see each object. Mirrors gpu_exec_*_warp.
 __device__ void gpu_exec_union_warp(gpu_exec_context& ctx, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
 
     const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     gpu_each_picked_cell_warp(ctx, *src, n, lane, [&](int r, int c, int8_t v) {
-        gpu_paint_cell(ctx.output.data, r, c, v);
+        ctx.output.data[r][c] = v;
     });
     gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
@@ -727,7 +698,7 @@ __device__ void gpu_exec_underlay_warp(gpu_exec_context& ctx, int lane) {
 
     const int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
     gpu_each_picked_cell_warp(ctx, *src, n, lane, [&](int r, int c, int8_t v) {
-        if (ctx.output.data[r][c] == GPU_TRANSPARENT) gpu_paint_cell(ctx.output.data, r, c, v);
+        if (ctx.output.data[r][c] == GPU_TRANSPARENT) ctx.output.data[r][c] = v;
     });
     gpu_warp_copy_objects(&gpu_acquire_and_publish(ctx), src, n, lane);
 }
@@ -806,16 +777,11 @@ __device__ void gpu_interior_paint_warp(const gpu_fixed_object& obj_src,
         __syncwarp();
     }
 
-    // Paint interior: transparent cells the flood never reached. ONE PACKED BYTE
-    // per lane (2 same-row cells) so the 4-bit packing has no shared-byte race —
-    // a lane-striped per-cell proxy write would clobber the neighbour nibble.
-    // Interior cell -> fill_value; every other cell keeps its copied source value.
-    for (int b = lane; b < (int)sizeof(out.mask.bytes); b += 32) {
-        int idx = arc::cells::first_cell_of_byte(b);
-        int r = idx / GPU_MAX_GRID, c = idx - r * GPU_MAX_GRID;   // c even => c,c+1 same row
-        int8_t v0 = (r < mh && c     < mw && !wall[r][c]     && !outside[r][c])     ? fill_value : (int8_t)obj_src.mask[r][c];
-        int8_t v1 = (r < mh && c + 1 < mw && !wall[r][c + 1] && !outside[r][c + 1]) ? fill_value : (int8_t)obj_src.mask[r][c + 1];
-        out.mask.bytes[b] = arc::cells::pair_byte(v0, v1);
+    // Paint interior: transparent cells the flood never reached take fill_value;
+    // every other cell keeps the source value copied above.
+    for (int p = lane; p < total; p += 32) {
+        int r = p / mw, c = p - r * mw;
+        if (!wall[r][c] && !outside[r][c]) out.mask[r][c] = fill_value;
     }
     __syncwarp();
 }
@@ -881,38 +847,24 @@ __device__ gpu_object_list& gpu_exec_recolor(gpu_exec_context& ctx, const gpu_ob
 // dims/anchor on lane 0. Ops that only touch headers or only masks can use
 // gpu_warp_copy_header / gpu_warp_fill_mask alone instead of the full skeleton.
 
-// Copy one object's header (everything before the packed mask: anchor, dims).
+// Copy one object's header (everything before the mask: anchor, dims).
 __device__ inline void gpu_warp_copy_header(const gpu_fixed_object& sobj, gpu_fixed_object& dobj, int lane) {
-    constexpr int meta_bytes = (int)sizeof(gpu_fixed_object) - (int)sizeof(arc::cells);
-    // The mask is last and the struct has no trailing padding, so "everything
-    // before the mask" and "the struct minus the mask" are the same bytes. The
-    // alignment arc::cells asks for makes that a layout fact worth pinning.
-    static_assert(offsetof(gpu_fixed_object, mask) == meta_bytes,
-                  "header copy must stop exactly where the mask starts");
+    constexpr int meta_bytes = (int)offsetof(gpu_fixed_object, mask);
     int8_t* d = reinterpret_cast<int8_t*>(&dobj);
     const int8_t* s = reinterpret_cast<const int8_t*>(&sobj);
     for (int b = lane; b < meta_bytes; b += 32) d[b] = s[b];
 }
 
 // Fill dobj's nw x nh mask cell by cell, asking `src_pixel(r, c)` for each
-// cell's color; cells outside nw x nh become transparent. Each lane owns ONE
-// packed dest byte = 2 dest cells in the same row (30 cells/row = 15 bytes,
-// even => no row crossing), so every mask byte is written exactly once and the
-// 4-bit packing is race-free with no pre-clear. No trailing sync: the caller's
-// lane-0 size stamp touches different bytes, one __syncwarp after both suffices.
+// cell's color; cells outside nw x nh become transparent. Each lane owns its
+// own cells, so every cell is written exactly once with no pre-clear. No
+// trailing sync: the caller's lane-0 size stamp touches different bytes, one
+// __syncwarp after both suffices.
 template <class PixelFn>
 __device__ inline void gpu_warp_fill_mask(gpu_fixed_object& dobj, int nw, int nh, int lane, PixelFn src_pixel) {
-    for (int bb = lane; bb < (int)sizeof(dobj.mask.bytes); bb += 32) {
-        int idx = arc::cells::first_cell_of_byte(bb);
-        int dr = idx / GPU_MAX_GRID;
-        int dc = idx - dr * GPU_MAX_GRID;            // even
-        int8_t pv[2];
-        #pragma unroll
-        for (int t2 = 0; t2 < 2; ++t2) {
-            int ddc = dc + t2;
-            pv[t2] = (dr < nh && ddc < nw) ? src_pixel(dr, ddc) : (int8_t)GPU_TRANSPARENT;
-        }
-        dobj.mask.bytes[bb] = arc::cells::pair_byte(pv[0], pv[1]);
+    for (int p = lane; p < arc::MAX_GRID_CELLS; p += 32) {
+        const int dr = arc::cell_row(p), dc = arc::cell_col(p);
+        dobj.mask.values[p] = (dr < nh && dc < nw) ? src_pixel(dr, dc) : (int8_t)GPU_TRANSPARENT;
     }
 }
 
@@ -956,16 +908,14 @@ __device__ inline void gpu_warp_remap_picked(const gpu_object_list* src, gpu_obj
 
 // Warp-parallel Recolor: every non-transparent cell -> `color`. The per-cell
 // recolor was a measured lane-0-serial hotspot (~70% of all kernel stall is on
-// 1-lane instructions). Here the 32 lanes stripe the mask in WHOLE PACKED BYTES
-// (2 cells/byte) so the 4-bit RMW has no shared-byte race (see gpu_paint_cell).
-// Object metadata (x0/y0/dims) is unchanged, so we deep-copy each src object
-// then overwrite only its mask bytes in parallel.
+// 1-lane instructions). Here the 32 lanes stripe the mask, a cell each.
+// Object metadata (x0/y0/dims) is unchanged, so we copy each src object's
+// header, then write its mask in parallel.
 __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int lane) {
     gpu_object_list* src = gpu_current_objects(ctx);
     if (!src) { ctx.current_objects_idx = gpu_exec_context::CURRENT_OBJECTS_NONE; return; }
     gpu_object_list* res = &gpu_acquire_and_publish(ctx);
     int n = min((int)src->count, GPU_KERNEL_MAX_OBJECTS);
-    constexpr int mask_bytes = sizeof(arc::cells);
     int8_t paint = color;
     for (int i = 0; i < n; ++i) {
         const gpu_fixed_object& sobj = src->objects[i];
@@ -983,15 +933,10 @@ __device__ void gpu_exec_recolor_warp(gpu_exec_context& ctx, int8_t color, int l
         // object recolors every one of its painted cells, an unselected object
         // rides through untouched. No selection in the chain means Recolor
         // changes nothing — acts NEVER fall back to "everything".
-        // Stripe mask bytes: each lane owns whole bytes (2 cells) -> no RMW race.
         bool sel = sobj.selected;
-        for (int b = lane; b < mask_bytes; b += 32) {
-            const uint8_t sb = sobj.mask.bytes[b];
-            const int8_t first = arc::cells::dec(sb, 0);
-            const int8_t second = arc::cells::dec(sb, arc::cells::CELL_BITS);
-            obj.mask.bytes[b] = arc::cells::pair_byte(
-                (first == GPU_TRANSPARENT || !sel) ? first : paint,
-                (second == GPU_TRANSPARENT || !sel) ? second : paint);
+        for (int p = lane; p < arc::MAX_GRID_CELLS; p += 32) {
+            const int8_t v = sobj.mask.values[p];
+            obj.mask.values[p] = (v == GPU_TRANSPARENT || !sel) ? v : paint;
         }
     }
     if (lane == 0) res->count = n;
@@ -1440,7 +1385,6 @@ __device__ gpu_object_list& gpu_exec_select_elected_background(gpu_exec_context&
         x1 = max(x1, obj.x0 + obj.width); y1 = max(y1, obj.y0 + obj.height);
     }
     gpu_fixed_grid current;
-    current.clear();
     current.width = (int16_t)max(0, min(GPU_MAX_GRID, x1 - x0));
     current.height = (int16_t)max(0, min(GPU_MAX_GRID, y1 - y0));
     for (int i = 0; i < src.count; ++i) {
@@ -1655,7 +1599,6 @@ __device__ void gpu_intersect_group(const gpu_object_list& src, bool want, gpu_o
     obj.width = (int16_t)min_w; obj.height = (int16_t)min_h;
     obj.x1 = (int16_t)(min_w - 1); obj.y1 = (int16_t)(min_h - 1);
     obj.selected = want;
-    obj.mask.clear();
 
     int kept = 0;
     for (int r = 0; r < min_h; ++r)
@@ -1851,7 +1794,7 @@ __device__ gpu_object_list& gpu_exec_layout(gpu_exec_context& ctx, const gpu_obj
         const auto& s = src.objects[i];
         const int ox = col_of[i] * cell_w, oy = row_of[i] * cell_h;
         const int top = top_of[i], left = left_of[i];
-        // Shift/Union can grow the box beyond the packed mask's actual extent.
+        // Shift/Union can grow the box beyond what the mask holds.
         const int height = min((int)s.height, GPU_MAX_GRID), width = min((int)s.width, GPU_MAX_GRID);
         for (int r = 0; r < cell_h && top + r < height; ++r)
             for (int c = 0; c < cell_w && left + c < width; ++c) {
@@ -1951,7 +1894,7 @@ __device__ gpu_object_list& gpu_exec_move(gpu_exec_context& ctx, const gpu_objec
 }
 
 // Warp-parallel Move (MoveRow/MoveColumn — the single most frequent op, ~1858
-// calls). The lane-0 version's cost is the per-object 470-byte struct copy done
+// calls). The lane-0 version's cost is the per-object struct copy done
 // serially; here the 32 lanes stripe the object bytes (the mask is the bulk), then
 // lane 0 tweaks the 2 shifted metadata fields. Mirrors gpu_exec_*_warp.
 __device__ void gpu_exec_move_warp(gpu_exec_context& ctx, int16_t delta, bool horizontal, int lane) {
@@ -1978,10 +1921,9 @@ __device__ gpu_object_list& gpu_exec_slam(gpu_exec_context& ctx, const gpu_objec
         res.objects[res.count] = src.objects[i];
         auto& obj = res.objects[res.count];
         if (obj.selected && step != 0) {
-            // Shift/Union can grow the box beyond the packed mask's actual extent.
+            // Shift/Union can grow the box beyond what the mask holds.
             const int width = min((int)obj.width, GPU_MAX_GRID);
             const int height = min((int)obj.height, GPU_MAX_GRID);
-            // Single-threaded, so writing cells that share a byte is safe.
             auto& drawn = *reinterpret_cast<arc::cells*>(ctx.op_scratch);
             drawn.clear();
             arc::slam_cells(width, height, rows, step,
@@ -2103,7 +2045,6 @@ __device__ gpu_object_list& gpu_exec_fit(gpu_exec_context& ctx, const gpu_object
         obj.x0 = (int16_t)target.col0; obj.y0 = (int16_t)target.row0;
         obj.width = (int16_t)nw; obj.height = (int16_t)nh;
         obj.x1 = (int16_t)target.col1; obj.y1 = (int16_t)target.row1;
-        obj.mask.clear();
         for (int r = 0; r < nh; ++r)
             for (int c = 0; c < nw; ++c)
                 obj.mask[r][c] = obj_src.mask[arc::fit_source_cell(r, sh, nh)][arc::fit_source_cell(c, sw, nw)];
@@ -2160,9 +2101,8 @@ __device__ gpu_object_list& gpu_exec_skew(gpu_exec_context& ctx, const gpu_objec
         }
         if (max_c < min_c) { res.count++; continue; }
         int nw = min(max_c - min_c + 1, GPU_MAX_GRID), nh = min(max_r - min_r + 1, GPU_MAX_GRID);
-        // Global scratch (coalesced), not per-thread local. Packed like the mask
-        // it becomes, so the result moves across as a copy, not a conversion.
-        // Single-threaded here, so sharing a byte between two cells is safe.
+        // Global scratch (coalesced), not per-thread local. The mask's own type,
+        // so the result moves across as a copy, not a conversion.
         arc::cells& nm = *reinterpret_cast<arc::cells*>(ctx.op_scratch);
         nm.clear();
         GPU_DEV_FOR_EACH_PIXEL(obj, r, c, v) {
@@ -2179,7 +2119,7 @@ __device__ gpu_object_list& gpu_exec_skew(gpu_exec_context& ctx, const gpu_objec
 }
 
 // Lets repeat_periods read an object: it wants width, height and data[r][c],
-// and a packed mask already indexes that way. No copy, no second period rule.
+// and a mask already indexes that way. No copy, no second period rule.
 struct gpu_object_view {
     const arc::cells& data;
     int width, height;
@@ -2203,7 +2143,6 @@ __device__ gpu_object_list& gpu_exec_pattern(gpu_exec_context& ctx, const gpu_ob
         obj.x0 = obj_src.x0; obj.y0 = obj_src.y0;
         obj.width = (int16_t)best_w; obj.height = (int16_t)best_h;
         obj.x1 = obj.x0 + (int16_t)best_w - 1; obj.y1 = obj.y0 + (int16_t)best_h - 1;
-        obj.mask.clear();
         // Every copy agrees with the top-left one, so the unit is that copy.
         for (int r = 0; r < best_h; ++r)
             for (int c = 0; c < best_w; ++c) obj.mask[r][c] = obj_src.mask[r][c];
@@ -2267,7 +2206,6 @@ __device__ gpu_object_list& gpu_exec_trim(gpu_exec_context& ctx, const gpu_objec
         obj.x0 = obj_src.x0 + min_c; obj.y0 = obj_src.y0 + min_r;
         obj.width = max_c - min_c + 1; obj.height = max_r - min_r + 1;
         obj.x1 = obj.x0 + obj.width - 1; obj.y1 = obj.y0 + obj.height - 1;
-        obj.mask.clear();
         for (int r = 0; r < obj.height; ++r)
             for (int c = 0; c < obj.width; ++c)
                 obj.mask[r][c] = obj_src.mask[min_r + r][min_c + c];
@@ -2346,26 +2284,18 @@ __device__ void gpu_exec_tile_warp(gpu_exec_context& ctx, int8_t period, bool ho
             // like Trim, Fit and Pattern. A rebuilt one starts unmarked.
             t.selected = obj.selected;
         }
-        // Byte-gather the mask: each lane owns ONE packed dest byte = 2 dest cells
-        // in the same row. Each dest cell pulls its source via the tiling period
-        // (already a dest->source map). Writes every mask byte once, race-free.
-        for (int bb = lane; bb < (int)sizeof(t.mask.bytes); bb += 32) {
-            int idx = arc::cells::first_cell_of_byte(bb);
-            int r = idx / GPU_MAX_GRID;
-            int c = idx - r * GPU_MAX_GRID;              // even
-            int8_t pv[2];
-            #pragma unroll
-            for (int t2 = 0; t2 < 2; ++t2) {
-                int cc = c + t2;
-                int8_t v = GPU_TRANSPARENT;
-                if (r < oh && cc < ow) {
-                    const int pr = horizontal ? r : arc::tiled_source(r, sy, per, sh);
-                    const int pc = horizontal ? arc::tiled_source(cc, sx, per, sw) : cc;
-                    if (pr >= 0 && pr < sh && pc >= 0 && pc < sw) v = obj.mask[pr][pc];
-                }
-                pv[t2] = v;
+        // Gather the mask: each lane owns its own dest cells, and each pulls its
+        // source via the tiling period (already a dest->source map). Writes
+        // every cell once, race-free.
+        for (int p = lane; p < arc::MAX_GRID_CELLS; p += 32) {
+            const int r = arc::cell_row(p), c = arc::cell_col(p);
+            int8_t v = GPU_TRANSPARENT;
+            if (r < oh && c < ow) {
+                const int pr = horizontal ? r : arc::tiled_source(r, sy, per, sh);
+                const int pc = horizontal ? arc::tiled_source(c, sx, per, sw) : c;
+                if (pr >= 0 && pr < sh && pc >= 0 && pc < sw) v = obj.mask[pr][pc];
             }
-            t.mask.bytes[bb] = arc::cells::pair_byte(pv[0], pv[1]);
+            t.mask.values[p] = v;
         }
         __syncwarp();
     }
@@ -2610,7 +2540,7 @@ __device__ inline bool gpu_obj_contains(const gpu_fixed_object& o, int x, int y)
 // passes through the object's own body (already painted). Output is one object
 // per input (body + trail), composing via Union. Obstacle field = the union of
 // all input objects, rasterized into op_scratch. Pass 1 measures body+trail
-// extent; pass 2 paints into the packed mask with identical march logic.
+// extent; pass 2 paints into the mask with identical march logic.
 // Slam to the grid edge: slide each object along dir until its painted cells
 // meet the canvas edge that way, ignoring paint. Shape unchanged.
 // (ExtendTo grows a trail; Slam squashes inside the box; this one TRAVELS.)
@@ -2867,9 +2797,8 @@ __device__ void gpu_rule_output_dims(int8_t rt, const int16_t* rp,
 // Object transpose mirrors gpu_exec_transform_warp (all-lane deterministic acquire,
 // lane-striped mask copy). Canvas transpose is an in-place square transpose of
 // output.data — row r owns the upper-triangle pairs (r, c>r) so no two lanes
-// touch the same cell; they can still share a byte, hence gpu_paint_cell
-// — plus a width<->height swap, keeping already-painted accumulator pixels
-// consistent with the rotated geometry.
+// touch the same cell — plus a width<->height swap, keeping already-painted
+// accumulator pixels consistent with the rotated geometry.
 // ---- Canonical pose (NormalizeOrientation[1]) ----
 // What the eight poses mean is 1_readings.hpp's to say, and the card reads it
 // from there, so the two sides cannot drift. The card once kept its own
@@ -3037,12 +2966,10 @@ __device__ void gpu_exec_rotate_warp(gpu_exec_context& ctx, bool normalize, int 
         arc::cells& od = ctx.output.data;
         for (int rr = lane; rr < GPU_MAX_GRID; rr += 32)
             for (int cc = rr + 1; cc < GPU_MAX_GRID; ++cc) {
-                // Each unordered pair belongs to exactly one lane, so the two
-                // reads are safe; the writes are not, because a cell shares its
-                // byte with a neighbour another lane is transposing.
+                // Each unordered pair belongs to exactly one lane.
                 int8_t a = od[rr][cc], b = od[cc][rr];
-                gpu_paint_cell(od, rr, cc, b);
-                gpu_paint_cell(od, cc, rr, a);
+                od[rr][cc] = b;
+                od[cc][rr] = a;
             }
         __syncwarp();
         if (lane == 0) {
@@ -3455,11 +3382,6 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
 // --- Cached per-example device data (uploaded once per puzzle) ---
 static constexpr int MAX_CACHED_EXAMPLES = 16;
 
-// MSVC C4324: intentional padding; see arc::cells in 0_core.hpp.
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
 struct gpu_example_template {
     gpu_fixed_grid input;
     gpu_object_list seed_objs;
@@ -3476,9 +3398,6 @@ struct gpu_example_template {
     gpu_object_summary target_objs[GPU_MAX_TARGET_OBJECTS];
     int8_t target_obj_count;
 };
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 // MULTISET MATCH, one home. Each attempt summary claims at most one target
 // summary by (w,h,count). Position bonus is a continuous
@@ -3763,18 +3682,15 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
         for (int i = lane; i < dm_bytes; i += 32)
             dst_dm[i] = src_dm[i];
 
-        // Stripe-copy the input grid, whole bytes per lane
+        // Stripe-copy the input grid
         const int8_t* src_in = reinterpret_cast<const int8_t*>(&tmpl.input);
         int8_t* dst_in = reinterpret_cast<int8_t*>(&ctx.input);
         constexpr int in_bytes = sizeof(gpu_fixed_grid);
         for (int i = lane; i < in_bytes; i += 32)
             dst_in[i] = src_in[i];
 
-        // Stripe-clear the canvas. Whole packed bytes per lane, so no two lanes
-        // share one, and the empty byte is two encoded TRANSPARENT nibbles.
-        uint8_t* dst_out = ctx.output.data.bytes;
-        for (int i = lane; i < (int)sizeof(ctx.output.data.bytes); i += 32)
-            dst_out[i] = arc::cells::empty_byte();
+        // Stripe-clear the canvas.
+        for (int i = lane; i < arc::MAX_GRID_CELLS; i += 32) ctx.output.data.values[i] = GPU_TRANSPARENT;
     }
 
     // Lane 0 sets scalar fields + output dims (must complete before eval)
@@ -3848,12 +3764,7 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
 
     // Parallel output write-back: 32 lanes stripe 900 cells.
     int8_t* my_out = output_grids + idx * GPU_GRID_CELLS;
-    constexpr int kCells = GPU_MAX_GRID * GPU_MAX_GRID;
-    for (int i = lane; i < kCells; i += 32) {
-        int r = i / GPU_MAX_GRID;
-        int c = i - r * GPU_MAX_GRID;
-        my_out[i] = ctx.output.data[r][c];
-    }
+    for (int i = lane; i < GPU_GRID_CELLS; i += 32) my_out[i] = ctx.output.data.values[i];
     // EXEC kernel ends here. ctx.output (in contexts[idx]) holds the produced
     // canvas; the separate dsl_score_kernel reads it back to score. The split
     // lets the scorer run without the op-switch's 80-reg/4.2KB-smem weight, so
@@ -4234,9 +4145,7 @@ __global__ void dsl_pieces_kernel(gpu_exec_context* __restrict__ contexts,
     const int8_t* src = reinterpret_cast<const int8_t*>(&grids[idx]);
     int8_t* dst = reinterpret_cast<int8_t*>(&ctx.input);
     for (int i = lane; i < (int)sizeof(gpu_fixed_grid); i += 32) dst[i] = src[i];
-    uint8_t* dout = ctx.output.data.bytes;
-    for (int i = lane; i < (int)sizeof(ctx.output.data.bytes); i += 32)
-        dout[i] = arc::cells::empty_byte();
+    for (int i = lane; i < arc::MAX_GRID_CELLS; i += 32) ctx.output.data.values[i] = GPU_TRANSPARENT;
     if (lane == 0) {
         ctx.pool_head = 0;
         ctx.orientation_flipped = 0;

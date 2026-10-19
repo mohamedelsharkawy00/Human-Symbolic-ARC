@@ -287,7 +287,6 @@ private:
                 const int block_width  = min(step_width,  one_grid.width  - block_left);
                 const int block_height = min(step_height, one_grid.height - block_top);
                 object piece;
-                piece.data.clear();  // every cell TRANSPARENT until the block claims it
                 int lit = 0;
                 for (int row = 0; row < block_height; ++row)
                     for (int col = 0; col < block_width; ++col) {

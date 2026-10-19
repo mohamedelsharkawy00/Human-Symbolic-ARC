@@ -107,13 +107,6 @@ ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count)
              (int16_t)count };
 }
 
-// MSVC C4324: the device only grabs memory 4 bytes at a time, so an object's
-// cells have to start where the 4s start. Lining it up leaves 2 bytes empty. The
-// compiler says "you left 2 empty". We say "yes, on purpose".
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
 struct object {
     object_summary summary;
     // Stored relative to the box's top-left.
@@ -125,7 +118,6 @@ struct object {
                              const int16_t* indices, int count) {
         object made;
         made.summary = box;
-        made.data.clear();
         for (int i = 0; i < count; ++i) {
             const int row = cell_row(indices[i]), col = cell_col(indices[i]);
             made.data[row - box.row][col - box.col] = (int8_t)source.data[row][col];
@@ -186,9 +178,6 @@ struct object {
 
     // The object on its own, as a grid just big enough to hold it: its own
     // colors where it reaches, TRANSPARENT in the gaps and nowhere else's cells.
-    // The cells are already this, packed four bits each; this spells them out
-    // for the code that walks a grid row by row. Host only -- it allocates a
-    // whole grid, which is what the packing exists to avoid on the device.
     grid drawn() const {
         grid out(summary.width, summary.height);
         for (int row = 0; row < summary.height; ++row)
@@ -197,11 +186,6 @@ struct object {
         return out;
     }
 };
-
-// End of warning suppression
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
 // THE EIGHT WAYS, the one numbering of directions in the project: the cells
 // around a cell, and the ways a piece can go, numbered as a compass is,

@@ -46,7 +46,7 @@ Tests are consolidated in `tests/core_transforms.cpp`. All 55 GPU cases passed a
 
 ### When the templates earn their place
 
-The slam helper uses two template parameters for its read and write callbacks. The movement loop is ordinary code; the compiler supplies the callback types. Both callers read packed cells, but inference writes directly onto its grid while GPU execution writes a packed mask. Those callbacks avoid an extra temporary object and painting pass in inference.
+The slam helper uses two template parameters for its read and write callbacks. The movement loop is ordinary code; the compiler supplies the callback types. Both callers read the same cells, but inference writes directly onto its grid while GPU execution writes a mask. Those callbacks avoid an extra temporary object and painting pass in inference.
 
 Keep that small adapter where it makes the data flow simpler. Prefer ordinary functions for shared arithmetic, as alignment demonstrates. Generality should follow actual callers, not require every shared operation to use a template.
 

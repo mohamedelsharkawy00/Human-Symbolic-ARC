@@ -36,100 +36,46 @@ ARC_HOST_DEVICE constexpr bool is_color(int value) {
 constexpr int MAX_GRID_DIM = 30;
 constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 
-// A cell's place in the largest grid as one number, counted row by row.
+// A cell's place in the largest grid as one number, counted row by row, and
+// back again. One number is for speed: a flat store or set finds a cell at a
+// look rather than a search, and a set of cells fits in 900 bits.
 ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
 ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
 ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
 
+// A byte a cell, in reading order: its color, or TRANSPARENT where it is empty.
 struct cells {
-    // Each cell takes 4 bits, so two share a byte, and a cell's number says
-    // which byte and which half.
-    static constexpr int CELL_BITS = 4;
-    static constexpr int CELL_MASK = (1 << CELL_BITS) - 1;
-    static constexpr int BYTE_BITS = 8;
-    static constexpr int CELLS_PER_BYTE = BYTE_BITS / CELL_BITS;
+    int8_t values[MAX_GRID_CELLS];
 
-    // The GPU updates the store a 4-byte word at a time. The aligned, padded
-    // store keeps those updates safe at the end of the storage.
-    static constexpr int WORD_BYTES = sizeof(uint32_t);
-    static constexpr int PACKED_BYTES = (MAX_GRID_CELLS + CELLS_PER_BYTE - 1) / CELLS_PER_BYTE;
-    static constexpr int BYTES = (PACKED_BYTES + WORD_BYTES - 1) / WORD_BYTES * WORD_BYTES;
-    alignas(WORD_BYTES) uint8_t bytes[BYTES];
+    // A new store is empty.
+    ARC_HOST_DEVICE cells() { clear(); }
 
-    // A half-byte cannot be returned by reference, so cell access uses proxies.
-    struct const_cell_ref {
-        const uint8_t* byte;
-        int shift;
-
-        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
-    };
-
-    struct cell_ref {
-        uint8_t* byte;
-        int shift;
-
-        ARC_HOST_DEVICE operator int8_t() const { return dec(*byte, shift); }
-
-        ARC_HOST_DEVICE void operator=(int8_t value) {
-            const uint8_t encoded = cells::enc(value);
-            *byte = (uint8_t)((*byte & ~(CELL_MASK << shift)) | (encoded << shift));
-        }
-
-        // Copy the cell value, not the proxy's byte pointer and bit position.
-        ARC_HOST_DEVICE void operator=(const cell_ref& other) { *this = (int8_t)other; }
-        ARC_HOST_DEVICE void operator=(const const_cell_ref& other) { *this = (int8_t)other; }
-    };
-
-    // One row proxy handles both read-only and writable cell access.
-    template <class Byte, class Cell>
+    // A row, so data[row][col] reaches a cell. A place past the store reaches
+    // the first cell rather than memory outside it.
+    template <class Cell>
     struct row_of_cells {
-        Byte* base;
+        Cell* base;
         int row;
 
-        ARC_HOST_DEVICE Cell operator[](int col) const {
+        ARC_HOST_DEVICE Cell& operator[](int col) const {
             int index = cell_index(row, col);
             if (index < 0 || index >= MAX_GRID_CELLS) index = 0;
-            return { base + index / CELLS_PER_BYTE, shift_in_byte(index) };
+            return base[index];
         }
     };
 
-    ARC_HOST_DEVICE row_of_cells<uint8_t, cell_ref> operator[](int row) { return { bytes, row }; }
-    ARC_HOST_DEVICE row_of_cells<const uint8_t, const_cell_ref> operator[](int row) const {
-        return { bytes, row };
-    }
+    ARC_HOST_DEVICE row_of_cells<int8_t> operator[](int row) { return { values, row }; }
+    ARC_HOST_DEVICE row_of_cells<const int8_t> operator[](int row) const { return { values, row }; }
 
-    // Store value + 1 so zero bits mean TRANSPARENT and black remains distinct.
-    ARC_HOST_DEVICE static constexpr uint8_t enc(int8_t value) {
-        return (uint8_t)(((int)value + 1) & CELL_MASK);
-    }
-    ARC_HOST_DEVICE static constexpr int8_t dec(uint8_t byte, int shift) {
-        return (int8_t)(((byte >> shift) & CELL_MASK) - 1);
-    }
-    // Two side-by-side cells, the first in the low bits.
-    ARC_HOST_DEVICE static constexpr uint8_t pair_byte(int8_t first, int8_t second) {
-        return (uint8_t)(enc(first) | (enc(second) << CELL_BITS));
-    }
-    ARC_HOST_DEVICE static constexpr uint8_t empty_byte() { return pair_byte(TRANSPARENT, TRANSPARENT); }
-
-    // Where a cell's bits start, within its byte and within its word.
-    ARC_HOST_DEVICE static constexpr int shift_in_byte(int index) { return index % CELLS_PER_BYTE * CELL_BITS; }
-    ARC_HOST_DEVICE static constexpr int shift_in_word(int index) {
-        return shift_in_byte(index) + index / CELLS_PER_BYTE % WORD_BYTES * BYTE_BITS;
-    }
-
-    // The first of the cells a byte holds.
-    ARC_HOST_DEVICE static constexpr int first_cell_of_byte(int byte) { return byte * CELLS_PER_BYTE; }
-
-    // Clear every cell, including storage outside the grid's current dimensions.
+    // Empty every cell, including storage outside the grid's current dimensions.
     ARC_HOST_DEVICE void clear() {
-        for (int i = 0; i < (int)sizeof(bytes); ++i) bytes[i] = empty_byte();
+        for (int8_t& value : values) value = TRANSPARENT;
     }
 };
 
 struct grid {
     int width = 0, height = 0;
-    // Zeroed, so a new grid starts transparent.
-    cells data{};
+    cells data;
 
     // No cells at all, so there is nothing to read off it.
     bool empty() const {
