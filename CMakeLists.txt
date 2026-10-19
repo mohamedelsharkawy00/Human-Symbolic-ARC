@@ -2,9 +2,8 @@
 set(CMAKE_CUDA_FLAGS "--allow-unsupported-compiler -Xptxas=-v --expt-relaxed-constexpr -Wreorder -Wmissing-launch-bounds -Wdefault-stream-launch -Wext-lambda-captures-this -Xcompiler /W4 --Ofast-compile=min" CACHE STRING "" FORCE)
 # --Ofast-compile=min since 2026-10-08: the CUDA compile alone went 91 s -> 37 s.
 # max compiled in 27 s but slowed a full arc_said run from 94 s to 170 s.
-# It compiles device code function by function, so the kernel spills far more
-# and the search on the GPU may be slower (unmeasured; the search is on its way
-# out). arc_said scored the same and ran as fast. It also cost the kernel's
+# It compiles device code function by function, so the kernel spills far more.
+# arc_said scored the same and ran as fast. It also cost the kernel's
 # enable_smem_spilling pragma, which ptxas allows only in whole-program mode.
 project(ARC LANGUAGES CXX CUDA)
 
@@ -84,25 +83,21 @@ add_custom_command(
 # a core file that reached for anything in include/gui would not build.
 add_library(arc_core INTERFACE)
 target_include_directories(arc_core INTERFACE include/core)
-# Off since 2026-09-09: nothing calls it yet and building it costs roughly a
-# third of every clean build. The reasoning sits above the kernel in cuda_solver.cu.
-option(ARC_ENABLE_CUDA_PIECES "Build the currently unused CUDA pieces extraction API" OFF)
-target_compile_definitions(arc_core INTERFACE ARC_ENABLE_CUDA_PIECES=$<BOOL:${ARC_ENABLE_CUDA_PIECES}>)
 
-# THE SOLVER'S GPU HALF: the CUDA kernel. Only the program that searches links it.
+# THE SOLVER'S GPU HALF: the CUDA kernel. Only the programs that run programs link it.
 add_library(arc_gpu STATIC "src/cuda_solver.cu")
 target_link_libraries(arc_gpu PUBLIC arc_core)
 
-# The solver on its own, no window: every search, the GUI's included, runs in
-# one of these, and it is what Kaggle runs. Built here too, so what Kaggle
-# compiles is compiled on every build and can be run on a desk.
+# The solver on its own, no window: every reading the GUI shows runs in one of
+# these, and it is what Kaggle runs. Built here too, so what Kaggle compiles is
+# compiled on every build and can be run on a desk.
 add_executable(arc_headless "src/kaggle_main.cpp")
 target_link_libraries(arc_headless PRIVATE arc_gpu)
 # It reads its settings with getenv, the call Kaggle's compiler has; MSVC would
 # rather it used its own _dupenv_s.
 target_compile_definitions(arc_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# ONE PROGRAM, ONE PUZZLE, NO SEARCH: hands a written program to a puzzle and
+# ONE PROGRAM, ONE PUZZLE: hands a written program to a puzzle and
 # shows what it drew beside what was wanted, pair by pair. It answers only
 # "can the words we already have say this?", which is the question a new op
 # should have to survive before it is added. Run it from the repo root:
@@ -112,7 +107,7 @@ add_executable(arc_spell "scripts/spell.cpp")
 target_link_libraries(arc_spell PRIVATE arc_gpu)
 target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# WHAT THE READING SOLVES WITHOUT SEARCHING, counted over a whole dataset, and
+# WHAT THE READING SOLVES, counted over a whole dataset, and
 # every puzzle's inference readout, in one run into out/<label>. The guard on
 # say_the_reading: a sentence it spells that draws the wrong thing is reported
 # here and nowhere else. scripts\said.bat builds it and runs it, and
@@ -121,7 +116,7 @@ add_executable(arc_said "scripts/said.cpp")
 target_link_libraries(arc_said PRIVATE arc_gpu)
 target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# The GUI: a window onto the search, which runs in an arc_headless child. It
+# The GUI: a window onto the reading, which runs in an arc_headless child. It
 # links the solver's headers and not its GPU half, so it cannot create a CUDA
 # context: GUI code that reached for the GPU would fail to link.
 # Its code compiles apart, in arc_gui, because Ninja holds back every compile

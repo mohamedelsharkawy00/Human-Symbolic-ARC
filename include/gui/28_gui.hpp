@@ -169,24 +169,13 @@ inline string get_node_label(node_type type, int16_t value) {
 
 // --- draw_frame decomposition ---
 
-inline string format_sci(float val) {
-  if (!isfinite(val)) return string("-------");
-  float a_val = abs(val);
-  if (a_val < 1e-9f) return string("0000.00 e0");
-
-  int exp = (int)floor(log10(a_val));
-  int eng_exp = (exp >= 0) ? (exp / 3) * 3 : ((exp - 2) / 3) * 3;
-  float eng_base = val / pow(10.0f, (float)eng_exp);
-
-  return to_text("%07.2f e%d", eng_base, eng_exp);
-}
-
 struct frame_layout {
   int base_margin, scale, v_gap;
   int row1_y;
   // Set once the header has drawn and knows how many lines it needed.
   int grid_labels_y, grid_data_start_y;
-  int footer1_y, footer2_y, footer3_y;
+  // The footer rows. The grids end where the BEST row starts.
+  int best_y, elapsed_y;
   int h_gap_internal;
   int screen_w, screen_h;
 };
@@ -210,10 +199,9 @@ inline frame_layout compute_frame_layout(int screen_w, int screen_h) {
 
   l.row1_y = l.base_margin;
 
-  // Footer: CURRENT, BEST, ELAPSED top-down
-  l.footer3_y = screen_h - l.base_margin - 9 * l.scale;
-  l.footer2_y = l.footer3_y - row_h;
-  l.footer1_y = l.footer2_y - row_h;
+  // Footer: BEST, ELAPSED top-down
+  l.elapsed_y = screen_h - l.base_margin - 9 * l.scale;
+  l.best_y = l.elapsed_y - row_h;
 
   return l;
 }
@@ -230,8 +218,8 @@ inline void collect_pipeline_ops(node *root, vector<node *> &ops) {
 // A LONG PIPELINE FOLDS to the four lines the footer always keeps for it: its
 // first ops, then a box saying how many more, which opens every line; open, a
 // box after its last op folds it again (show_whole_programs, the facts pane's
-// fold too). Every line at once ran CURRENT into BEST and BEST off the bottom
-// of the screen (31aa019c's 79 ops). The boxes a pipeline of `ops` draws:
+// fold too). Every line at once ran BEST off the bottom of the screen
+// (31aa019c's 79 ops). The boxes a pipeline of `ops` draws:
 // `shown` ops, and the fold's box when it has one.
 constexpr size_t PIPELINE_FOLDED_LINES = 4;
 struct pipeline_fold { size_t shown; bool toggle; };
@@ -262,9 +250,7 @@ inline int draw_header_rows(
     global_app_state &app_state,
     const frame_layout &lay,
     const puzzle &task,
-    int puzzle_idx, int puzzle_count,
-    long long current_attempts, float aps, float fps, float gpu_ms,
-    int cur_depth, int best_depth, int search_depth_limit) {
+    int puzzle_idx, int puzzle_count, float fps) {
 
   int scale = lay.scale;
 
@@ -275,9 +261,6 @@ inline int draw_header_rows(
   // the number).
   int puz_digits = (int)to_string(puzzle_count > 0 ? puzzle_count : 1).size();
   string puz_str = to_text("%0*d/%0*d", puz_digits, puzzle_idx + 1, puz_digits, puzzle_count);
-  string attempts_str = format_sci((float)current_attempts);
-  string aps_str = format_sci(aps);
-  string gpu_str = to_text("%.0fms", gpu_ms);
   string fps_str = to_text("%06.1f", fps);
   string status_str = string(app_state.is_paused ? "PAUSED" : "RUNNING");
   string log_state_str = (app_state.log_mode == logging_mode::stream) ? "ON" : "OFF";
@@ -387,12 +370,6 @@ inline int draw_header_rows(
   button_piece("EXPORT [E]", "", ui_action::export_sol, 1);
   button_piece(to_text("BENCHMARK %-2s [B]", app_state.is_benchmarking ? "ON" : ""), "",
                ui_action::toggle_benchmark, app_state.is_benchmarking ? 4 : 1);
-
-  {
-    int ts = (int)app_state.benchmark_timeout_seconds;
-    stepper_piece("TIMEOUT", to_text("%02d:%02d:%02d", ts / 3600, (ts % 3600) / 60, ts % 60),
-                  text_w("88:88:88", scale), ui_action::dec_timeout, ui_action::inc_timeout);
-  }
   stepper_piece("LIMIT", to_text("%03d", app_state.benchmark_puzzle_limit),
                 text_w("888", scale), ui_action::dec_limit, ui_action::inc_limit);
 
@@ -467,15 +444,6 @@ inline int draw_header_rows(
   }
 
   pair_piece("FPS", to_text("%-7s", fps_str.c_str()));
-  pair_piece("ATTEMPTS", to_text("%-12s", attempts_str.c_str()));
-  pair_piece("APS", to_text("%-12s", aps_str.c_str()));
-  // How long one GPU batch takes. It sits beside APS on purpose: a frame spent
-  // inside a running kernel scores no attempts, so APS alone cannot say busy
-  // from stalled, and this is what tells them apart.
-  pair_piece("GPU BATCH", to_text("%-8s", gpu_str.c_str()));
-  pair_piece("BEST DEPTH", to_text("%-3d", best_depth));
-  pair_piece("CURRENT DEPTH", to_text("%-3d", cur_depth));
-  pair_piece("MAX DEPTH", to_text("%-3d", search_depth_limit));
 
   // ARC palette reference -- a flush strip of square swatches, each with its
   // index drawn with a black outline.
@@ -517,15 +485,14 @@ inline int draw_header_rows(
   return fy + row_h;
 }
 
-// Draws the bottom of the screen: the CURRENT and BEST program pipelines and the
-// elapsed timer.
+// Draws the bottom of the screen: the BEST program pipeline and the elapsed
+// timer.
 inline void draw_footer_rows(
     vulkan_context *context,
     const map<uint32_t, display_grid> &font,
     global_app_state &app_state,
     const frame_layout &lay,
     const puzzle &task,
-    const solver_state &state,
     float elapsed) {
 
   int scale = lay.scale;
@@ -536,7 +503,7 @@ inline void draw_footer_rows(
   // `top_y` is the first line; long pipelines wrap downward at the right edge
   // (continuation lines indent under the first token). Footer Y-positions are
   // reflowed in draw_frame so the wrapped block stacks without overlapping.
-  auto draw_pipeline = [&](node *root, int start_x, int top_y, int source) {
+  auto draw_pipeline = [&](node *root, int start_x, int top_y) {
     int box_h = 5 * scale + pad * 2;
     int gap = pad;
     int max_x = lay.screen_w - lay.base_margin;
@@ -546,7 +513,6 @@ inline void draw_footer_rows(
     (void)max_x;  // sentences decide the wrap now, not the right edge
 
     uint64_t hh = app_state.hovered_hash.load();
-    int hs = app_state.hovered_source.load();
     int x = start_x, y = top_y, end_x = start_x;
     const bool whole = app_state.show_whole_programs.load();
     const pipeline_fold fold = fold_of(ops.size(), whole);
@@ -568,40 +534,31 @@ inline void draw_footer_rows(
       string label = get_node_label(n->type, n->value);
       int bw = text_w(label, scale) + pad * 2;
       int color_idx = 1;
-      if (n->hash != 0 && hh == n->hash && hs == source)
+      if (n->hash != 0 && hh == n->hash)
         color_idx = 4;
       draw_boxed_text(context, font, label, x, y, scale, bw, box_h, color_idx);
-      app_state.node_zones.push_back({x, y, bw, box_h, n->hash, source});
+      app_state.node_zones.push_back({x, y, bw, box_h, n->hash});
       x += bw + gap;
       if (x > end_x) end_x = x;
     }
     return end_x;
   };
 
-  // Footer 1: CURRENT program pipeline
-  {
-    int lw = text_w("CURRENT", scale) + pad * 2;
-    int box_h = 5 * scale + pad * 2;
-    draw_boxed_text(context, font, "CURRENT", lay.base_margin, lay.footer1_y, scale, lw, box_h, 5);
-    if (state.search.current_tree)
-      draw_pipeline(state.search.current_tree, lay.base_margin + lw + pad, lay.footer1_y, 2);
-  }
-
-  // Footer 2: BEST program pipeline
+  // BEST program pipeline
   {
     int lw = text_w("BEST", scale) + pad * 2;
     int box_h = 5 * scale + pad * 2;
-    draw_boxed_text(context, font, "BEST", lay.base_margin, lay.footer2_y, scale, lw, box_h, 5);
+    draw_boxed_text(context, font, "BEST", lay.base_margin, lay.best_y, scale, lw, box_h, 5);
     if (task.best_tree)
-      draw_pipeline(task.best_tree, lay.base_margin + lw + pad, lay.footer2_y, 1);
+      draw_pipeline(task.best_tree, lay.base_margin + lw + pad, lay.best_y);
   }
 
-  // Footer 3: Elapsed timer
+  // Elapsed timer
   {
     string elapsed_val = format_elapsed(elapsed);
     int lw = text_w("ELAPSED", scale) + pad * 2;
-    draw_boxed_text(context, font, "ELAPSED", lay.base_margin, lay.footer3_y, scale, lw, 5 * scale + pad * 2, 5);
-    draw_text(context, font, elapsed_val, lay.base_margin + lw + pad, lay.footer3_y + pad, scale);
+    draw_boxed_text(context, font, "ELAPSED", lay.base_margin, lay.elapsed_y, scale, lw, 5 * scale + pad * 2, 5);
+    draw_text(context, font, elapsed_val, lay.base_margin + lw + pad, lay.elapsed_y + pad, scale);
   }
 }
 
@@ -642,8 +599,8 @@ inline grid_place place_grid_cell(const grid &m, int col_idx, int row_y,
   return p;
 }
 
-// Draws the 4-column grid view (INPUT / OUTPUT / CURRENT / BEST).
-// Returns false if there is no data to draw.
+// Draws the grid view (INPUT / OUTPUT / BEST), a quarter of the screen to a
+// column. Returns false if there is no data to draw.
 inline bool draw_grid_view(
     vulkan_context *context,
     const map<uint32_t, display_grid> &font,
@@ -656,7 +613,7 @@ inline bool draw_grid_view(
     return false;
 
   int inputs_n = (int)(task.train.size() + task.test.size());
-  int available_grid_h = lay.footer1_y - lay.grid_data_start_y;
+  int available_grid_h = lay.best_y - lay.grid_data_start_y;
 
   int n = inputs_n > 0 ? inputs_n : 1;
   int slot_h = available_grid_h / n;
@@ -664,7 +621,8 @@ inline bool draw_grid_view(
   int cur_y = lay.grid_data_start_y;
 
   // The cells come from wherever they live -- the puzzle's own pair, or the
-  // display's picture of the search -- and `at` says where they were uploaded.
+  // display's picture of what the reading drew -- and `at` says where they
+  // were uploaded.
   auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y,
                        float score_val = SCORE_MIN - 1.0f) {
     if (m.width <= 0 || m.height <= 0)
@@ -718,15 +676,14 @@ inline bool draw_grid_view(
       draw_cell(ex.input, v->input, 0, cur_y);
       if (show_output)
         draw_cell(ex.output, v->output, 1, cur_y);
-      draw_cell(v->current, v->current.at, 2, cur_y, v->current_score);
-      draw_cell(v->best, v->best.at, 3, cur_y, task.best_score_or_worst(is_test, i));
+      draw_cell(v->best, v->best.at, 2, cur_y, task.best_score_or_worst(is_test, i));
       cur_y += slot_h;
     }
   };
 
-  string heads[] = {"INPUT", "OUTPUT", "CURRENT", "BEST"};
+  string heads[] = {"INPUT", "OUTPUT", "BEST"};
   int grid_pad = 2 * lay.scale;
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < (int)size(heads); ++i) {
     int header_label_x = i * col_w + lay.base_margin;
     int lw = text_w(heads[i], lay.scale) + grid_pad * 2;
     int lh = 5 * lay.scale + grid_pad * 2;
@@ -747,8 +704,8 @@ inline bool draw_grid_view(
 
 // Top-edge drawer overlay: a full-width panel that floats on top of the live
 // frame, covering the header band from the top of the screen down to the
-// grid-label row (no shrink â€” the grids and the BEST/CURRENT/ELAPSED footers
-// stay visible below). A tab row picks the op family; the active family's ops
+// grid-label row (no shrink â€” the grids and the BEST/ELAPSED footers stay
+// visible below). A tab row picks the op family; the active family's ops
 // flow below in as many columns as fit. Opens by dragging its handle, no key;
 // tabs are click_zones.
 // Thickness of the drawer/handle border (quad-weight).
@@ -1057,7 +1014,7 @@ inline void draw_correspondence(vulkan_context *context, const puzzle &task,
   const auto& correspondence = task.inf.correspondence;
   if (inputs_n <= 0 || rank >= (int)correspondence.readings.size()) return;
   const auto& pairs = correspondence.readings[rank].pairs;
-  int slot_h = (lay.footer1_y - lay.grid_data_start_y) / inputs_n;
+  int slot_h = (lay.best_y - lay.grid_data_start_y) / inputs_n;
   int col_w = lay.screen_w / 4;
   int t = max(1, lay.scale);
   int nth = -1;
@@ -1117,7 +1074,7 @@ inline void draw_selection(vulkan_context *context, const puzzle &task,
                             nested_outlines &rings) {
   int inputs_n = (int)(task.train.size() + task.test.size());
   if (inputs_n <= 0 || pair < 0 || pair >= (int)task.train.size()) return;
-  int slot_h = (lay.footer1_y - lay.grid_data_start_y) / inputs_n;
+  int slot_h = (lay.best_y - lay.grid_data_start_y) / inputs_n;
   int col_w = lay.screen_w / 4;
   int t = max(1, lay.scale);
   const example &ex = task.train[pair];
@@ -1143,8 +1100,8 @@ inline void draw_selection(vulkan_context *context, const puzzle &task,
 // changed, what correspondence made of each pair — and no lines are drawn. On a
 // correspondence step the lines are on the grids and the pane says only what
 // their colors mean, and the readout doubles as the controls: every row that
-// names a choice is the thing you click to change it. Parked over the
-// CURRENT/BEST columns, which are empty until solving.
+// names a choice is the thing you click to change it. Parked over the BEST
+// column and the quarter beside it.
 inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, display_grid> &font,
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
@@ -1161,7 +1118,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
   int pad = 2 * scale;
   int line_h = 7 * scale;
   int sw = 5 * scale;                 // color swatch side
-  // Park it in the CURRENT/BEST region (cols 2-3), which is empty until solving.
+  // Park it over the BEST column and the quarter beside it (cols 2-3).
   int col_w = lay.screen_w / 4;
   int x0 = 2 * col_w + lay.base_margin, y0 = lay.grid_data_start_y;
   int panel_w = 2 * col_w - lay.base_margin * 2;
@@ -1770,9 +1727,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     if (task.inf.shape_color_map.count)
       named_row({{"SHAPE PICKS COLOR", to_text("%d LEARNED", (int)task.inf.shape_color_map.count)}});
 
-    // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs the
-    // search will actually try, not a prettier retelling, so what is on screen and
-    // what is run cannot drift apart. One sentence a row, four beats to a sentence.
+    // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs
+    // SPACE runs, not a prettier retelling, so what is on screen and what is
+    // run cannot drift apart. One sentence a row, four beats to a sentence.
     // A LONG PROGRAM FOLDS: its first rows, then how many more it has. The
     // button on the heading opens every row and folds them again; every row at
     // once ran the pane off the bottom of the screen (31aa019c's fifteen
@@ -2066,16 +2023,11 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display
 inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid> &font,
                        const display_grid &background, const solver_state &state,
                        global_app_state &app_state, const puzzle &task,
-                       int screen_w, int screen_h, float fps, float aps, float gpu_ms,
+                       int screen_w, int screen_h, float fps,
                        int puzzle_idx, int puzzle_count,
                        vector<int> &gpu_buffer) {
 
   frame_layout lay = compute_frame_layout(screen_w, screen_h);
-
-  long long current_attempts = state.search.attempts.load();
-  int search_depth_limit = state.search.current_max_depth;
-  int best_depth = task.best_tree ? task.best_tree->max_depth : 0;
-  int cur_depth = state.search.current_attempt_depth.load();
 
   float elapsed = get_elapsed(app_state, state.search);
 
@@ -2088,44 +2040,37 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
     // The header takes as many lines as its pieces need, so everything under it
     // is placed from where it actually ended, not from a reserved row count.
     lay.grid_labels_y = draw_header_rows(context, font, app_state, lay,
-                                         task, puzzle_idx, puzzle_count,
-                                         current_attempts, aps, fps, gpu_ms,
-                                         cur_depth, best_depth, search_depth_limit);
+                                         task, puzzle_idx, puzzle_count, fps);
     int grid_label_h = 5 * lay.scale + 2 * 2 * lay.scale; // matches label box height
     lay.grid_data_start_y = lay.grid_labels_y + grid_label_h + lay.v_gap;
 
-    // Reflow the BEST/CURRENT footers for multi-line (wrapped) pipelines: deep
-    // programs stack upward (and shrink the grid area) instead of running off the
-    // right edge. Single-line programs reproduce the original footer positions
-    // exactly (cur_lines == best_lines == 1 -> footer{2,1}_y a row_h apart).
+    // Reflow the BEST footer for a multi-line (wrapped) pipeline: a deep program
+    // stacks upward (and shrinks the grid area) instead of running off the
+    // right edge.
     {
       int fscale = lay.scale;
       int line_h = 9 * fscale + lay.v_gap;
-      // Always reserve at least 3 lines each so the layout doesn't jump on wrap.
       // Four sentences of room, always, so the footer does not walk up and down
       // the screen as a program grows a sentence.
       const bool whole = app_state.show_whole_programs.load();
       int best_lines = max((int)PIPELINE_FOLDED_LINES, task.best_tree ? count_pipeline_lines(task.best_tree, whole) : 1);
-      int cur_lines = max((int)PIPELINE_FOLDED_LINES,
-                          state.search.current_tree ? count_pipeline_lines(state.search.current_tree, whole) : 1);
-      lay.footer2_y = lay.footer3_y - best_lines * line_h;
-      lay.footer1_y = lay.footer2_y - cur_lines * line_h;
-      // Safety: never let footers climb into the grid-label band (absurdly deep
-      // programs); the grid just shrinks to whatever room remains.
-      if (lay.footer1_y < lay.grid_data_start_y + line_h)
-        lay.footer1_y = lay.grid_data_start_y + line_h;
+      lay.best_y = lay.elapsed_y - best_lines * line_h;
+      // Safety: never let the footer climb into the grid-label band (absurdly
+      // deep programs); the grid just shrinks to whatever room remains.
+      if (lay.best_y < lay.grid_data_start_y + line_h)
+        lay.best_y = lay.grid_data_start_y + line_h;
     }
 
-    draw_footer_rows(context, font, app_state, lay, task, state, elapsed);
+    draw_footer_rows(context, font, app_state, lay, task, elapsed);
   }
 
   if (!draw_grid_view(context, font, background, task, state.views, lay))
     return;
 
   // Hover preview: draw the subtree output for every train+test example,
-  // overlaid on top of the corresponding row in the CURRENT column. Only the
-  // search's process can run a program, so a subtree not seen yet is asked
-  // for, and drawn once the answer is back.
+  // overlaid on the BEST column and the quarter beside it. Only the solver's
+  // process can run a program, so a subtree not seen yet is asked for, and
+  // drawn once the answer is back.
   {
     int p_idx = state.puzzle_idx.load();
     if (state.preview_last_puzzle_idx != p_idx) {
@@ -2135,8 +2080,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
     }
 
     uint64_t h = app_state.hovered_hash.load();
-    int hs = app_state.hovered_source.load();
-    node *root = (hs == 1) ? task.best_tree : state.search.current_tree;
+    node *root = task.best_tree;
     int total_examples = (int)(task.train.size() + task.test.size());
     if (h != 0 && root && total_examples > 0) {
       auto it = state.preview_cache.find(h);
@@ -2174,16 +2118,16 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
         // Re-derive row Y positions exactly as draw_grid_view does, so each
         // preview overlays its own example.
         int pad = lay.base_margin / 2;
-        int available_grid_h = lay.footer1_y - lay.grid_data_start_y;
+        int available_grid_h = lay.best_y - lay.grid_data_start_y;
         int slot_h = available_grid_h / total_examples;
         int col_w = lay.screen_w / 4;
         int outline = lay.scale;
         int n = min((int)state.preview_grids.size(), total_examples);
 
-        // Backdrop spans CURRENT (col 2) + BEST (col 3) for every example row,
-        // giving the preview ~half the screen width to lay out accumulator +
-        // object strip. It also extends upward to cover the BEST/CURRENT
-        // header labels so the preview takes over the whole right half.
+        // Backdrop spans cols 2 and 3 for every example row, giving the
+        // preview ~half the screen width to lay out accumulator + object
+        // strip. It also extends upward to cover the BEST header label so the
+        // preview takes over the whole right half.
         int back_x = 2 * col_w + lay.base_margin;
         int back_w = 2 * col_w - lay.base_margin * 2;
 
@@ -2206,7 +2150,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
           int grid_pad = 2 * lay.scale;
           int lw = text_w("PREVIEW", lay.scale) + grid_pad * 2;
           int lh = 5 * lay.scale + grid_pad * 2;
-          // Flush-left at the CURRENT column's label x (col index 2).
+          // Flush-left at the BEST column's label x (col index 2).
           int label_x = 2 * col_w + lay.base_margin;
           draw_boxed_text(context, font, "PREVIEW", label_x, lay.grid_labels_y,
                           lay.scale, lw, lh, 5);
@@ -2219,7 +2163,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
           int back_y = row_y + pad;
           int back_h = slot_h - pad * 2;
 
-          // Black backdrop covers CURRENT + BEST for this row. Use color 0
+          // Black backdrop covers cols 2 and 3 for this row. Use color 0
           // (black in the ARC palette) rather than the cell-outline grid,
           // which is a non-black UI color.
           const display_grid &back_sheet = solid_sheets.count(0) ? solid_sheets[0] : background;

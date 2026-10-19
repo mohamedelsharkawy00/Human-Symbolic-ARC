@@ -1,11 +1,11 @@
 #pragma once
 
-// This header is included from 16_solver_beam.hpp AFTER 13_environment.hpp and 12_dsl.cuh,
+// This header is included from 16_solver.hpp AFTER 13_environment.hpp and 12_dsl.cuh,
 // so arc:: types (grid, example, output_dimension_rule, flat_program, etc.) are already available.
 // Do NOT include 13_environment.hpp here to avoid circular dependencies.
 //
 // Contains: fixed-size grid/object types, segmentation helpers for puzzle upload,
-// and the fixed_init_context used by build_example_upload. All DSL execution is
+// and the fixed_init_context used by fill_example_slot. All DSL execution is
 // handled by the GPU kernel in cuda_solver.cu.
 
 #include "12_dsl.cuh"
@@ -64,51 +64,9 @@ static inline void fixed_segment_objects(const fixed_grid& g, fixed_object_list&
         });
 }
 
-// One layer per color, including disconnected cells.
-static inline void fixed_segment_color_layers(const fixed_grid& g, fixed_object_list& out, int8_t bg_color = GPU_TRANSPARENT) {
-    out.clear();
-    if (g.width <= 0 || g.height <= 0) return;
-
-    for (int color = 0; color < GPU_MAX_COLORS; ++color) {
-        if (color == bg_color) continue;
-
-        int16_t x0 = (int16_t)g.width, y0 = (int16_t)g.height;
-        int16_t x1 = -1, y1 = -1;
-        bool found = false;
-
-        for (int r = 0; r < g.height; ++r) {
-            for (int c = 0; c < g.width; ++c) {
-                if (g.data[r][c] != color) continue;
-                found = true;
-                if (c < x0) x0 = (int16_t)c;
-                if (r < y0) y0 = (int16_t)r;
-                if (c > x1) x1 = (int16_t)c;
-                if (r > y1) y1 = (int16_t)r;
-            }
-        }
-        if (!found) continue;
-
-        fixed_object obj;
-        obj.x0 = x0; obj.y0 = y0; obj.x1 = x1; obj.y1 = y1;
-        obj.width = (int16_t)std::min((int)(x1 - x0 + 1), (int)GPU_MAX_GRID);
-        obj.height = (int16_t)std::min((int)(y1 - y0 + 1), (int)GPU_MAX_GRID);
-
-        for (int r = 0; r < g.height; ++r) {
-            for (int c = 0; c < g.width; ++c) {
-                if (g.data[r][c] != color) continue;
-                int pr = r - y0, pc = c - x0;
-                if (pr >= 0 && pr < obj.height && pc >= 0 && pc < obj.width)
-                    obj.mask[pr][pc] = (int8_t)color;
-            }
-        }
-
-        if (!out.push(obj)) return; // full
-    }
-}
-
 // =====================================================================
 // Execution context (fixed-size, no heap) — used by fixed_init_context
-// and build_example_upload to prepare per-example data for GPU upload.
+// and fill_example_slot to prepare per-example data for GPU upload.
 // =====================================================================
 
 struct fixed_exec_context {
@@ -119,18 +77,6 @@ struct fixed_exec_context {
     // Distance maps for scoring (from example)
     int8_t distance_maps[GPU_MAX_COLORS][GPU_MAX_GRID][GPU_MAX_GRID];
 };
-
-static inline void sort_objects_by_area_asc(fixed_object_list& list) {
-    for (int i = 1; i < list.count; ++i) {
-        int j = i;
-        while (j > 0) {
-            int a0 = list.objects[j-1].width * list.objects[j-1].height;
-            int a1 = list.objects[j].width * list.objects[j].height;
-            if (a1 < a0) { std::swap(list.objects[j], list.objects[j-1]); j--; }
-            else break;
-        }
-    }
-}
 
 // fixed_object_list (CPU) -> gpu_object_list (GPU kernel), both as long as a
 // grid has cells. Both sides hold their cells in the same bytes, so the mask

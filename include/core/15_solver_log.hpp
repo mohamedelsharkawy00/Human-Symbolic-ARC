@@ -1,8 +1,8 @@
 #pragma once
-// What the search says about itself as it runs: the live counters another
-// thread may read, and the per-puzzle log file a person may read afterwards.
-// Core, so neither knows whether anybody is watching. Whoever builds the
-// solver says whether the log is written at all.
+// What the solver shares while it runs: the lock and clock another thread may
+// read by, and the per-puzzle log file a person may read afterwards. Core, so
+// neither knows whether anybody is watching. Whoever builds the solver says
+// whether the log is written at all.
 #include "13_environment.hpp"
 #include <atomic>
 #include <chrono>
@@ -24,35 +24,12 @@ inline string format_elapsed(double t) {
 	return to_text("%02d:%02d:%07.4f", h, m, s);
 }
 
-// WHAT THE SEARCH HAS DONE SO FAR, readable from any thread while it runs.
-// The mutex guards the solver's puzzle and current_tree for a reader on
-// another thread; a solver driven from one thread never waits on it.
+// The mutex guards the solver's puzzle for a reader on another thread; a
+// solver driven from one thread never waits on it.
 struct search_progress {
 	mutable mutex mtx;
-	// The program most recently tried, for someone watching to read.
-	node *current_tree = nullptr;
-	atomic<long long> attempts{0};
-	// Nanoseconds the search has spent waiting on the GPU. Read by the render
-	// thread: attempts alone cannot tell a running kernel from a stall.
-	// gpu_wait_since is the start of the wait in progress (0 = not waiting).
-	// Without it a long wait posts its whole duration to the single frame it
-	// ends on, which reads as more than 100% busy.
-	atomic<long long> gpu_wait_ns{0};
-	atomic<long long> gpu_wait_since{0};
-	atomic<long long> gpu_wait_count{0};
-
-	// Total GPU wait including the part not yet finished.
-	long long gpu_wait_now() const {
-		long long since = gpu_wait_since.load();
-		long long live = since ? chrono::duration_cast<chrono::nanoseconds>(
-			chrono::steady_clock::now().time_since_epoch()).count() - since : 0;
-		return gpu_wait_ns.load() + (live > 0 ? live : 0);
-	}
-	atomic<int> current_max_depth{1};
-	atomic<int> current_attempt_depth{0};
-	atomic<int> current_attempt_nodes{0};
 	// When the puzzle was loaded. A driver that pauses moves it forward by the
-	// pause, so time since it is time spent searching.
+	// pause, so time since it is time spent reading.
 	chrono::steady_clock::time_point start_time{chrono::steady_clock::now()};
 };
 
@@ -61,7 +38,7 @@ struct logger {
   // logs/<id>.txt at all. Off for a run nobody reads the logs of: on Kaggle
   // they would be 240+ files in /kaggle/working, over its disk quota.
   const bool write_files;
-  // Debug and tree lines too, not just timing. The GUI's logging switch.
+  // Debug lines at all. The GUI's logging switch.
   atomic<bool> verbose{false};
 
   logger(const search_progress &p, bool write) : progress(p), write_files(write) {
@@ -89,16 +66,6 @@ struct logger {
 
   void debug(const string &msg) {
     if (verbose) add("DEBUG", msg);
-  }
-
-  // Always recorded: the timing line measures what logging costs, so the
-  // logging toggle must not be able to change it.
-  void timing(const string &msg) { add("TIME", msg); }
-
-  void tree_record(const node *tree, float score, long long attempts) {
-    if (!write_files || !verbose) return;
-    add("TREE", to_text("%lld | %s | %s", attempts, shortest(score).c_str(),
-                        environment::stringify_tree_via_flat(tree).c_str()));
   }
 
   // Empties the current puzzle's file, for a log that starts with this run.

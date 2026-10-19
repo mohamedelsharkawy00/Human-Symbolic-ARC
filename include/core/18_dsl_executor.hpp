@@ -1,7 +1,7 @@
 #pragma once
 
 // GPU-based execute_flat_program bridge.
-// All program execution + scoring goes through the CUDA scratch kernel.
+// All program execution + scoring goes through the CUDA kernel.
 // No CPU-side scoring — GPU score and solved flag are returned directly.
 
 namespace arc {
@@ -15,10 +15,7 @@ namespace arc {
 		"GPU pool must hold more than the lists live at once; raise GPU_KERNEL_POOL_SIZE");
 
 	// ONE EXAMPLE, READY FOR THE KERNEL: what it starts from and what it must
-	// paint, into slot `ei` of an upload. The main search fills its active
-	// examples with this and the scratch path its one, so a program scores the
-	// same on both -- otherwise refresh_best_display_scores would set the bar
-	// without the CC bonus and every CC-bearing winner would trivially beat it.
+	// paint, into slot `ei` of an upload.
 	inline void fill_example_slot(cuda_dsl_example_data& data, int ei, const example& ex,
 	                              const puzzle& p) {
 		static thread_local auto init_ctx = std::make_unique<fixed_exec_context>();
@@ -86,8 +83,7 @@ namespace arc {
 		fill_example_slot(*ex_data, 0, ex, p);
 		fill_puzzle_level(*ex_data, p);
 
-		// Upload into the scratch slot — isolated from the main cache used by beam search.
-		cuda_dsl_upload_scratch_example(*ex_data);
+		cuda_dsl_upload_example(*ex_data);
 
 		// Build a 1-job batch
 		static thread_local cuda_dsl_exec_batch batch;
@@ -101,11 +97,9 @@ namespace arc {
 		for (int o = gpu_op_count; o < GPU_MAX_OPS; ++o) dst_ops[o] = {node_type::Input, 0};
 		batch.program_lengths[0] = (int16_t)gpu_op_count;
 		batch.node_counts[0] = (int16_t)node_count;
-		batch.program_indices[0] = 0;
 
-		// Execute on GPU via scratch path — leaves main example cache intact.
-		cuda_dsl_exec_and_score_scratch(batch);
-		cuda_dsl_fetch_output_grids_scratch(batch, 0, 1);
+		cuda_dsl_exec_and_score(batch);
+		cuda_dsl_fetch_output_grids(batch, 0, 1);
 
 		// Read GPU score + solved flag directly — no CPU re-scoring.
 		out_score = batch.scores[0];

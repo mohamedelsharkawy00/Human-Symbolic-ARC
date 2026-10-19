@@ -28,11 +28,6 @@ file in `edge://tracing` or `chrome://tracing` to explore nested compiler events
 Tracing adds overhead; compare runs using the same profiling mode. To regenerate
 only the CUDA analysis, run `python scripts/summarize_cuda_build.py out/build-profile-...`.
 
-CMake builds leave the CUDA pieces extraction API out by default, because
-nothing calls it yet and compiling it costs about a third of a clean build. Turn
-it back on with `cmake --preset x64-Release -DARC_ENABLE_CUDA_PIECES=ON`. Direct
-NVCC builds, which define nothing, keep the API.
-
 # 3. Build and check
 1. Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
 2. Score and readouts, one run: `scripts\said.bat [--as <label>] [--solved [label]] [id...]` builds arc_said and reads every training puzzle, or the ids named, into `out\x64-Release\`, or `out\<label>\` when a run is named to compare.
@@ -45,28 +40,28 @@ NVCC builds, which define nothing, keep the API.
 9. Tests: none besides the score and the readouts. `tests/puzzles` holds small made-up puzzles to view in the app (the CUS dataset button).
 
 # 4. Layout
-1. `include\core` is the solver. Give it a puzzle, call `step()` until it is solved or out of time, read the best program off the puzzle. It has no thread, window, sound or settings file of its own.
-2. `include\gui` is the window: the puzzle list, pause, settings, sounds, and the pictures of what the search is doing. It never runs the solver itself (section 5).
+1. `include\core` is the solver. Give it a puzzle, call `infer()`, read the best program off the puzzle. It has no thread, window, sound or settings file of its own.
+2. `include\gui` is the window: the puzzle list, pause, settings, sounds, and the pictures of what the reading drew. It never runs the solver itself (section 5).
 3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` links the solver's headers but not its GPU code, so GUI code that reached for the GPU would not link.
-4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every search the GUI shows, and the Kaggle run. Both come out of every build.
+4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every reading the GUI shows, and the Kaggle run. Both come out of every build.
 5. Headers are numbered in the order they are meant to be read, core first. The number says where a file sits in the story, not what it may include: `8_vocabulary.hpp` needs only `0_core.hpp`, but its words name facts established by `1_readings.hpp` through `7_infer.hpp`.
 
 # 5. One puzzle, one process
-1. Every search runs in a fresh `arc_headless` process, one per puzzle. A solver that has worked through one puzzle carries its memory and state into the next, and freeing it by hand never cleaned up as thoroughly as ending the process does; puzzles that ran after another went measurably worse than the same puzzle run first. The GUI creates no CUDA context at all.
-2. In the GUI, a search process is started once the window has stayed on a puzzle for a moment (stepping through puzzles starts nothing) and waits paused, so SPACE starts it instantly. Pause and resume are sent to it. Another puzzle, a reset or a dataset change kills it; the next search starts clean. If the GUI dies, its search dies with it.
-3. The process streams what it paints and where it stands, and the window replays it into the same view as before. Hovering a program in the footer asks the process what it paints, since only it can run one. Import is sent to it too. Its stderr goes to `logs\search_process.txt`.
-4. `arc_headless --task ID --datasets MASK --timeout SECONDS --out FILE` solves one puzzle and writes what it found to `FILE`: its line of the submission and how the search went. `MASK` is the dataset bits to look `ID` up in (1 train, 2 eval, 4 test, 8 custom). `--serve` is the GUI's form: it streams on stdout and takes commands on stdin (`include\core\22_search_stream.hpp` has both). `--logs` writes `logs\<id>.txt` and the inference readout, `--verbose` puts debug lines in them too, `--max-attempts N` and `--start-examples N` are the experiment knobs.
+1. Every puzzle runs in a fresh `arc_headless` process of its own. A solver that has worked through one puzzle carries its memory and state into the next, and freeing it by hand never cleaned up as thoroughly as ending the process does; puzzles that ran after another went measurably worse than the same puzzle run first. The GUI creates no CUDA context at all.
+2. In the GUI, the puzzle's process is started once the window has stayed on a puzzle for a moment (stepping through puzzles starts nothing) and waits. SPACE, or opening the inference pane, asks it to read: it runs what the reading spells, shows the first program that fits (the first program when none does) and pauses again. Another puzzle, a reset or a dataset change kills it; the next one starts clean. If the GUI dies, its process dies with it.
+3. The process streams what it paints, and the window replays it into the same view as before. Hovering a program in the footer asks the process what it paints, since only it can run one. Import is sent to it too. Its stderr goes to `logs\search_process.txt`.
+4. `arc_headless --task ID --datasets MASK --out FILE` reads one puzzle and writes what it found to `FILE`: its line of the submission and how the reading went. `MASK` is the dataset bits to look `ID` up in (1 train, 2 eval, 4 test, 8 custom). `--serve` is the GUI's form: it streams on stdout and takes commands on stdin (`include\core\22_search_stream.hpp` has both); with `--out` too it reads at once, writes `FILE` and stops. With `--serve`, `--logs` writes `logs\<id>.txt` and the inference readout, and `--verbose` puts debug lines in them too.
 5. Everything that runs many puzzles, the Kaggle run and the GUI's benchmark, starts one of these per puzzle. A puzzle whose process dies still gets a line in the submission, its test inputs echoed as answers, since every task must be there.
 
 # 6. Benchmark
-1. The BENCHMARK button in the GUI runs the checked datasets from their first puzzle, each for up to TIMEOUT seconds, stopping after LIMIT puzzles.
-2. The search on screen is killed, and each puzzle runs in its own `arc_headless.exe`, one at a time, shown live the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh search starts, paused, on the last puzzle it ran.
+1. The BENCHMARK button in the GUI reads the checked datasets from their first puzzle, stopping after LIMIT puzzles: arc_said in the window.
+2. The puzzle's process on screen is killed, and each puzzle is read in its own `arc_headless.exe`, one at a time, shown the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh process starts, paused, on the last puzzle it read.
 3. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
 
 # 7. Kaggle
 1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp`, `src\cuda_solver.cu` and `scripts\said.cpp` with `in_parallel.hpp` as a Kaggle dataset, the commit they came from as its version message, and `commit.txt` (that commit and a digest of the files), which the push waits to see Kaggle serve before it runs anything; nothing from `include\gui` goes.
 2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it on Kaggle's GPU and starts one `arc_headless` per GPU. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`. Told to read training or evaluation (`ARC_DATASET`), it builds `arc_said` instead: a scored run (below).
-3. Kaggle uses inference only: `ARC_INFERENCE_ONLY=1`. It emits programs, accepts the first that exactly reproduces every training output, and predicts the test outputs. No search runs. Run the same path locally with `arc_headless.exe`, `ARC_INFERENCE_ONLY=1`, and `ARC_DATASET` set to test, eval, train or custom. Optional controls are `ARC_PUZZLE_LIMIT` and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`. One task can be run with `arc_headless --task ID --datasets MASK --infer-only --out FILE`. The older search path is still available when inference-only is not set.
+3. On Kaggle it emits programs, accepts the first that exactly reproduces every training output, and predicts the test outputs. Run the same path locally with `arc_headless.exe` and `ARC_DATASET` set to test, eval, train or custom. Optional controls are `ARC_PUZZLE_LIMIT` and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`. One task can be run with `arc_headless --task ID --datasets MASK --out FILE`.
 
 One dataset (`solver-source-code`) and one notebook (`arc-build`) serve
 everything, pushed from any folder: a run builds whatever was pushed last.

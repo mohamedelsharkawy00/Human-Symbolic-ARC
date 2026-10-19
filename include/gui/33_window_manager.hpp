@@ -239,12 +239,6 @@ private:
       case ui_action::toggle_benchmark:
         m_app_state.is_benchmarking = !m_app_state.is_benchmarking;
         break;
-      case ui_action::inc_timeout:
-        m_app_state.benchmark_timeout_seconds = min(600.0, m_app_state.benchmark_timeout_seconds + 10.0);
-        break;
-      case ui_action::dec_timeout:
-        m_app_state.benchmark_timeout_seconds = max(10.0, m_app_state.benchmark_timeout_seconds - 10.0);
-        break;
       case ui_action::inc_limit:
         m_app_state.benchmark_puzzle_limit = min(m_solver_threading.get_puzzle_count(), m_app_state.benchmark_puzzle_limit + 1);
         break;
@@ -451,19 +445,16 @@ private:
         m_app_state.op_handle_hot.store(is_near || m_dragging_handle);
       }
       uint64_t hit = 0;
-      int hit_src = 0;
       {
         std::lock_guard<std::mutex> lk(m_app_state.node_zones_mtx);
         for (const auto &z : m_app_state.node_zones) {
           if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) {
             hit = z.node_hash;
-            hit_src = z.source;
             break;
           }
         }
       }
       m_app_state.hovered_hash.store(hit);
-      m_app_state.hovered_source.store(hit_src);
       return 0;
     }
     if (u_msg == WM_LBUTTONDOWN) {
@@ -702,7 +693,6 @@ private:
 
   static inline bool is_repeatable(ui_action a) {
     return a == ui_action::prev_puzzle || a == ui_action::next_puzzle ||
-           a == ui_action::inc_timeout || a == ui_action::dec_timeout ||
            a == ui_action::inc_limit   || a == ui_action::dec_limit   ||
            a == ui_action::cycle_coarseness || a == ui_action::cycle_coarseness_back ||
            a == ui_action::step_edge        || a == ui_action::step_edge_back ||

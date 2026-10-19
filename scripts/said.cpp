@@ -26,10 +26,9 @@
 //
 // THE PUZZLES ARE READ AT ONCE, one per CPU thread (in_parallel.hpp). Each
 // writes its own readout. Their programs run one puzzle at a time: every run on
-// the GPU goes through its one scratch slot, and every program is parsed into
-// one pool. The lines come out in the dataset's order, as they did one puzzle at
-// a time.
-#include "16_solver_beam.hpp"
+// the GPU goes through its one set of device buffers. The lines come out in the
+// dataset's order, as they did one puzzle at a time.
+#include "16_solver.hpp"
 #include "14_puzzle_loader.hpp"
 #include "20_cuda_solver.cuh"
 #include "in_parallel.hpp"

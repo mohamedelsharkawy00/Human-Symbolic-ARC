@@ -20,7 +20,7 @@ struct placement {
 };
 
 // A grid THE DISPLAY ITSELF OWNS: font glyphs, color sheets, preview slots, and
-// the current/best pictures. Data and placement travel together because nothing
+// the best pictures. Data and placement travel together because nothing
 // in core holds these. Core functions taking `const grid&` accept one unchanged;
 // assigning one INTO a grid drops the placement, which is what core wants.
 struct display_grid : grid {
@@ -29,16 +29,11 @@ struct display_grid : grid {
 
 // WHAT THE GUI KEEPS BESIDE AN EXAMPLE, never inside it. The puzzle's own input
 // and output live in core and are only pointed at here, by where their cells
-// were uploaded. `current` and `best` are pictures of the search for a person to
-// watch, so the display owns them outright.
+// were uploaded. `best` is the picture of what the reading's program drew, for
+// a person to watch, so the display owns it outright.
 struct example_views {
   placement input, output;
-  display_grid current, best;
-  // What the search is trying right now, scored. Lives here and not on the
-  // example because only this column reads it: nothing in the search decides
-  // anything by it. Below SCORE_MIN means nothing has been tried, which is how
-  // the CURRENT column knows to draw nothing.
-  float current_score = SCORE_MIN - 1.0f;
+  display_grid best;
 };
 
 // One of the above per example, in the same order as puzzle::train and

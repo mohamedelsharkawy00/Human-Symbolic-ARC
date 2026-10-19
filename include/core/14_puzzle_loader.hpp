@@ -224,8 +224,8 @@ struct puzzle_label {
 // so nothing can be worked out before the fact it rests on. Never at load: a
 // puzzle nobody is looking at and nobody is solving does not need it, and
 // stepping through a thousand puzzles should cost only the parse. Whoever
-// needs the facts asks for them — the pane when it opens, the search before
-// it starts. The readout file is written only when asked for, since only a
+// needs the facts asks for them — the pane when it opens, the reading when
+// it is asked for. The readout file is written only when asked for, since only a
 // person ever reads it. The reading itself, infer, is the slow part (seconds
 // where it reads its passes); take_the_reading is the rest, so a caller that
 // holds a lock others wait on can read outside it and take inside it.
@@ -243,43 +243,6 @@ inline void take_the_reading(puzzle& task, inference read, const puzzle_label& l
     task.rule = inf.size;                              // size - across_input_output
     if (inf.ground_election.input_elected() >= 0)              // color - across_inputs
         task.invariant_colors[inf.ground_election.input_elected()] = true;  // (bg only - see CAVEAT)
-    // WHAT AN OP CANNOT DO ANYTHING WITH. An op whose backing fact is absent
-    // can only no-op, so it leaves the generating pool now, once, rather than
-    // being tried and discarded on every candidate. Read off what inference
-    // actually said, so a verdict cannot drift from the fact behind it.
-    task.dead_ops[(int)node_type::SizeRankColorMap] =
-        (inf.colors.output_colors_by_size_count == 0);
-    // No split, no panes: the op would hand back an empty list on every grid.
-    task.dead_ops[(int)node_type::Panes] = !inf.pane_split.holds();
-    // The two shape->color ops SHARE one learned table and mean different things
-    // by it: one repaints a body, the other fills a hole. Whichever detector
-    // claimed it, the other op would be reading the wrong semantics, so an
-    // unclaimed op is as dead as an empty table.
-    const auto claimed = inf.shape_color_map.claimed_by;
-    const bool learned = inf.shape_color_map.holds();
-    task.dead_ops[(int)node_type::ShapeColorMap] =
-        (!learned || claimed != shape_color_map_rule::body_recolor);
-    task.dead_ops[(int)node_type::ShapeToInteriorColorMap] =
-        (!learned || claimed != shape_color_map_rule::interior_fill);
-    // A word read off a partner is only ever the partner inference read off the
-    // pairs; anywhere else the op would act by a relation nothing bore out. Each
-    // such op is open only where the line says its word.
-    using said_as = correspondence_election::fired_rule::said_as;
-    const auto& election = inf.correspondence;
-    auto line_says = [&](auto said) {
-        if (election.readings.empty()) return false;
-        const auto& read = election.readings[election.chosen];
-        return ranges::any_of(read.line, [&](int8_t which) { return said(read.fired[which]); });
-    };
-    const std::pair<node_type, said_as> by_partner[] = {
-        { node_type::ColorFrom, said_as::color_from }, { node_type::AlignTo, said_as::align_to },
-        { node_type::MirrorAround, said_as::mirror_around }, { node_type::MoveToward, said_as::move_toward } };
-    for (const auto& [op, as] : by_partner)
-        task.dead_ops[(int)op] = !line_says([&](const auto& rule) { return rule.as == as; });
-    task.dead_ops[(int)node_type::WouldFit] = !line_says([](const auto& rule) { return rule.pick.fits >= 0; });
-    task.dead_ops[(int)node_type::SelectPartition] = !line_says([](const auto& rule) { return rule.pick.part >= 0; });
-    task.dead_ops[(int)node_type::SelectLikeKey] = !line_says([](const auto& rule) { return rule.pick.like >= 0; });
-    task.dead_ops[(int)node_type::SelectPartner] = !line_says([](const auto& rule) { return rule.pick.partner >= 0; });
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one
@@ -287,7 +250,7 @@ inline void take_the_reading(puzzle& task, inference read, const puzzle_label& l
     task.suggested_programs = programs_from(say_the_reading(inf));
     // A sentence that opens with no source carves what the sentence before it
     // left instead of the input. It runs, it draws, and it is wrong, so it is
-    // dropped here rather than handed to the search as something to build on.
+    // dropped here rather than run.
     erase_if(task.suggested_programs, [](const string& one) {
         return sentence_with_no_source(one) != nullptr; });
     task.inferred = true;

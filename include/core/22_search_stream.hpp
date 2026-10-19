@@ -1,27 +1,23 @@
 #pragma once
-// A SEARCH WATCHED FROM ANOTHER PROCESS. Every search runs in a process of its
-// own (arc_headless --serve, see kaggle_main.cpp), and the GUI watches it: the
-// process says what it paints and where its search stands as lines of text on
-// stdout, and the watcher replays them into its own copy of the puzzle and its
-// own counters. The watcher talks back on stdin. Both halves live here so the
-// two sides of the pipe cannot drift apart.
+// A READING WATCHED FROM ANOTHER PROCESS. Every reading the GUI shows runs in a
+// process of its own (arc_headless --serve, see kaggle_main.cpp), and the GUI
+// watches it: the process says what it paints as lines of text on stdout, and
+// the watcher replays them into its own copy of the puzzle. The watcher talks
+// back on stdin. Both halves live here so the two sides of the pipe cannot
+// drift apart.
 //
-// What the search says, one message per line, first word saying which:
+// What the process says, one message per line, first word saying which:
 //   L                                   a puzzle was loaded
-//   P side example column -             a picture cleared (side 0 train, 1 test;
-//   P side example column w h cells...    column 0 current, 1 best)
-//   S side example score                the score beside a CURRENT picture
-//   N from promotions improved simplified train_solved test_solved
-//   A attempts max_depth attempt_depth attempt_nodes gpu_wait_ns gpu_waits elapsed
-//   B nodes solved test_solved train_count scores... test_count scores... | program
-//   T program                           the program tried last
-//   Z attempts                          it stopped itself at --max-attempts
+//   P side example -                    a picture cleared (side 0 train, 1 test)
+//   P side example w h cells...         what the best program painted there
+//   N train_solved test_solved          the reading is done
+//   B solved test_solved train_count scores... test_count scores... | program
 //   V hash examples, then per example:  what a program paints (a hover preview)
 //     w h cells...  objects, then per object: x0 y0 x1 y1 w h cells...
 //
-// What it is told, on stdin (search_commands):
-//   run | pause | infer | verbose 0|1 | import <program> | preview <hash> <program> | quit
-#include "16_solver_beam.hpp"
+// What it is told, on stdin:
+//   infer | verbose 0|1 | import <program> | preview <hash> <program> | quit
+#include "16_solver.hpp"
 #include <chrono>
 #include <cstdio>
 #include <map>
@@ -68,7 +64,7 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
       static thread_local auto fetched = std::make_unique<gpu_object_list>();
       gpu_object_list& ol = *fetched;
       int work_w = 0, work_h = 0;
-      if (cuda_dsl_fetch_last_object_list_scratch(0, ol, &work_w, &work_h)) {
+      if (cuda_dsl_fetch_last_object_list(0, ol, &work_w, &work_h)) {
         int n_obj = min((int)ol.count, GPU_KERNEL_MAX_OBJECTS);
         payload.object_lists[slot].reserve(n_obj);
         payload.object_bboxes[slot].reserve(n_obj);
@@ -141,55 +137,28 @@ inline void read_grid(istream &in, grid &g) {
     }
 }
 
-// THE WATCHED SIDE: a solver_observer that writes the lines. Pictures and
-// scores are held and only the latest of each goes out, at most every
-// `interval`, so a fast search is not slowed by its own commentary.
+// THE WATCHED SIDE: a solver_observer that writes the lines. Pictures are held
+// and only the latest of each goes out, at most every `interval`.
 class search_stream_writer : public solver_observer {
 public:
   explicit search_stream_writer(FILE *out, chrono::milliseconds interval = chrono::milliseconds(50))
       : m_out(out), m_interval(interval) {}
 
-  // How often the counters go out. They are one short line, and the window
-  // reads its attempts-per-second off the gaps between them, so they are sent
-  // far more often than the pictures -- at the rate a frame is drawn, since a
-  // slower one makes that reading jump about.
-  static constexpr chrono::milliseconds counter_interval{16};
-
-  // The last thing it said it found, taken: a driver that stops on a solve
-  // reads it here.
-  search_news take_news() {
-    search_news n = m_last_news;
-    m_last_news = {};
-    return n;
-  }
-
   void loaded(const puzzle &) override {
     m_pending.clear();
     m_best.clear();
-    m_current.clear();
     line("L");
   }
 
-  void painted(bool is_test, size_t i, column which, const grid *g) override {
-    string text = to_text("P %d %zu %d", (int)is_test, i, (int)(which == column::best));
+  void painted(bool is_test, size_t i, const grid *g) override {
+    string text = to_text("P %d %zu", (int)is_test, i);
     if (g) write_grid(text, *g);
     else text += " -";
-    m_pending[key(is_test, i, which == column::best ? 1 : 0)] = std::move(text);
-  }
-
-  void scored_current(bool is_test, size_t i, float score) override {
-    m_pending[key(is_test, i, 2)] = to_text("S %d %zu %s", (int)is_test, i, shortest(score).c_str());
+    m_pending[key(is_test, i)] = std::move(text);
   }
 
   void news(const search_news &n) override {
-    m_last_news = n;
-    line(to_text("N %d %d %d %d %d %d", (int)n.from, n.promotions, (int)n.improved,
-                 (int)n.simplified, (int)n.train_solved, (int)n.test_solved));
-  }
-
-  void stopped_at(long long attempts) {
-    line(to_text("Z %lld", attempts));
-    fflush(m_out);
+    line(to_text("N %d %d", (int)n.train_solved, (int)n.test_solved));
   }
 
   void previewed(uint64_t hash, const preview_payload &p) {
@@ -208,22 +177,9 @@ public:
   }
 
   // Called from the loop driving the solver: sends what changed since last
-  // time and, while it runs, where the search stands. `now` sends it whatever
-  // the interval; a paused search's clock is sent once, as it stops.
-  void tick(const beam_solver &solver, bool running, double elapsed, bool now = false) {
+  // time. `now` sends it whatever the interval.
+  void tick(const solver &reader, bool now = false) {
     const auto t = chrono::steady_clock::now();
-    if (!now && t - m_counters_last < counter_interval) return;
-
-    const search_progress &s = solver.progress();
-    if (running || now) {
-      m_counters_last = t;
-      line(to_text("A %lld %d %d %d %lld %lld %s", s.attempts.load(), s.current_max_depth.load(),
-                   s.current_attempt_depth.load(), s.current_attempt_nodes.load(), s.gpu_wait_now(),
-                   s.gpu_wait_count.load(), shortest((float)elapsed).c_str()));
-    }
-
-    // The pictures and the programs, at their own slower rate: they are the
-    // size of the puzzle, and nobody can read them faster than this anyway.
     if (!now && t - m_last < m_interval) {
       fflush(m_out);
       return;
@@ -233,9 +189,8 @@ public:
     for (auto &entry : m_pending) line(entry.second);
     m_pending.clear();
 
-    const puzzle &p = solver.get_puzzle();
-    string best = to_text("B %d %d %d %zu", p.best_node_count, (int)p.is_solved,
-                          (int)p.is_test_solved, p.train.size());
+    const puzzle &p = reader.get_puzzle();
+    string best = to_text("B %d %d %zu", (int)p.is_solved, (int)p.is_test_solved, p.train.size());
     for (size_t i = 0; i < p.train.size(); ++i)
       best += " " + shortest(p.best_score_or_worst(false, i));
     best += to_text(" %zu", p.test.size());
@@ -244,15 +199,11 @@ public:
     best += " | " + (p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : string());
     if (best != m_best) line(m_best = best);
 
-    string current = "T " + (s.current_tree ? environment::stringify_tree_via_flat(s.current_tree)
-                                            : string());
-    if (current != m_current) line(m_current = current);
-
     fflush(m_out);
   }
 
 private:
-  static int key(bool is_test, size_t i, int kind) { return ((int)is_test * 1024 + (int)i) * 4 + kind; }
+  static int key(bool is_test, size_t i) { return (int)is_test * 1024 + (int)i; }
   void line(const string &text) {
     fputs(text.c_str(), m_out);
     fputc('\n', m_out);
@@ -261,10 +212,8 @@ private:
   FILE *m_out;
   chrono::milliseconds m_interval;
   chrono::steady_clock::time_point m_last{};
-  chrono::steady_clock::time_point m_counters_last{};
   map<int, string> m_pending;
-  string m_best, m_current;
-  search_news m_last_news;
+  string m_best;
 };
 
 // THE WATCHING SIDE: what a watcher hears besides what the solver told its
@@ -272,13 +221,11 @@ private:
 struct stream_receiver : solver_observer {
   // The answer to "preview <hash> <program>".
   virtual void previewed(uint64_t /*hash*/, preview_payload && /*p*/) {}
-  // The search stopped itself, having tried as many as it was told to.
-  virtual void stopped_at(long long /*attempts*/) {}
 };
 
 // One line, replayed. `p` is the watcher's own copy of the puzzle, parsed from
-// the same task; `progress` holds its copy of the counters, and its mutex
-// guards both, the way it guards a solver's own.
+// the same task; `progress` holds its lock, which guards it the way it guards
+// a solver's own.
 inline void apply_stream_line(const string &text, puzzle &p, search_progress &progress,
                               stream_receiver &watcher) {
   istringstream in(text);
@@ -287,22 +234,9 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
 
   // These arrive with the lock NOT held, as a solver's own news does.
   if (kind == "N") {
-    int from = 0, promotions = 0, improved = 0, simplified = 0, train = 0, test = 0;
-    in >> from >> promotions >> improved >> simplified >> train >> test;
-    search_news n;
-    n.from = (search_news::source)from;
-    n.promotions = promotions;
-    n.improved = improved != 0;
-    n.simplified = simplified != 0;
-    n.train_solved = train != 0;
-    n.test_solved = test != 0;
-    watcher.news(n);
-    return;
-  }
-  if (kind == "Z") {
-    long long attempts = 0;
-    in >> attempts;
-    watcher.stopped_at(attempts);
+    int train = 0, test = 0;
+    in >> train >> test;
+    watcher.news({train != 0, test != 0});
     return;
   }
   if (kind == "V") {
@@ -334,48 +268,24 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
     return;
   }
 
-  if (kind == "A") {
-    long long attempts = 0, wait_ns = 0, waits = 0;
-    int max_depth = 0, depth = 0, nodes = 0;
-    double elapsed = 0;
-    in >> attempts >> max_depth >> depth >> nodes >> wait_ns >> waits >> elapsed;
-    progress.attempts = attempts;
-    progress.current_max_depth = max_depth;
-    progress.current_attempt_depth = depth;
-    progress.current_attempt_nodes = nodes;
-    progress.gpu_wait_ns = wait_ns;
-    progress.gpu_wait_count = waits;
-    scoped_lock lock(progress.mtx);
-    progress.start_time = chrono::steady_clock::now() -
-        chrono::duration_cast<chrono::steady_clock::duration>(chrono::duration<double>(elapsed));
-    return;
-  }
-
   scoped_lock lock(progress.mtx);
   if (kind == "L") {
     watcher.loaded(p);
   } else if (kind == "P") {
-    int side = 0, column = 0;
+    int side = 0;
     size_t i = 0;
-    in >> side >> i >> column;
-    const auto which = column ? solver_observer::column::best : solver_observer::column::current;
+    in >> side >> i;
     if (in >> ws && in.peek() == '-') {
-      watcher.painted(side != 0, i, which, nullptr);
+      watcher.painted(side != 0, i, nullptr);
     } else {
       grid g;
       read_grid(in, g);
-      watcher.painted(side != 0, i, which, &g);
+      watcher.painted(side != 0, i, &g);
     }
-  } else if (kind == "S") {
-    int side = 0;
-    size_t i = 0;
-    float score = 0;
-    in >> side >> i >> score;
-    watcher.scored_current(side != 0, i, score);
   } else if (kind == "B") {
     int solved = 0, test_solved = 0;
     size_t count = 0;
-    in >> p.best_node_count >> solved >> test_solved >> count;
+    in >> solved >> test_solved >> count;
     p.is_solved = solved != 0;
     p.is_test_solved = test_solved != 0;
     for (size_t i = 0; i < count; ++i) in >> p.best_score(false, i);
@@ -386,11 +296,6 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
     getline(in >> ws, program);
     environment::remove(p.best_tree);
     p.best_tree = program.empty() ? nullptr : environment::parse(program);
-  } else if (kind == "T") {
-    string program;
-    getline(in >> ws, program);
-    environment::remove(progress.current_tree);
-    progress.current_tree = program.empty() ? nullptr : environment::parse(program);
   }
   watcher.changed();
 }

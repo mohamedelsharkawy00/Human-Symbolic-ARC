@@ -15,7 +15,6 @@
 //                           default ON PURPOSE: guessing wrong writes a
 //                           submission built from the training set that looks
 //                           exactly like a real one, and no one is watching.
-//         ARC_TIMEOUT       seconds per puzzle (default 120).
 //         ARC_PUZZLE_LIMIT  only the first N tasks overall (0 or unset = all).
 //         ARC_SHARD_INDEX / ARC_SHARD_TOTAL
 //                           which contiguous slice this process solves, one
@@ -26,21 +25,19 @@
 //           merge in kaggle/src/arc_build/build.py. Change one, change both,
 //           or the merge silently finds nothing. ***
 //
-//   arc_headless --task ID --datasets MASK --timeout SECONDS --out FILE
-//       One puzzle, searched until solved or out of time, its result written
-//       to FILE (a puzzle_result). What the run above starts per puzzle. MASK
-//       is the dataset_flag bits to find ID in.
+//   arc_headless --task ID --datasets MASK --out FILE
+//       One puzzle, read: the first program its reading spells that draws
+//       every training output, its result written to FILE (a puzzle_result).
+//       What the run above starts per puzzle. MASK is the dataset_flag bits
+//       to find ID in.
 //
-//   arc_headless --task ID --datasets MASK --serve [--timeout S --out FILE]
-//       One puzzle, watched: the search streams on stdout and takes commands
-//       on stdin (22_search_stream.hpp). Every search the GUI shows is one of
-//       these. Without --timeout it waits paused for "run" and goes until
-//       told to quit or stdin closes; with it (a benchmark) it runs at once
-//       and stops like the one above.
-//
-//   Either takes: --logs (write logs/<id>.txt and the inference readout),
-//   --verbose (debug lines in them too), --max-attempts N (stop, paused, after
-//   N candidates), --start-examples N (judge on N examples from the first).
+//   arc_headless --task ID --datasets MASK --serve [--out FILE]
+//       One puzzle, watched: the reading streams on stdout and it takes
+//       commands on stdin (22_search_stream.hpp). Every puzzle the GUI shows is
+//       one of these. Without --out it waits for "infer" and goes until told
+//       to quit or stdin closes; with it (a benchmark) it reads at once,
+//       writes FILE and stops. It also takes --logs (write logs/<id>.txt and
+//       the inference readout) and --verbose (debug lines in them too).
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -58,7 +55,7 @@
 // 9_sentences and 10_log would be read late, when 14_puzzle_loader includes them.
 #include "10_log.hpp"
 #include "11_text_format.hpp"
-#include "16_solver_beam.hpp"
+#include "16_solver.hpp"
 #include "20_cuda_solver.cuh"
 #include "21_submission.hpp"
 #include "22_search_stream.hpp"
@@ -105,7 +102,7 @@ static string shell_line(const vector<string> &parts) {
 	return line;
 }
 
-// What --serve is told on stdin, read on a thread of its own so the search
+// What --serve is told on stdin, read on a thread of its own so the reading
 // never waits on it. Never freed: the reader may still be blocked on stdin as
 // the process exits, and must not find this gone.
 struct command_inbox {
@@ -124,20 +121,15 @@ struct command_inbox {
 	}
 };
 
-// ONE PUZZLE: load it, step until it is solved or its time is up (or, served,
-// until told to quit), hand back what it found.
+// ONE PUZZLE: load it, read it, hand back what the reading came to (or, served,
+// read it when told to, until told to quit).
 static int solve_one(int argc, char **argv) {
 	const string id = arg_after(argc, argv, "--task");
 	const int flags = atoi(arg_after(argc, argv, "--datasets").c_str());
-	const double timeout = atof(arg_after(argc, argv, "--timeout").c_str());
 	const string out_path = arg_after(argc, argv, "--out");
 	const bool serve = has_arg(argc, argv, "--serve");
-	const bool inference_only = has_arg(argc, argv, "--infer-only");
-	const bool timed = timeout > 0;
-	if (id.empty() || flags == 0 ||
-	    (inference_only ? (serve || out_path.empty()) :
-	     (timed != !out_path.empty() || (!serve && !timed)))) {
-		fprintf(stderr, "--task needs --datasets and --out with --infer-only or --timeout; --serve is interactive\n");
+	if (id.empty() || flags == 0 || (!serve && out_path.empty())) {
+		fprintf(stderr, "--task needs --datasets, and --out unless it is --serve\n");
 		return 1;
 	}
 
@@ -152,9 +144,9 @@ static int solve_one(int argc, char **argv) {
 		fprintf(stderr, "no usable GPU, nothing solved\n");
 		return 1;
 	}
-	if (inference_only) {
+	if (!serve) {
 		// Same selection as arc_said: only programs emitted by inference, and
-		// only the first that draws every training output exactly. No beam.
+		// only the first that draws every training output exactly.
 		const auto started = chrono::steady_clock::now();
 		puzzle p;
 		const auto* answers = tasks.solutions_for(id);
@@ -173,7 +165,6 @@ static int solve_one(int argc, char **argv) {
 			}
 			if (fits) {
 				p.best_tree = tree;
-				p.best_node_count = nodes;
 				p.is_solved = true;
 				accepted = program;
 				break;
@@ -190,7 +181,7 @@ static int solve_one(int argc, char **argv) {
 			if (p.best_tree) {
 				float score = 0; bool solved = false;
 				environment::execute_tree_via_flat(p.best_tree, ex, drawn, p,
-				                                 p.best_node_count, score, solved);
+				                                 environment::count_nodes(p.best_tree), score, solved);
 			}
 			if (right && drawn != (*answers)[test_index]) right = false;
 			++test_index;
@@ -199,7 +190,7 @@ static int solve_one(int argc, char **argv) {
 		result.test_solved = right;
 		result.elapsed = chrono::duration<double>(chrono::steady_clock::now() - started).count();
 		const char* verdict = !p.is_solved ? "UNSOLVED" : !answers ? "FIT" : right ? "SOLVED" : "WRONG";
-		result.text = id + "\t" + verdict + "\t" + accepted + "\nMode: inference only; search attempts: 0\n";
+		result.text = id + "\t" + verdict + "\t" + accepted + "\n";
 		const bool ok = result.write(out_path);
 		environment::remove(p.best_tree);
 		p.best_tree = nullptr;
@@ -209,48 +200,39 @@ static int solve_one(int argc, char **argv) {
 
 	solver_options options;
 	options.write_logs = has_arg(argc, argv, "--logs");
-	beam_solver solver(options);
-	solver.set_verbose(has_arg(argc, argv, "--verbose"));
+	solver puzzle_solver(options);
+	puzzle_solver.set_verbose(has_arg(argc, argv, "--verbose"));
 	search_stream_writer stream(stdout);
-	if (serve) solver.set_observer(&stream);
+	puzzle_solver.set_observer(&stream);
 	const int idx = (int)(found - tasks.tasks.begin());
-	if (!solver.load(*found, tasks.solutions_for(id), {idx, (int)tasks.tasks.size(), flags})) {
+	if (!puzzle_solver.load(*found, tasks.solutions_for(id), {idx, (int)tasks.tasks.size(), flags})) {
 		fprintf(stderr, "%s: could not be read\n", id.c_str());
 		return 1;
 	}
-	// A load puts both back to their defaults, so they are set after it.
-	if (long long n = atoll(arg_after(argc, argv, "--max-attempts").c_str()); n > 0)
-		solver.set_stop_after_attempts(n);
-	if (int n = atoi(arg_after(argc, argv, "--start-examples").c_str()); n > 0)
-		solver.set_start_example_count(n);
+
+	// A benchmark reads at once, says what it came to, and stops.
+	if (!out_path.empty()) {
+		const auto started = chrono::steady_clock::now();
+		puzzle_solver.infer();
+		stream.tick(puzzle_solver, true);
+		const double elapsed = chrono::duration<double>(chrono::steady_clock::now() - started).count();
+		const bool ok = puzzle_result::of(puzzle_solver.get_puzzle(), elapsed).write(out_path);
+		// Said before the solver's buffers are freed on the way out, so the frees
+		// that would reach a runtime already shutting down are skipped.
+		cuda_runtime_shutting_down();
+		return ok ? 0 : 1;
+	}
 
 	command_inbox *inbox = new command_inbox;
-	if (serve)
-		thread([inbox] {
-			string line;
-			while (getline(cin, line)) {
-				if (!line.empty() && line.back() == '\r') line.pop_back();
-				inbox->push(line);
-			}
-			// Whoever was talking to it has gone, so it goes too.
-			inbox->push("quit");
-		}).detach();
-
-	// A watched search waits to be told to run; a timed one runs at once.
-	// The clock stops while it waits, so time searched is what it shows.
-	search_progress &progress = solver.progress();
-	bool running = !serve || timed;
-	auto paused_since = chrono::steady_clock::now();
-	auto elapsed = [&] {
-		auto upto = running ? chrono::steady_clock::now() : paused_since;
-		return chrono::duration<double>(upto - progress.start_time).count();
-	};
-	auto pause = [&] {
-		if (!running) return;
-		running = false;
-		paused_since = chrono::steady_clock::now();
-		stream.tick(solver, false, elapsed(), true);
-	};
+	thread([inbox] {
+		string line;
+		while (getline(cin, line)) {
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+			inbox->push(line);
+		}
+		// Whoever was talking to it has gone, so it goes too.
+		inbox->push("quit");
+	}).detach();
 
 	for (bool quit = false; !quit;) {
 		for (const string &command : inbox->take()) {
@@ -259,67 +241,39 @@ static int solve_one(int argc, char **argv) {
 			in >> verb;
 			if (verb == "quit") {
 				quit = true;
-			} else if (verb == "run" && !running) {
-				progress.start_time += chrono::steady_clock::now() - paused_since;
-				running = true;
-			} else if (verb == "pause") {
-				pause();
 			} else if (verb == "infer") {
-				// The pane is open: read the puzzle and try what the reading
-				// spelled, so one that solves that way shows as solved unrun.
-				solver.infer();
+				// SPACE, or the pane opening: read the puzzle and try what the
+				// reading spelled.
+				puzzle_solver.infer();
 			} else if (verb == "verbose") {
 				int on = 0;
 				in >> on;
-				solver.set_verbose(on != 0);
+				puzzle_solver.set_verbose(on != 0);
 			} else if (verb == "import") {
 				string program;
 				getline(in >> ws, program);
-				solver.apply_program(program);
+				puzzle_solver.apply_program(program);
 			} else if (verb == "preview") {
 				unsigned long long hash = 0;
 				string program;
 				in >> hash;
 				getline(in >> ws, program);
-				solver.read_facts();
+				puzzle_solver.read_facts();
 				if (node *target = environment::parse(program)) {
-					stream.previewed(hash, preview_of(solver.get_puzzle(), target));
+					stream.previewed(hash, preview_of(puzzle_solver.get_puzzle(), target));
 					environment::remove(target);
 				}
 			}
 		}
 		if (quit) break;
-		if (timed && (solver.get_puzzle().is_solved || elapsed() >= timeout)) break;
-
-		if (running) {
-			solver.step();
-			// A SOLVED PUZZLE DOES NOT SEARCH ON ITS OWN, and neither does one
-			// that just got shorter: a person unpauses it to hunt for shorter
-			// still. A timed run stops on its solve instead.
-			const search_news news = stream.take_news();
-			if (serve && !timed && (news.train_solved || news.simplified)) pause();
-			// One-shot: cleared as it fires, so unpausing by hand does not re-stop.
-			const long long stop_at = solver.get_stop_after_attempts();
-			if (stop_at > 0 && progress.attempts.load() >= stop_at) {
-				solver.set_stop_after_attempts(0);
-				pause();
-				stream.stopped_at(progress.attempts.load());
-			}
-		} else {
-			this_thread::sleep_for(chrono::milliseconds(5));
-		}
-		if (serve) stream.tick(solver, running, elapsed());
+		stream.tick(puzzle_solver);
+		this_thread::sleep_for(chrono::milliseconds(5));
 	}
-	if (serve) stream.tick(solver, running, elapsed(), true);
-
-	bool ok = true;
-	if (!out_path.empty())
-		ok = puzzle_result::of(solver.get_puzzle(), elapsed(), progress.attempts.load())
-		         .write(out_path);
+	stream.tick(puzzle_solver, true);
 	// Said before the solver's buffers are freed on the way out, so the frees
 	// that would reach a runtime already shutting down are skipped.
 	cuda_runtime_shutting_down();
-	return ok ? 0 : 1;
+	return 0;
 }
 
 // THE KAGGLE RUN: this shard's puzzles, each in a child of this program.
@@ -330,8 +284,6 @@ static int run_shard(const filesystem::path &self) {
 		fprintf(stderr, "ARC_DATASET must be test, eval, train or custom. Refusing to guess.\n");
 		return 1;
 	}
-	const double timeout = env_number("ARC_TIMEOUT", 120.0);
-	const bool inference_only = env_number("ARC_INFERENCE_ONLY", 0) != 0;
 	const int limit = (int)env_number("ARC_PUZZLE_LIMIT", 0);
 	const int shard_index = (int)env_number("ARC_SHARD_INDEX", 0);
 	const int shard_total = max(1, (int)env_number("ARC_SHARD_TOTAL", 1));
@@ -344,8 +296,6 @@ static int run_shard(const filesystem::path &self) {
 	const int last = min(total, first + chunk);
 	fprintf(stderr, "shard %d/%d: tasks [%d, %d) of %d\n",
 	        shard_index, shard_total, first, last, total);
-	if (inference_only) fprintf(stderr, "MODE: inference only, no search timeout\n");
-	else fprintf(stderr, "MODE: search, %.0fs each\n", timeout);
 
 	const filesystem::path scratch =
 		filesystem::temp_directory_path() / ("arc_shard_" + to_string(shard_index));
@@ -357,10 +307,8 @@ static int run_shard(const filesystem::path &self) {
 		const challenge_task &task = tasks.tasks[i];
 		const string result_path = (scratch / (task.id + ".txt")).string();
 		const auto started = chrono::steady_clock::now();
-		vector<string> command{self.string(), "--task", task.id, "--datasets",
-		                       to_string(flags), "--out", result_path};
-		if (inference_only) command.push_back("--infer-only");
-		else { command.push_back("--timeout"); command.push_back(to_string(timeout)); }
+		const vector<string> command{self.string(), "--task", task.id, "--datasets",
+		                             to_string(flags), "--out", result_path};
 		const int status = system(shell_line(command).c_str());
 		if (status != 0) fprintf(stderr, "%s: its run exited with %d\n", task.id.c_str(), status);
 		const double took = chrono::duration<double>(chrono::steady_clock::now() - started).count();

@@ -81,7 +81,7 @@ constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS =
 // line reads left-to-right through these): bring a source in (GET) -> cut it
 // down (REDUCE) -> pick objects (SELECT) -> move it (TRANSLATE) -> recolor or
 // reason (MAP) -> grow it (GENERATE) -> merge into the canvas (COMBINE).
-// The generator's four sentence roles fold out of this: the middle four are ACT.
+// A sentence's four roles fold out of this: the middle four are ACT.
 // Order is frozen — the GUI indexes its tab rows by these ordinals.
 enum class op_role { get, reduce, select, translate, map, generate, combine, count };
 
@@ -89,11 +89,11 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
 enum class inferred_amount { none, some, all };
 
 // --- Op vocabulary: the single home of the DSL op list ---
-// CPU (search, GUI, serializer) and GPU (kernel dispatch) both derive from
+// CPU (reading, GUI, serializer) and GPU (kernel dispatch) both derive from
 // this one macro, so the two sides cannot drift apart.
 // INFERRED says how much the op depends on learned facts.
-// PICK means it does nothing without selected objects; CLEARS means it removes
-// selection marks. These describe kernel behavior, so update both together.
+// CLEARS means it removes selection marks. That describes kernel behavior, so
+// update both together.
 // The ID also supplies its text spelling (#id), so names cannot drift.
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
@@ -103,162 +103,159 @@ enum class inferred_amount { none, some, all };
 // whether the op takes an argument at all is LOW != HIGH -- three facts read
 // off two numbers, so none of them can disagree with the others, and no index
 // is interpreted anywhere. An op that takes nothing writes 0, 0.
-// THE ORDER IS THE SEARCH ORDER, simplest first: fewest variants, then fewest
-// lines of code. Ties: turns before flips, rights before lefts, inputs before
-// outputs, canvas as Union/Underlay/Intersection/Difference, then fewer letters.
-#define NODE_PRIMITIVES /* Schema: X(ID, LOW, HIGH, ROLE, INFERRED, PICK, CLEARS) */                            \
-  X(SelectAll                   , 0                 , 0                        , select   , none, false, false) \
-  X(InvertSelection             , 0                 , 0                        , select   , none, false, false) \
-  X(TurnRight                   , 0                 , 0                        , translate, none, true , false) \
-  X(TurnLeft                    , 0                 , 0                        , translate, none, true , false) \
-  X(FlipHorizontal              , 0                 , 0                        , translate, none, true , false) \
-  X(FlipVertical                , 0                 , 0                        , translate, none, true , false) \
-  X(Input                       , 0                 , 0                        , get      , none, false, false) \
-  X(Output                      , 0                 , 0                        , get      , none, false, false) \
-  X(CurrentObjects              , 0                 , 0                        , get      , none, false, false) \
-  X(Origin                      , 0                 , 0                        , translate, none, true , false) \
-  X(Union                       , 0                 , 0                        , combine  , none, false, false) \
+#define NODE_PRIMITIVES /* Schema: X(ID, LOW, HIGH, ROLE, INFERRED, CLEARS) */                                   \
+  X(SelectAll                   , 0                 , 0                        , select   , none, false)        \
+  X(InvertSelection             , 0                 , 0                        , select   , none, false)        \
+  X(TurnRight                   , 0                 , 0                        , translate, none, false)        \
+  X(TurnLeft                    , 0                 , 0                        , translate, none, false)        \
+  X(FlipHorizontal              , 0                 , 0                        , translate, none, false)        \
+  X(FlipVertical                , 0                 , 0                        , translate, none, false)        \
+  X(Input                       , 0                 , 0                        , get      , none, false)        \
+  X(Output                      , 0                 , 0                        , get      , none, false)        \
+  X(CurrentObjects              , 0                 , 0                        , get      , none, false)        \
+  X(Origin                      , 0                 , 0                        , translate, none, false)        \
+  X(Union                       , 0                 , 0                        , combine  , none, false)        \
   /* DeleteSelection consumes the marks, it does not make them: an act. */       \
-  X(DeleteSelection             , 0                 , 0                        , reduce   , none, true , true ) \
+  X(DeleteSelection             , 0                 , 0                        , reduce   , none, true )        \
   /* The canvas-readers judge by what lies beneath, not by the object: acts. */  \
-  X(ReadUnder                   , 0                 , 0                        , map      , none, true , false) \
-  X(Outline                     , 0                 , 0                        , reduce   , none, true , false) \
-  X(SelectMostCommonColor       , 0                 , 0                        , select   , none, false, false) \
+  X(ReadUnder                   , 0                 , 0                        , map      , none, false)        \
+  X(Outline                     , 0                 , 0                        , reduce   , none, false)        \
+  X(SelectMostCommonColor       , 0                 , 0                        , select   , none, false)        \
   /* Colors extracts the palette as objects — a producing act, not a source. */  \
-  X(Colors                      , 0                 , 0                        , map      , none, false, true ) \
-  X(Trim                        , 0                 , 0                        , reduce   , none, true , false) \
-  X(OverlapCorner               , 0                 , 0                        , map      , none, false, false) \
-  X(Underlay                    , 0                 , 0                        , combine  , none, false, false) \
+  X(Colors                      , 0                 , 0                        , map      , none, true )        \
+  X(Trim                        , 0                 , 0                        , reduce   , none, false)        \
+  X(OverlapCorner               , 0                 , 0                        , map      , none, false)        \
+  X(Underlay                    , 0                 , 0                        , combine  , none, false)        \
   /* Withhold closes the beat without painting, so a sentence that only sets  */ \
   /* up the hand is sayable and does not read as damage to the canvas.        */ \
-  X(Withhold                    , 0                 , 0                        , combine  , none, false, false) \
-  X(Fit                         , 0                 , 2                        , reduce   , none, true , false) \
-  X(Intersection                , 0                 , 0                        , combine  , none, false, false) \
-  X(Fractal                     , 0                 , 0                        , generate , none, true , false) \
-  X(Difference                  , 0                 , 0                        , combine  , none, false, false) \
-  X(UnionList                   , 0                 , 0                        , reduce   , none, false, false) \
-  X(AlignToCanvas               , 0                 , 0                        , translate, none, true , false) \
-  X(IntersectionList            , 0                 , 0                        , reduce   , none, false, false) \
-  X(SizeRankColorMap            , 0                 , 0                        , map      , all , false, false) \
-  X(Pattern                     , 0                 , 0                        , generate , none, true , false) \
-  X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false, false) \
-  X(Partition                   , 0                 , 0                        , generate , none, true , true ) \
-  X(RestoreOrientation          , 0                 , 0                        , translate, none, false, false) \
-  X(Seeds                       , 0                 , 0                        , get      , some, false, false) \
+  X(Withhold                    , 0                 , 0                        , combine  , none, false)        \
+  X(Fit                         , 0                 , 2                        , reduce   , none, false)        \
+  X(Intersection                , 0                 , 0                        , combine  , none, false)        \
+  X(Fractal                     , 0                 , 0                        , generate , none, false)        \
+  X(Difference                  , 0                 , 0                        , combine  , none, false)        \
+  X(UnionList                   , 0                 , 0                        , reduce   , none, false)        \
+  X(AlignToCanvas               , 0                 , 0                        , translate, none, false)        \
+  X(IntersectionList            , 0                 , 0                        , reduce   , none, false)        \
+  X(SizeRankColorMap            , 0                 , 0                        , map      , all , false)        \
+  X(Pattern                     , 0                 , 0                        , generate , none, false)        \
+  X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false)        \
+  X(Partition                   , 0                 , 0                        , generate , none, true )        \
+  X(RestoreOrientation          , 0                 , 0                        , translate, none, false)        \
+  X(Seeds                       , 0                 , 0                        , get      , some, false)        \
   /* Partition cuts on the walls a selection marks; Panes cuts on the cut  */    \
   /* the split elected, which is the same act with a surer hand.           */        \
-  X(Panes                       , 0                 , 0                        , generate , all , false, false) \
-  X(VoteDenoise                 , 0                 , 0                        , map      , some, true , false) \
-  X(ShapeToInteriorColorMap     , 0                 , 0                        , map      , all , true , false) \
-  X(SnapToAnchors               , 0                 , 0                        , map      , none, false, false) \
-  X(SortBySize                  , 0                 , 1                        , map      , none, true , false) \
-  X(DiagTile                    , 0                 , 1                        , generate , none, false, false) \
-  X(NormalizeOrientation        , 0                 , 1                        , translate, none, false, false) \
+  X(Panes                       , 0                 , 0                        , generate , all , false)        \
+  X(VoteDenoise                 , 0                 , 0                        , map      , some, false)        \
+  X(ShapeToInteriorColorMap     , 0                 , 0                        , map      , all , false)        \
+  X(SnapToAnchors               , 0                 , 0                        , map      , none, false)        \
+  X(SortBySize                  , 0                 , 1                        , map      , none, false)        \
+  X(DiagTile                    , 0                 , 1                        , generate , none, false)        \
+  X(NormalizeOrientation        , 0                 , 1                        , translate, none, false)        \
   /* Each picked piece takes the color its own key names: its shape [0] or  */ \
   /* its symmetry [1] (shape_key_of), or the color the table gives every    */ \
   /* key it does not name.                                                  */ \
-  X(ShapeColorMap               , 0                 , 1                        , map      , all , true , false) \
+  X(ShapeColorMap               , 0                 , 1                        , map      , all , false)        \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
-  X(Skew                        , -1                , 1                        , translate, none, true , false) \
+  X(Skew                        , -1                , 1                        , translate, none, false)        \
   /* Split[3] joins one color's cells by sides alone, the finest connected cut. */ \
-  X(Split                       , 0                 , 3                        , generate , none, false, true ) \
+  X(Split                       , 0                 , 3                        , generate , none, true )        \
   /* Cells slide a step and pile at the wall, so a step past the wall says */    \
-  X(SlamColumn                  , -1                , 1                        , translate, none, true , false) \
+  X(SlamColumn                  , -1                , 1                        , translate, none, false)        \
   /* nothing new: the answers run out at the object, not at the grid. */         \
-  X(SlamRow                     , -1                , 1                        , translate, none, true , false) \
-  X(Tile                        , 0                 , 3                        , generate , none, false, false) \
-  X(SelectObjectsWithHoles      , 0                 , 4                        , select   , none, false, false) \
+  X(SlamRow                     , -1                , 1                        , translate, none, false)        \
+  X(Tile                        , 0                 , 3                        , generate , none, false)        \
+  X(SelectObjectsWithHoles      , 0                 , 4                        , select   , none, false)        \
   /* How a bridge reaches (bridge_bars): rows and columns, rows, or columns, */ \
   /* to the nearest piece, then the same three to every one, then to the one */ \
   /* facing it across the grid. Only the picked pieces are bridged, and only */ \
   /* the bars come back picked. Past those [9], an L from each picked piece  */ \
   /* to its one partner of each kind partner_of_kind names.                  */ \
-  X(Bridge                      , 0                 , 31                       , generate , none, true , false) \
-  X(Shift                       , 0                 , 7                        , translate, none, true , false) \
-  X(MoveToEdge                  , 0                 , 7                        , translate, none, true , false) \
+  X(Bridge                      , 0                 , 31                       , generate , none, false)        \
+  X(Shift                       , 0                 , 7                        , translate, none, false)        \
+  X(MoveToEdge                  , 0                 , 7                        , translate, none, false)        \
   /* A trail one of the eight ways [0-7], or past them every picked piece    */ \
   /* grown in step with the others until they meet: along its rows, along    */ \
   /* its columns, to every side, along the canvas's edge [8-11]; along its   */ \
   /* diagonals one way or the other, both, its rows and columns, every way,  */ \
   /* to every side and corner [12-17] (grown_along).                        */ \
-  X(ExtendTo                    , 0                 , 17                       , generate , none, true , false) \
+  X(ExtendTo                    , 0                 , 17                       , generate , none, false)        \
   /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
   /* past those [13], the color a key drawn in the grid shows at its place;  */ \
   /* past that [14-19], its colors cell by cell from the one piece of its    */ \
   /* shape each likeness finds (colors_from_its_shape, 8b_op_math.hpp).      */ \
-  X(ColorFrom                   , 0                 , 19                       , map      , none, true , false) \
+  X(ColorFrom                   , 0                 , 19                       , map      , none, false)        \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
   /* partner stay picked (would_fit, 8b_op_math.hpp). A pick, so it selects. */ \
-  X(WouldFit                    , 0                 , 12                       , select   , none, true , false) \
+  X(WouldFit                    , 0                 , 12                       , select   , none, false)        \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
-  X(CopyTo                      , 0                 , 8                        , generate , none, true , false) \
+  X(CopyTo                      , 0                 , 8                        , generate , none, false)        \
   /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \
   /* as long as a grid is wide, so a ray can run on to any edge.              */ \
-  X(ExtendDiagonal              , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, true , false) \
-  X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, true , false) \
-  X(ScaleUp                     , 2                 , 10                       , translate, none, true , false) \
-  X(ScaleDown                   , 2                 , 10                       , translate, none, true , false) \
-  X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false, false) \
+  X(ExtendDiagonal              , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
+  X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
+  X(ScaleUp                     , 2                 , 10                       , translate, none, false)        \
+  X(ScaleDown                   , 2                 , 10                       , translate, none, false)        \
+  X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false)        \
   /* The one picked-from piece with no twin (unique_piece, 8b_op_math.hpp):  */ \
   /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
   /* or past those the same count of what count_kind names [4-16].            */ \
-  X(SelectUnique                , 0                 , 16                       , select   , none, false, false) \
-  X(SelectElectedBackground     , 0                 , 0                        , select   , none, false, false) \
+  X(SelectUnique                , 0                 , 16                       , select   , none, false)        \
+  X(SelectElectedBackground     , 0                 , 0                        , select   , none, false)        \
   /* The n-th piece by its cells [0-9]; past those, every piece with the most */ \
   /* (fewest, SelectSmallestObject) of what count_kind names (count_of).     */ \
-  X(SelectLargestObject         , 0                 , 22                       , select   , none, false, false) \
-  X(SelectSmallestObject        , 0                 , 22                       , select   , none, false, false) \
-  X(AddColor                    , 0                 , 11                       , generate , none, true , false) \
-  X(MaskBy                      , 0                 , 10                       , map      , none, true , false) \
-  X(MaskOut                     , 0                 , 10                       , map      , none, true , false) \
+  X(SelectLargestObject         , 0                 , 22                       , select   , none, false)        \
+  X(SelectSmallestObject        , 0                 , 22                       , select   , none, false)        \
+  X(AddColor                    , 0                 , 11                       , generate , none, false)        \
+  X(MaskBy                      , 0                 , 10                       , map      , none, false)        \
+  X(MaskOut                     , 0                 , 10                       , map      , none, false)        \
   /* Layout[0] reads its cell size off the pieces instead of being told it. */  \
-  X(Layout                      , 0                 , 10                       , translate, none, false, false) \
-  X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, true , false) \
-  X(Recolor                     , 0                 , 11                       , map      , none, true , false) \
+  X(Layout                      , 0                 , 10                       , translate, none, false)        \
+  X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, false)        \
+  X(Recolor                     , 0                 , 11                       , map      , none, false)        \
   /* Each picked piece moves level with its partner: rows first, then columns, */ \
   /* each by every way partner_by finds one.                                   */ \
-  X(AlignTo                     , 0                 , 25                       , translate, none, true , false) \
+  X(AlignTo                     , 0                 , 25                       , translate, none, false)        \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
   /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
-  X(MirrorAround                , 0                 , 41                       , generate , none, true , false) \
-  X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
-  X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, true , false) \
+  X(MirrorAround                , 0                 , 41                       , generate , none, false)        \
+  X(TileX                       , 1                 , arc::MAX_GRID_DIM        , generate , none, false)        \
+  X(TileY                       , 1                 , arc::MAX_GRID_DIM        , generate , none, false)        \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
-  X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
-  X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false, false) \
+  X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
+  X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* The picked pieces trade the colors of one fixed pair, color_pair's      */ \
   /* numbering, or past those, the pairs a key drawn in the grid names: the  */ \
   /* pieces not picked, read along their rows, then their columns.           */ \
-  X(BidiColorMap                , 0                 , arc::KEY_PAIRS_ALONG_COLUMNS, map   , none, true , false) \
+  X(BidiColorMap                , 0                 , arc::KEY_PAIRS_ALONG_COLUMNS, map   , none, false)        \
   /* The move IS the number of cells, so the whole grid is sayable in one. */    \
-  X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
-  X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, true , false) \
+  X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, false)        \
+  X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, false)        \
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
-  X(MoveToward                  , 0                 , 68                       , translate, none, true , false) \
+  X(MoveToward                  , 0                 , 68                       , translate, none, false)        \
   /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
   /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
-  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false, false) \
+  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false)        \
   /* The pieces on the row or column `from` lines past the middle of all    */ \
   /* they paint together (line_from_middle): 0 is the middle itself.        */ \
-  X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false, false) \
-  X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false, false) \
+  X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false)        \
+  X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false)        \
   /* The picked pieces are walls, as Partition reads them, and the pick    */ \
   /* becomes the pieces lying in one part they fence off (fence_parts),   */ \
   /* the parts numbered in reading order, row by row, as rows wrap.       */ \
-  X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, true , false) \
+  X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* Of the picked pieces, only those like a piece of the key -- every    */ \
   /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
   /* any way, at its size [0-1], any size [2-3] or stretched [4-5]          */ \
   /* (like_the_key, 8b_op_math.hpp).                                       */ \
-  X(SelectLikeKey               , 0                 , 5                        , select   , none, true , false) \
+  X(SelectLikeKey               , 0                 , 5                        , select   , none, false)        \
   /* The pick moves onto every partner each picked piece has, the way       */ \
   /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
   /* the eight directions, from up clockwise (each_partner_picked, 8b).       */ \
-  X(SelectPartner               , 0                 , 116                      , select   , none, true , false)
+  X(SelectPartner               , 0                 , 116                      , select   , none, false)
 
 enum class node_type : uint8_t {
-#define X(id, low, high, role, inferred, pick, clears) id,
+#define X(id, low, high, role, inferred, clears) id,
     NODE_PRIMITIVES
 #undef X
     type_count
@@ -271,7 +268,7 @@ struct op_row {
     int low = 1, high = 0;
     op_role role = op_role::map;
     inferred_amount inferred = inferred_amount::none;
-    bool pick = false, clears = false;
+    bool clears = false;
 };
 
 // SWITCHES, not tables: the kernel calls these, and a table would be host
@@ -280,8 +277,8 @@ struct op_row {
 // dereference.
 inline constexpr op_row row_of(node_type t) {
     switch (t) {
-#define X(id, low, high, role, inferred, pick, clears) \
-    case node_type::id: return { low, high, op_role::role, inferred_amount::inferred, pick, clears };
+#define X(id, low, high, role, inferred, clears) \
+    case node_type::id: return { low, high, op_role::role, inferred_amount::inferred, clears };
     NODE_PRIMITIVES
 #undef X
     default: return {};
@@ -295,7 +292,7 @@ inline constexpr op_row row_of(node_type t) {
 // anyone reads to ask what an op does.
 inline constexpr op_role role_of(node_type t) {
     switch (t) {
-#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return op_role::role;
+#define X(id, low, high, role, inferred, clears) case node_type::id: return op_role::role;
     NODE_PRIMITIVES
 #undef X
     default: return op_row{}.role;
@@ -303,22 +300,11 @@ inline constexpr op_role role_of(node_type t) {
 }
 inline constexpr bool clears_the_marks(node_type t) {
     switch (t) {
-#define X(id, low, high, role, inferred, pick, clears) case node_type::id: return clears;
+#define X(id, low, high, role, inferred, clears) case node_type::id: return clears;
     NODE_PRIMITIVES
 #undef X
     default: return op_row{}.clears;
     }
-}
-
-// The canvas ops ("printer-ops"): the four that write ctx.output —
-// Union/Underlay paint, Intersection/Difference erase. Everything else works on
-// the pending object list. Kernel-verified 2026-07-12 (grep for ctx.output
-// writes per exec function). Locks may only root at one of these: a lock
-// certifies canvas cells, and only canvas paint survives into the continuations
-// that build on the frozen prefix.
-inline constexpr bool modifies_canvas(node_type t) {
-    return t == node_type::Union || t == node_type::Underlay ||
-           t == node_type::Intersection || t == node_type::Difference;
 }
 
 // THE POSE EACH TURN OR FLIP SETS ITS PIECE IN, numbered as 1_readings.hpp
@@ -330,11 +316,11 @@ inline constexpr int pose_of(node_type t) {
          : t == node_type::FlipHorizontal ? 4 : t == node_type::FlipVertical ? 2 : 0;
 }
 
-// --- Generation roles (the sentence: GET SELECT ACT COMBINE) --------------
-// The four roles the generator's legality rules speak in, read off the ROLE
-// column. GET = pure source (chain start). SELECT = marks objects, drops
-// nothing. COMBINE = lands the list on the canvas. ACT = the four middle roles
-// folded together — everything else that does work.
+// --- Sentence roles (GET SELECT ACT COMBINE) ------------------------------
+// The four roles a sentence speaks in, read off the ROLE column. GET = pure
+// source (chain start). SELECT = marks objects, drops nothing. COMBINE = lands
+// the list on the canvas. ACT = the four middle roles folded together —
+// everything else that does work.
 inline constexpr bool is_get_op(node_type t)     { return role_of(t) == op_role::get; }
 inline constexpr bool is_select_op(node_type t)  { return role_of(t) == op_role::select; }
 inline constexpr bool is_combine_op(node_type t) { return role_of(t) == op_role::combine; }
@@ -351,13 +337,12 @@ inline constexpr bool takes_value(node_type t, int value) {
 
 // Properties come from the op's row, like its role and argument range.
 inline constexpr inferred_amount how_much_is_inferred(node_type t) { return row_of(t).inferred; }
-inline constexpr bool needs_a_pick(node_type t) { return row_of(t).pick; }
 
 // Read a word's operation name; arguments remain the caller's concern.
 // Unknown words (including the inference placeholder "?") have no operation.
 inline constexpr node_type operation_named(std::string_view word) {
     word = word.substr(0, word.find('['));
-#define X(id, low, high, role, inferred, pick, clears) if (word == #id) return node_type::id;
+#define X(id, low, high, role, inferred, clears) if (word == #id) return node_type::id;
     NODE_PRIMITIVES
 #undef X
     return node_type::type_count;

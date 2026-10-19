@@ -1,6 +1,6 @@
 #pragma once
 // WHAT A SOLVED PUZZLE HANDS BACK: its line of submission.json, and a few lines
-// saying how the search went. Every puzzle is solved in a process of its own
+// saying how the reading went. Every puzzle is solved in a process of its own
 // (see kaggle_main.cpp), so these are also what crosses from that process to
 // the one that started it, as a small file.
 //
@@ -33,7 +33,7 @@ inline grid predict_test(const puzzle &p, const example &test_ex) {
   grid out{};
   if (p.best_tree) {
     environment::score_tree_output(
-        p.best_tree, test_ex, out, p, p.best_node_count);
+        p.best_tree, test_ex, out, p, environment::count_nodes(p.best_tree));
   }
   if (out.width <= 0 || out.height <= 0) {
     return test_ex.input;  // fallback: echo input
@@ -92,13 +92,12 @@ inline std::string submission_entry(const puzzle &p) {
 // THE RESULT OF ONE PUZZLE, as text. Line 1 is the program alone, so the file
 // reads back in as a solution; the rest says how it went. Used for manual
 // export and for every entry of a benchmark report.
-inline std::string describe_result(const puzzle &p, double elapsed, long long attempts) {
-  std::string train_status = p.is_solved ? "Solved" : "Timeout";
+inline std::string describe_result(const puzzle &p, double elapsed) {
+  std::string train_status = p.is_solved ? "Solved" : "Unsolved";
   std::string test_status = p.is_test_solved ? "Solved"
                           : (p.is_solved ? "Failed" : "N/A");
 
-  int node_count = p.best_node_count;
-  int max_depth = p.best_tree ? (int)p.best_tree->max_depth : 0;
+  int node_count = environment::count_nodes(p.best_tree);
 
   float best_score = 0.0f;
   for (size_t i = 0; i < p.train.size(); ++i)
@@ -112,10 +111,8 @@ inline std::string describe_result(const puzzle &p, double elapsed, long long at
   out += "Train:        " + train_status + "\n";
   out += "Test:         " + test_status + "\n";
   out += "Elapsed:      " + format_elapsed(elapsed) + "\n";
-  out += to_text("Attempts:     %lld\n", attempts);
   out += to_text("Nodes:        %d\n", node_count);
   out += to_text("Best Score:   %.4f\n", best_score);
-  out += to_text("Max Depth:    %d\n", max_depth);
   return out;
 }
 
@@ -123,20 +120,18 @@ struct puzzle_result {
   std::string id;
   bool solved = false;
   bool test_solved = false;
-  long long attempts = 0;
   double elapsed = 0.0;
   std::string entry;  // its line of submission.json
   std::string text;   // describe_result
 
-  static puzzle_result of(const puzzle &p, double elapsed, long long attempts) {
+  static puzzle_result of(const puzzle &p, double elapsed) {
     puzzle_result r;
     r.id = p.id;
     r.solved = p.is_solved;
     r.test_solved = p.is_test_solved;
-    r.attempts = attempts;
     r.elapsed = elapsed;
     r.entry = submission_entry(p);
-    r.text = describe_result(p, elapsed, attempts);
+    r.text = describe_result(p, elapsed);
     return r;
   }
 
@@ -152,7 +147,7 @@ struct puzzle_result {
     r.id = p.id;
     r.elapsed = elapsed;
     r.entry = submission_line(p, [](const example &ex) { return ex.input; });
-    r.text = describe_result(p, elapsed, 0);
+    r.text = describe_result(p, elapsed);
     return r;
   }
 
@@ -163,7 +158,6 @@ struct puzzle_result {
     f << "id " << id << "\n"
       << "solved " << (int)solved << "\n"
       << "test_solved " << (int)test_solved << "\n"
-      << "attempts " << attempts << "\n"
       << "elapsed " << elapsed << "\n"
       << "entry " << entry << "\n"
       << "text\n" << text;
@@ -180,7 +174,6 @@ struct puzzle_result {
     if (!(f >> key >> r.id) || key != "id") return std::nullopt;
     if (!(f >> key >> solved) || key != "solved") return std::nullopt;
     if (!(f >> key >> test_solved) || key != "test_solved") return std::nullopt;
-    if (!(f >> key >> r.attempts) || key != "attempts") return std::nullopt;
     if (!(f >> key >> r.elapsed) || key != "elapsed") return std::nullopt;
     if (!(f >> key) || key != "entry") return std::nullopt;
     f.get();  // the space after "entry"

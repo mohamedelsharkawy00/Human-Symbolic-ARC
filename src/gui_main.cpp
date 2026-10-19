@@ -1,7 +1,8 @@
 // THE GUI: a window onto the solver. The solver never runs in this process:
-// each search is an arc_headless child (see 30_solver_session.hpp), and this
-// process creates no CUDA context at all -- it is linked without the GPU code,
-// so it cannot. The Kaggle run (kaggle_main.cpp) is that same child, alone.
+// each puzzle's reading is an arc_headless child (see 30_solver_session.hpp),
+// and this process creates no CUDA context at all -- it is linked without the
+// GPU code, so it cannot. The Kaggle run (kaggle_main.cpp) is that same child,
+// alone.
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -30,7 +31,7 @@ using namespace std;
 using namespace arc;
 
 int main() {
-	// Cap RAM so a runaway search can't hang the machine. Its searches are its
+	// Cap RAM so a runaway reading can't hang the machine. Its readings are its
 	// children, under the same cap, and die with it.
 	enforce_memory_limit();
 
@@ -72,24 +73,10 @@ int main() {
 	display_grid bg_grid;
 	solver.init(gpu_buffer, chars, bg_grid);
 
-	// Experiment knobs, handed to the first search: they are about the puzzle
-	// the app opens on.
-	// --start-examples N judges candidates against N examples from the first
-	// one, instead of starting at one and promoting.
-	// --max-attempts N pauses the search once it has tried that many candidates,
-	// so two runs compared against each other stopped at the same place.
-	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--max-attempts "))
-		if (long long given = _wtoi64(arg + 15); given > 0)
-			solver.set_stop_after_attempts(given);
-
-	if (const wchar_t *arg = wcsstr(GetCommandLineW(), L"--start-examples "))
-		if (int given = _wtoi(arg + 17); given > 0)
-			solver.set_start_example_count(given);
-
 	// Restore the saved GUI settings. Datasets were already restored inside
 	// solver.init; pause and mute go through their owners here. Before the
-	// thread starts, so the first search is started already knowing whether
-	// to run.
+	// thread starts, so the first child is started already knowing whether
+	// to read.
 	{
 		auto saved = read_settings_file();
 		apply_settings(app_state, saved);
@@ -100,15 +87,8 @@ int main() {
 	solver.start_thread();
 	benchmark_run benchmark(app_state, solver);
 
-	// Telemetry / Profiling State
 	auto last_time = chrono::steady_clock::now();
-	long long last_attempts = 0;
-	auto last_attempts_at = chrono::steady_clock::now();
 	float fps = 0.0f;
-	float aps = 0.0f;
-	float gpu_ms = 0.0f;
-	long long last_gpu_wait = 0;
-	long long last_gpu_count = 0;
 
 	// Settings writer: snapshot once a second, write only when something changed.
 	string last_settings;
@@ -151,7 +131,7 @@ int main() {
 				if (int p_idx = st.puzzle_idx; p_idx >= 0 && p_idx < solver.get_puzzle_count()) {
 					lock_guard<mutex> lock(st.search.mtx);
 					draw_frame(&context, chars, bg_grid, st, app_state,
-						solver.get_puzzle(), w, h, fps, aps, gpu_ms, p_idx,
+						solver.get_puzzle(), w, h, fps, p_idx,
 						solver.get_puzzle_count(), gpu_buffer);
 				}
 				if (!context.end_capture(pass == 1 ? path : string()))
@@ -172,11 +152,11 @@ int main() {
 			auto yes_no = [](bool b) { return b ? "true" : "false"; };
 			return to_text(
 				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s "
-				"attempts=%lld gpu_used=%d%% build=%s",
+				"gpu_used=%d%% build=%s",
 				solver.current_puzzle_id().c_str(), idx, solver.get_puzzle_count(),
 				yes_no((bool)app_state.is_paused), yes_no((bool)app_state.is_benchmarking),
 				yes_no(solved), format_elapsed(get_elapsed(app_state, st.search)).c_str(),
-				st.search.attempts.load(), gpu.used_percent, exe_build_time().c_str());
+				gpu.used_percent, exe_build_time().c_str());
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);
@@ -248,47 +228,7 @@ int main() {
 			}
 		}
 
-		// Stats are reads of what the search last said, not rendering — sampled
-		// every loop so they stay live while minimized, which is how the agent
-		// runs the app.
 		fps = (float)(1.0 / delta);
-		long long current_attempts = state.search.attempts.load();
-		if (current_attempts < last_attempts) {
-			last_attempts = 0;
-			last_attempts_at = now;
-		}
-		// MEASURED BETWEEN ONE COUNT AND THE NEXT, not once a frame: the search
-		// says where it is on its own beat, and frames that fall between two of
-		// its words carry no news. Reading a rate off those gave a zero every
-		// time, and the number flickered between zero and a spike.
-		if (current_attempts != last_attempts) {
-			double since = chrono::duration<double>(now - last_attempts_at).count();
-			if (since > 0.0) aps = (float)((current_attempts - last_attempts) / since);
-			last_attempts = current_attempts;
-			last_attempts_at = now;
-		} else if (chrono::duration<double>(now - last_attempts_at).count() > 1.0) {
-			// Nothing tried for a second: it is paused, waiting or gone.
-			aps = 0.0f;
-		}
-
-		// Attempts count candidates handed to the GPU, so a frame spent
-		// inside a running kernel scores zero — that is busy, not idle.
-		// The old "- Idle" verdict read that as a stall and was always wrong.
-		// gpu is how long ONE batch waits on the kernel. Held over between
-		// samples, so a batch longer than a frame reads as its own duration
-		// instead of the slice of it this frame happened to catch.
-		long long current_gpu_wait = state.search.gpu_wait_now();
-		long long current_gpu_count = state.search.gpu_wait_count.load();
-		if (current_gpu_wait < last_gpu_wait) { last_gpu_wait = 0; last_gpu_count = 0; }
-		if (current_gpu_count > last_gpu_count) {
-			gpu_ms = (float)((current_gpu_wait - last_gpu_wait) / 1e6
-				/ (double)(current_gpu_count - last_gpu_count));
-			last_gpu_wait = current_gpu_wait;
-			last_gpu_count = current_gpu_count;
-		}
-
-		solver.log_debug(to_text("[APS] %.2f  (Attempts: %lld) gpu=%.0fms",
-			aps, current_attempts, gpu_ms));
 
 		if (minimized) {
 			this_thread::sleep_for(chrono::milliseconds(16));
@@ -309,7 +249,7 @@ int main() {
 			if (p_idx >= 0 && p_idx < p_count) {
 				lock_guard<mutex> lock(state.search.mtx);
 				draw_frame(&context, chars, bg_grid, state,
-					app_state, solver.get_puzzle(), w, h, fps, aps, gpu_ms, p_idx,
+					app_state, solver.get_puzzle(), w, h, fps, p_idx,
 					p_count, gpu_buffer);
 			}
 			context.end_frame();
@@ -331,7 +271,7 @@ int main() {
 		ofstream f(get_settings_path());
 		f << serialize_settings(app_state, sound_manager::get().is_muted(), solver.get_solver_state().puzzle_idx.load());
 	}
-	// Ends the search, and its process with it.
+	// Ends the child, and its process with it.
 	solver.stop_thread();
 	return 0;
 }

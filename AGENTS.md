@@ -101,7 +101,7 @@
    2. It is the only way the agent can SEE the app, everything else on this port is the agent acting blind.
 3. Look before acting: `state` returns `id idx paused benchmarking solved elapsed`.
 4. Puzzle jumps land asynchronously, poll `state` until the id changes.
-5. The solver runs only while unpaused (`toggle_pause`), and auto-pauses on solve.
+5. Unpausing (`toggle_pause`, SPACE) reads the puzzle and runs what the reading spells; it pauses itself when the reading is done.
 6. "Connection refused" means the app is not running, start `out\x64-Release\ARC.exe` with repo root as working directory, pass `--minimized` so the window starts minimized and never steals the user's screen, the agent drives blind through the port anyway.
    1. Minimize is sticky, it saves to `settings/settings.txt` and restores next launch, the user un-minimizes by clicking the taskbar icon.
    2. Copy `settings\settings.txt` first and put it back after: the app saves where it was left.

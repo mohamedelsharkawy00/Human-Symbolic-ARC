@@ -1,22 +1,22 @@
 #pragma once
 // THE GUI'S SIDE OF THE SOLVER. The solver never runs in this process: every
-// search is an arc_headless --serve child (see kaggle_main.cpp), one per
-// puzzle, and ending a search is ending that process, which takes everything
-// it held with it -- memory, GPU state, whatever a long search left behind.
-// A switch to another puzzle, a reset or a dataset change kills it; the next
-// search starts clean. This process creates no CUDA context at all.
+// puzzle on screen has an arc_headless --serve child (see kaggle_main.cpp), and
+// ending it is ending that process, which takes everything it held with it --
+// memory, GPU state. A switch to another puzzle, a reset or a dataset change
+// kills it; the next one starts clean. This process creates no CUDA context at
+// all.
 //
 // What a person at a window expects is kept here: the puzzle list, pause,
-// settings, sounds, and pictures of what the search is doing. The child
-// streams what it paints and where it stands (22_search_stream.hpp); this
-// replays it into its own copy of the puzzle and counters, and the frame draws
-// those as if the search were local. Hovering a program asks the child what it
-// paints, since only the child has a GPU context to run it with.
+// settings, sounds, and pictures of what the reading drew. The child streams
+// what it paints (22_search_stream.hpp); this replays it into its own copy of
+// the puzzle, and the frame draws that as if the solver were local. Hovering a
+// program asks the child what it paints, since only the child has a GPU
+// context to run it with.
 //
 // A child is started once the window has stayed on a puzzle for a moment, so
-// stepping through puzzles costs nothing, and it waits paused until told to
-// run -- which makes unpausing instant. A benchmark (31_benchmark.hpp) runs its
-// puzzles through the same child, one process each.
+// stepping through puzzles costs nothing, and it waits until SPACE or the pane
+// asks it to read. A benchmark (31_benchmark.hpp) runs its puzzles through the
+// same child, one process each.
 #include "14_puzzle_loader.hpp"
 #include "15_solver_log.hpp"
 #include "21_submission.hpp"   // describe_result, puzzle_result
@@ -122,7 +122,7 @@ public:
     m_thread = jthread(&solver_session::control, this);
   }
 
-  // Stops the control thread and the search with it.
+  // Stops the control thread and the child with it.
   inline void stop_thread() {
     m_app.stop_threads = true;
     if (m_thread.joinable()) {
@@ -133,7 +133,7 @@ public:
     m_child.kill();
   }
 
-  // --- What the search is doing, for the frame and the command port. ---
+  // --- What the solver drew, for the frame and the command port. ---
   inline solver_state &get_solver_state() { return m_view; }
   inline int get_puzzle_count() const { return (int)m_tasks.tasks.size(); }
   inline const challenge_task &task(int idx) const { return m_tasks.tasks[idx]; }
@@ -154,11 +154,11 @@ public:
 
   // The current puzzle's result as text, the way a benchmark entry reads.
   inline string result_text() const {
-    return describe_result(m_puzzle, get_elapsed(m_app, m_search), m_search.attempts.load());
+    return describe_result(m_puzzle, get_elapsed(m_app, m_search));
   }
 
   // --- Asked for from the window; the control thread carries them out. ---
-  // A benchmark owns the search while it runs, so these do nothing then.
+  // A benchmark owns the child while it runs, so these do nothing then.
   inline void change_puzzle(int delta) {
     if (m_benchmarking || m_tasks.tasks.empty())
       return;
@@ -190,7 +190,7 @@ public:
     return true;
   }
 
-  // Kills the search and starts the puzzle over in a fresh one.
+  // Kills the child and starts the puzzle over in a fresh one.
   inline void reset_solver() {
     if (!m_benchmarking) m_reset_requested = true;
   }
@@ -203,8 +203,8 @@ public:
     m_queued_dataset_flags.store(flags);
   }
 
-  // Reads solutions/<id>.txt and hands its program to the search, which
-  // scores it and makes it the best.
+  // Reads solutions/<id>.txt and hands its program to the child, which scores
+  // it and makes it the best.
   inline void import_solution() {
     if (m_benchmarking) return;
     string id = current_puzzle_id();
@@ -261,13 +261,14 @@ public:
   }
 
   // Pausing stops the clock: the time paused is added to the start, so what
-  // the clock shows is time spent searching. Both are no-ops when already
-  // there, so a solve arriving on an already-paused search leaves it paused.
+  // the clock shows is time spent reading. Both are no-ops when already there,
+  // so a reading that ends on an already-paused window leaves it paused.
+  // Unpausing asks the child to read, as opening the pane does; the reading
+  // pauses the window again when it is done.
   inline void pause() {
     if (m_benchmarking || m_app.is_paused) return;
     m_app.pause_start_time = chrono::steady_clock::now();
     m_app.is_paused = true;
-    send("pause");
   }
   inline void resume() {
     if (m_benchmarking || !m_app.is_paused) return;
@@ -277,23 +278,18 @@ public:
       m_search.start_time += dt;
     }
     m_app.is_paused = false;
-    send("run");
+    send("infer");
   }
   inline void toggle_pause() {
     if (m_app.is_paused) resume();
     else pause();
   }
 
-  // Experiment knobs, handed to the first search only: they are asked for on
-  // the command line, about the puzzle the app opens on.
-  void set_stop_after_attempts(long long n) { m_first_max_attempts = n; }
-  void set_start_example_count(int n) { m_first_start_examples = n; }
-
   void log_debug(const string &msg) { m_log.debug(msg); }
 
   // --- A benchmark (31_benchmark.hpp). ---
-  // Takes over the search: the one running now is killed, and the window's
-  // own controls do nothing until end_benchmark.
+  // Takes over the child: the one running now is killed, and the window's own
+  // controls do nothing until end_benchmark.
   inline void begin_benchmark() {
     m_benchmarking = true;
     m_bench_idx = -1;
@@ -301,17 +297,15 @@ public:
     m_child.kill();
   }
 
-  // Puzzle `idx`, searched in a process of its own for up to `timeout`
-  // seconds while the window shows it. Blocks until that process ends;
-  // nothing when it handed nothing back or `cancelled` stopped it.
-  inline optional<puzzle_result> benchmark_puzzle(int idx, double timeout,
-                                                   const atomic<bool> &cancelled) {
+  // Puzzle `idx`, read in a process of its own while the window shows it.
+  // Blocks until that process ends; nothing when it handed nothing back or
+  // `cancelled` stopped it.
+  inline optional<puzzle_result> benchmark_puzzle(int idx, const atomic<bool> &cancelled) {
     const filesystem::path out =
         filesystem::temp_directory_path() / ("arc_benchmark_" + m_tasks.tasks[idx].id + ".txt");
     error_code gone;
     filesystem::remove(out, gone);
     m_bench_out = out.string();
-    m_bench_timeout = timeout;
     m_bench_done = false;
     m_bench_idx = idx;  // the control thread takes it from here
     while (!m_bench_done && !m_app.stop_threads) {
@@ -326,7 +320,7 @@ public:
     return result;
   }
 
-  // Gives the search back to the window, paused, on the puzzle the benchmark
+  // Gives the child back to the window, paused, on the puzzle the benchmark
   // ended on.
   inline void end_benchmark() {
     {
@@ -352,8 +346,8 @@ private:
   }
 
   // Parses the puzzle puzzle_idx names into this side's copy and blanks every
-  // counter and picture, the way a fresh search starts. Nothing is inferred
-  // here: that waits for the pane or the search.
+  // picture, the way a fresh child starts. Nothing is inferred here: that
+  // waits for the pane or SPACE.
   inline void load_current() {
     sound_manager::get().clear_queue();
     int idx = m_view.puzzle_idx;
@@ -366,14 +360,6 @@ private:
                                         m_tasks.solutions_for(task.id));
       m_puzzle.id = task.id;
       m_label = {idx, count, m_dataset_flags.load()};
-      m_search.attempts = 0;
-      m_search.current_max_depth = 1;
-      m_search.current_attempt_depth = 0;
-      m_search.current_attempt_nodes = 0;
-      m_search.gpu_wait_ns = 0;
-      m_search.gpu_wait_count = 0;
-      environment::remove(m_search.current_tree);
-      m_search.current_tree = nullptr;
       m_search.start_time = chrono::steady_clock::now();
       loaded(m_puzzle);
     }
@@ -383,11 +369,12 @@ private:
     m_settled_at = chrono::steady_clock::now();
     m_child_failed = false;
     m_asked_to_infer = false;
+    m_announced = false;
     m_preview_sent = 0;
     m_app.needs_upload = true;
   }
 
-  // The command line of a search on the puzzle on screen, from the program
+  // The command line of a child for the puzzle on screen, from the program
   // beside this one.
   wstring child_command(const wstring &extra) {
     wchar_t self[MAX_PATH];
@@ -402,7 +389,7 @@ private:
   bool start_child(const wstring &extra) {
     lock_guard lock(m_child_mtx);
     filesystem::create_directories("logs");
-    // What the search says on stderr, kept for the one running now.
+    // What the child says on stderr, kept for the one running now.
     const bool ok = m_child.start(child_command(extra), "logs/search_process.txt");
     if (!ok) m_log.debug("could not start arc_headless.exe beside ARC.exe");
     m_sent_verbose = m_app.log_mode.load() == logging_mode::stream;
@@ -414,7 +401,7 @@ private:
     m_child.send(line);
   }
 
-  // Sent to the search as soon as there is one; imports wait for it to start.
+  // Sent to the child as soon as there is one; imports wait for it to start.
   void send_when_running(const string &line) {
     lock_guard lock(m_outbox_mtx);
     m_outbox.push_back(line);
@@ -473,8 +460,8 @@ private:
           load_current();
         }
 
-        // A search once the window has stayed here a moment, so stepping
-        // through puzzles starts nothing. It waits paused until told to run.
+        // A child once the window has stayed here a moment, so stepping
+        // through puzzles starts nothing. It waits until told to read.
         bool started;
         {
           lock_guard lock(m_child_mtx);
@@ -482,13 +469,8 @@ private:
         }
         if (!started && m_loaded && !m_child_failed &&
             chrono::steady_clock::now() - m_settled_at >= chrono::milliseconds(300)) {
-          wstring extra;
-          if (m_first_max_attempts > 0) extra += L" --max-attempts " + to_wstring(m_first_max_attempts);
-          if (m_first_start_examples > 0) extra += L" --start-examples " + to_wstring(m_first_start_examples);
-          m_first_max_attempts = 0;
-          m_first_start_examples = 0;
-          if (start_child(extra)) {
-            if (!m_app.is_paused) send("run");
+          if (start_child(L"")) {
+            if (!m_app.is_paused) send("infer");
           } else {
             m_child_failed = true;
           }
@@ -516,8 +498,8 @@ private:
   }
 
   // The pane reads the facts off this side's copy, so they are read here too;
-  // the search is asked to read its own and try what they spelled, so a
-  // puzzle that solves that way shows as solved without being run.
+  // the child is asked to read its own and try what they spelled, as SPACE
+  // asks it.
   void read_facts_for_the_pane() {
     if (!m_loaded || !inference_pane_open()) return;
     if (!m_puzzle.inferred) {
@@ -537,7 +519,7 @@ private:
     }
   }
 
-  // The frame names the program it wants a preview of; the search runs it.
+  // The frame names the program it wants a preview of; the child runs it.
   void ask_for_preview() {
     uint64_t wanted;
     string program;
@@ -570,38 +552,25 @@ private:
       // Not killed from here, so it died: say so, and leave it dead until the
       // next puzzle or reset rather than restarting into the same crash.
       m_child_failed = true;
-      m_log.debug("the search process ended by itself; see logs/search_process.txt");
+      m_log.debug("the puzzle's process ended by itself; see logs/search_process.txt");
       pause();
     }
   }
 
-  // A benchmark puzzle asked for: loads it on screen and starts its search,
-  // which runs at once and ends by itself. A minute past its time it is
-  // stopped.
+  // A benchmark puzzle asked for: loads it on screen and starts its reading,
+  // which runs at once and ends by itself.
   void run_benchmark_turn() {
     const int idx = m_bench_idx.exchange(-1);
-    if (idx >= 0) {
-      kill_child();
-      m_view.puzzle_idx = idx;
-      load_current();
-      m_app.is_paused = false;
-      const wstring extra = L" --timeout " + to_wstring(m_bench_timeout) + L" --out \"" +
-                            filesystem::path(m_bench_out).wstring() + L"\"";
-      if (!start_child(extra)) {
-        m_bench_done = true;
-        return;
-      }
-      m_bench_deadline = chrono::steady_clock::now() +
-          chrono::duration_cast<chrono::steady_clock::duration>(
-              chrono::duration<double>(m_bench_timeout + 60.0));
-    }
-    if (chrono::steady_clock::now() > m_bench_deadline) {
-      lock_guard lock(m_child_mtx);
-      m_child.kill();
-    }
+    if (idx < 0) return;
+    kill_child();
+    m_view.puzzle_idx = idx;
+    load_current();
+    m_app.is_paused = false;
+    if (!start_child(L" --out \"" + filesystem::path(m_bench_out).wstring() + L"\""))
+      m_bench_done = true;
   }
 
-  // --- What the search said, replayed into this side's pictures. ---
+  // --- What the child said, replayed into this side's pictures. ---
   // Everything below arrives on the control thread, most of it under
   // m_search.mtx, which is the lock the frame draws under.
   void loaded(const puzzle &p) override {
@@ -614,15 +583,14 @@ private:
     if (!m_gpu_buffer) return;
     // Drop the last puzzle's cells; its views pointed into them.
     m_gpu_buffer->resize(m_base_gpu_buffer_size);
-    // Where each pair's cells landed, and a slot for each picture of the
-    // search, one entry per example, same index as the puzzle's own.
+    // Where each pair's cells landed, and a slot for the picture of what the
+    // best program drew, one entry per example, same index as the puzzle's own.
     auto build = [&](const vector<example> &side, vector<example_views> &out) {
       for (const example &ex : side) {
         example_views view;
         view.input = upload_grid(ex.input, *m_gpu_buffer);
         if (ex.output.width > 0)
           view.output = upload_grid(ex.output, *m_gpu_buffer);
-        view.current = allocate_empty_grid(*m_gpu_buffer);
         view.best = allocate_empty_grid(*m_gpu_buffer);
         out.push_back(view);
       }
@@ -631,19 +599,13 @@ private:
     build(p.test, views.test);
   }
 
-  void painted(bool is_test, size_t i, column which, const grid *g) override {
+  void painted(bool is_test, size_t i, const grid *g) override {
     example_views *v = m_view.views.of(is_test, i);
     if (!v || !m_gpu_buffer) return;
-    display_grid &picture = which == column::current ? v->current : v->best;
     if (g)
-      update_display_buffer(picture, *g, *m_gpu_buffer);
+      update_display_buffer(v->best, *g, *m_gpu_buffer);
     else
-      picture.width = 0;
-  }
-
-  void scored_current(bool is_test, size_t i, float score) override {
-    if (example_views *v = m_view.views.of(is_test, i))
-      v->current_score = score;
+      v->best.width = 0;
   }
 
   void changed() override { m_app.needs_upload = true; }
@@ -653,43 +615,21 @@ private:
     m_view.preview_cache[hash] = std::move(payload);
   }
 
-  void stopped_at(long long attempts) override {
-    m_log.debug(to_text("!!!! PAUSED AT %lld ATTEMPTS !!!!", attempts));
-    pause();
-  }
-
+  // The reading is done, so the window's switch goes back to paused. A solve
+  // is announced once a puzzle: asked again, the reading says the same thing.
   void news(const search_news &n) override {
-    // A SOLVED PUZZLE DOES NOT SEARCH ON ITS OWN, whoever solved it -- what
-    // the looking said, a promotion, or the beam -- and neither does one that
-    // just got shorter. The search has already stopped itself; this keeps the
-    // window's switch in step. Unpausing is the user's call, and then it hunts
-    // for a shorter one.
-    if (n.train_solved || n.simplified)
-      pause();
-
-    vector<pair<int, int>> seq;
-    if (n.from == search_news::source::beam) {
-      seq.push_back({1047, 40});
-      for (int i = 0; i < n.promotions; ++i)
-        seq.push_back({1319, 80});
-      if (n.simplified)
-        seq.push_back({1319, 60});
-    }
-    // What inference said lands before anyone has asked for anything, so it
-    // is not announced.
-    if (n.from != search_news::source::inference) {
-      if (n.train_solved)
-        seq.push_back({1568, 150});
-      if (n.test_solved)
-        seq.push_back({2093, 250});
-    }
-    if (!seq.empty())
-      sound_manager::get().play_sequence(seq);
+    pause();
+    if (m_announced || !n.train_solved) return;
+    m_announced = true;
+    vector<pair<int, int>> seq{{1568, 150}};
+    if (n.test_solved)
+      seq.push_back({2093, 250});
+    sound_manager::get().play_sequence(seq);
   }
 
   global_app_state &m_app;
-  // This side's copy of the search: its counters and its puzzle, both kept
-  // up to date from what the child says, both guarded by m_search.mtx.
+  // This side's lock and clock, and its copy of the puzzle, kept up to date
+  // from what the child says, both guarded by m_search.mtx.
   search_progress m_search;
   puzzle m_puzzle;
   bool m_loaded = false;
@@ -699,7 +639,7 @@ private:
   vector<int> *m_gpu_buffer = nullptr;
   size_t m_base_gpu_buffer_size = 0;
 
-  // The search: one child, for the puzzle on screen.
+  // One child, for the puzzle on screen.
   mutex m_child_mtx;
   search_process m_child;
   mutex m_outbox_mtx;
@@ -707,10 +647,9 @@ private:
   chrono::steady_clock::time_point m_settled_at{};
   bool m_child_failed = false;
   bool m_asked_to_infer = false;
+  bool m_announced = false;
   bool m_sent_verbose = false;
   uint64_t m_preview_sent = 0;
-  long long m_first_max_attempts = 0;
-  int m_first_start_examples = 0;
 
   task_set m_tasks;
   // Which dataset(s) are loaded into m_tasks, as a bitmask of dataset_flag.
@@ -725,9 +664,7 @@ private:
   atomic<bool> m_benchmarking{false};
   atomic<int> m_bench_idx{-1};
   atomic<bool> m_bench_done{false};
-  double m_bench_timeout = 0;
   string m_bench_out;
-  chrono::steady_clock::time_point m_bench_deadline{};
 
   jthread m_thread;
 };

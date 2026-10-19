@@ -1,6 +1,5 @@
 #include "12_dsl.cuh"
 #include "20_cuda_solver.cuh"
-#include <chrono>
 #include <atomic>
 #include <cstring>
 #include <cstdio>
@@ -22,18 +21,6 @@ void cuda_runtime_shutting_down() { cuda_runtime_alive.store(false); }
 
 void pinned_buffer_free(void* ptr) {
     if (ptr && cuda_runtime_alive.load()) cudaFreeHost(ptr);
-}
-
-gpu_memory read_gpu_memory() {
-    gpu_memory status;
-    size_t free_bytes = 0, total_bytes = 0;
-    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes == 0)
-        return status;
-    status.free_mb = free_bytes / (1024ull * 1024ull);
-    status.total_mb = total_bytes / (1024ull * 1024ull);
-    status.used_mb = status.total_mb - status.free_mb;
-    status.used_percent = (int)((status.used_mb * 100ull) / status.total_mb);
-    return status;
 }
 
 bool cuda_init() {
@@ -221,12 +208,6 @@ __device__ inline int8_t gpu_obj_first_color(const gpu_fixed_object& o) {
 __device__ inline int8_t gpu_obj_resolve_color(const gpu_fixed_object& o, int8_t value) {
     return arc::object_paint_color(o.height, o.width, value,
         [&](int row, int col) { return (int8_t)o.mask[row][col]; });
-}
-
-// One folding step of FNV-1a, so the canvas and the hand are stirred into the
-// same number the same way.
-__device__ inline uint64_t gpu_fold(uint64_t hash, uint64_t value) {
-    return (hash ^ value) * 1099511628211ULL;
 }
 
 // A source has no frame to inherit, so it takes the one its own content makes:
@@ -3379,7 +3360,7 @@ __device__ gpu_object_list& gpu_eval_program_warp(gpu_exec_context& ctx, const g
 // Host interface for combined exec+score
 // =====================================================================
 
-// --- Cached per-example device data (uploaded once per puzzle) ---
+// --- Per-example device data ---
 static constexpr int MAX_CACHED_EXAMPLES = 16;
 
 struct gpu_example_template {
@@ -3439,55 +3420,33 @@ __device__ inline void gpu_match_summaries(const gpu_object_summary* attempt, in
     }
 }
 
-static gpu_example_template* d_example_templates = nullptr;
-static bool d_examples_uploaded = false;
+// Device storage for one program on one example (execute_flat_program).
+static gpu_example_template* d_templates = nullptr;
+static int8_t*  d_rule_type = nullptr;
+static int16_t* d_rule_params = nullptr;
+static gpu_exec_context* d_contexts = nullptr;
+static gpu_flat_op*      d_programs = nullptr;
+static int16_t*          d_prog_lengths = nullptr;
+static int16_t*          d_node_counts = nullptr;
+static float*            d_scores = nullptr;
+static int8_t*           d_solved = nullptr;
+static int8_t*           d_output_grids = nullptr;
+static int8_t*           d_output_dims = nullptr;
+static gpu_score_terms*  d_score_terms = nullptr;
+static int               d_capacity = 0;
 
-// Scratch slot: separate device storage for 1-off bridge calls (execute_flat_program).
-// Kept isolated from the main cache so mid-beam calls don't evict training data.
-static gpu_example_template* d_scratch_templates = nullptr;
-static int8_t*  d_scratch_rule_type = nullptr;
-static int16_t* d_scratch_rule_params = nullptr;
-static gpu_exec_context* d_scratch_contexts = nullptr;
-static gpu_flat_op*      d_scratch_programs = nullptr;
-static int16_t*          d_scratch_prog_lengths = nullptr;
-static int16_t*          d_scratch_node_counts = nullptr;
-static float*            d_scratch_scores = nullptr;
-static int8_t*           d_scratch_solved = nullptr;
-static int8_t*           d_scratch_output_grids = nullptr;
-static int8_t*           d_scratch_output_dims = nullptr;
-static uint64_t*         d_scratch_output_hashes = nullptr;
-static gpu_score_terms*  d_scratch_score_terms = nullptr;
-static int               d_scratch_capacity = 0;
-// Rule is per-puzzle, cache on device
-static int8_t*  d_cached_rule_type = nullptr;
-static int16_t* d_cached_rule_params = nullptr;
-
-// --- Two streams for pipelining: launch batch N while waiting on batch N-1 ---
-static cudaStream_t exec_stream[2] = {nullptr, nullptr};
-static inline cudaStream_t get_exec_stream(int slot) {
-    if (!exec_stream[slot]) cudaStreamCreate(&exec_stream[slot]);
-    return exec_stream[slot];
+static cudaStream_t exec_stream = nullptr;
+static inline cudaStream_t get_exec_stream() {
+    if (!exec_stream) cudaStreamCreate(&exec_stream);
+    return exec_stream;
 }
-
-// --- Per-batch device buffers (two slots for ping-pong) ---
-static gpu_exec_context* d_exec_contexts[2] = {nullptr, nullptr};
-static gpu_flat_op*      d_exec_programs[2] = {nullptr, nullptr};
-static int16_t*          d_exec_prog_lengths[2] = {nullptr, nullptr};
-static int16_t*          d_exec_node_counts[2] = {nullptr, nullptr};
-static float*            d_exec_scores[2] = {nullptr, nullptr};
-static int8_t*           d_exec_solved[2] = {nullptr, nullptr};
-static int8_t*           d_exec_output_grids[2] = {nullptr, nullptr};
-static int8_t*           d_exec_output_dims[2] = {nullptr, nullptr};
-static uint64_t*         d_exec_output_hashes[2] = {nullptr, nullptr};
-static gpu_score_terms*  d_exec_score_terms[2] = {nullptr, nullptr};
-static int               d_exec_capacity[2] = {0, 0};
 
 static void resize_exec_buffers(int job_count, int& capacity,
                                 gpu_exec_context*& ctxs, gpu_flat_op*& progs,
                                 int16_t*& prog_lens, int16_t*& node_cnts,
                                 float*& scores, int8_t*& solved,
                                 int8_t*& out_grids, int8_t*& out_dims,
-                                uint64_t*& out_hashes, gpu_score_terms*& out_terms) {
+                                gpu_score_terms*& out_terms) {
     if (job_count <= capacity) return;
 
     cudaFree(ctxs);
@@ -3498,14 +3457,13 @@ static void resize_exec_buffers(int job_count, int& capacity,
     cudaFree(solved);
     cudaFree(out_grids);
     cudaFree(out_dims);
-    cudaFree(out_hashes);
     cudaFree(out_terms);
 
     capacity = job_count;
     // Check every cudaMalloc. An unchecked device-OOM here leaves null device
     // pointers AND a sticky CUDA error on the context, which then surfaces as a
-    // baffling cudaMallocHost abort on ANOTHER thread (e.g. the GUI scratch eval).
-    // Fail loud at the actual source with the size that didn't fit.
+    // baffling cudaMallocHost abort later. Fail loud at the actual source with
+    // the size that didn't fit.
     cudaError_t e = cudaSuccess;
     auto chk = [&](cudaError_t r, const char* what, size_t bytes) {
         if (r != cudaSuccess && e == cudaSuccess) {
@@ -3524,21 +3482,11 @@ static void resize_exec_buffers(int job_count, int& capacity,
     chk(cudaMalloc(&solved,    (size_t)job_count * sizeof(int8_t)), "solved", (size_t)job_count);
     chk(cudaMalloc(&out_grids, (size_t)job_count * GPU_GRID_CELLS * sizeof(int8_t)), "out_grids", (size_t)job_count * GPU_GRID_CELLS);
     chk(cudaMalloc(&out_dims,  (size_t)job_count * 2 * sizeof(int8_t)), "out_dims", (size_t)job_count * 2);
-    chk(cudaMalloc(&out_hashes, (size_t)job_count * sizeof(uint64_t)), "out_hashes", (size_t)job_count * sizeof(uint64_t));
     chk(cudaMalloc(&out_terms, (size_t)job_count * sizeof(gpu_score_terms)), "out_terms", (size_t)job_count * sizeof(gpu_score_terms));
     if (e != cudaSuccess) std::abort();
 }
 
-static void ensure_exec_capacity(int job_count, int slot) {
-    resize_exec_buffers(job_count, d_exec_capacity[slot],
-                        d_exec_contexts[slot], d_exec_programs[slot],
-                        d_exec_prog_lengths[slot], d_exec_node_counts[slot],
-                        d_exec_scores[slot], d_exec_solved[slot],
-                        d_exec_output_grids[slot], d_exec_output_dims[slot],
-                        d_exec_output_hashes[slot], d_exec_score_terms[slot]);
-}
-
-// Build host-side templates from cuda_dsl_example_data. Shared by main + scratch paths.
+// Build host-side templates from cuda_dsl_example_data.
 static void build_example_templates(const cuda_dsl_example_data& ex, int count,
                                     std::vector<gpu_example_template>& h_templates) {
     // Made where they lie: one template holds a list as long as a grid has
@@ -3574,48 +3522,20 @@ static void build_example_templates(const cuda_dsl_example_data& ex, int count,
     }
 }
 
-// Upload per-example data to device. Call once per puzzle (or when puzzle changes).
-void cuda_dsl_upload_examples(const cuda_dsl_example_data& ex) {
-    if (!d_example_templates) {
-        cudaMalloc(&d_example_templates, MAX_CACHED_EXAMPLES * sizeof(gpu_example_template));
-        cudaMalloc(&d_cached_rule_type,   sizeof(int8_t));
-        cudaMalloc(&d_cached_rule_params, 6 * sizeof(int16_t));
+void cuda_dsl_upload_example(const cuda_dsl_example_data& ex) {
+    if (!d_templates) {
+        cudaMalloc(&d_templates,   MAX_CACHED_EXAMPLES * sizeof(gpu_example_template));
+        cudaMalloc(&d_rule_type,   sizeof(int8_t));
+        cudaMalloc(&d_rule_params, 6 * sizeof(int16_t));
     }
 
     int count = std::min(ex.count, MAX_CACHED_EXAMPLES);
     std::vector<gpu_example_template> h_templates;
     build_example_templates(ex, count, h_templates);
 
-    cudaMemcpy(d_example_templates, h_templates.data(), count * sizeof(gpu_example_template), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_cached_rule_type,   &ex.rule_type,  sizeof(int8_t),         cudaMemcpyHostToDevice);
-    cudaMemcpy(d_cached_rule_params, ex.rule_params, 6 * sizeof(int16_t),    cudaMemcpyHostToDevice);
-
-    d_examples_uploaded = true;
-}
-
-// Upload a single example into the scratch slot. Does NOT touch the main cache.
-void cuda_dsl_upload_scratch_example(const cuda_dsl_example_data& ex) {
-    if (!d_scratch_templates) {
-        cudaMalloc(&d_scratch_templates,   MAX_CACHED_EXAMPLES * sizeof(gpu_example_template));
-        cudaMalloc(&d_scratch_rule_type,   sizeof(int8_t));
-        cudaMalloc(&d_scratch_rule_params, 6 * sizeof(int16_t));
-    }
-
-    int count = std::min(ex.count, MAX_CACHED_EXAMPLES);
-    std::vector<gpu_example_template> h_templates;
-    build_example_templates(ex, count, h_templates);
-
-    cudaMemcpy(d_scratch_templates,   h_templates.data(), count * sizeof(gpu_example_template), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_scratch_rule_type,   &ex.rule_type,  sizeof(int8_t),      cudaMemcpyHostToDevice);
-    cudaMemcpy(d_scratch_rule_params, ex.rule_params, 6 * sizeof(int16_t), cudaMemcpyHostToDevice);
-}
-
-void cuda_dsl_invalidate_examples() {
-    d_examples_uploaded = false;
-}
-
-bool cuda_dsl_examples_uploaded() {
-    return d_examples_uploaded;
+    cudaMemcpy(d_templates,   h_templates.data(), count * sizeof(gpu_example_template), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rule_type,   &ex.rule_type,  sizeof(int8_t),      cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rule_params, ex.rule_params, 6 * sizeof(int16_t), cudaMemcpyHostToDevice);
 }
 
 // New kernel that reads from cached example templates.
@@ -3720,10 +3640,7 @@ __global__ void __launch_bounds__(32, 21) dsl_exec_and_score_kernel_v2(
     }
 
     // 3D-printer model: ctx.output is the accumulator. Ops are the only writers;
-    // there is no post-hoc paint of the final object list. Undeposited chains
-    // get their beam gradient from the EXPLICIT Underlay twin the generator
-    // emits alongside them (add_candidate_if_new) — same visibility, no
-    // implicit semantics, no phantom locks.
+    // there is no post-hoc paint of the final object list.
     if (lane == 0) {
         int8_t rt = *rule_type;
         if (rt == arc::output_dimension_rule::BoundingBox) {
@@ -3788,7 +3705,6 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
     float* __restrict__ scores,
     int8_t* __restrict__ solved_out,
     int8_t* __restrict__ output_dims,
-    uint64_t* __restrict__ output_hashes,
     gpu_score_terms* __restrict__ score_terms,
     int active_examples,
     int job_count)
@@ -4043,42 +3959,6 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
 
         output_dims[idx * 2 + 0] = (int8_t)ctx.output.width;
         output_dims[idx * 2 + 1] = (int8_t)ctx.output.height;
-        // WHAT THIS JOB IS, as one number: the canvas it painted AND the objects
-        // it still holds. Two chains that painted the same picture but hold
-        // different objects are two different chains, because the next sentence
-        // acts on the hand and not on the paint -- hashing the paint alone made
-        // a sentence that only rearranges the hand look like a sentence that did
-        // nothing, and the dedup deleted it.
-        {
-            uint64_t state = 1469598103934665603ULL;
-            state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.width);
-            state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.height);
-            for (int row = 0; row < ctx.output.height; ++row)
-                for (int col = 0; col < ctx.output.width; ++col)
-                    state = gpu_fold(state, (uint64_t)(uint8_t)ctx.output.data[row][col]);
-            const gpu_object_list* hand =
-                (ctx.current_objects_idx >= 0) ? &ctx.pool[ctx.current_objects_idx] :
-                (ctx.current_objects_idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS) ? &ctx.seed_objs :
-                nullptr;
-            state = gpu_fold(state, (uint64_t)(hand ? hand->count : 0));
-            if (hand) {
-                for (int i = 0; i < hand->count; ++i) {
-                    const gpu_fixed_object& obj = hand->objects[i];
-                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.x0);
-                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.y0);
-                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.width);
-                    state = gpu_fold(state, (uint64_t)(uint16_t)obj.height);
-                    state = gpu_fold(state, (uint64_t)(obj.selected ? 1 : 0));
-                    // Only the object's own box, never the unused rest of the mask.
-                    int w = min((int)obj.width, GPU_MAX_GRID);
-                    int h = min((int)obj.height, GPU_MAX_GRID);
-                    for (int row = 0; row < h; ++row)
-                        for (int col = 0; col < w; ++col)
-                            state = gpu_fold(state, (uint64_t)(uint8_t)obj.mask[row][col]);
-                }
-            }
-            output_hashes[idx] = state;
-        }
         scores[idx] = total;
         solved_out[idx] = (dims_match && my_mismatches == 0) ? 1 : 0;
         // Say what that was made of, so nothing has to mirror the formula.
@@ -4099,313 +3979,70 @@ __global__ void __launch_bounds__(32, 24) dsl_score_kernel(
     }
 }
 
-// --- DIAG: capture the first CUDA error so the worker can log it. The "short
-// pause then frozen/corrupt output" symptom is consistent with a sticky CUDA
-// error (kernel fault / OOM) silently no-op'ing all later launches. REMOVE later.
-static char g_cuda_err_msg[512] = {0};
-static bool g_cuda_err_set = false;
-static void capture_cuda_err(const char* where, cudaError_t e, int slot, int n) {
-    if (e != cudaSuccess && !g_cuda_err_set) {
-        snprintf(g_cuda_err_msg, sizeof(g_cuda_err_msg),
-                 "%s slot=%d n=%d err=%s", where, slot, n, cudaGetErrorString(e));
-        g_cuda_err_set = true;
-    }
-}
-// NOT BUILT by default since 2026-09-09, and this guard is why: building it
-// costs about a third of every clean build. Measured back to back that day
-// with scripts/build.bat over a deleted out/, with it and without. Trust the
-// ratio and never a stopwatch reading: the same pair, run twice the same
-// morning, moved by about half in absolute terms while the ratio held.
-// It inlines the whole op evaluator a second time, lands at 255 registers, and
-// warns about its missing __launch_bounds__ on every build, which only teaches
-// us to ignore that warning. Nothing calls it yet, so today we pay all of that
-// for nothing. It stays here, reasoning and all, rather than being deleted and
-// guessed at again later: build it with -DARC_ENABLE_CUDA_PIECES=ON the day
-// inference asks the ops for pieces instead of segmenting grids on the CPU.
-#if !defined(ARC_ENABLE_CUDA_PIECES) || ARC_ENABLE_CUDA_PIECES
-// --- Ask an op what the pieces of a grid are ---------------------------------
-// The ops are the single home of "what is an object", so nothing on the CPU
-// segments a grid itself. This runs ONE op through the same evaluator the
-// solver uses and hands back what it made; no op is touched or reimplemented.
-// TWO ops are sent, `Input` then the splitter, because the dispatch gives an op
-// with no list before it nothing to work on and just acquires the input.
-// NO __launch_bounds__ ON PURPOSE, and nvcc says so every build. Nothing calls
-// this yet -- inference still segments grids itself -- so the occupancy worth
-// asking for depends on grid counts nobody has passed. A number now would be a
-// guess frozen into the source. See Inference Master.md, "REPLACING THESE".
-__global__ void dsl_pieces_kernel(gpu_exec_context* __restrict__ contexts,
-                                  const gpu_fixed_grid* __restrict__ grids,
-                                  node_type op, int8_t variant, int8_t background,
-                                  dsl_pieces* __restrict__ out, int grid_count) {
-    int idx = blockIdx.x;
-    if (idx >= grid_count) return;
-    int lane = threadIdx.x;
-    gpu_exec_context& ctx = contexts[idx];
-
-    const int8_t* src = reinterpret_cast<const int8_t*>(&grids[idx]);
-    int8_t* dst = reinterpret_cast<int8_t*>(&ctx.input);
-    for (int i = lane; i < (int)sizeof(gpu_fixed_grid); i += 32) dst[i] = src[i];
-    for (int i = lane; i < arc::MAX_GRID_CELLS; i += 32) ctx.output.data.values[i] = GPU_TRANSPARENT;
-    if (lane == 0) {
-        ctx.pool_head = 0;
-        ctx.orientation_flipped = 0;
-        ctx.output.width = ctx.input.width;
-        ctx.output.height = ctx.input.height;
-        // Nothing is being painted, so the size rule is "same as the input".
-        ctx.rule_type = (int8_t)arc::output_dimension_rule::Identity;
-        for (int k = 0; k < 6; ++k) ctx.rule_params[k] = 0;
-    }
-    __syncwarp();
-
-    gpu_flat_op prog[6];
-    int count = 0;
-    prog[count++] = {node_type::Input, 0};
-    if (arc::is_color(background) && (op == node_type::Colors || op == node_type::Split)) {
-        prog[count++] = {node_type::Colors, 0};
-        prog[count++] = {node_type::SelectColor, background};
-        prog[count++] = {node_type::DeleteSelection, 0};
-        if (op == node_type::Split) prog[count++] = {op, variant};
-    } else prog[count++] = {op, variant};
-    gpu_object_list& list = gpu_eval_program_warp(ctx, prog, count, lane);
-
-    if (lane != 0) return;
-    dsl_pieces& o = out[idx];
-    for (int r = 0; r < GPU_MAX_GRID; ++r)
-        for (int c = 0; c < GPU_MAX_GRID; ++c) o.owner[r][c] = -1;
-    int n = list.count < DSL_MAX_PIECES ? list.count : DSL_MAX_PIECES;
-    for (int i = 0; i < n; ++i) {
-        const gpu_fixed_object& ob = list.objects[i];
-        dsl_pieces::piece p;
-        p.x0 = (int8_t)ob.x0; p.y0 = (int8_t)ob.y0;
-        p.w = (int8_t)ob.width; p.h = (int8_t)ob.height;
-        p.cells = 0;
-        int one_color = -1; bool mixed = false;
-        for (int r = 0; r < ob.height; ++r)
-            for (int c = 0; c < ob.width; ++c) {
-                int8_t v = ob.mask[r][c];
-                if (v == GPU_TRANSPARENT) continue;
-                p.cells++;
-                int gr = ob.y0 + r, gc = ob.x0 + c;
-                if (gr >= 0 && gr < GPU_MAX_GRID && gc >= 0 && gc < GPU_MAX_GRID)
-                    o.owner[gr][gc] = (int8_t)i;
-                if (one_color < 0) one_color = v;
-                else if (one_color != v) mixed = true;
-            }
-        p.color = mixed ? (int8_t)-1 : (int8_t)one_color;
-        o.pieces[i] = p;
-    }
-    o.count = n;
+static void ensure_capacity(int job_count) {
+    resize_exec_buffers(job_count, d_capacity,
+                        d_contexts, d_programs,
+                        d_prog_lengths, d_node_counts,
+                        d_scores, d_solved,
+                        d_output_grids, d_output_dims,
+                        d_score_terms);
 }
 
-void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
-                     node_type op, int8_t variant, int8_t background,
-                     dsl_pieces* out) {
-    if (grid_count <= 0) return;
-    gpu_exec_context* d_ctx = nullptr;
-    gpu_fixed_grid*   d_grids = nullptr;
-    dsl_pieces*       d_out = nullptr;
-    // Load-time only and a handful of grids, so allocate for the call rather
-    // than keeping a pool alive for something that runs once per puzzle.
-    if (cudaMalloc(&d_ctx,   (size_t)grid_count * sizeof(gpu_exec_context)) != cudaSuccess ||
-        cudaMalloc(&d_grids, (size_t)grid_count * sizeof(gpu_fixed_grid))   != cudaSuccess ||
-        cudaMalloc(&d_out,   (size_t)grid_count * sizeof(dsl_pieces))       != cudaSuccess) {
-        cudaFree(d_ctx); cudaFree(d_grids); cudaFree(d_out);
-        for (int i = 0; i < grid_count; ++i) out[i].count = 0;
-        return;
-    }
-    cudaMemcpy(d_grids, grids, (size_t)grid_count * sizeof(gpu_fixed_grid), cudaMemcpyHostToDevice);
-    // DEFAULT STREAM ON PURPOSE, and nvcc says so every build. The copies either
-    // side of this are blocking, so a stream would have nothing to overlap with.
-    // Whoever makes those async wants to revisit this line in the same breath.
-    dsl_pieces_kernel<<<grid_count, 32>>>(d_ctx, d_grids, op, variant, background, d_out, grid_count);
-    cudaMemcpy(out, d_out, (size_t)grid_count * sizeof(dsl_pieces), cudaMemcpyDeviceToHost);
-    cudaFree(d_ctx); cudaFree(d_grids); cudaFree(d_out);
-}
-
-#endif // ARC_ENABLE_CUDA_PIECES
-
-bool cuda_dsl_take_error(char* out, int outsz) {
-    if (!g_cuda_err_set) return false;
-    snprintf(out, outsz, "%s", g_cuda_err_msg);
-    g_cuda_err_set = false;
-    return true;
-}
-
-void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch, int slot) {
+void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch) {
     if (batch.job_count <= 0) return;
 
     int n = batch.job_count;
     int active = std::min((int)batch.active_examples, MAX_CACHED_EXAMPLES);
-    ensure_exec_capacity(n, slot);
+    ensure_capacity(n);
 
-    cudaStream_t s = get_exec_stream(slot);
+    cudaStream_t s = get_exec_stream();
 
-    cudaMemcpyAsync(d_exec_programs[slot],     batch.programs.data(),        n * GPU_MAX_OPS * sizeof(gpu_flat_op), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_exec_prog_lengths[slot], batch.program_lengths.data(), n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_exec_node_counts[slot],  batch.node_counts.data(),     n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
-
-    int threads = 32;  // one warp per job
-    int blocks = n;
-    dsl_exec_and_score_kernel_v2<<<blocks, threads, 0, s>>>(
-        d_exec_contexts[slot], d_example_templates,
-        d_exec_programs[slot], d_exec_prog_lengths[slot], d_exec_node_counts[slot],
-        d_cached_rule_type, d_cached_rule_params,
-        d_exec_scores[slot], d_exec_solved[slot],
-        d_exec_output_grids[slot], d_exec_output_dims[slot],
-        active, n);
-    capture_cuda_err("launch", cudaGetLastError(), slot, n);  // launch errors (kept: cheap, catches future faults)
-
-    // Score kernel: same stream -> runs after exec finishes writing contexts[].
-    dsl_score_kernel<<<n, 32, 0, s>>>(
-        d_exec_contexts[slot], d_example_templates, d_exec_node_counts[slot],
-        d_exec_scores[slot], d_exec_solved[slot], d_exec_output_dims[slot],
-        d_exec_output_hashes[slot], d_exec_score_terms[slot],
-        active, n);
-    capture_cuda_err("score-launch", cudaGetLastError(), slot, n);
-
-    cudaMemcpyAsync(batch.scores.data(), d_exec_scores[slot], n * sizeof(float),  cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.solved.data(), d_exec_solved[slot], n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.output_hashes.data(), d_exec_output_hashes[slot], n * sizeof(uint64_t), cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.score_terms.data(), d_exec_score_terms[slot], n * sizeof(gpu_score_terms), cudaMemcpyDeviceToHost, s);
-    // No sync here — caller does CPU work then calls cuda_dsl_wait_for_exec(slot).
-}
-
-void cuda_dsl_wait_for_exec(int slot) {
-    if (exec_stream[slot]) capture_cuda_err("sync", cudaStreamSynchronize(exec_stream[slot]), slot, 0);  // kernel exec errors surface here
-}
-
-static long long g_fetch_copy_ns = 0;
-static long long g_fetch_sync_ns = 0;
-
-void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns) {
-    if (copy_ns) *copy_ns = g_fetch_copy_ns;
-    if (sync_ns) *sync_ns = g_fetch_sync_ns;
-    g_fetch_copy_ns = 0;
-    g_fetch_sync_ns = 0;
-}
-
-// Where a winner's picture lands. Its own pinned buffer, allocated once and
-// never resized, so nothing can free it while a copy is still in flight.
-static int8_t* h_winner_grids[2] = {nullptr, nullptr};
-static int8_t* h_winner_dims[2]  = {nullptr, nullptr};
-
-static inline void ensure_winner_landing(int slot) {
-    if (h_winner_grids[slot]) return;
-    cudaHostAlloc((void**)&h_winner_grids[slot],
-                  (size_t)MAX_CACHED_EXAMPLES * GPU_GRID_CELLS, cudaHostAllocDefault);
-    cudaHostAlloc((void**)&h_winner_dims[slot],
-                  (size_t)MAX_CACHED_EXAMPLES * 2, cudaHostAllocDefault);
-}
-
-const int8_t* cuda_dsl_winner_grids(int slot) { return h_winner_grids[slot]; }
-const int8_t* cuda_dsl_winner_dims(int slot)  { return h_winner_dims[slot]; }
-
-void cuda_dsl_fetch_output_grids_async(int winner_idx, int active_examples, int slot) {
-    int active = std::min(active_examples, MAX_CACHED_EXAMPLES);
-    if (active <= 0 || winner_idx < 0) return;
-    ensure_winner_landing(slot);
-    if (!h_winner_grids[slot] || !h_winner_dims[slot]) return;
-    int base = winner_idx * active;
-    cudaStream_t s = get_exec_stream(slot);
-    auto t0 = std::chrono::steady_clock::now();
-    cudaMemcpyAsync(h_winner_grids[slot],
-                    d_exec_output_grids[slot] + (size_t)base * GPU_GRID_CELLS,
-                    (size_t)active * GPU_GRID_CELLS * sizeof(int8_t),
-                    cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(h_winner_dims[slot],
-                    d_exec_output_dims[slot] + (size_t)base * 2,
-                    (size_t)active * 2 * sizeof(int8_t),
-                    cudaMemcpyDeviceToHost, s);
-    g_fetch_copy_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - t0).count();
-}
-
-void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples, int slot) {
-    int active = std::min(active_examples, MAX_CACHED_EXAMPLES);
-    int base = winner_idx * active;
-    cudaStream_t s = get_exec_stream(slot);
-    auto t0 = std::chrono::steady_clock::now();
-    cudaMemcpyAsync(batch.output_grids.data()       + base * GPU_GRID_CELLS,
-                    d_exec_output_grids[slot]       + base * GPU_GRID_CELLS,
-                    active * GPU_GRID_CELLS * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.output_dims_result.data() + base * 2,
-                    d_exec_output_dims[slot]        + base * 2,
-                    active * 2 * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
-    auto t1 = std::chrono::steady_clock::now();
-    cudaStreamSynchronize(s);
-    auto t2 = std::chrono::steady_clock::now();
-    g_fetch_copy_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-    g_fetch_sync_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
-}
-
-// --- Scratch exec path: reads from d_scratch_* buffers, isolated from main cache. ---
-
-static void ensure_scratch_capacity(int job_count) {
-    resize_exec_buffers(job_count, d_scratch_capacity,
-                        d_scratch_contexts, d_scratch_programs,
-                        d_scratch_prog_lengths, d_scratch_node_counts,
-                        d_scratch_scores, d_scratch_solved,
-                        d_scratch_output_grids, d_scratch_output_dims,
-                        d_scratch_output_hashes, d_scratch_score_terms);
-}
-
-void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch) {
-    if (batch.job_count <= 0) return;
-
-    int n = batch.job_count;
-    int active = std::min((int)batch.active_examples, MAX_CACHED_EXAMPLES);
-    ensure_scratch_capacity(n);
-
-    cudaStream_t s = get_exec_stream(0);  // scratch uses slot 0 (independent from main pipeline)
-
-    cudaMemcpyAsync(d_scratch_programs,     batch.programs.data(),        n * GPU_MAX_OPS * sizeof(gpu_flat_op), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_scratch_prog_lengths, batch.program_lengths.data(), n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(d_scratch_node_counts,  batch.node_counts.data(),     n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_programs,     batch.programs.data(),        n * GPU_MAX_OPS * sizeof(gpu_flat_op), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_prog_lengths, batch.program_lengths.data(), n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(d_node_counts,  batch.node_counts.data(),     n * sizeof(int16_t),                    cudaMemcpyHostToDevice, s);
 
     int threads = 32;
     int blocks = n;
     dsl_exec_and_score_kernel_v2<<<blocks, threads, 0, s>>>(
-        d_scratch_contexts, d_scratch_templates,
-        d_scratch_programs, d_scratch_prog_lengths, d_scratch_node_counts,
-        d_scratch_rule_type, d_scratch_rule_params,
-        d_scratch_scores, d_scratch_solved,
-        d_scratch_output_grids, d_scratch_output_dims,
+        d_contexts, d_templates,
+        d_programs, d_prog_lengths, d_node_counts,
+        d_rule_type, d_rule_params,
+        d_scores, d_solved,
+        d_output_grids, d_output_dims,
         active, n);
-    capture_cuda_err("scratch-launch", cudaGetLastError(), -1, n);  // GUI eval path; also surfaces sticky errors
 
     dsl_score_kernel<<<n, 32, 0, s>>>(
-        d_scratch_contexts, d_scratch_templates, d_scratch_node_counts,
-        d_scratch_scores, d_scratch_solved, d_scratch_output_dims,
-        d_scratch_output_hashes, d_scratch_score_terms,
+        d_contexts, d_templates, d_node_counts,
+        d_scores, d_solved, d_output_dims,
+        d_score_terms,
         active, n);
-    capture_cuda_err("scratch-score-launch", cudaGetLastError(), -1, n);
 
-    cudaMemcpyAsync(batch.scores.data(), d_scratch_scores, n * sizeof(float),  cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.solved.data(), d_scratch_solved, n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
-    cudaMemcpyAsync(batch.score_terms.data(), d_scratch_score_terms, n * sizeof(gpu_score_terms), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.scores.data(), d_scores, n * sizeof(float),  cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.solved.data(), d_solved, n * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(batch.score_terms.data(), d_score_terms, n * sizeof(gpu_score_terms), cudaMemcpyDeviceToHost, s);
 
     cudaStreamSynchronize(s);
 }
 
-void cuda_dsl_fetch_output_grids_scratch(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples) {
+void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int job_idx, int active_examples) {
     int active = std::min(active_examples, MAX_CACHED_EXAMPLES);
-    int base = winner_idx * active;
-    cudaStream_t s = get_exec_stream(0);  // scratch uses slot 0 (independent from main pipeline)
+    int base = job_idx * active;
+    cudaStream_t s = get_exec_stream();
     cudaMemcpyAsync(batch.output_grids.data()       + base * GPU_GRID_CELLS,
-                    d_scratch_output_grids          + base * GPU_GRID_CELLS,
+                    d_output_grids                  + base * GPU_GRID_CELLS,
                     active * GPU_GRID_CELLS * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
     cudaMemcpyAsync(batch.output_dims_result.data() + base * 2,
-                    d_scratch_output_dims           + base * 2,
+                    d_output_dims                   + base * 2,
                     active * 2 * sizeof(int8_t), cudaMemcpyDeviceToHost, s);
     cudaStreamSynchronize(s);
 }
 
-bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
-                                             int* out_canvas_w, int* out_canvas_h) {
-    if (!d_scratch_contexts || job_idx < 0 || job_idx >= d_scratch_capacity) return false;
+bool cuda_dsl_fetch_last_object_list(int job_idx, gpu_object_list& out,
+                                     int* out_canvas_w, int* out_canvas_h) {
+    if (!d_contexts || job_idx < 0 || job_idx >= d_capacity) return false;
 
-    cudaStream_t s = get_exec_stream(0);  // scratch uses slot 0 (independent from main pipeline)
-    gpu_exec_context* d_ctx = d_scratch_contexts + job_idx;
+    cudaStream_t s = get_exec_stream();
+    gpu_exec_context* d_ctx = d_contexts + job_idx;
 
     // Working output-canvas dimensions after execution (including rotate ops).
     // The shared grid stores adjacent int dimensions at its start.
@@ -4431,7 +4068,7 @@ bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
     size_t src_off = 0;
     if (current_idx == gpu_exec_context::CURRENT_OBJECTS_SEEDS) {
         src_off = offsetof(gpu_exec_context, seed_objs);
-        } else if (current_idx >= 0 && current_idx < GPU_KERNEL_POOL_SIZE) {
+    } else if (current_idx >= 0 && current_idx < GPU_KERNEL_POOL_SIZE) {
         src_off = offsetof(gpu_exec_context, pool) + current_idx * sizeof(gpu_object_list);
     } else {
         return false;

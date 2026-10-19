@@ -91,7 +91,7 @@ print(subprocess.check_output(["nvcc", "--version"], text=True))
 def compile_to(binary, *sources):
     cmd = [
         "nvcc", "-std=c++20", "--expt-relaxed-constexpr",
-        "-O2", "-DARC_ENABLE_CUDA_PIECES=0",
+        "-O2",
         "-I", INC, *sources,
         "-o", binary,
     ]
@@ -161,9 +161,8 @@ def submission():
     NGPU = len(gpu_arches)
     SHARDS = 1 if QUICK_CHECK else NGPU
     PUZZLE_LIMIT = "3" if QUICK_CHECK else "0"   # 0 = full run
-    # There is no search budget: each task stops after its emitted programs.
     print(f"detected {NGPU} GPU(s) -> launching {SHARDS} shards, "
-          f"PUZZLE_LIMIT={PUZZLE_LIMIT} MODE=inference-only (QUICK_CHECK={QUICK_CHECK})")
+          f"PUZZLE_LIMIT={PUZZLE_LIMIT} (QUICK_CHECK={QUICK_CHECK})")
 
     procs = []
     # A rerun must never merge output left by an earlier run.
@@ -176,7 +175,6 @@ def submission():
         env["ARC_SHARD_INDEX"] = str(s)
         env["ARC_SHARD_TOTAL"] = str(SHARDS)
         env["ARC_PUZZLE_LIMIT"] = PUZZLE_LIMIT  # overall task cap (shard takes its slice)
-        env["ARC_INFERENCE_ONLY"] = "1"  # Emit, replay on all training pairs, predict. No search.
         env["ARC_DATASET"] = "test"   # which set to solve; the solver finds the file itself,
                                       # walking up from /kaggle/working to the /kaggle/input mount
         lf = open(f"/kaggle/working/shard_{s}.log", "w")

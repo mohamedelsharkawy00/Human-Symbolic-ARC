@@ -1,6 +1,6 @@
-// This file defines the data used to execute and score solver programs.
+// This file defines the data used to run the programs the reading spells.
 // Operators are combined into sentences, and those sentences together
-// form a candidate program for the solver to try.
+// form a program.
 //
 // The earlier chapters describe what happens in the training examples.
 // To solve a puzzle, we need a program that can make those changes.
@@ -8,7 +8,7 @@
 // and draw the result.
 //
 // 8_vocabulary.hpp defines the operators; here we define the data sent to the GPU,
-// and the results returned so the solver can judge each candidate program.
+// and what comes back: the drawing, and its score.
 #pragma once
 // Single home of the grid/color limits the GPU_* names below alias, and of
 // output_dimension_rule, whose cases the kernel switches on.
@@ -106,8 +106,7 @@ static constexpr int GPU_GRID_CELLS = arc::MAX_GRID_CELLS;
 // held them to 127, and a reading's passes outgrew it (1d61978c's 130 ops,
 // fea12743's 156; the user: 512) -- and it is the ONLY thing binding program
 // length now that the object pool is a ring (gpu_acquire) rather than one slot
-// per producing op. A written program is what spends this; the search stops at
-// MAX_SEARCH_DEPTH, far below.
+// per producing op.
 static constexpr int GPU_MAX_OPS = 512;
 static constexpr int GPU_TRANSPARENT = arc::TRANSPARENT;
 // A grid cut both ways leaves at most this many panes worth carrying.
@@ -115,8 +114,7 @@ static constexpr int GPU_MAX_PANES = 32;
 static constexpr int GPU_MAX_COLORS = arc::COLOR_COUNT;
 
 // --- Scoring weights & penalties: single source of truth for all scoring ---
-// Used by the kernel (dsl_exec_and_score_kernel_v2) and by the CPU-side
-// debug/analysis breakdown in 13_environment.hpp.
+// Used by the score kernel (dsl_score_kernel).
 static constexpr float GPU_SCORE_W_EXACT_MATCH = 1.0f;
 static constexpr float GPU_SCORE_W_HISTOGRAM = 1.0f;
 static constexpr float GPU_SCORE_W_DISTANCE_MAP = 0.1f;
@@ -215,38 +213,6 @@ inline ARC_HOST_DEVICE uint32_t gpu_shape_key_of_paint(const gpu_fixed_object& o
 
 // The grid used by the CUDA path is the same type used by inference.
 using gpu_fixed_grid = arc::grid;
-
-// --- What the DSL thinks the pieces of a grid are, read back to the CPU ---
-// The ops are the single home of "what is an object", so nothing on the CPU
-// segments a grid itself: it asks for the pieces and gets these. Sent back as
-// an OWNER MAP rather than a stack of masks — a gpu_object_list carries a full
-// 30x30 mask per object and would be ~800 KB, where one byte per cell plus a
-// box per piece is under 1.5 KB. Ops whose pieces overlap cannot be read this
-// way; Split and Colors cut a grid into disjoint pieces, so they can.
-static constexpr int DSL_MAX_PIECES = 64;
-
-struct dsl_pieces {
-    struct piece {
-        int8_t x0 = 0, y0 = 0, w = 0, h = 0;
-        // -1 when the piece carries several colors (Split[0] does)
-        int8_t color = -1;
-        int16_t cells = 0;
-    };
-    piece pieces[DSL_MAX_PIECES];
-    int count = 0;
-    // Which piece owns each cell, -1 = none. Glyphs are rebuilt from this.
-    int8_t owner[GPU_MAX_GRID][GPU_MAX_GRID];
-};
-
-// Run ONE op over each grid and hand back the pieces it made. `variant` is the
-// op's annotation (Split's depth: 0 object with colors mixed, 1 object of one
-// color, 2 single pixels); ignored by ops that take none. The op itself is
-// untouched — this runs it through the same evaluator the solver uses.
-#if !defined(ARC_ENABLE_CUDA_PIECES) || ARC_ENABLE_CUDA_PIECES
-void cuda_dsl_pieces(const gpu_fixed_grid* grids, int grid_count,
-                     node_type op, int8_t variant, int8_t background,
-                     dsl_pieces* out);
-#endif
 
 // Per-job execution context living in device global memory.
 struct gpu_exec_context {
@@ -348,8 +314,8 @@ struct cuda_dsl_example_data {
 // What the score was made of, straight from the kernel that made it. A host
 // mirror of the formula drifted the moment a term was added on one side only,
 // and it did: focus, vandal and lookahead were GPU-only, so every [SCORE] line
-// ever printed was a partial sum that could not equal the number the beam ranks
-// by. One home: the kernel computes these, so the kernel reports them.
+// ever printed was a partial sum that could not equal the score. One home: the
+// kernel computes these, so the kernel reports them.
 struct gpu_score_terms {
     float vandal = 0, exact = 0, histogram = 0, distance = 0;
     float rarity = 0, shape = 0, color = 0, position = 0;
@@ -388,18 +354,11 @@ struct cuda_dsl_exec_batch {
     pinned_vector<int16_t>     program_lengths;
     pinned_vector<int16_t>     node_counts;
 
-    // Which candidate index each job belongs to
-    pinned_vector<int16_t> program_indices;
-
     // Results (filled by kernel)
     pinned_vector<float>  scores;
     pinned_vector<int8_t> solved;
     pinned_vector<int8_t> output_grids;     // [job_count * GRID_CELLS]
     pinned_vector<int8_t> output_dims_result; // [job_count * 2]
-    // What each job PAINTED, as one number. Two candidates that paint the same
-    // canvas are the same answer however differently they were spelled, and the
-    // grid itself is far too wide to bring back for every job.
-    pinned_vector<uint64_t> output_hashes;  // [job_count]
     pinned_vector<gpu_score_terms> score_terms;  // [job_count]
 
     void resize(int count) {
@@ -407,64 +366,26 @@ struct cuda_dsl_exec_batch {
         programs.resize(count * GPU_MAX_OPS);
         program_lengths.resize(count);
         node_counts.resize(count);
-        program_indices.resize(count);
         scores.resize(count);
         solved.resize(count);
         output_grids.resize(count * GPU_GRID_CELLS);
         output_dims_result.resize(count * 2);
-        output_hashes.resize(count);
         score_terms.resize(count);
     }
 };
 
-// Upload per-example data to GPU. Call once per puzzle (or after invalidation).
-void cuda_dsl_upload_examples(const cuda_dsl_example_data& examples);
+// One program on one example: upload the example, run and score the batch,
+// then fetch what it drew. Each call waits for the GPU to finish.
+void cuda_dsl_upload_example(const cuda_dsl_example_data& example);
+void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch);
+void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int job_idx, int active_examples);
 
-// Execute flat programs on GPU and score results. Copies back only scores+solved.
-// NOTE: does NOT block for completion. Caller must call cuda_dsl_wait_for_exec(slot)
-// before reading batch.scores / batch.solved.
-void cuda_dsl_exec_and_score(cuda_dsl_exec_batch& batch, int slot);
-
-// Block until the cuda_dsl_exec_and_score(slot) call has finished copying results.
-// Call this immediately before reading batch.scores / batch.solved on the CPU.
-void cuda_dsl_wait_for_exec(int slot);
-// DIAG: returns true and fills `out` if a CUDA error was captured since last call.
-bool cuda_dsl_take_error(char* out, int outsz);
-
-// Fetch output grids for a specific winner from GPU. Call after picking winner.
-void cuda_dsl_fetch_output_grids(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples, int slot);
-// The same copy, issued and left to travel: the caller reads it one harvest
-// later, after the wait_for_exec on that slot has ordered it, and so never
-// stands still for a picture. It lands in its OWN buffer rather than the
-// batch's, because the batch is repacked in between and can reallocate under a
-// DMA. cuda_dsl_winner_grids/dims hand back where it landed: `active` grids laid
-// end to end, first example first.
-void cuda_dsl_fetch_output_grids_async(int winner_idx, int active_examples, int slot);
-const int8_t* cuda_dsl_winner_grids(int slot);
-const int8_t* cuda_dsl_winner_dims(int slot);
-// Reads and zeroes the fetch's own split: nanoseconds in the copies, and in
-// the stream sync that follows them.
-void cuda_dsl_take_fetch_ns(long long* copy_ns, long long* sync_ns);
-
-// Call when puzzle changes to force re-upload of per-example data.
-void cuda_dsl_invalidate_examples();
-
-// Returns true if per-example data is already cached on device.
-bool cuda_dsl_examples_uploaded();
-
-// --- Scratch path: isolated device slot for 1-off bridge calls. ---
-// These do not touch the main example cache used by the beam search,
-// so firing them mid-beam does not invalidate the training upload.
-void cuda_dsl_upload_scratch_example(const cuda_dsl_example_data& example);
-void cuda_dsl_exec_and_score_scratch(cuda_dsl_exec_batch& batch);
-void cuda_dsl_fetch_output_grids_scratch(cuda_dsl_exec_batch& batch, int winner_idx, int active_examples);
-
-// Fetch the object list produced by the last op of a single scratch job
-// (i.e. the list pointed to by ctx.current_objects_idx). Used by the GUI hover
-// preview. Returns false if the job produced no object list (CURRENT_OBJECTS_NONE).
+// Fetch the object list produced by the last op of a single job (i.e. the list
+// pointed to by ctx.current_objects_idx). Used by the GUI hover preview.
+// Returns false if the job produced no object list (CURRENT_OBJECTS_NONE).
 // out_canvas_w/h (optional) receive the job's working output-canvas dims after
 // execution, which reflect any rotate ops (e.g. NormalizeOrientation makes the
 // canvas portrait) so the preview can size the tile background to match.
-bool cuda_dsl_fetch_last_object_list_scratch(int job_idx, gpu_object_list& out,
-                                             int* out_canvas_w = nullptr,
-                                             int* out_canvas_h = nullptr);
+bool cuda_dsl_fetch_last_object_list(int job_idx, gpu_object_list& out,
+                                     int* out_canvas_w = nullptr,
+                                     int* out_canvas_h = nullptr);

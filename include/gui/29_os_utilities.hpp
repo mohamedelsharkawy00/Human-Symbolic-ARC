@@ -214,10 +214,10 @@ inline void enforce_memory_limit() {
 		info.BasicLimitInformation.MaximumWorkingSetSize = ws_max_gb * GB;
 	}
 
-	// Every search runs in a child of this process (search_process below), and
+	// Every reading runs in a child of this process (search_process below), and
 	// a child is in its parent's job, under the same limits. Closing the job
 	// kills it -- and the job closes as this process ends, however it ends,
-	// so no search outlives the window it belongs to.
+	// so no child outlives the window it belongs to.
 	flags |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
 	info.BasicLimitInformation.LimitFlags = flags;
@@ -226,8 +226,8 @@ inline void enforce_memory_limit() {
 }
 
 // A CHILD PROCESS SPOKEN TO BY LINES: what it is sent goes to its stdin, what
-// it says comes back from its stdout a line at a time. Every search the GUI
-// shows is one of these (arc_headless --serve), so ending a search is ending a
+// it says comes back from its stdout a line at a time. Every puzzle the GUI
+// shows has one of these (arc_headless --serve), so ending one is ending a
 // process, which takes everything it held with it. Its stderr goes to `errors`,
 // kept apart so an error cannot land in the middle of one of its lines.
 class search_process {

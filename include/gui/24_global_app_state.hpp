@@ -42,18 +42,13 @@ inline int settings_int(const unordered_map<string, string>& kv, const string& k
 	return it == kv.end() ? fallback : atoi(it->second.c_str());
 }
 
-inline double settings_double(const unordered_map<string, string>& kv, const string& key, double fallback) {
-	auto it = kv.find(key);
-	return it == kv.end() ? fallback : atof(it->second.c_str());
-}
-
 enum class logging_mode { none, stream };
 // op_role lives beside the op list in 12_dsl.cuh — it is what an op DOES. The
 // op_tab_* actions below are clicks on the drawer tab that draws each role.
-enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_timeout, dec_timeout, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
+enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
 // The same actions as words, in the same order: the command port's vocabulary.
 // Keep in lockstep with ui_action above.
-inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_timeout", "dec_timeout", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "toggle_ds_custom", "cycle_inference", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "step_left_over", "step_left_over_back", "toggle_op_list", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine", "toggle_programs" };
+inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "toggle_ds_custom", "cycle_inference", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "step_left_over", "step_left_over_back", "toggle_op_list", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine", "toggle_programs" };
 
 struct click_zone {
 	int x, y, w, h;
@@ -62,7 +57,6 @@ struct click_zone {
 struct node_zone {
 	int x, y, w, h;
 	uint64_t node_hash;
-	int source; // distinguishes which row/group the zone belongs to (e.g. BEST vs CURRENT)
 };
 // A counter that steps both ways, folded into [0, count). Plain % keeps the
 // sign, which would index off the front the first time you step back.
@@ -151,17 +145,16 @@ struct slider_zone {
 	int stops;
 	int knob; // the handle's width, so the hit test lands where the handle draws
 };
-// THE GUI'S SIDE OF THE SEARCH: which puzzle is up, and the pictures kept of
-// the search. `search` is this side's copy of its counters, kept up to date
-// from what the search's process says; its mutex guards the puzzle, and this
-// side's pictures with it.
+// THE GUI'S SIDE OF THE SOLVER: which puzzle is up, and the pictures kept of
+// what it drew. `search` holds this side's lock and clock; its mutex guards
+// the puzzle, and this side's pictures with it.
 struct solver_state {
 	search_progress &search;
 	explicit solver_state(search_progress &s) : search(s) {}
 	atomic<int> puzzle_idx = -1;
 
 	// Hover preview: what the hovered program paints on every example, keyed
-	// by its node hash. Only the search's process can run a program, so the
+	// by its node hash. Only the solver's process can run a program, so the
 	// frame names the one it wants (preview_wanted, preview_program) and the
 	// answer lands in the cache when it comes back. preview_grids is a fixed
 	// pool of GPU display slots, one per example row; preview_object_grids is a
@@ -169,7 +162,7 @@ struct solver_state {
 	mutable unordered_map<uint64_t, preview_payload> preview_cache;
 	mutable vector<display_grid> preview_grids;
 	mutable vector<vector<display_grid>> preview_object_grids;
-	// The current/best pictures, and where the puzzle's own pair was uploaded.
+	// The best pictures, and where the puzzle's own pair was uploaded.
 	// Beside the puzzle, not inside it: core states the facts, the display keeps
 	// what it needs to paint them.
 	puzzle_views views;
@@ -228,14 +221,12 @@ struct global_app_state {
 
 	// Benchmark mode: the switch, and what a run is asked for (31_benchmark.hpp).
 	atomic<bool> is_benchmarking{false};
-	double benchmark_timeout_seconds{10.0};
 	int benchmark_puzzle_limit{10};
 
 	// Benchmark session stats (reset on (re)start)
 	atomic<int> benchmark_puzzles_run{0};
 	atomic<int> benchmark_train_solved{0};
 	atomic<int> benchmark_test_solved{0};
-	atomic<double> benchmark_total_aps{0.0};
 	atomic<chrono::steady_clock::time_point> benchmark_start_time{};
 
 	// Puzzle-ID inline editor. When `active`, keystrokes append to `buffer`
@@ -255,7 +246,6 @@ struct global_app_state {
 	mutex node_zones_mtx;
 	vector<node_zone> node_zones;
 	atomic<uint64_t> hovered_hash{0};
-	atomic<int> hovered_source{0};
 	atomic<ui_action> active_ui_action{ui_action::none};
 };
 
@@ -265,19 +255,11 @@ struct global_app_state {
 // the caller passes those in.
 inline string serialize_settings(const global_app_state& app, bool muted, int puzzle_idx) {
 	string s;
-	// One line whatever the value is: a timeout is a fraction of a second, every
-	// other setting is a whole number.
-	auto line = [&](const char* key, auto value) {
-		if constexpr (is_floating_point_v<decltype(value)>)
-			s += to_text("%s %s\n", key, shortest(value).c_str());
-		else
-			s += to_text("%s %lld\n", key, (long long)value);
-	};
+	auto line = [&](const char* key, long long value) { s += to_text("%s %lld\n", key, value); };
 	line("puzzle", puzzle_idx);
 	line("paused", (int)app.is_paused.load());
 	line("muted", (int)muted);
 	line("datasets", app.dataset_flags.load());
-	line("benchmark_timeout", app.benchmark_timeout_seconds);
 	line("benchmark_limit", app.benchmark_puzzle_limit);
 	line("minimized", (int)app.gui_minimized.load());
 	line("logging", (int)(app.log_mode.load() == logging_mode::stream));
@@ -296,7 +278,6 @@ inline string serialize_settings(const global_app_state& app, bool muted, int pu
 // fixes up timers), mute lives in the sound manager, and datasets must be
 // restored before the saved puzzle index is read.
 inline void apply_settings(global_app_state& app, const unordered_map<string, string>& kv) {
-	app.benchmark_timeout_seconds = settings_double(kv, "benchmark_timeout", app.benchmark_timeout_seconds);
 	app.benchmark_puzzle_limit = settings_int(kv, "benchmark_limit", app.benchmark_puzzle_limit);
 	app.inference_view.store(settings_int(kv, "inference_view", global_app_state::INFERENCE_OFF)
 	                         % global_app_state::INFERENCE_STEPS);
