@@ -139,7 +139,7 @@ struct object_matching {
         // Every pose that lands the object here in these colors, its own among
         // them; bit p is pose p. Said for blocks, where a symmetric copy lands
         // several ways and the rule that places the copies may need any of them.
-        uint8_t ways_round = 0;
+        uint8_t poses = 0;
         // The one color a piece of one color, `source_color`, came out in; -1
         // where the match kept its colors or the piece wears several, and where it
         // became empty, which is a deletion and not a recolor.
@@ -351,10 +351,10 @@ struct object_matching {
         if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
 
         // Does this from block sit at that place on the other grid? The answer is
-        // the same question both sweeps ask, so it is written once. `ways` is
-        // every way round it sits there in the colors of the one kept.
+        // the same question both sweeps ask, so it is written once. `poses` holds
+        // every pose in which it sits there in the colors of the one kept.
         auto sits_at = [&](int from_index, const object_info& target,
-                           object_match& found, uint8_t& ways) {
+                           object_match& found, uint8_t& poses) {
             // A copy on another block has moved, so it needs the freedom to --
             // the same rule the representative edge above keeps.
             if (!allowed.translate && !same_corner(from_info[from_index].summary, target.summary))
@@ -374,20 +374,20 @@ struct object_matching {
             // A symmetric block sits several ways round, and find_in tries each
             // distinct drawing once, so the ways that draw alike are read off the
             // drawings themselves.
-            ways = 0;
+            poses = 0;
             for (const object_match& hit : matches.hits) {
                 if (hit.exact != best->exact || hit.color_map != best->color_map) continue;
                 const grid landed = posed_cells(cells, hit.pose);
                 for (int pose = 0; pose < POSE_COUNT; ++pose)
-                    if (posed_cells(cells, pose) == landed) ways |= (uint8_t)(1 << pose);
+                    if (posed_cells(cells, pose) == landed) poses |= (uint8_t)(1 << pose);
             }
             return true;
         };
-        auto draw = [&](int from_index, int target_index, const object_match& hit, uint8_t ways) {
+        auto draw = [&](int from_index, int target_index, const object_match& hit, uint8_t poses) {
             const auto& target = into_info[target_index];
             auto edge = edge_from_match(hit, from_index, same_corner(from_info[from_index].summary, target.summary));
             edge.to = (int16_t)target_index;
-            edge.ways_round = ways;
+            edge.poses = poses;
             edges.push_back(edge);
         };
 
@@ -397,16 +397,16 @@ struct object_matching {
             const auto& target = into_info[target_index];
             int source = -1;
             object_match hit;
-            uint8_t ways = 0;
+            uint8_t poses = 0;
             for (int i = 0; i < (int)from_info.size(); ++i)
-                if (same_corner(from_info[i].summary, target.summary) && sits_at(i, target, hit, ways)) {
+                if (same_corner(from_info[i].summary, target.summary) && sits_at(i, target, hit, poses)) {
                     source = i;
                     break;
                 }
             for (int i = 0; source < 0 && i < (int)from_info.size(); ++i)
-                if (sits_at(i, target, hit, ways)) source = i;
+                if (sits_at(i, target, hit, poses)) source = i;
             if (source < 0) continue;
-            draw(source, target_index, hit, ways);
+            draw(source, target_index, hit, poses);
             answered[source] = true;
         }
         // WHERE DID EACH OBJECT GO. Only the ones no landing claimed, so a from side
@@ -414,10 +414,10 @@ struct object_matching {
         for (int i = 0; i < (int)from_info.size(); ++i) {
             if (answered[i]) continue;
             object_match hit;
-            uint8_t ways = 0;
+            uint8_t poses = 0;
             for (int target_index = 0; target_index < (int)into_info.size(); ++target_index)
-                if (sits_at(i, into_info[target_index], hit, ways)) {
-                    draw(i, target_index, hit, ways);
+                if (sits_at(i, into_info[target_index], hit, poses)) {
+                    draw(i, target_index, hit, poses);
                     answered[i] = true;
                     break;
                 }

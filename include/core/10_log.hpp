@@ -429,7 +429,7 @@ inline void report_ray_extension(ostream& report, const ray_extension_rule& rule
     report << "[ray_extension] holds " << rule.holds() << "\n";
     for (const auto& branch : rule.branches) {
         report << "  color rank " << (int)branch.rank << "  "
-               << (branch.direction == ray_extension_rule::Orthogonal ? "orthogonal" : "diagonal")
+               << (branch.ray_kind == ray_extension_rule::Orthogonal ? "orthogonal" : "diagonal")
                << " rays " << (int)branch.radius;
         if (branch.fill_interior) report << "  fill interior";
         if (branch.stamp_body) report << "  stamp body";
@@ -665,7 +665,7 @@ inline void log_inference(const string& id, const inference& inf,
         report << "  cut " << segmentation_names[(int)inf.edge_slide.segmentation]
                << "  pieces " << (is_color(inf.edge_slide.color) ? "of color " + to_string(inf.edge_slide.color)
                                                                   : string("all"))
-               << "  way " << direction_names[inf.edge_slide.way]
+               << "  way " << direction_names[inf.edge_slide.slide_direction]
                << "  laid " << (inf.edge_slide.over ? "over" : "under");
     report << "\n\n";
     report << "[corner_crop] holds " << inf.corner_crop.holds();

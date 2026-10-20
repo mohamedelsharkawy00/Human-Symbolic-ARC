@@ -1474,14 +1474,14 @@ object_list& op_delete_selection(program_run& run, const object_list& from) {
 
 // --- Translate, by itself ---
 
-// Shift[dir]: each picked object moves its own size away, the direction `dir`
+// Shift[move_direction]: each picked object moves its own size away, the direction `move_direction`
 // names (shift_by, 8b_op_math.hpp). No selection means Shift moves nothing.
-object_list& op_shift(program_run& run, const object_list& from, int8_t dir) {
+object_list& op_shift(program_run& run, const object_list& from, int8_t move_direction) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         held_object& one = res.objects[res.count++] = from.objects[i];
         if (!one.selected) continue;
-        const direction_step by = shift_by(dir, one.width, one.height);
+        const direction_step by = shift_by(move_direction, one.width, one.height);
         one.x0 += (int16_t)by.across; one.y0 += (int16_t)by.down;
         one.x1 += (int16_t)by.across; one.y1 += (int16_t)by.down;
     }
@@ -2021,7 +2021,7 @@ bool paints_at(const held_object& one, int x, int y) {
     return across >= 0 && across < one.width && down >= 0 && down < one.height && one.mask[down][across] != TRANSPARENT;
 }
 
-// MoveToEdge[dir]: each picked object slides along dir until its painted cells
+// MoveToEdge[move_direction]: each picked object slides along move_direction until its painted cells
 // meet the canvas edge that way, ignoring paint. Shape unchanged. (ExtendTo
 // grows a trail; Slam squashes inside the box; this one TRAVELS.)
 // PAST THE EDGE ALREADY, IT SLIDES BACK until its far side lies on the edge,
@@ -2029,9 +2029,9 @@ bool paints_at(const held_object& one, int x, int y) {
 // shows its right side, so a crop at a corner is the size rule's box and a
 // push, with no count of cells in it. Inside the canvas nothing changes: the
 // slide stops at whichever edge it meets first.
-object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t dir) {
+object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t move_direction) {
     object_list& res = run.fresh();
-    const direction_step step = step_of(dir);
+    const direction_step step = step_of(move_direction);
     copy_objects(res, from, min(from.count, MAX_OBJECTS_IN_A_LIST));
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
@@ -2039,7 +2039,7 @@ object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t d
         cell_box painted;
         each_painted(one, [&](int row, int col, int8_t) { painted.include_cell(one.y0 + row, one.x0 + col); });
         if (painted.empty()) continue;
-        const int steps = steps_to_edge(painted, run.canvas.width, run.canvas.height, dir);
+        const int steps = steps_to_edge(painted, run.canvas.width, run.canvas.height, move_direction);
         one.x0 = (int16_t)(one.x0 + steps * step.across);
         one.x1 = (int16_t)(one.x1 + steps * step.across);
         one.y0 = (int16_t)(one.y0 + steps * step.down);
@@ -2061,9 +2061,9 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
     width = min(width, MAX_GRID_DIM);
     height = min(height, MAX_GRID_DIM);
     // Each cell's object, the first in the list that holds it; the turn it was
-    // taken in; the cells still to grow from; the ways each cell was reached.
+    // taken in; the cells still to grow from; the directions each cell was reached.
     int16_t owner[MAX_GRID_CELLS] = {}, turn[MAX_GRID_CELLS] = {}, queue[MAX_GRID_CELLS] = {};
-    uint8_t ways[MAX_GRID_CELLS] = {};
+    uint8_t cell_directions[MAX_GRID_CELLS] = {};
     for (int at = 0; at < width * height; ++at) owner[at] = -1;
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
     for (int i = 0; i < count; ++i) {
@@ -2075,7 +2075,7 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
         });
     }
     grow_in_step(width, height, track, [&](int piece) { return from.objects[piece].selected; },
-                 owner, turn, queue, ways, [](int, int, int) {});
+                 owner, turn, queue, cell_directions, [](int, int, int) {});
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
@@ -2110,16 +2110,16 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
     return res;
 }
 
-// ExtendTo[dir]: every picked object extrudes its cells along one of 8
+// ExtendTo[grow_direction]: every picked object extrudes its cells along one of 8
 // directions, painting the swept path in the object's color. A ray stops just
 // before the first FOREIGN occupied cell (a wall / another object) or the grid
 // edge, and passes through the object's own body (march_trail, the walk the
 // reading replays). Hands back each object's body and trail, which compose via
 // Union. Past the eight ways, the objects grow in step (op_grow_in_step).
-object_list& op_extend_to(program_run& run, const object_list& from, int8_t dir) {
-    if (dir >= direction::count) return op_grow_in_step(run, from, (grown_along)(dir - direction::count));
+object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow_direction) {
+    if (grow_direction >= direction::count) return op_grow_in_step(run, from, (grown_along)(grow_direction - direction::count));
     object_list& res = run.fresh();
-    const direction_step step = step_of(dir);
+    const direction_step step = step_of(grow_direction);
     int width = run.canvas.width > 0 ? run.canvas.width : run.input.width;
     int height = run.canvas.height > 0 ? run.canvas.height : run.input.height;
     if (width <= 0 || height <= 0) return res;

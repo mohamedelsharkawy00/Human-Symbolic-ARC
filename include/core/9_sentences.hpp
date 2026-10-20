@@ -782,7 +782,7 @@ inline bool say_edge_slide(const inference& inf, said_reading& said) {
     const string cut = word_for_segmentation(slide.segmentation);
     if (cut.empty()) return false;
     const string pieces = string("Input ") + cut;
-    const string push = spell("MoveToEdge", slide.way);
+    const string push = spell("MoveToEdge", slide.slide_direction);
     if (!is_color(slide.color)) {
         say_closed(said, pieces + " SelectAll " + push, "Union");
         return true;
@@ -815,7 +815,7 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
                        " InvertSelection DeleteSelection SelectAll Trim";
         if (branch.fill_interior) layer += " InteriorColor[-1]";
         layer += " Split[1] SelectAll Trim";
-        const string extend = spell(branch.direction == ray_extension_rule::Orthogonal
+        const string extend = spell(branch.ray_kind == ray_extension_rule::Orthogonal
                                     ? "ExtendOrthogonal" : "ExtendDiagonal", branch.radius);
         if (branch.stamp_body) {
             say_closed(said, layer, "Union");

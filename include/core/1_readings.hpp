@@ -187,19 +187,19 @@ struct object {
     }
 };
 
-// THE EIGHT WAYS, the one numbering of directions in the project: the cells
-// around a cell, and the ways a piece can go, numbered as a compass is,
+// THE EIGHT DIRECTIONS, the one numbering of directions in the project: the cells
+// around a cell, and the directions a piece can go, numbered as a compass is,
 // clockwise from up, as MoveToEdge, Shift and ExtendTo's first eight take
-// them. The way back is four on, a quarter turn two on, and the sides are the
-// even ways.
+// them. The opposite direction is four on, a quarter turn two on, and the sides are the
+// even directions.
 struct direction {
     enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
 };
 
-// One step that way; a direction out of range goes up.
+// One step in the given direction; a direction out of range goes up.
 struct direction_step { int down, across; };
-inline direction_step step_of(int way) {
-    switch (way) {
+inline direction_step step_of(int step_direction) {
+    switch (step_direction) {
     case direction::up_right:   return { -1,  1 };
     case direction::right:      return {  0,  1 };
     case direction::down_right: return {  1,  1 };
@@ -211,12 +211,12 @@ inline direction_step step_of(int way) {
     }
 }
 
-// THE CELLS THAT JOIN A CELL: all eight ways round, or only the four sides,
-// the even ways -- the step between the ways asked, for 8 or for 4.
+// THE CELLS THAT JOIN A CELL: all eight directions, or only the four sides,
+// the even directions -- the step between the directions asked, for 8 or for 4.
 //
-// Grouping cells into an object is eight ways, "is this one object?" -- save
+// Grouping cells into an object uses eight directions, "is this one object?" -- save
 // the one finer cut that asks it of sides alone (touching_sides_same_color).
-// Adjacency is four ways, "what shares an edge with this cell?": a diagonal
+// Adjacency uses four directions, "what shares an edge with this cell?": a diagonal
 // cell touches only at a corner.
 //
 // Why four there and eight for grouping. Picture a ring of blocks meeting only
@@ -228,22 +228,22 @@ inline direction_step step_of(int way) {
 // the grid edge -- takes the four. Whatever the shapes use, the space around
 // them uses the other one. Let both use eight and no shape has an inside any
 // more, so holes stop existing.
-template <int Ways>
-constexpr int every_nth_way = Ways == 4 ? 2 : 1;
+template <int direction_count>
+constexpr int every_nth_direction = direction_count == 4 ? 2 : 1;
 
 // Walks connected cells: eight directions for objects, four for surrounding space.
 // `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
-template <int Directions = 8, class Claim, class See>
+template <int direction_count = 8, class Claim, class See>
 inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
                     Claim claim, See see) {
-    static_assert(Directions == 4 || Directions == 8);
+    static_assert(direction_count == 4 || direction_count == 8);
     int head = 0, tail = seeded;
     while (head < tail) {
         const int row = queue_row[head], col = queue_col[head];
         ++head;
         see(row, col);
-        for (int way = 0; way < direction::count; way += every_nth_way<Directions>) {
-            const int next_row = row + step_of(way).down, next_col = col + step_of(way).across;
+        for (int neighbor_direction = 0; neighbor_direction < direction::count; neighbor_direction += every_nth_direction<direction_count>) {
+            const int next_row = row + step_of(neighbor_direction).down, next_col = col + step_of(neighbor_direction).across;
             if (next_row < 0 || next_row >= rows || next_col < 0 || next_col >= cols) continue;
             if (!claim(next_row, next_col)) continue;
             queue_row[tail] = (int16_t)next_row; queue_col[tail] = (int16_t)next_col;
@@ -333,7 +333,7 @@ inline void each_object(const Grid& one_grid, int background,
                         ++seeded;
                     }
             // One flood fill for the whole project, so no two readings can
-            // disagree about which cells belong to one group: eight ways round,
+            // disagree about which cells belong to one group: eight directions,
             // or four where only a side joins.
             auto claim = [&](int next_row, int next_col) {
                 if (whole_color || taken[next_row][next_col] || !in_this_copy(next_row, next_col)) return false;
@@ -374,7 +374,7 @@ inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
     return hsh;
 }
 
-// THE EIGHT WAYS A GRID CAN SIT: four turns by two mirrors, packed in three
+// THE EIGHT POSES A GRID CAN TAKE: four turns by two mirrors, packed in three
 // bits, pose 0 being the grid as given.
 //   1  rows and columns trade places, transpose
 //   2  flipped top to bottom
@@ -408,7 +408,7 @@ inline pair<int, int> posed_place(int pose, int width, int height,
     return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
 }
 
-// THE EIGHT WAYS ROUND IN THE ORDER A SHAPE ASKS THEM, turns before flips and
+// THE EIGHT POSES IN THE ORDER A SHAPE ASKS THEM, turns before flips and
 // rights before lefts: as it lies, a quarter turn right, a half turn, a
 // quarter turn left, then flipped left to right, top to bottom, and across
 // either diagonal. Where two ways lay a shape on another, the first is how it

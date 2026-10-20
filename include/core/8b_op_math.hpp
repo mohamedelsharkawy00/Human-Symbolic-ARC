@@ -72,8 +72,8 @@ inline int box_gap(const cell_box& one, const cell_box& other) {
 // a corner way, both of its two sides. SelectPartner's side of a partner: a
 // partner below a piece stays below it however far either slides across
 // (4364c1c4's stacks, each upper piece a step left, each lower one right).
-inline bool lies_toward(const cell_box& from, const cell_box& to, int way) {
-    const direction_step step = step_of(way);
+inline bool lies_toward(const cell_box& from, const cell_box& to, int partner_direction) {
+    const direction_step step = step_of(partner_direction);
     return (step.down == 0 || (step.down > 0 ? to.row0 > from.row1 : to.row1 < from.row0)) &&
            (step.across == 0 || (step.across > 0 ? to.col0 > from.col1 : to.col1 < from.col0));
 }
@@ -89,8 +89,8 @@ inline bool touches(const Pieces& pieces, int mine, int other, direction_step by
             if (!pieces.painted(mine, row, col)) continue;
             const int at_row = row + by.down, at_col = col + by.across;
             if (pieces.painted(other, at_row, at_col)) return true;
-            for (int way = 0; way < direction::count; way += sides_only ? every_nth_way<4> : every_nth_way<8>)
-                if (pieces.painted(other, at_row + step_of(way).down, at_col + step_of(way).across)) return true;
+            for (int neighbor_direction = 0; neighbor_direction < direction::count; neighbor_direction += sides_only ? every_nth_direction<4> : every_nth_direction<8>)
+                if (pieces.painted(other, at_row + step_of(neighbor_direction).down, at_col + step_of(neighbor_direction).across)) return true;
         }
     return false;
 }
@@ -256,8 +256,8 @@ inline int overlapping_bands(int count, const int16_t* lows,
 // The caller supplies occupancy, including false outside its own frame.
 template <class Occupied>
 inline bool on_object_edge(int row, int col, Occupied occupied) {
-    for (int way = 0; way < direction::count; ++way)
-        if (!occupied(row + step_of(way).down, col + step_of(way).across)) return true;
+    for (int neighbor_direction = 0; neighbor_direction < direction::count; ++neighbor_direction)
+        if (!occupied(row + step_of(neighbor_direction).down, col + step_of(neighbor_direction).across)) return true;
     return false;
 }
 
@@ -617,20 +617,20 @@ inline bool like_the_key(int how, int mine, const Pieces& pieces) {
 // a partner comes out unpicked (4364c1c4: of every piece, the partners above
 // each, the upper piece of each stack). The pieces are asked as each_partner
 // asks them.
-constexpr int PARTNER_SIDES = 1 + direction::count;
-constexpr int SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)partner_by::count;
+constexpr int PARTNER_DIRECTIONS = 1 + direction::count;
+constexpr int SELECT_PARTNER_VALUES = PARTNER_DIRECTIONS * (int)partner_by::count;
 constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
-// The side a SelectPartner value names: -1 for any, else the direction.
-constexpr int partner_side_of(int value) { return value / (int)partner_by::count - 1; }
+// The direction a SelectPartner value names: -1 for any direction.
+constexpr int partner_direction_of(int value) { return value / (int)partner_by::count - 1; }
 template <class Pieces, class Mark>
 inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
     if (value < 0 || value >= SELECT_PARTNER_VALUES) return;
-    const partner_by way = partner_way_of(value);
-    const int side = partner_side_of(value);
+    const partner_by how = partner_way_of(value);
+    const int partner_direction = partner_direction_of(value);
     for (int mine = 0; mine < pieces.count(); ++mine) {
         if (!pieces.is_picked(mine)) continue;
-        each_partner(way, mine, pieces, [&](int other) {
-            if (side < 0 || lies_toward(pieces.box(mine), pieces.box(other), side)) mark(other);
+        each_partner(how, mine, pieces, [&](int other) {
+            if (partner_direction < 0 || lies_toward(pieces.box(mine), pieces.box(other), partner_direction)) mark(other);
         }, true);
     }
 }
@@ -660,18 +660,18 @@ inline int8_t majority_vote(const Mask& mask, int row, int col,
 
 // WHERE SHIFT MOVES A BOX, its own size away: one step that way (step_of), its
 // height a step down or up and its width a step across. The op and the
-// reading that replays it take the move from here; a way out of range stays.
-inline direction_step shift_by(int way, int width, int height) {
-    if (way < 0 || way >= direction::count) return { 0, 0 };
-    const direction_step step = step_of(way);
+// reading that replays it take the move from here; a direction out of range stays.
+inline direction_step shift_by(int move_direction, int width, int height) {
+    if (move_direction < 0 || move_direction >= direction::count) return { 0, 0 };
+    const direction_step step = step_of(move_direction);
     return { step.down * height, step.across * width };
 }
 
 // How far a box goes that way before its far side meets the edge of a canvas
 // this size, as MoveToEdge takes it: negative when that side already lies past
 // the edge, and on a diagonal whichever edge comes first.
-inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
-    const direction_step step = step_of(way);
+inline int steps_to_edge(const cell_box& box, int width, int height, int move_direction) {
+    const direction_step step = step_of(move_direction);
     const int room_down = step.down > 0 ? height - 1 - box.row1 : box.row0;
     const int room_across = step.across > 0 ? width - 1 - box.col1 : box.col0;
     if (step.across == 0) return room_down;
@@ -679,7 +679,7 @@ inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
     return room_down < room_across ? room_down : room_across;
 }
 
-// THE WAY FROM ONE BOX TOWARD ANOTHER: the one of the eight directions whose
+// THE DIRECTION FROM ONE BOX TOWARD ANOTHER: the one of the eight directions whose
 // compass sector the line between their middles points into, each sector 45
 // degrees wide, its edges 22.5 degrees off the axes. A line steeper than that
 // off the rows goes up or down, and one flatter than that off the columns goes
@@ -694,8 +694,8 @@ inline int direction_toward(const cell_box& from, const cell_box& to) {
     const int vertical = reach > 2 * wide * wide ? (down > 0 ? 1 : -1) : 0;
     const int horizontal = reach > 2 * tall * tall ? (across > 0 ? 1 : -1) : 0;
     if (vertical == 0 && horizontal == 0) return -1;
-    for (int way = 0; way < direction::count; ++way)
-        if (step_of(way).down == vertical && step_of(way).across == horizontal) return way;
+    for (int partner_direction = 0; partner_direction < direction::count; ++partner_direction)
+        if (step_of(partner_direction).down == vertical && step_of(partner_direction).across == horizontal) return partner_direction;
     return -1;
 }
 
@@ -714,9 +714,9 @@ template <class Pieces>
 inline direction_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
                                                 int width, int height) {
     const cell_box own = pieces.box(mine);
-    const int way = direction_toward(own, pieces.box(partner));
-    if (way < 0 || own.empty()) return { 0, 0 };
-    const direction_step step = step_of(way);
+    const int partner_direction = direction_toward(own, pieces.box(partner));
+    if (partner_direction < 0 || own.empty()) return { 0, 0 };
+    const direction_step step = step_of(partner_direction);
     if (far == toward_by::a_step) return step;
     if (far == toward_by::its_size) return { step.down * own.height(), step.across * own.width() };
     for (int steps = 0;; ++steps) {
@@ -736,7 +736,7 @@ inline bool slam_cells(int width, int height, bool rows, int step,
                        At at, Put put) {
     const int lines = rows ? height : width;
     const int length = rows ? width : height;
-    const int direction = step > 0 ? 1 : -1;
+    const int step_sign = step > 0 ? 1 : -1;
     bool moved = false;
     for (int line = 0; line < lines; ++line) {
         int wall = step > 0 ? length - 1 : 0;
@@ -747,7 +747,7 @@ inline bool slam_cells(int width, int height, bool rows, int step,
             int target = source + step;
             if (step > 0 ? target > wall : target < wall) target = wall;
             put(rows ? line : target, rows ? target : line, color);
-            wall = target - direction;
+            wall = target - step_sign;
             moved = moved || target != source;
         }
     }
@@ -1519,14 +1519,14 @@ inline void march_trail(int row, int col, direction_step step, int width, int he
 // corner. The order is ExtendTo's, so a value said once keeps its meaning.
 enum class grown_along : int8_t {
     rows, columns, sides, canvas_edge,
-    diagonals_down_right, diagonals_up_right, diagonals, rows_and_columns, every_way, sides_and_corners,
+    diagonals_down_right, diagonals_up_right, diagonals, rows_and_columns, every_direction, sides_and_corners,
     count
 };
 
-// The ways a track grows, one bit for each heading (1_readings.hpp): a line
+// The directions a track grows, one bit for each direction (1_readings.hpp): a line
 // both ways along it, or the sides, the corners, or both, of every cell.
-constexpr uint8_t grown_ways(grown_along track) {
-    auto both = [](int one, int other) { return (uint8_t)(1u << one | 1u << other); };
+constexpr uint8_t grown_directions(grown_along track) {
+    auto both = [](int first_direction, int second_direction) { return (uint8_t)(1u << first_direction | 1u << second_direction); };
     const uint8_t sides = (uint8_t)(both(direction::up, direction::down) | both(direction::right, direction::left));
     const uint8_t corners =
         (uint8_t)(both(direction::down_right, direction::up_left) | both(direction::up_right, direction::down_left));
@@ -1536,7 +1536,7 @@ constexpr uint8_t grown_ways(grown_along track) {
     case grown_along::diagonals_down_right: return both(direction::down_right, direction::up_left);
     case grown_along::diagonals_up_right:   return both(direction::up_right, direction::down_left);
     case grown_along::diagonals:            return corners;
-    case grown_along::every_way:
+    case grown_along::every_direction:
     case grown_along::sides_and_corners:    return (uint8_t)(sides | corners);
     default:                                return sides;
     }
@@ -1559,7 +1559,7 @@ constexpr bool grown_spreads(grown_along track) {
 // Along the canvas's edge, a piece grows from its cells on the edge alone.
 // `owner` comes back holding the piece that took each cell and `turn` the turn
 // it was taken in: 0 for a piece's own cell, -1 for one no piece took. `turn`,
-// `queue` and `ways` are scratch, width * height cells each.
+// `queue` and `cell_directions` are scratch, width * height cells each.
 //
 // THROUGH THE OPEN CELLS a piece floods: every cell it takes grows every way
 // of the track. ALONG LINES every cell of a picked piece sends a ray each way
@@ -1568,26 +1568,26 @@ constexpr bool grown_spreads(grown_along track) {
 // ray along its own line took before it, head-on or behind; a ray of another
 // line taken before it is crossed, as a line drawn across another goes on
 // (21f83797's lines cross; 1190bc91's rays meet in one turn and stop). `met(cell,
-// way, piece)` hears of each ray stopped by meeting another.
+// grow_direction, piece)` hears of each ray stopped by meeting another.
 template <class Grows, class Met>
 inline void grow_in_step(int width, int height, grown_along track, Grows grows,
-                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways, Met met) {
+                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* cell_directions, Met met) {
     auto on_track = [&](int row, int col) {
         return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
     };
-    const uint8_t every = grown_ways(track);
+    const uint8_t track_directions = grown_directions(track);
     // The cells grown from: every picked cell on the track, and as the piece
-    // floods, each cell it takes. Along lines, a picked cell's `ways` are its
-    // rays still going, and a taken cell's the ways of the rays that took it.
+    // floods, each cell it takes. Along lines, a picked cell's `cell_directions` are its
+    // rays still going, and a taken cell's the directions of the rays that took it.
     int tail = 0;
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
             const int at = row * width + col;
             turn[at] = (int16_t)(owner[at] >= 0 ? 0 : -1);
-            ways[at] = 0;
+            cell_directions[at] = 0;
             if (owner[at] < 0) continue;
             if (!grows(owner[at])) owner[at] = -1;
-            else if (on_track(row, col)) { queue[tail++] = (int16_t)at; ways[at] = every; }
+            else if (on_track(row, col)) { queue[tail++] = (int16_t)at; cell_directions[at] = track_directions; }
         }
     if (grown_spreads(track)) {
         // Taken turn by turn, in the order reached: a cell is grown from only
@@ -1595,9 +1595,9 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
         // settled.
         for (int head = 0; head < tail; ++head) {
             const int at = queue[head], row = at / width, col = at % width;
-            for (int way = direction::up; way < direction::count; ++way) {
-                if (!(every >> way & 1u)) continue;
-                const direction_step step = step_of(way);
+            for (int grow_direction = direction::up; grow_direction < direction::count; ++grow_direction) {
+                if (!(track_directions >> grow_direction & 1u)) continue;
+                const direction_step step = step_of(grow_direction);
                 const int next_row = row + step.down, next_col = col + step.across;
                 if (next_row < 0 || next_col < 0 || next_row >= height || next_col >= width ||
                     !on_track(next_row, next_col))
@@ -1618,42 +1618,42 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
         bool going = false;
         for (int i = 0; i < tail; ++i) {
             const int from = queue[i], from_row = from / width, from_col = from % width;
-            for (int way = direction::up; way < direction::count; ++way) {
-                const uint8_t ray = (uint8_t)(1u << way);
-                if (!(ways[from] & ray)) continue;
-                const direction_step step = step_of(way);
+            for (int grow_direction = direction::up; grow_direction < direction::count; ++grow_direction) {
+                const uint8_t ray = (uint8_t)(1u << grow_direction);
+                if (!(cell_directions[from] & ray)) continue;
+                const direction_step step = step_of(grow_direction);
                 const int row = from_row + step.down * step_number, col = from_col + step.across * step_number;
                 if (row < 0 || col < 0 || row >= height || col >= width) {
-                    ways[from] = (uint8_t)(ways[from] & ~ray);
+                    cell_directions[from] = (uint8_t)(cell_directions[from] & ~ray);
                     continue;
                 }
                 const int at = row * width + col;
-                const uint8_t own_line = (uint8_t)(ray | 1u << (way + direction::count / 2) % direction::count);
+                const uint8_t own_line = (uint8_t)(ray | 1u << (grow_direction + direction::count / 2) % direction::count);
                 bool stops = false;
                 if (turn[at] < 0) {
                     turn[at] = step_number;
                     owner[at] = owner[from];
-                    ways[at] = ray;
+                    cell_directions[at] = ray;
                 } else if (turn[at] == step_number && owner[from] < owner[at]) {
                     // Met in this turn by an earlier piece: the rays that took it stop.
-                    for (int took = direction::up; took < direction::count; ++took) {
-                        if (!(ways[at] >> took & 1u)) continue;
-                        const direction_step back = step_of(took);
+                    for (int arrival_direction = direction::up; arrival_direction < direction::count; ++arrival_direction) {
+                        if (!(cell_directions[at] >> arrival_direction & 1u)) continue;
+                        const direction_step back = step_of(arrival_direction);
                         const int start = (row - back.down * step_number) * width + col - back.across * step_number;
-                        ways[start] = (uint8_t)(ways[start] & ~(1u << took));
-                        met(at, took, owner[at]);
+                        cell_directions[start] = (uint8_t)(cell_directions[start] & ~(1u << arrival_direction));
+                        met(at, arrival_direction, owner[at]);
                     }
                     owner[at] = owner[from];
-                    ways[at] = ray;
+                    cell_directions[at] = ray;
                 } else if (turn[at] == step_number && owner[from] == owner[at]) {
-                    ways[at] = (uint8_t)(ways[at] | ray);
+                    cell_directions[at] = (uint8_t)(cell_directions[at] | ray);
                 } else {
                     // A body, a later piece's ray met in this turn, or a ray
                     // along its own line before it; another line's is crossed.
-                    stops = turn[at] == 0 || turn[at] == step_number || (ways[at] & own_line) != 0;
-                    if (stops && turn[at] > 0) met(at, way, owner[from]);
+                    stops = turn[at] == 0 || turn[at] == step_number || (cell_directions[at] & own_line) != 0;
+                    if (stops && turn[at] > 0) met(at, grow_direction, owner[from]);
                 }
-                if (stops) ways[from] = (uint8_t)(ways[from] & ~ray);
+                if (stops) cell_directions[from] = (uint8_t)(cell_directions[from] & ~ray);
                 else going = true;
             }
         }
@@ -1683,14 +1683,14 @@ inline ray_seed nearest_ray_seed(int height, int width,
     return seed;
 }
 
-// The rays run the four sides of the compass, its even ways, or the four
-// diagonals, its odd ones (heading, 1_readings.hpp).
+// The rays run the four sides of the compass, its even directions, or the four
+// diagonals, its odd ones (direction, 1_readings.hpp).
 template <class Paint>
 inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
                                                Paint paint) {
     if (seed.row < 0) return;
-    for (int way = diagonal ? 1 : 0; way < direction::count; way += 2) {
-        const direction_step step = step_of(way);
+    for (int ray_direction = diagonal ? 1 : 0; ray_direction < direction::count; ray_direction += 2) {
+        const direction_step step = step_of(ray_direction);
         for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along);
     }
 }
