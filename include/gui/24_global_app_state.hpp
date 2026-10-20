@@ -43,7 +43,7 @@ inline int settings_int(const unordered_map<string, string>& kv, const string& k
 }
 
 enum class logging_mode { none, stream };
-// op_role lives beside the op list in 12_dsl.cuh — it is what an op DOES. The
+// op_role lives beside the op list in 8_vocabulary.hpp — it is what an op DOES. The
 // op_tab_* actions below are clicks on the drawer tab that draws each role.
 enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
 // The same actions as words, in the same order: the command port's vocabulary.
@@ -146,8 +146,8 @@ struct slider_zone {
 	int knob; // the handle's width, so the hit test lands where the handle draws
 };
 // THE GUI'S SIDE OF THE SOLVER: which puzzle is up, and the pictures kept of
-// what it drew. `search` holds this side's lock and clock; its mutex guards
-// the puzzle, and this side's pictures with it.
+// it. `search` holds this side's lock and clock; its mutex guards the puzzle,
+// and this side's pictures with it.
 struct solver_state {
 	search_progress &search;
 	explicit solver_state(search_progress &s) : search(s) {}
@@ -162,9 +162,8 @@ struct solver_state {
 	mutable unordered_map<uint64_t, preview_payload> preview_cache;
 	mutable vector<display_grid> preview_grids;
 	mutable vector<vector<display_grid>> preview_object_grids;
-	// The best pictures, and where the puzzle's own pair was uploaded.
-	// Beside the puzzle, not inside it: core states the facts, the display keeps
-	// what it needs to paint them.
+	// Where the puzzle's own pairs were uploaded. Beside the puzzle, not inside
+	// it: core states the facts, the display keeps what it needs to paint them.
 	puzzle_views views;
 	mutable uint64_t preview_uploaded_hash = 0;
 	mutable int preview_last_puzzle_idx = -1;

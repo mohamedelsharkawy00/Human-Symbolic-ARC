@@ -23,13 +23,10 @@ Each run is saved in profiling/output/cpu-<timestamp>/:
 
 Re-analyze: python profiling\analyze.py profiling\output\cpu-<timestamp>
 Open raw results: vtune-gui profiling\output\cpu-<timestamp>\vtune_results
-The sampler attaches after CUDA startup to avoid a driver startup stall.
+The sampler attaches once the puzzles are loaded.
 The score covers all puzzles; the profile excludes startup and attachment time.
 Sampling adds overhead; profile elapsed time is not an unprofiled benchmark.
 Functional areas are name-based summaries; use raw stacks for caller costs.
-
-GPU profiling remains in scripts\profile_nsys.bat and profile_ncu.bat.
-Those scripts still target the GUI, not the dataset runner.
 
 Collection and finalization are separate: a shutdown control-connection error
 can leave usable samples. Success requires a completed score and readable report.

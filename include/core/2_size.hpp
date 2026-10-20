@@ -19,7 +19,7 @@ namespace arc {
 using namespace std;
 
 // What decides the output size: read off the train pairs by infer_rule(),
-// then read by the engine and uploaded to the kernel.
+// then read by the replays and the ops.
 struct output_dimension_rule {
     enum : int8_t {
         NotInferredYet,
@@ -40,8 +40,8 @@ struct output_dimension_rule {
     // The canvas this rule gives one input before anything is painted on it.
     // False under BoundingBox, where only the drawing says, and when the size
     // would not fit a grid at all.
-    ARC_HOST_DEVICE bool size_for(int input_width, int input_height,
-                                  int& out_width, int& out_height) const {
+    bool size_for(int input_width, int input_height,
+                  int& out_width, int& out_height) const {
         out_width = out_height = 0;
         long long w = 0, h = 0;
         switch (Chosen) {
@@ -65,11 +65,11 @@ struct output_dimension_rule {
         return size_for(input.width, input.height, out_width, out_height);
     }
 
-    // The working frame is shared by host replay and execution. BoundingBox
+    // The working frame is shared by the replays and the ops. BoundingBox
     // alone gets the full workspace; its final bounds come from painted cells.
     // Invalid or unknown rules give no frame, never an implicit Identity.
-    ARC_HOST_DEVICE bool canvas_size_for(int input_width, int input_height,
-                                         int& out_width, int& out_height) const {
+    bool canvas_size_for(int input_width, int input_height,
+                         int& out_width, int& out_height) const {
         if (Chosen == BoundingBox) {
             out_width = out_height = MAX_GRID_DIM;
             return true;

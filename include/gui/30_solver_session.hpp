@@ -1,17 +1,15 @@
 #pragma once
 // THE GUI'S SIDE OF THE SOLVER. The solver never runs in this process: every
 // puzzle on screen has an arc_headless --serve child (see kaggle_main.cpp), and
-// ending it is ending that process, which takes everything it held with it --
-// memory, GPU state. A switch to another puzzle, a reset or a dataset change
-// kills it; the next one starts clean. This process creates no CUDA context at
-// all.
+// ending it is ending that process, which takes everything it held with it. A
+// switch to another puzzle, a reset or a dataset change kills it; the next one
+// starts clean.
 //
 // What a person at a window expects is kept here: the puzzle list, pause,
 // settings, sounds, and pictures of what the reading drew. The child streams
-// what it paints (22_search_stream.hpp); this replays it into its own copy of
+// what it says (22_search_stream.hpp); this replays it into its own copy of
 // the puzzle, and the frame draws that as if the solver were local. Hovering a
-// program asks the child what it paints, since only the child has a GPU
-// context to run it with.
+// program asks the child what it paints, since only the child can run one.
 //
 // A child is started once the window has stayed on a puzzle for a moment, so
 // stepping through puzzles costs nothing, and it waits until SPACE or the pane
@@ -82,14 +80,13 @@ public:
     for (int i = 0; i < 32; ++i)
       m_view.preview_grids.push_back(allocate_empty_grid(gpu_buffer));
 
-    // Object-list preview slots: [example][object]. Per-example object cap
-    // matches the kernel's GPU_KERNEL_MAX_OBJECTS (the largest list the GPU
-    // can produce in a single op).
+    // Object-list preview slots: [example][object], as many objects as a
+    // list holds (MAX_OBJECTS_IN_A_LIST).
     m_view.preview_object_grids.clear();
     m_view.preview_object_grids.resize(32);
     for (int i = 0; i < 32; ++i) {
-      m_view.preview_object_grids[i].reserve(GPU_KERNEL_MAX_OBJECTS);
-      for (int j = 0; j < GPU_KERNEL_MAX_OBJECTS; ++j)
+      m_view.preview_object_grids[i].reserve(MAX_OBJECTS_IN_A_LIST);
+      for (int j = 0; j < MAX_OBJECTS_IN_A_LIST; ++j)
         m_view.preview_object_grids[i].push_back(allocate_empty_grid(gpu_buffer));
     }
     // Everything above stays put; a puzzle's cells go after it and are
@@ -583,29 +580,19 @@ private:
     if (!m_gpu_buffer) return;
     // Drop the last puzzle's cells; its views pointed into them.
     m_gpu_buffer->resize(m_base_gpu_buffer_size);
-    // Where each pair's cells landed, and a slot for the picture of what the
-    // best program drew, one entry per example, same index as the puzzle's own.
+    // Where each pair's cells landed, one entry per example, same index as the
+    // puzzle's own.
     auto build = [&](const vector<example> &side, vector<example_views> &out) {
       for (const example &ex : side) {
         example_views view;
         view.input = upload_grid(ex.input, *m_gpu_buffer);
         if (ex.output.width > 0)
           view.output = upload_grid(ex.output, *m_gpu_buffer);
-        view.best = allocate_empty_grid(*m_gpu_buffer);
         out.push_back(view);
       }
     };
     build(p.train, views.train);
     build(p.test, views.test);
-  }
-
-  void painted(bool is_test, size_t i, const grid *g) override {
-    example_views *v = m_view.views.of(is_test, i);
-    if (!v || !m_gpu_buffer) return;
-    if (g)
-      update_display_buffer(v->best, *g, *m_gpu_buffer);
-    else
-      v->best.width = 0;
   }
 
   void changed() override { m_app.needs_upload = true; }

@@ -6,7 +6,7 @@
 // carries its memory into the next, and runs after the first went measurably
 // worse than the same puzzle run first in a clean process. So a run over many
 // puzzles is a parent that starts this same program once per puzzle, and
-// never touches the GPU itself.
+// reads none itself.
 //
 //   arc_headless
 //       The Kaggle run: a shard of a dataset, one child per puzzle, merged
@@ -18,7 +18,8 @@
 //         ARC_PUZZLE_LIMIT  only the first N tasks overall (0 or unset = all).
 //         ARC_SHARD_INDEX / ARC_SHARD_TOTAL
 //                           which contiguous slice this process solves, one
-//                           process per GPU. The last shard takes what is left.
+//                           process per CPU thread. The last shard takes what
+//                           is left.
 //       Writes kaggle/working/submission.json under the data root, or
 //       submission_<shard>.json when there is more than one shard.
 //       *** CROSS-FILE CONTRACT: the "submission_<n>.json" name MUST match the
@@ -56,7 +57,6 @@
 #include "10_log.hpp"
 #include "11_text_format.hpp"
 #include "16_solver.hpp"
-#include "20_cuda_solver.cuh"
 #include "21_submission.hpp"
 #include "22_search_stream.hpp"
 
@@ -140,10 +140,6 @@ static int solve_one(int argc, char **argv) {
 		fprintf(stderr, "%s: no such task in datasets %d\n", id.c_str(), flags);
 		return 1;
 	}
-	if (!cuda_init()) {
-		fprintf(stderr, "no usable GPU, nothing solved\n");
-		return 1;
-	}
 	if (!serve) {
 		// Same selection as arc_said: only programs emitted by inference, and
 		// only the first that draws every training output exactly.
@@ -156,13 +152,9 @@ static int solve_one(int argc, char **argv) {
 		for (const string& program : p.suggested_programs) {
 			node* tree = environment::parse(program);
 			if (!tree) continue;
-			const int nodes = environment::count_nodes(tree);
 			bool fits = !p.train.empty();
-			for (const auto& pair : p.train) {
-				grid drawn; float score = 0; bool solved = false;
-				environment::execute_tree_via_flat(tree, pair, drawn, p, nodes, score, solved);
-				if (drawn != pair.output) { fits = false; break; }
-			}
+			for (const auto& pair : p.train)
+				if (environment::draw(tree, pair, p) != pair.output) { fits = false; break; }
 			if (fits) {
 				p.best_tree = tree;
 				p.is_solved = true;
@@ -177,12 +169,7 @@ static int solve_one(int argc, char **argv) {
 		result.id = id;
 		result.solved = p.is_solved;
 		result.entry = submission_line(p, [&](const example& ex) {
-			grid drawn = ex.input;
-			if (p.best_tree) {
-				float score = 0; bool solved = false;
-				environment::execute_tree_via_flat(p.best_tree, ex, drawn, p,
-				                                 environment::count_nodes(p.best_tree), score, solved);
-			}
+			const grid drawn = p.best_tree ? environment::draw(p.best_tree, ex, p) : ex.input;
 			if (right && drawn != (*answers)[test_index]) right = false;
 			++test_index;
 			return drawn;
@@ -194,7 +181,6 @@ static int solve_one(int argc, char **argv) {
 		const bool ok = result.write(out_path);
 		environment::remove(p.best_tree);
 		p.best_tree = nullptr;
-		cuda_runtime_shutting_down();
 		return ok ? 0 : 1;
 	}
 
@@ -217,9 +203,6 @@ static int solve_one(int argc, char **argv) {
 		stream.tick(puzzle_solver, true);
 		const double elapsed = chrono::duration<double>(chrono::steady_clock::now() - started).count();
 		const bool ok = puzzle_result::of(puzzle_solver.get_puzzle(), elapsed).write(out_path);
-		// Said before the solver's buffers are freed on the way out, so the frees
-		// that would reach a runtime already shutting down are skipped.
-		cuda_runtime_shutting_down();
 		return ok ? 0 : 1;
 	}
 
@@ -270,9 +253,6 @@ static int solve_one(int argc, char **argv) {
 		this_thread::sleep_for(chrono::milliseconds(5));
 	}
 	stream.tick(puzzle_solver, true);
-	// Said before the solver's buffers are freed on the way out, so the frees
-	// that would reach a runtime already shutting down are skipped.
-	cuda_runtime_shutting_down();
 	return 0;
 }
 

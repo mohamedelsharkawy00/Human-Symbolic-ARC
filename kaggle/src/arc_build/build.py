@@ -1,4 +1,4 @@
-# ARC headless solver on Kaggle's GPU: the submission, or a scored run of a set
+# ARC headless solver on Kaggle: the submission, or a scored run of a set
 # whose answers are known. (Authored as a .py for clarity; converted to notebook
 # cells for the kernel.)
 import os, json, glob, shutil, subprocess, sys, time
@@ -81,22 +81,10 @@ print("source root:", SRC_ROOT)
 print("source commit:", open(SRC_ROOT + "/commit.txt").read().strip())
 
 # --- compile -------------------------------------------------------------
-# Compile for the GPUs actually assigned, including T4 fallback machines.
-gpu_info = subprocess.check_output(
-    ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"], text=True)
-gpu_arches = [line.strip().replace(".", "") for line in gpu_info.splitlines() if line.strip()]
-assert gpu_arches and all(a.isdigit() for a in gpu_arches), gpu_info
-print(subprocess.check_output(["nvcc", "--version"], text=True))
+print(subprocess.check_output(["g++", "--version"], text=True))
 
 def compile_to(binary, *sources):
-    cmd = [
-        "nvcc", "-std=c++20", "--expt-relaxed-constexpr",
-        "-O2",
-        "-I", INC, *sources,
-        "-o", binary,
-    ]
-    for arch in sorted(set(gpu_arches)):
-        cmd.extend(["-gencode", f"arch=compute_{arch},code=sm_{arch}"])
+    cmd = ["g++", "-std=c++20", "-O2", "-pthread", "-I", INC, *sources, "-o", binary]
     print("compiling:\n  " + " ".join(cmd))
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -109,13 +97,13 @@ def compile_to(binary, *sources):
     print("compiled OK ->", binary)
 
 # --- a scored run ---------------------------------------------------------
-# arc_said reads the set on every CPU thread, runs what each reading says on
-# the GPU, and writes said.txt, tally.txt, timings.csv and every readout
-# beside itself, all of it handed back as one archive, said.tar.gz.
+# arc_said reads the set on every CPU thread, runs what each reading says,
+# and writes said.txt, tally.txt, timings.csv and every readout beside itself,
+# all of it handed back as one archive, said.tar.gz.
 def scored_run():
     run = "/kaggle/working/said"
     os.makedirs(run, exist_ok=True)
-    compile_to(run + "/arc_said", SRC_ROOT + "/scripts/said.cpp", SRC_ROOT + "/src/cuda_solver.cu")
+    compile_to(run + "/arc_said", SRC_ROOT + "/scripts/said.cpp", SRC_ROOT + "/src/ops.cpp")
     print(f"reading {len(RUN_IDS) or 'every'} {DATASET} puzzle(s) on {os.cpu_count()} CPU threads")
     t0 = time.time()
     # "/" holds kaggle/input, where arc_said finds the puzzles.
@@ -140,28 +128,19 @@ def submission():
 
     # --- 2. compile -----------------------------------------------------------
     BIN = "/kaggle/working/arc_solver"
-    compile_to(BIN, SRC_ROOT + "/src/kaggle_main.cpp", SRC_ROOT + "/src/cuda_solver.cu")
+    compile_to(BIN, SRC_ROOT + "/src/kaggle_main.cpp", SRC_ROOT + "/src/ops.cpp")
 
-    # --- 3. run: one shard PER VISIBLE GPU -------------------------------------
-    # Launch one process per physical GPU, pinned via CUDA_VISIBLE_DEVICES, each
-    # solving a contiguous shard and writing submission_<shard>.json. Each of those
-    # solves every puzzle of its shard in a fresh child process of its own (the
-    # child inherits the GPU pin), so no puzzle runs on memory another left behind.
-    #
-    # SHARD COUNT = number of GPUs ACTUALLY PRESENT (nvidia-smi -L), not a hardcoded
-    # 4. This is load-bearing: hardcoding 4 on a 2-GPU box (the default T4x2, which
-    # the accelerator dropdown silently falls back to) launches 2 extra shards with
-    # no GPU -- they crash on cudaMallocHost (pinned-memory exhaustion) and SILENTLY
-    # drop 120 of 240 tasks. Sizing to the real GPU count means the run always covers
-    # all 240 tasks on whatever hardware we land on (L4x4 -> 4 fast shards; T4x2 -> 2
-    # slower shards, still complete).
+    # --- 3. run: one shard PER CPU THREAD ---------------------------------------
+    # One process per thread the machine has, each solving a contiguous shard and
+    # writing submission_<shard>.json. Each of those solves every puzzle of its
+    # shard in a fresh child process of its own, so no puzzle runs on memory
+    # another left behind.
     os.chdir("/kaggle/working")
     # The smoke check runs inference on three tasks. It checks
     # build, execution and output format; it does not measure solve rate.
-    NGPU = len(gpu_arches)
-    SHARDS = 1 if QUICK_CHECK else NGPU
+    SHARDS = 1 if QUICK_CHECK else os.cpu_count()
     PUZZLE_LIMIT = "3" if QUICK_CHECK else "0"   # 0 = full run
-    print(f"detected {NGPU} GPU(s) -> launching {SHARDS} shards, "
+    print(f"{os.cpu_count()} CPU threads -> launching {SHARDS} shards, "
           f"PUZZLE_LIMIT={PUZZLE_LIMIT} (QUICK_CHECK={QUICK_CHECK})")
 
     procs = []
@@ -171,7 +150,6 @@ def submission():
     t0 = time.time()
     for s in range(SHARDS):
         env = dict(os.environ)
-        env["CUDA_VISIBLE_DEVICES"] = str(s)   # pin this process to physical GPU s
         env["ARC_SHARD_INDEX"] = str(s)
         env["ARC_SHARD_TOTAL"] = str(SHARDS)
         env["ARC_PUZZLE_LIMIT"] = PUZZLE_LIMIT  # overall task cap (shard takes its slice)

@@ -1,5 +1,5 @@
 # 1. What is this project?
-1. A searchless ARC-AGI-2 solver in C++20 and CUDA.
+1. A searchless ARC-AGI-2 solver in C++20.
 2. Inference reads the training pairs, names the rule as a line of words, and says it as a DSL program.
 3. The reading matches pieces between input and output ("everything in ARC is this matches that").
 4. It writes every change down cell by cell.
@@ -14,7 +14,7 @@
 3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the word it lacks, built in the op that owns it (read the whole op list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
 5. A word is said only after it is replayed on every training pair on the host, and seen to change something in every pair.
-   1. The replay runs the arithmetic the GPU op runs: a shared `ARC_HOST_DEVICE` helper in `8b_op_math.hpp` the op calls.
+   1. The replay runs the arithmetic the op runs: a shared helper in `8b_op_math.hpp` the op (`src/ops.cpp`) calls.
    2. Anything less would let the language say a word the pairs don't back.
 6. New words are compositions of existing ops where possible. Add an op only when none exists.
 7. No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
@@ -109,10 +109,7 @@
 7. Every command and outcome is receipt-logged app-clock timestamped in `logs/commands_<port>.txt`, the trustworthy record, one file per app, cleared on each app launch.
    1. A log ending in `stopped` means the app closed cleanly, a log that simply ends means it was killed or crashed, end task cannot announce itself so its absence is the tell.
 8. The command port is GUI build only, the headless Kaggle build has none.
-9. `state` ends with `gpu_used=<percent>`, and the receipt log opens with how much of the card is already taken plus whether a sibling app got 2026 first.
-   1. Two idle apps sit at about 17% of 6140 MB, that is the baseline, well above it means the card is shared with something.
-   2. It is a snapshot taken when asked, not a watch, so one reading near the baseline means nothing big is running, never that nothing is.
-   3. A shared run is not comparable to one that had the card alone, say so rather than reading it as a regression.
+9. The receipt log opens with which binary is answering and whether a sibling app got 2026 first.
 # 4. Worktrees
 1. A folder is the unit of parallel work here, because everything the app and the build write is per folder, and switching branches in place would swap files out from under a running app and a live build. That is the whole reason worktrees are used rather than switching.
 2. Look before settling in, nothing announces another session, so ask the things that already know.

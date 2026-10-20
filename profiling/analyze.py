@@ -1,4 +1,4 @@
-"""Summarize VTune CPU profiles and optional Nsight GPU reports.
+"""Summarize VTune CPU profiles.
 
 Usage: python profiling/analyze.py [run-directory]
 """
@@ -20,15 +20,6 @@ VTUNE_FUNC_CSV = os.path.join(OUTPUT_DIR, "cpu_stacks_vtune.csv")
 VTUNE_LINE_CSV = os.path.join(OUTPUT_DIR, "source_lines.csv")
 VTUNE_THREAD_CSV = os.path.join(OUTPUT_DIR, "threads.csv")
 
-# Nsight Systems CSV paths
-NSYS_KERN_CSV = os.path.join(OUTPUT_DIR, "nsys_stats_cuda_gpu_kern_sum.csv")
-NSYS_MEM_CSV = os.path.join(OUTPUT_DIR, "nsys_stats_cuda_gpu_mem_time_sum.csv")
-NSYS_API_CSV = os.path.join(OUTPUT_DIR, "nsys_stats_cuda_api_sum.csv")
-NSYS_EXEC_CSV = os.path.join(OUTPUT_DIR, "nsys_stats_cuda_kern_exec_sum.csv")
-
-# Nsight Compute CSV (per-kernel metrics deep-dive)
-NCU_CSV = os.path.join(OUTPUT_DIR, "ncu_kernel.csv")
-
 TOP_N = 80
 
 # --- Source files of interest for line-level breakdown ---
@@ -36,9 +27,7 @@ HOT_SOURCE_FILES = {
     "1_readings.hpp", "3_background.hpp", "4_objects.hpp",
     "5_matching.hpp", "6_correspondence.hpp", "7_infer.hpp", "8b_op_math.hpp",
     "9_sentences.hpp", "said.cpp",
-    "cuda_solver.cu",
-    "17_fixed_dsl.hpp",
-    "12_dsl.cuh",
+    "ops.cpp",
     "13_environment.hpp",
 }
 
@@ -50,8 +39,6 @@ GPU_DRIVER = {"nvwgf2umx", "nvlddmkm.sys", "nvoglv64", "nvapi64",
               "nvmemmapstoragex", "nvppex",
               "vulkan-1", "d3d12core", "d3d12", "dxgi", "dxcore",
               "dxgkrnl.sys", "dxgmms2.sys", "dcomp", "opengl32"}
-CUDA_RUNTIME = {"cudart64_12", "cudart64", "nvcuda", "cublas64_12",
-                "cublaslt64_12", "nvcuda64", "nvcudart_hybrid64"}
 OS_KERNEL = {"ntoskrnl", "win32kfull.sys", "win32kbase.sys", "win32k.sys",
              "win32u", "kernelbase", "kernel32", "user32", "gdi32",
              "gdi32full", "fltmgr.sys", "ntfs.sys", "classpnp.sys",
@@ -65,7 +52,6 @@ CAT_LABELS = {
     "MEM":    "ARC:mem",
     "HEAP":   "ARC:heap",
     "GPU":    "GPU/Vulkan",
-    "CUDA":   "CUDA",
     "OS":     "OS",
     "NOISE":  "noise",
     "OTHER":  "other",
@@ -122,10 +108,6 @@ def simplify_name(name: str) -> str:
                 return f"arc::vector{op}"
         return "arc::vector::?"
 
-    # CUDA-related
-    if "cuda" in func.lower() or "memcpy" in func.lower():
-        return f"arc::{func}"
-
     # std:: other
     if func.startswith("std::"):
         return f"arc::{func}"
@@ -152,8 +134,6 @@ def categorize(module: str) -> str:
         return "MEM"
     if mod in INDIRECT_HEAP or mod in {m.lower() for m in INDIRECT_HEAP}:
         return "HEAP"
-    if mod in CUDA_RUNTIME or mod in {m.lower() for m in CUDA_RUNTIME}:
-        return "CUDA"
     if mod in GPU_DRIVER or mod in {m.lower() for m in GPU_DRIVER}:
         return "GPU"
     if mod in OS_KERNEL or mod in {m.lower() for m in OS_KERNEL}:
@@ -280,11 +260,8 @@ def build_area_breakdown(hotspots: list[tuple[str, float, float, int]]) -> list[
         ("dsl_emission", ["say_the_", "sentence", "spell"]),
         ("inference", ["infer", "read_figures", "read_the_cut", "finish_the_line", "carry_the_hand", "says_the_most"]),
         ("tree_ops",        ["copy", "remove", "flatten", "update_hash", "stringify"]),
-        ("gpu_interface",   ["cuda_dsl_exec", "cuda_dsl_upload", "cuda_dsl_fetch",
-                             "convert_program_to_gpu", "cuda_init", "ensure_capacity"]),
+        ("program_runs",    ["::op_", "environment::draw", "run_ops", "one_op"]),
         ("hash_cache",      ["unordered_map", "hash_container"]),
-        ("fixed_dsl",       ["fixed_init_context", "fixed_execute", "fixed_exec_",
-                             "to_gpu_object_list"]),
         ("display_ui",      ["update_grid", "update_example", "update_display",
                              "render", "present", "swapchain"]),
     ]
@@ -350,179 +327,12 @@ def build_thread_breakdown(thread_csv: str) -> list[tuple[str, float, int]]:
     return results
 
 
-# =====================================================================
-# Nsight Systems ingestion
-# =====================================================================
-
-def fmt_ns(ns: float) -> str:
-    """Format nanoseconds into human-readable time."""
-    if ns >= 1e9:
-        return f"{ns / 1e9:.3f}s"
-    if ns >= 1e6:
-        return f"{ns / 1e6:.3f}ms"
-    if ns >= 1e3:
-        return f"{ns / 1e3:.1f}us"
-    return f"{ns:.0f}ns"
-
-
-def fmt_pct(pct: float) -> str:
-    return f"{pct:.1f}%"
-
-
-def parse_nsys_kernels(path: str) -> list[dict]:
-    """Parse cuda_gpu_kern_sum CSV."""
-    if not os.path.isfile(path):
-        return []
-    rows = parse_csv(path)
-    out = []
-    for row in rows:
-        name = row.get("Name", "").strip()
-        if not name:
-            continue
-        # Simplify kernel name: extract function name before first (
-        short = name.split("(")[0].strip() if "(" in name else name
-        # Remove return type prefix if present
-        if " " in short:
-            short = short.rsplit(" ", 1)[-1]
-        out.append({
-            "name": short,
-            "full_name": name,
-            "time_pct": float(row.get("Time (%)", "0") or "0"),
-            "total_ns": float(row.get("Total Time (ns)", "0") or "0"),
-            "instances": int(row.get("Instances", "0") or "0"),
-            "avg_ns": float(row.get("Avg (ns)", "0") or "0"),
-            "min_ns": float(row.get("Min (ns)", "0") or "0"),
-            "max_ns": float(row.get("Max (ns)", "0") or "0"),
-        })
-    out.sort(key=lambda x: x["total_ns"], reverse=True)
-    return out
-
-
-def parse_nsys_memops(path: str) -> list[dict]:
-    """Parse cuda_gpu_mem_time_sum CSV."""
-    if not os.path.isfile(path):
-        return []
-    rows = parse_csv(path)
-    out = []
-    for row in rows:
-        op = row.get("Operation", "").strip()
-        if not op:
-            continue
-        out.append({
-            "operation": op,
-            "time_pct": float(row.get("Time (%)", "0") or "0"),
-            "total_ns": float(row.get("Total Time (ns)", "0") or "0"),
-            "count": int(row.get("Count", "0") or "0"),
-            "avg_ns": float(row.get("Avg (ns)", "0") or "0"),
-            "min_ns": float(row.get("Min (ns)", "0") or "0"),
-            "max_ns": float(row.get("Max (ns)", "0") or "0"),
-        })
-    out.sort(key=lambda x: x["total_ns"], reverse=True)
-    return out
-
-
-def parse_nsys_api(path: str) -> list[dict]:
-    """Parse cuda_api_sum CSV."""
-    if not os.path.isfile(path):
-        return []
-    rows = parse_csv(path)
-    out = []
-    for row in rows:
-        name = row.get("Name", "").strip()
-        if not name:
-            continue
-        out.append({
-            "name": name,
-            "time_pct": float(row.get("Time (%)", "0") or "0"),
-            "total_ns": float(row.get("Total Time (ns)", "0") or "0"),
-            "calls": int(row.get("Num Calls", row.get("Instances", "0")) or "0"),
-            "avg_ns": float(row.get("Avg (ns)", "0") or "0"),
-            "min_ns": float(row.get("Min (ns)", "0") or "0"),
-            "max_ns": float(row.get("Max (ns)", "0") or "0"),
-        })
-    out.sort(key=lambda x: x["total_ns"], reverse=True)
-    return out
-
-
-def parse_nsys_kern_exec(path: str) -> list[dict]:
-    """Parse cuda_kern_exec_sum CSV (launch-to-exec latency)."""
-    if not os.path.isfile(path):
-        return []
-    rows = parse_csv(path)
-    out = []
-    for row in rows:
-        name = row.get("Name", "").strip()
-        if not name:
-            continue
-        short = name.split("(")[0].strip() if "(" in name else name
-        if " " in short:
-            short = short.rsplit(" ", 1)[-1]
-        out.append({
-            "name": short,
-            "instances": int(row.get("Instances", "0") or "0"),
-            "exec_ns": float(row.get("Avg Exec Time (ns)", row.get("Avg (ns)", "0")) or "0"),
-            "launch_ns": float(row.get("Avg Launch Time (ns)", "0") or "0"),
-        })
-    return out
-
-
-# =====================================================================
-# Nsight Compute ingestion
-# =====================================================================
-
-def parse_ncu(path: str) -> list[dict]:
-    """Parse Nsight Compute --csv output.
-
-    NCU CSV is metric-per-row: each kernel launch produces many rows.
-    Returns a list of {kernel_name, launch_id, metrics: {name: value}}.
-    """
-    if not os.path.isfile(path):
-        return []
-    try:
-        rows = parse_csv(path)
-    except Exception:
-        return []
-    if not rows:
-        return []
-
-    launches: dict[tuple, dict] = {}
-    for row in rows:
-        kname = (row.get("Kernel Name") or row.get("kernel name") or "").strip()
-        launch_id = (row.get("ID") or row.get("id") or "").strip()
-        metric = (row.get("Metric Name") or row.get("metric name") or "").strip()
-        unit = (row.get("Metric Unit") or row.get("metric unit") or "").strip()
-        value = (row.get("Metric Value") or row.get("metric value") or "").strip()
-        if not kname or not metric:
-            continue
-        short = kname.split("(")[0].strip() if "(" in kname else kname
-        if " " in short:
-            short = short.rsplit(" ", 1)[-1]
-        key = (short, launch_id)
-        if key not in launches:
-            launches[key] = {"name": short, "launch_id": launch_id, "metrics": {}}
-        launches[key]["metrics"][metric] = (value, unit)
-    return list(launches.values())
-
-
-def ncu_get(metrics: dict, key: str) -> str:
-    v = metrics.get(key)
-    if not v:
-        return "-"
-    val, unit = v
-    return f"{val} {unit}".strip()
-
-
 # --- Report output ---
 
 def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
                  area_breakdown: list[tuple[str, float]] | None = None,
                  source_breakdown: dict[str, list[tuple[int, str, float]]] | None = None,
-                 thread_breakdown: list[tuple[str, float, int]] | None = None,
-                 gpu_kernels: list[dict] | None = None,
-                 gpu_memops: list[dict] | None = None,
-                 gpu_api: list[dict] | None = None,
-                 gpu_kern_exec: list[dict] | None = None,
-                 ncu_launches: list[dict] | None = None) -> None:
+                 thread_breakdown: list[tuple[str, float, int]] | None = None) -> None:
     total = sum(h[3] for h in hotspots)
     cats: dict[str, float] = defaultdict(float)
     for name, exc, _, _ in hotspots:
@@ -530,99 +340,12 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
 
     arc_all = cats["ARC"] + cats["MEM"] + cats["HEAP"]
 
-    has_gpu = bool(gpu_kernels or gpu_memops or gpu_api)
-    has_ncu = bool(ncu_launches)
-
     with open(out_path, "w", encoding="utf-8") as f:
         def w(s: str = "") -> None:
             f.write(s + "\n")
 
-        sources = []
-        if hotspots:
-            sources.append("VTune")
-        if has_gpu:
-            sources.append("Nsight Systems")
-        if has_ncu:
-            sources.append("Nsight Compute")
-
-        w(f"ARC Profiling Report  |  {datetime.now():%Y-%m-%d %H:%M:%S}  |  {total} sampled CPU ms  |  {' + '.join(sources)}")
+        w(f"ARC Profiling Report  |  {datetime.now():%Y-%m-%d %H:%M:%S}  |  {total} sampled CPU ms  |  VTune")
         w("=" * 120)
-
-        # =========================================================
-        # GPU Section (Nsight Systems)
-        # =========================================================
-        if has_gpu:
-            w()
-            w("  GPU Profile (Nsight Systems)")
-            w("-" * 80)
-
-            if gpu_kernels:
-                total_kern_ns = sum(k["total_ns"] for k in gpu_kernels)
-                w()
-                w(f"  CUDA Kernels  (total GPU time: {fmt_ns(total_kern_ns)})")
-                w(f"  {'Kernel':<45}  {'Time':>10}  {'%':>6}  {'Calls':>7}  {'Avg':>10}  {'Min':>10}  {'Max':>10}")
-                w(f"  {'-'*45}  {'-'*10}  {'-'*6}  {'-'*7}  {'-'*10}  {'-'*10}  {'-'*10}")
-                for k in gpu_kernels:
-                    w(f"  {k['name']:<45}  {fmt_ns(k['total_ns']):>10}  {fmt_pct(k['time_pct']):>6}  {k['instances']:>7}  {fmt_ns(k['avg_ns']):>10}  {fmt_ns(k['min_ns']):>10}  {fmt_ns(k['max_ns']):>10}")
-
-            if gpu_memops:
-                total_mem_ns = sum(m["total_ns"] for m in gpu_memops)
-                w()
-                w(f"  CUDA Memory Transfers  (total: {fmt_ns(total_mem_ns)})")
-                w(f"  {'Operation':<40}  {'Time':>10}  {'%':>6}  {'Count':>7}  {'Avg':>10}  {'Min':>10}  {'Max':>10}")
-                w(f"  {'-'*40}  {'-'*10}  {'-'*6}  {'-'*7}  {'-'*10}  {'-'*10}  {'-'*10}")
-                for m in gpu_memops:
-                    w(f"  {m['operation']:<40}  {fmt_ns(m['total_ns']):>10}  {fmt_pct(m['time_pct']):>6}  {m['count']:>7}  {fmt_ns(m['avg_ns']):>10}  {fmt_ns(m['min_ns']):>10}  {fmt_ns(m['max_ns']):>10}")
-
-            if gpu_api:
-                w()
-                w(f"  CUDA API Calls (CPU-side overhead)")
-                w(f"  {'API':<45}  {'Time':>10}  {'%':>6}  {'Calls':>7}  {'Avg':>10}")
-                w(f"  {'-'*45}  {'-'*10}  {'-'*6}  {'-'*7}  {'-'*10}")
-                for a in gpu_api[:15]:
-                    w(f"  {a['name']:<45}  {fmt_ns(a['total_ns']):>10}  {fmt_pct(a['time_pct']):>6}  {a['calls']:>7}  {fmt_ns(a['avg_ns']):>10}")
-
-            if gpu_kern_exec:
-                w()
-                w(f"  Kernel Launch-to-Execution Latency")
-                w(f"  {'Kernel':<45}  {'Instances':>10}  {'Avg Exec':>12}  {'Avg Launch':>12}")
-                w(f"  {'-'*45}  {'-'*10}  {'-'*12}  {'-'*12}")
-                for k in gpu_kern_exec:
-                    if k["instances"] > 0:
-                        w(f"  {k['name']:<45}  {k['instances']:>10}  {fmt_ns(k['exec_ns']):>12}  {fmt_ns(k['launch_ns']):>12}")
-
-            # GPU utilization summary
-            if gpu_kernels and gpu_memops:
-                total_kern_ns = sum(k["total_ns"] for k in gpu_kernels)
-                total_mem_ns = sum(m["total_ns"] for m in gpu_memops)
-                total_gpu_ns = total_kern_ns + total_mem_ns
-                w()
-                w(f"  GPU Time Split:")
-                w(f"    Compute: {fmt_ns(total_kern_ns):>10}  ({total_kern_ns / total_gpu_ns * 100:.1f}%)")
-                w(f"    MemOps:  {fmt_ns(total_mem_ns):>10}  ({total_mem_ns / total_gpu_ns * 100:.1f}%)")
-                w(f"    Total:   {fmt_ns(total_gpu_ns):>10}")
-
-            w()
-            w("=" * 120)
-
-        # =========================================================
-        # GPU Kernel Deep-Dive (Nsight Compute)
-        # =========================================================
-        if has_ncu:
-            w()
-            w("  GPU Kernel Deep-Dive (Nsight Compute)")
-            w("-" * 80)
-            w(f"  {len(ncu_launches)} kernel launch(es) profiled")
-            w()
-
-            for launch in ncu_launches:
-                w(f"  Kernel: {launch['name']}  (launch #{launch['launch_id']})")
-                for metric in sorted(launch["metrics"].keys()):
-                    val, unit = launch["metrics"][metric]
-                    w(f"    {metric:<60}  {val} {unit}".rstrip())
-                w()
-
-            w("=" * 120)
 
         # =========================================================
         # CPU Section (VTune)
@@ -636,7 +359,6 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
         w(f"    |- Direct code               {cats['ARC']:7.2f}%")
         w(f"    |- C runtime (incl. memory)    {cats['MEM']:7.2f}%")
         w(f"    |- Heap (new/delete/malloc)   {cats['HEAP']:7.2f}%")
-        w(f"  CUDA runtime                  {cats['CUDA']:7.2f}%")
         w(f"  GPU / Vulkan                  {cats['GPU']:7.2f}%")
         w(f"  OS / Kernel                   {cats['OS']:7.2f}%")
         w()
@@ -695,38 +417,16 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
 
 
 def main() -> None:
-    has_vtune = os.path.isfile(VTUNE_FUNC_CSV)
-    has_nsys = any(os.path.isfile(p) for p in [NSYS_KERN_CSV, NSYS_MEM_CSV, NSYS_API_CSV])
-    has_ncu = os.path.isfile(NCU_CSV)
-
-    if not has_vtune and not has_nsys and not has_ncu:
+    if not os.path.isfile(VTUNE_FUNC_CSV):
         print(f"ERROR: No profiling data found. Run profile.bat first.")
         sys.exit(1)
 
-    # VTune data
-    hotspots = []
-    area_breakdown = []
-    source_breakdown = {}
-    thread_breakdown = []
-    if has_vtune:
-        rows = parse_csv(VTUNE_FUNC_CSV)
-        hotspots = extract_vtune(rows)
-        area_breakdown = build_area_breakdown(hotspots)
-        source_breakdown = build_source_breakdown(VTUNE_LINE_CSV)
-        thread_breakdown = build_thread_breakdown(VTUNE_THREAD_CSV)
+    hotspots = extract_vtune(parse_csv(VTUNE_FUNC_CSV))
+    area_breakdown = build_area_breakdown(hotspots)
+    source_breakdown = build_source_breakdown(VTUNE_LINE_CSV)
+    thread_breakdown = build_thread_breakdown(VTUNE_THREAD_CSV)
 
-    # Nsight data
-    gpu_kernels = parse_nsys_kernels(NSYS_KERN_CSV)
-    gpu_memops = parse_nsys_memops(NSYS_MEM_CSV)
-    gpu_api = parse_nsys_api(NSYS_API_CSV)
-    gpu_kern_exec = parse_nsys_kern_exec(NSYS_EXEC_CSV)
-
-    # Nsight Compute data
-    ncu_launches = parse_ncu(NCU_CSV)
-
-    write_report(hotspots, REPORT_PATH, area_breakdown, source_breakdown,
-                 thread_breakdown, gpu_kernels, gpu_memops, gpu_api, gpu_kern_exec,
-                 ncu_launches)
+    write_report(hotspots, REPORT_PATH, area_breakdown, source_breakdown, thread_breakdown)
     print(f"Report written to {REPORT_PATH}")
 
     if hotspots:
@@ -739,7 +439,7 @@ def main() -> None:
         cats: dict[str, float] = defaultdict(float)
         for name, exc, _, _ in hotspots:
             cats[categorize(get_module(name))] += exc
-        for cat in ["ARC", "MEM", "HEAP", "CUDA", "GPU", "OS"]:
+        for cat in ["ARC", "MEM", "HEAP", "GPU", "OS"]:
             if cats[cat] > 0:
                 label = CAT_LABELS.get(cat, cat)
                 print(f"  {label:<12}  {cats[cat]:6.2f}%")
@@ -754,26 +454,6 @@ def main() -> None:
             cat = CAT_LABELS.get(categorize(get_module(name)), "other")
             display = simplify_name(name)
             print(f"  {i:2d}. {exc:6.2f}%  [{cat:>9}]  {display}")
-
-    if gpu_kernels:
-        print(f"\nGPU Kernels:")
-        for k in gpu_kernels:
-            print(f"  {k['name']:<45}  {fmt_ns(k['total_ns']):>10}  ({k['instances']} calls, avg {fmt_ns(k['avg_ns'])})")
-
-    if ncu_launches:
-        print(f"\nGPU Kernel Deep-Dive ({len(ncu_launches)} launches):")
-        for launch in ncu_launches:
-            print(f"  Kernel: {launch['name']}  (launch #{launch['launch_id']})")
-            for metric in sorted(launch["metrics"].keys()):
-                val, unit = launch["metrics"][metric]
-                print(f"    {metric:<60}  {val} {unit}".rstrip())
-            print()
-
-    if gpu_memops:
-        total_mem = sum(m["total_ns"] for m in gpu_memops)
-        print(f"\nGPU Memory Transfers (total: {fmt_ns(total_mem)}):")
-        for m in gpu_memops:
-            print(f"  {m['operation']:<40}  {fmt_ns(m['total_ns']):>10}  ({m['count']} ops)")
 
 
 if __name__ == "__main__":

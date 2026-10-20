@@ -1,126 +1,384 @@
-4709    cuda_solver.cu                   src
-2519    28_gui.hpp                       include\gui
-2205    19_solver_executor.hpp           include\core
-919     5_matching.hpp                   include\core
-865     13_environment.hpp               include\core
-835     6_correspondence.hpp             include\core
-830     26_vulkan_context.hpp            include\gui
-------------------------------------- 800 line limit
-788     analyze.py                       profiling
-764     16_solver_beam.hpp               include\core
-762     33_window_manager.hpp            include\gui
-759     7_infer.hpp                      include\core
-729     12_dsl.cuh                       include\core
-723     30_solver_session.hpp            include\gui
-608     compare_benchmarks.py            scripts
-596     3_background.hpp                 include\core
-520     1_readings.hpp                   include\core
-448     14_puzzle_loader.hpp             include\core
-445     9_sentences.hpp                  include\core
-393     22_search_stream.hpp             include\core
-390     29_os_utilities.hpp              include\gui
-382     10_log.hpp                       include\core
-364     4_objects.hpp                    include\core
-350     kaggle_main.cpp                  src
-337     24_global_app_state.hpp          include\gui
-337     gui_main.cpp                     src
-269     17_fixed_dsl.hpp                 include\core
-245     arc-build.ipynb                  kaggle\src\arc_build
-224     build.py                         kaggle\src\arc_build
-221     21_submission.hpp                include\core
-178     fetch_data.py                    scripts
-178     color_pair_test.html             scripts
-172     kaggle_push.py                   scripts
-168     15_solver_log.hpp                include\core
-163     27_sound_manager.hpp             include\gui
-162     l4-probe.ipynb                   kaggle\src\diagnostics\l4_probe
-162     31_benchmark.hpp                 include\gui
-161     32_command_server.hpp            include\gui
-154     profile_build.py                 scripts
-150     CMakeLists.txt                   .
-137     profile_ncu.bat                  scripts
-134     vert.glsl                        src\shaders
-133     backup.py                        scripts
-131     bg_ranking.html                  scripts
-126     line_counts.txt                  scripts
-118     25_screenshot.hpp                include\gui
-115     profile.bat                      scripts
-107     23_grid_buffer.hpp               include\gui
-100     build.bat                        scripts
-100     18_dsl_executor.hpp              include\core
-99      find_duplicates.py               scripts
-95      session_check.py                 scripts
-95      make_resources.py                scripts
-89      2_size.hpp                       include\core
-85      count_lines.ps1                  scripts
-80      profile_nsys.bat                 scripts
-77      11_text_format.hpp              include\core
-75      list_puzzles_by_size_rule.py     scripts
-67      summarize_cuda_build.py          scripts
-64      README.md                        .
-64      title_hook.py                    scripts
-53      split_kaggle_data.py             scripts
-52      mkdocs.yml                       scripts
-46      CMakePresets.json                .
-39      0_core.hpp                       include\core
-39      read_me.txt                      profiling
-37      build_notes.bat                  scripts
-34      build_to_ipynb.py                scripts
-22      measure_aps.ps1                  scripts
-21      kernel-metadata.json             kaggle\src\diagnostics\env_probe
-21      kernel-metadata.json             kaggle\src\diagnostics\compile_probe
-20      kernel-metadata.json             kaggle\src\arc_build
-20      filter_vtune.ps1                 profiling
-19      05a7bcf2 Manual Example1.txt     solutions\shelf
-18      LICENSE                          .
-17      profile_build.bat                scripts
-16      kernel-metadata.json             kaggle\src\diagnostics\l4_probe
-14      20_cuda_solver.cuh               include\core
-10      .gitignore                       .
-10      nsys_command.txt                 profiling
-9       070dd51e.txt                     solutions
-9       08ed6ac7.txt                     solutions
-9       0520fde7.txt                     solutions
-9       05269061.txt                     solutions
-9       3618c87e.txt                     solutions
-9       05a7bcf2 Machine Example1.txt    solutions\shelf
-9       frag.glsl                        src\shaders
-9       0520fde7 Auto.txt                solutions\shelf
-9       0520fde7 Before.txt              solutions\shelf
-9       009d5c81.txt                     solutions
-9       007bbfb7.txt                     solutions
-9       017c7c7b.txt                     solutions
-9       00dbd492.txt                     solutions
-9       00d62c1b.txt                     solutions
-9       00576224.txt                     solutions
-9       045e512c.txt                     solutions
-7       05a7bcf2.txt                     solutions
-6       count_lines.bat                  scripts
-6       09c534e7 Manual.txt              solutions\shelf
-5       .gitattributes                   .
-5       05a7bcf2 Wall Variant.txt        solutions\shelf
-3       0ca9ddb6.txt                     solutions
-2       0962bcdd.txt                     solutions
-1       0607ce86.txt                     solutions
-1       0692e18c.txt                     solutions
-1       025d127b.txt                     solutions
-1       0520fde7 Manual.txt              solutions\shelf
-1       06df4c85.txt                     solutions
-1       arc-competition.ipynb            kaggle\src\diagnostics\env_probe
-1       arc-port-probe.ipynb             kaggle\src\diagnostics\compile_probe
-1       0e206a2e.txt                     solutions
-1       05f2a901.txt                     solutions
-1       arc_logo.svg                     assets
-1       03560426.txt                     solutions
-1       09629e4f.txt                     solutions
-1       0b148d64.txt                     solutions
-1       0d3d703e.txt                     solutions
-1       0a938d79.txt                     solutions
-1       0a1d4ef5.txt                     solutions
-1       0a2355a6.txt                     solutions
-1       09c534e7.txt                     solutions
-1       f25fbde4.txt                     solutions
-1       00dbd492 Manual.txt              solutions\shelf
-1       32597951.txt                     solutions
-1       10fcaaa3.txt                     solutions
-1       11852cab.txt                     solutions
+8232    7_infer.hpp                                           include\core
+2728    ops.cpp                                               src
+2430    28_gui.hpp                                            include\gui
+1792    8b_op_math.hpp                                        include\core
+1735    6_correspondence.hpp                                  include\core
+1489    9_sentences.hpp                                       include\core
+1161    5_matching.hpp                                        include\core
+1150    DIFF_vs_baseline_2026-06-10.diff                      notes\6 - Handoffs
+980     Inference Master.md                                   notes\1 - Overall Design
+871     Select Map Compose.md                                 notes\2 - DSL
+834     26_vulkan_context.hpp                                 include\gui
+---------------------------------------------------------- 800 line limit
+795     Handoff Kaggle Port.md                                notes\6 - Handoffs
+769     3_background.hpp                                      include\core
+727     33_window_manager.hpp                                 include\gui
+683     10_log.hpp                                            include\core
+659     30_solver_session.hpp                                 include\gui
+574     1_readings.hpp                                        include\core
+551     Handoff.md                                            notes\6 - Handoffs
+486     14_puzzle_loader.hpp                                  include\core
+460     analyze.py                                            profiling
+386     4_objects.hpp                                         include\core
+358     29_os_utilities.hpp                                   include\gui
+350     Constraining Degrees Of Freedom By Invariants.md      notes\1 - Overall Design
+344     8_vocabulary.hpp                                      include\core
+340     kaggle_main.cpp                                       src
+314     Kernel Optimization Handoff.md                        notes\6 - Handoffs
+311     24_global_app_state.hpp                               include\gui
+305     Inference Notes.md                                    notes\6 - Handoffs
+302     Locking To Twins Arc.md                               notes\6 - Handoffs
+265     Handoff Main Cleanup.md                               notes\6 - Handoffs
+265     arc-build.ipynb                                       kaggle\src\arc_build
+264     gui_main.cpp                                          src
+262     said.cpp                                              scripts
+259     Solver Optimization Handoff 2026-06-04.md             notes\6 - Handoffs
+250     Backward Deduction Design.md                          notes\1 - Overall Design
+249     22_search_stream.hpp                                  include\core
+246     Salience Anchoring.md                                 notes\3 - Search
+244     build.py                                              kaggle\src\arc_build
+234     13_environment.hpp                                    include\core
+233     Session Handout.md                                    notes\6 - Handoffs
+220     Session Summary 2026-08-05.md                         notes\6 - Handoffs
+220     Variant Elimination Loop.md                           notes\1 - Overall Design
+219     Inference Says The Answer.md                          notes\6 - Handoffs
+206     Pane Family.md                                        notes
+202     21_submission.hpp                                     include\core
+200     autosize_nav.js                                       notes\javascripts
+186     Correspondence First.md                               notes
+186     kaggle_push.py                                        scripts
+183     Session Summary.md                                    notes\2 - DSL
+178     color_pair_test.html                                  scripts
+178     fetch_data.py                                         scripts
+174     Ground With No Home.md                                notes\6 - Handoffs
+173     To Do.md                                              notes\4 - To Do
+172     Human Work Landscape.md                               notes\5 - Competition
+166     DifferenceL Design.md                                 notes\2 - DSL
+163     27_sound_manager.hpp                                  include\gui
+162     l4-probe.ipynb                                        kaggle\src\diagnostics\l4_probe
+161     32_command_server.hpp                                 include\gui
+153     31_benchmark.hpp                                      include\gui
+147     CMakeLists.txt                                        .
+145     Split As Properties Not Kinds.md                      notes\4 - To Do
+143     Project Status 09-06-2026.md                          notes\6 - Handoffs
+143     2_size.hpp                                            include\core
+141     profile_build.py                                      scripts
+137     Op Masking.md                                         notes\3 - Search
+135     15_solver_log.hpp                                     include\core
+134     vert.glsl                                             src\shaders
+133     backup.py                                             scripts
+132     A Piece Is Credited With Cells It Never Carried.md    notes\4 - To Do
+132     Contest Rules.md                                      notes\5 - Competition
+131     bg_ranking.html                                       scripts
+130     Human Bias.md                                         notes\1 - Overall Design
+129     AGENTS.md                                             .
+126     line_counts.txt                                       scripts
+126     Where The Elections Stand.md                          notes\4 - To Do
+125     0_core.hpp                                            include\core
+121     README.md                                             .
+118     25_screenshot.hpp                                     include\gui
+115     19_solver_executor.hpp                                include\core
+115     extra.css                                             notes\stylesheets
+114     Background Per-Side Split.md                          notes\4 - To Do
+114     Bug Hunting.md                                        notes\4 - To Do
+114     16_solver.hpp                                         include\core
+108     Fastest Benchmark 2026-03-30 12-28-59 PM.md           notes\3 - Search
+108     Shared Transformations.md                             notes
+107     HANDOFF .md                                           notes\6 - Handoffs
+104     build.bat                                             scripts
+103     Infer The Program Instead Of Searching For It.md      notes\4 - To Do
+100     Op Algebra.md                                         notes\2 - DSL
+100     23_grid_buffer.hpp                                    include\gui
+99      Observational Equivalence.md                          notes\3 - Search
+99      Diagnostic Backtracking.md                            notes\3 - Search
+99      find_duplicates.py                                    scripts
+98      Design Principles.md                                  notes\2 - DSL
+97      readouts.py                                           scripts
+95      make_resources.py                                     scripts
+95      session_check.py                                      scripts
+95      Generation Baking.md                                  notes\3 - Search
+92      spell.cpp                                             scripts
+89      Let Var P2 Implementation.md                          notes\2 - DSL
+88      Dreamcoder Folding.md                                 notes\2 - DSL
+87      Structural Ground Enclosure.md                        notes\4 - To Do
+85      count_lines.ps1                                       scripts
+85      Verifying Inference Changes.md                        notes\6 - Handoffs
+84      Search Strategies.md                                  notes\3 - Search
+83      Colour Bindings And Derivations.md                    notes\4 - To Do
+81      session_2026-07-01.md                                 notes\5 - Competition
+75      Read Like A Person Two Parked Halves.md               notes\4 - To Do
+75      list_puzzles_by_size_rule.py                          scripts
+73      Project Status 06-04-2026.md                          notes\6 - Handoffs
+72      One Body Two Compilers.md                             notes\1 - Overall Design
+72      TODO.txt                                              notes\4 - To Do
+71      VoteDenoise Needs The Background.md                   notes\4 - To Do
+69      Project Status 04-04-2026.md                          notes\6 - Handoffs
+69      Program Reduction Greedy Vs Fullsubset.md             notes\3 - Search
+68      One Block For A Pair Is Chosen Not Computed.md        notes\4 - To Do
+68      Solution Skeleton From Inference.md                   notes\4 - To Do
+68      CUDA Lessons.md                                       notes\3 - Search
+67      A Repeat Has To Fit Twice.md                          notes\4 - To Do
+66      Method Order Reminder.md                              notes\4 - To Do
+65      Code Explanation P2.md                                notes\1 - Overall Design
+64      title_hook.py                                         scripts
+63      Some Objects Are Arrangements.md                      notes\4 - To Do
+62      The Repeat Search Only Sees Rectangles.md             notes\4 - To Do
+62      Overlay Underlay Union.md                             notes\2 - DSL
+62      Learned Orderings.md                                  notes\2 - DSL
+60      Connectivity Is Two Questions.md                      notes\4 - To Do
+59      Arch Concepts P1 Current.md                           notes\1 - Overall Design
+57      Contest Hardening Plan.md                             notes\4 - To Do
+57      The Smallest Repeating Block.md                       notes\1 - Overall Design
+55      Direction Strictness And Facts Vs Rules.md            notes\4 - To Do
+55      Substitution Reduction.md                             notes\3 - Search
+55      Memory Safety And DSL Lessons.md                      notes\4 - To Do
+54      Step Blocks Are Not Known To Be Copies.md             notes\4 - To Do
+53      split_kaggle_data.py                                  scripts
+52      mkdocs.yml                                            scripts
+50      Shark And Dorr.md                                     notes\3 - Search
+50      Arch Concepts P2 Future.md                            notes\1 - Overall Design
+49      Code Explanation P1.md                                notes\1 - Overall Design
+48      in_parallel.hpp                                       scripts
+48      Symbolic TTT Techniques.md                            notes\3 - Search
+48      Beam Diversity Fix.md                                 notes\3 - Search
+47      Home.md                                               notes
+47      11_text_format.hpp                                    include\core
+47      ARC Bitmask.md                                        notes\1 - Overall Design
+47      Priors And Robustness.md                              notes\1 - Overall Design
+46      CMakePresets.json                                     .
+46      Scalar Purge Plan.md                                  notes\2 - DSL
+46      collect_cpu.ps1                                       profiling
+46      Dedup Pass 2.md                                       notes\4 - To Do
+44      Competition Info.md                                   notes\5 - Competition
+44      Design Decisions.md                                   notes\1 - Overall Design
+44      12_dsl.hpp                                            include\core
+42      Beam Order Shuffle Hardening.md                       notes\4 - To Do
+40      profile.bat                                           scripts
+39      Concise Notes.md                                      notes\1 - Overall Design
+39      MaskBy Design.md                                      notes\2 - DSL
+37      build_notes.bat                                       scripts
+36      Map Op Consolidation.md                               notes\4 - To Do
+35      Unary Dilemma.md                                      notes\2 - DSL
+35      Copying To Objects.md                                 notes\2 - DSL
+35      build_to_ipynb.py                                     scripts
+34      Removing Let Var.md                                   notes\2 - DSL
+34      Comment Capitalization Sweep.md                       notes\4 - To Do
+33      More Data Or A Better Prior.md                        notes\5 - Competition
+32      read_me.txt                                           profiling
+31      Benchmark Plan.md                                     notes\4 - To Do
+30      Paper Track.txt                                       notes
+28      Verify Submission Path After Puzzle Refactor.md       notes\4 - To Do
+25      Code Explanation P3.md                                notes\1 - Overall Design
+25      Interior Color Tradeoff.md                            notes\2 - DSL
+25      WER Dumps Enabled.md                                  notes\4 - To Do
+23      kernel-metadata.json                                  kaggle\src\diagnostics\cloud_check
+23      kernel-metadata.json                                  kaggle\src\diagnostics\smoke_check
+23      Let Var P1 Analysis.md                                notes\2 - DSL
+23      Regression Benchmark Todo.md                          notes\4 - To Do
+21      kernel-metadata.json                                  kaggle\src\diagnostics\env_probe
+21      kernel-metadata.json                                  kaggle\src\diagnostics\compile_probe
+20      kernel-metadata.json                                  kaggle\src\arc_build
+20      filter_vtune.ps1                                      profiling
+19      05a7bcf2 Manual Example1.txt                          solutions\shelf
+18      LICENSE                                               .
+17      profile_build.bat                                     scripts
+16      kernel-metadata.json                                  kaggle\src\diagnostics\l4_probe
+12      said.bat                                              scripts
+12      .gitignore                                            .
+9       0520fde7 Auto.txt                                     solutions\shelf
+9       88a62173.txt                                          solutions
+9       05a7bcf2 Machine Example1.txt                         solutions\shelf
+9       0520fde7 Before.txt                                   solutions\shelf
+9       frag.glsl                                             src\shaders
+9       Dorr solving 05a7bcf2.txt                             notes\3 - Search
+9       dbff022c.txt                                          solutions\shelf
+9       Inserted And Deleted Are One Fact.md                  notes\4 - To Do
+7       Time Sensitive On Test.md                             notes\5 - Competition
+6       94f9d214.txt                                          solutions
+6       9172f3a0.txt                                          solutions
+6       9565186b.txt                                          solutions
+6       963e52fc.txt                                          solutions
+6       99b1bc43.txt                                          solutions
+6       88a10436.txt                                          solutions
+6       84f2aca1.txt                                          solutions
+6       8be77c9e.txt                                          solutions
+6       8eb1be9a.txt                                          solutions
+6       8d5021e8.txt                                          solutions
+6       a87f7484.txt                                          solutions
+6       a699fb00.txt                                          solutions
+6       aabf363d.txt                                          solutions
+6       b230c067.txt                                          solutions
+6       b1948b0a.txt                                          solutions
+6       a68b268e.txt                                          solutions
+6       a416b8f3.txt                                          solutions
+6       9dfd6313.txt                                          solutions
+6       a48eeaf7.txt                                          solutions
+6       a61f2674.txt                                          solutions
+6       a5313dff.txt                                          solutions
+6       6d0aefbc.txt                                          solutions
+6       6a11f6da.txt                                          solutions
+6       6fa7a44f.txt                                          solutions
+6       7468f01a.txt                                          solutions
+6       73182012.txt                                          solutions
+6       68b67ca3.txt                                          solutions
+6       66f2d22f.txt                                          solutions
+6       64a7c07e.txt                                          solutions
+6       67a3c6ac.txt                                          solutions
+6       68b16354.txt                                          solutions
+6       67e8384a.txt                                          solutions
+6       810b9b61.txt                                          solutions
+6       7b7f7511.txt                                          solutions
+6       833dafe3.txt                                          solutions
+6       84db8fc4.txt                                          solutions
+6       845d6e51.txt                                          solutions
+6       7b6016b9.txt                                          solutions
+6       74dd1130.txt                                          solutions
+6       746b3537.txt                                          solutions
+6       75b8110e.txt                                          solutions
+6       7953d61e.txt                                          solutions
+6       780d0b14.txt                                          solutions
+6       e729b7be.txt                                          solutions
+6       e57337a4.txt                                          solutions
+6       e76a88a6.txt                                          solutions
+6       e99362f0.txt                                          solutions
+6       e98196ab.txt                                          solutions
+6       e41c6fd3.txt                                          solutions
+6       ded97339.txt                                          solutions
+6       dc433765.txt                                          solutions
+6       e133d23d.txt                                          solutions
+6       e3497940.txt                                          solutions
+6       e345f17b.txt                                          solutions
+6       f2829549.txt                                          solutions
+6       f25ffba3.txt                                          solutions
+6       f45f5ca7.txt                                          solutions
+6       09c534e7 Manual.txt                                   solutions\shelf
+6       fafffa47.txt                                          solutions
+6       f25fbde4.txt                                          solutions
+6       ea786f4a.txt                                          solutions
+6       ea32f347.txt                                          solutions
+6       ea9794b1.txt                                          solutions
+6       ed98d772.txt                                          solutions
+6       ed36ccf7.txt                                          solutions
+6       c59eb873.txt                                          solutions
+6       c48954c1.txt                                          solutions
+6       c7d4e6ad.txt                                          solutions
+6       c9e6f938.txt                                          solutions
+6       c8f0f002.txt                                          solutions
+6       c35c1b4c.txt                                          solutions
+6       b60334d2.txt                                          solutions
+6       b2862040.txt                                          solutions
+6       bc4146bd.txt                                          solutions
+6       c0f76784.txt                                          solutions
+6       be94b721.txt                                          solutions
+6       d19f7514.txt                                          solutions
+6       d13f3404.txt                                          solutions
+6       d511f180.txt                                          solutions
+6       dc1df850.txt                                          solutions
+6       dae9d2b5.txt                                          solutions
+6       d10ecb37.txt                                          solutions
+6       ce22a75a.txt                                          solutions
+6       c9f8e694.txt                                          solutions
+6       ce4f8723.txt                                          solutions
+6       d037b0a7.txt                                          solutions
+6       cf98881b.txt                                          solutions
+6       0ca9ddb6.txt                                          solutions
+6       0c9aba6e.txt                                          solutions
+6       0d3d703e.txt                                          solutions
+6       10fcaaa3.txt                                          solutions
+6       0e206a2e.txt                                          solutions
+6       0c786b71.txt                                          solutions
+6       0a938d79.txt                                          solutions
+6       0a2355a6.txt                                          solutions
+6       0b148d64.txt                                          solutions
+6       0bb8deee.txt                                          solutions
+6       0b17323b.txt                                          solutions
+6       1cf80156.txt                                          solutions
+6       1caeab9d.txt                                          solutions
+6       1f85a75f.txt                                          solutions
+6       21f83797.txt                                          solutions
+6       2013d3e2.txt                                          solutions
+6       1b2d62fb.txt                                          solutions
+6       140c817e.txt                                          solutions
+6       11852cab.txt                                          solutions
+6       18419cfa.txt                                          solutions
+6       1acc24af.txt                                          solutions
+6       195ba7dc.txt                                          solutions
+6       0a1d4ef5.txt                                          solutions
+6       025d127b.txt                                          solutions
+6       017c7c7b.txt                                          solutions
+6       03560426.txt                                          solutions
+6       0520fde7.txt                                          solutions
+6       045e512c.txt                                          solutions
+6       00dbd492.txt                                          solutions
+6       00576224.txt                                          solutions
+6       count_lines.bat                                       scripts
+6       007bbfb7.txt                                          solutions
+6       00d62c1b.txt                                          solutions
+6       009d5c81.txt                                          solutions
+6       08ed6ac7.txt                                          solutions
+6       070dd51e.txt                                          solutions
+6       09629e4f.txt                                          solutions
+6       09c534e7.txt                                          solutions
+6       0962bcdd.txt                                          solutions
+6       06df4c85.txt                                          solutions
+6       05a7bcf2.txt                                          solutions
+6       05269061.txt                                          solutions
+6       05f2a901.txt                                          solutions
+6       0692e18c.txt                                          solutions
+6       0607ce86.txt                                          solutions
+6       54d9e175.txt                                          solutions
+6       5117e062.txt                                          solutions
+6       5521c0d9.txt                                          solutions
+6       5614dbcf.txt                                          solutions
+6       5582e5ca.txt                                          solutions
+6       506d28a5.txt                                          solutions
+6       496994bd.txt                                          solutions
+6       4938f0c2.txt                                          solutions
+6       4c4377d9.txt                                          solutions
+6       4f537728.txt                                          solutions
+6       4c5c2cf0.txt                                          solutions
+6       623ea044.txt                                          solutions
+6       6150a2bd.txt                                          solutions
+6       62ab2642.txt                                          solutions
+6       6430c8c4.txt                                          solutions
+6       62c24649.txt                                          solutions
+6       60c09cac.txt                                          solutions
+6       5b6cbef5.txt                                          solutions
+6       59341089.txt                                          solutions
+6       5bd6f4ac.txt                                          solutions
+6       60b61512.txt                                          solutions
+6       5d2a5c43.txt                                          solutions
+6       44d8ac46.txt                                          solutions
+6       2a5f8217.txt                                          solutions
+6       28bf18c6.txt                                          solutions
+6       2dc579da.txt                                          solutions
+6       31d5ba1a.txt                                          solutions
+6       2dee498d.txt                                          solutions
+6       281123b4.txt                                          solutions
+6       22eb0ac0.txt                                          solutions
+6       2204b7a8.txt                                          solutions
+6       23b5c85d.txt                                          solutions
+6       272f95fa.txt                                          solutions
+6       25ff71a9.txt                                          solutions
+6       3af2c5a8.txt                                          solutions
+6       3aa6fb7a.txt                                          solutions
+6       3c9b0459.txt                                          solutions
+6       4258a5f9.txt                                          solutions
+6       3d31c5b3.txt                                          solutions
+6       37d3e8b2.txt                                          solutions
+6       34b99a2b.txt                                          solutions
+6       3428a4f5.txt                                          solutions
+6       32597951.txt                                          solutions
+6       363442ee.txt                                          solutions
+6       3618c87e.txt                                          solutions
+5       .gitattributes                                        .
+5       05a7bcf2 Wall Variant.txt                             solutions\shelf
+2       paradox_of_improvement.url                            notes\1 - Overall Design
+2       nvidia_nsight_integration_nvidia_developer.url        notes\3 - Search
+1       00dbd492 Manual.txt                                   solutions\shelf
+1       arc-cloud-check.ipynb                                 kaggle\src\diagnostics\cloud_check
+1       arc-smoke-check.ipynb                                 kaggle\src\diagnostics\smoke_check
+1       0520fde7 Manual.txt                                   solutions\shelf
+1       arc_logo.svg                                          assets
+1       arc-competition.ipynb                                 kaggle\src\diagnostics\env_probe
+1       arc-port-probe.ipynb                                  kaggle\src\diagnostics\compile_probe

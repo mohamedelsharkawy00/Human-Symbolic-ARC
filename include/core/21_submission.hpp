@@ -30,15 +30,8 @@ namespace arc {
 // tree, or execution produced an empty grid) fall back to the input grid so
 // the task still has a (wrong but valid) prediction.
 inline grid predict_test(const puzzle &p, const example &test_ex) {
-  grid out{};
-  if (p.best_tree) {
-    environment::score_tree_output(
-        p.best_tree, test_ex, out, p, environment::count_nodes(p.best_tree));
-  }
-  if (out.width <= 0 || out.height <= 0) {
-    return test_ex.input;  // fallback: echo input
-  }
-  return out;
+  const grid out = p.best_tree ? environment::draw(p.best_tree, test_ex, p) : grid{};
+  return out.width <= 0 || out.height <= 0 ? test_ex.input : out;
 }
 
 inline std::string grid_to_json(const grid &g, const example &test_ex) {
@@ -99,10 +92,6 @@ inline std::string describe_result(const puzzle &p, double elapsed) {
 
   int node_count = environment::count_nodes(p.best_tree);
 
-  float best_score = 0.0f;
-  for (size_t i = 0; i < p.train.size(); ++i)
-    best_score += p.best_score_or_worst(false, i);
-
   std::string sol_str = p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : "";
 
   std::string out;
@@ -112,7 +101,6 @@ inline std::string describe_result(const puzzle &p, double elapsed) {
   out += "Test:         " + test_status + "\n";
   out += "Elapsed:      " + format_elapsed(elapsed) + "\n";
   out += to_text("Nodes:        %d\n", node_count);
-  out += to_text("Best Score:   %.4f\n", best_score);
   return out;
 }
 
@@ -138,7 +126,7 @@ struct puzzle_result {
   // A task whose run handed nothing back (it crashed, or was stopped). Still a
   // line in the submission -- every task id must be there -- read straight off
   // the task, with each test input echoed as its answer. Runs nothing, so the
-  // GUI, which has no GPU context, can write it.
+  // GUI, which runs no program, can write it.
   static puzzle_result nothing_from(const challenge_task &task, double elapsed) {
     puzzle p;
     load_task_from_content(task.content, task.id, p);

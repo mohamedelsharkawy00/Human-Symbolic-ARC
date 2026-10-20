@@ -173,9 +173,8 @@ inline void disable_power_throttling() {
 //
 //  2. COMMIT CAP (runaway guillotine, NOT a working limit): caps total
 //     address commit. On breach the allocation FAILS and the process is
-//     killed instead of filling the pagefile forever. Set HIGH (20 GB) so
-//     it never false-trips on CUDA's large committed-but-never-resident
-//     reservations (~5 GB) — only a genuine leak/runaway hits it.
+//     killed instead of filling the pagefile forever. Set high, so only a
+//     genuine leak/runaway hits it.
 //
 // Both overridable without a rebuild:
 //   ARC_WS_MAX_GB   working-set maximum  (0 = no working-set limit)
@@ -355,36 +354,5 @@ private:
   std::string m_pending;
   std::vector<char> m_chunk;
 };
-
-// How much of the card is already spoken for. Anything resident that is not
-// ours -- a game, a second app, a browser -- shows up here, and makes timings
-// from this run incomparable to an uncontended one. Read through NVML, which
-// the driver ships, because the GUI creates no CUDA context to ask with.
-struct gpu_usage {
-  unsigned long long used_mb = 0;
-  unsigned long long total_mb = 0;
-  int used_percent = 0;
-};
-
-inline gpu_usage read_gpu_usage() {
-  struct nvml_memory { unsigned long long total, free, used; };
-  using init_fn = int (*)();
-  using handle_fn = int (*)(unsigned, void **);
-  using memory_fn = int (*)(void *, nvml_memory *);
-  static HMODULE nvml = LoadLibraryW(L"nvml.dll");
-  static auto init = nvml ? (init_fn)(void *)GetProcAddress(nvml, "nvmlInit_v2") : nullptr;
-  static auto device = nvml ? (handle_fn)(void *)GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex_v2") : nullptr;
-  static auto memory = nvml ? (memory_fn)(void *)GetProcAddress(nvml, "nvmlDeviceGetMemoryInfo") : nullptr;
-  static const bool ready = init && device && memory && init() == 0;
-
-  gpu_usage usage;
-  void *gpu = nullptr;
-  nvml_memory m{};
-  if (!ready || device(0, &gpu) != 0 || memory(gpu, &m) != 0 || m.total == 0) return usage;
-  usage.used_mb = m.used / (1024ull * 1024ull);
-  usage.total_mb = m.total / (1024ull * 1024ull);
-  usage.used_percent = (int)(100ull * m.used / m.total);
-  return usage;
-}
 
 }

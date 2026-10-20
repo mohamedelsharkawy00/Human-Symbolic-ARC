@@ -5,13 +5,6 @@
 #pragma once
 #include <cstdint>
 
-// Shared helpers can run on the host and on the CUDA device.
-#ifdef __CUDACC__
-#define ARC_HOST_DEVICE __host__ __device__
-#else
-#define ARC_HOST_DEVICE
-#endif
-
 namespace arc {
 
 // The ARC cell and the ten colors it can hold.
@@ -28,7 +21,7 @@ constexpr int COLOR_COUNT = (int)arc_color::count;
 constexpr int TRANSPARENT = -1;
 
 // Check if a value is a valid color, not anything else.
-ARC_HOST_DEVICE constexpr bool is_color(int value) {
+constexpr bool is_color(int value) {
     return value >= 0 && value < COLOR_COUNT;
 }
 
@@ -39,16 +32,16 @@ constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 // A cell's place in the largest grid as one number, counted row by row, and
 // back again. One number is for speed: a flat store or set finds a cell at a
 // look rather than a search, and a set of cells fits in 900 bits.
-ARC_HOST_DEVICE constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
-ARC_HOST_DEVICE constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
-ARC_HOST_DEVICE constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
+constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
+constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
 
 // A byte a cell, in reading order: its color, or TRANSPARENT where it is empty.
 struct cells {
     int8_t values[MAX_GRID_CELLS];
 
     // A new store is empty.
-    ARC_HOST_DEVICE cells() { clear(); }
+    cells() { clear(); }
 
     // A row, so data[row][col] reaches a cell. A place past the store reaches
     // the first cell rather than memory outside it.
@@ -57,18 +50,18 @@ struct cells {
         Cell* base;
         int row;
 
-        ARC_HOST_DEVICE Cell& operator[](int col) const {
+        Cell& operator[](int col) const {
             int index = cell_index(row, col);
             if (index < 0 || index >= MAX_GRID_CELLS) index = 0;
             return base[index];
         }
     };
 
-    ARC_HOST_DEVICE row_of_cells<int8_t> operator[](int row) { return { values, row }; }
-    ARC_HOST_DEVICE row_of_cells<const int8_t> operator[](int row) const { return { values, row }; }
+    row_of_cells<int8_t> operator[](int row) { return { values, row }; }
+    row_of_cells<const int8_t> operator[](int row) const { return { values, row }; }
 
     // Empty every cell, including storage outside the grid's current dimensions.
-    ARC_HOST_DEVICE void clear() {
+    void clear() {
         for (int8_t& value : values) value = TRANSPARENT;
     }
 };
@@ -88,7 +81,7 @@ struct grid {
 
     // Shared walk for grid-shaped storage, in reading order.
     template <class Grid, class See>
-    ARC_HOST_DEVICE static void walk_colored_cells(const Grid& one_grid, int skip, See see) {
+    static void walk_colored_cells(const Grid& one_grid, int skip, See see) {
         for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
             for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
                 const int color = one_grid.data[row][col];
@@ -97,12 +90,12 @@ struct grid {
     }
 
     template <class See>
-    ARC_HOST_DEVICE void for_each_colored_cell(int skip, See see) const {
+    void for_each_colored_cell(int skip, See see) const {
         walk_colored_cells(*this, skip, see);
     }
 
-    ARC_HOST_DEVICE void clear_cells() { data.clear(); }
-    ARC_HOST_DEVICE void clear() { data.clear(); width = height = 0; }
+    void clear_cells() { data.clear(); }
+    void clear() { data.clear(); width = height = 0; }
 
     bool same_size(const grid& other) const {
         return width == other.width && height == other.height;

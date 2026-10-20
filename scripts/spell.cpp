@@ -7,7 +7,6 @@
 //   spell <task-id> --file <path>        one program per line, first that solves wins
 #include "16_solver.hpp"
 #include "14_puzzle_loader.hpp"
-#include "20_cuda_solver.cuh"
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -43,7 +42,6 @@ int main(int argc, char** argv) {
         programs.push_back(argv[2]);
         every_test = argc > 3 && string(argv[3]) == "--test";
     }
-    if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
 
     task_set set = load_task_set(DS_TRAIN);
     puzzle task;
@@ -59,20 +57,10 @@ int main(int argc, char** argv) {
     for (const string& program : programs) {
         node* tree = environment::parse(program);
         if (!tree) { printf("UNPARSED   %s\n", program.c_str()); continue; }
-        const int nodes = environment::count_nodes(tree);
-        // Past the ceiling nothing runs and every pair draws an empty grid, which
-        // reads exactly like a program that paints nothing. Say which one it is.
-        if (too_long_to_run(nodes)) {
-            printf("TOO LONG   %d ops, the most a program may be is %d   %s\n",
-                   nodes, flat_program::MAX_OPS, program.c_str());
-            environment::remove(tree);
-            continue;
-        }
         int fits = 0;
         vector<grid> drew(task.train.size());
         for (size_t i = 0; i < task.train.size(); ++i) {
-            float score = 0; bool solved = false;
-            environment::execute_tree_via_flat(tree, task.train[i], drew[i], task, nodes, score, solved);
+            drew[i] = environment::draw(tree, task.train[i], task);
             fits += (drew[i] == task.train[i].output);
         }
         printf("%s  %zu/%zu train pairs   %s\n",
@@ -87,8 +75,7 @@ int main(int argc, char** argv) {
         if (fits == (int)task.train.size() || every_test) {
             const vector<grid>* answers = set.solutions_for(id);
             for (size_t i = 0; i < task.test.size() && answers && i < answers->size(); ++i) {
-                grid drawn; float score = 0; bool solved = false;
-                environment::execute_tree_via_flat(tree, task.test[i], drawn, task, nodes, score, solved);
+                const grid drawn = environment::draw(tree, task.test[i], task);
                 const bool right = drawn == (*answers)[i];
                 printf("            test %zu: %s\n", i, right ? "RIGHT" : "wrong");
                 // A program that fits every pair and still misses the test is the

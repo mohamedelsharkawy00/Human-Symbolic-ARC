@@ -1,8 +1,7 @@
 // THE GUI: a window onto the solver. The solver never runs in this process:
 // each puzzle's reading is an arc_headless child (see 30_solver_session.hpp),
-// and this process creates no CUDA context at all -- it is linked without the
-// GPU code, so it cannot. The Kaggle run (kaggle_main.cpp) is that same child,
-// alone.
+// and this process runs no program at all -- it is linked without the ops, so
+// it cannot. The Kaggle run (kaggle_main.cpp) is that same child, alone.
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -144,19 +143,15 @@ int main() {
 			int idx = st.puzzle_idx.load();
 			bool solved = idx >= 0 && idx < solver.get_puzzle_count() &&
 			              solver.get_puzzle().is_solved;
-			// gpu_used says whether the card is shared right now, so nobody reads
-			// a contended run as a regression.
-			gpu_usage gpu = read_gpu_usage();
 			// The three flags read as words, not as 1 and 0: that is the reply
 			// every caller of this port already parses.
 			auto yes_no = [](bool b) { return b ? "true" : "false"; };
 			return to_text(
-				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s "
-				"gpu_used=%d%% build=%s",
+				"ok id=%s idx=%d/%d paused=%s benchmarking=%s solved=%s elapsed=%s build=%s",
 				solver.current_puzzle_id().c_str(), idx, solver.get_puzzle_count(),
 				yes_no((bool)app_state.is_paused), yes_no((bool)app_state.is_benchmarking),
 				yes_no(solved), format_elapsed(get_elapsed(app_state, st.search)).c_str(),
-				gpu.used_percent, exe_build_time().c_str());
+				exe_build_time().c_str());
 		}
 		if (line.starts_with("puzzle ")) {
 			string id = line.substr(7);
@@ -170,19 +165,11 @@ int main() {
 		return "error unknown command " + line;
 	});
 
-	// Say once, at startup, how busy the card already is and whether a sibling
-	// app took 2026 before us. Both mean this run shares the GPU, and a shared
-	// run is not comparable to one that had the card to itself.
-	{
-		// Which binary is answering. An app that started before the build after
-		// it gives old answers to new questions, and nothing else here says so.
-		cmd_server.note(to_text("running the binary built %s", exe_build_time().c_str()));
-		gpu_usage gpu = read_gpu_usage();
-		cmd_server.note(to_text(
-			"gpu %llu MB of %llu MB in use (%d%%)%s", gpu.used_mb, gpu.total_mb,
-			gpu.used_percent,
-			cmd_server.port() != 2026 ? ", another app already holds 2026" : ""));
-	}
+	// Say once, at startup, which binary is answering -- an app that started
+	// before the build after it gives old answers to new questions, and nothing
+	// else here says so -- and whether a sibling app took 2026 before us.
+	cmd_server.note(to_text("running the binary built %s", exe_build_time().c_str()));
+	if (cmd_server.port() != 2026) cmd_server.note("another app already holds 2026");
 
 	// Program Loop, driven off the window message pump: the benchmark switch,
 	// then settings, stats and the frame.

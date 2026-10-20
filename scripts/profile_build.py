@@ -23,10 +23,6 @@ SCRIPT = Path(__file__).resolve()
 def time_command():
     directory, label = sys.argv[2:4]
     command = sys.argv[5:]
-    if label == "CUDA-compile" and os.environ.get("ARC_PROFILE_CUDA") == "1":
-        prefix = Path(directory) / ("cuda-" + uuid.uuid4().hex)
-        command += ["--time", str(prefix.with_suffix(".csv")),
-                    "--fdevice-time-trace", str(prefix.with_suffix(".trace"))]
     start = time.perf_counter()
     code = subprocess.call(command)
     record = {"name": label, "seconds": time.perf_counter() - start,
@@ -54,8 +50,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("preset", nargs="?", default="x64-Release",
                         choices=["x64-Release", "x64-RelWithDebInfo", "x64-Debug"])
-    parser.add_argument("--cuda", action="store_true",
-                        help="record NVCC phase CSV and device compiler JSON timeline (CUDA 12.8+)")
     args = parser.parse_args()
     run = ROOT / "out" / ("build-profile-" + datetime.datetime.now().strftime(
         "%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
@@ -110,14 +104,12 @@ def main():
         env = json.loads(environment_file.read_text(encoding="utf-8"))
         environment_file.unlink()  # The environment is not a report artifact.
         env["NINJA_STATUS"] = "[%f/%t, %es] "
-        env["ARC_PROFILE_CUDA"] = "1" if args.cuda else "0"
         command = ["cmake", "--preset", args.preset, "-B", str(run / "build"),
                    f"-DARC_BUILD_TIMING_DIR={timing.as_posix()}"]
-        for language in ("CXX", "CUDA"):
-            for kind, label in (("COMPILER", "compile"), ("LINKER", "link")):
-                launcher = ";".join([Path(sys.executable).as_posix(), SCRIPT.as_posix(),
-                    "--time-command", timing.as_posix(), f"{language}-{label}", "--"])
-                command.append(f"-DCMAKE_{language}_{kind}_LAUNCHER={launcher}")
+        for kind, label in (("COMPILER", "compile"), ("LINKER", "link")):
+            launcher = ";".join([Path(sys.executable).as_posix(), SCRIPT.as_posix(),
+                "--time-command", timing.as_posix(), f"CXX-{label}", "--"])
+            command.append(f"-DCMAKE_CXX_{kind}_LAUNCHER={launcher}")
         phase("configure", command)
         phase("build", ["cmake", "--build", str(run / "build"), "--", "-v", "-d", "stats"])
     except (OSError, subprocess.CalledProcessError) as error:
@@ -125,11 +117,9 @@ def main():
         code = 1
     finally:
         total = time.perf_counter() - total_start
-        commands = [json.loads(p.read_text(encoding="utf-8")) for p in timing.glob("*.json")
-                    if not p.name.startswith("cuda-")]
+        commands = [json.loads(p.read_text(encoding="utf-8")) for p in timing.glob("*.json")]
         edges = ninja_edges(run / "build/.ninja_log")
         report = {"preset": args.preset, "total_seconds": total, "exit_code": code,
-                  "cuda_trace": args.cuda,
                   "phases": phases, "commands": commands, "ninja_edges": edges}
         (run / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         lines = [f"Fresh {args.preset} build: {total:.3f}s; exit {code}", "", "Wall-clock phases:"]
@@ -144,9 +134,6 @@ def main():
         summary = "\n".join(lines) + "\n"
         (run / "report.txt").write_text(summary, encoding="utf-8")
         print("\n" + summary + f"Reports: {run}", flush=True)
-        if args.cuda:
-            from summarize_cuda_build import summarize
-            print(summarize(run) or "No CUDA phase timings were produced.", flush=True)
     return code
 
 

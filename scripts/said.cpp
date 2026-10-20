@@ -25,19 +25,16 @@
 // what it says. The panes are still tallied apart.
 //
 // THE PUZZLES ARE READ AT ONCE, one per CPU thread (in_parallel.hpp). Each
-// writes its own readout. Their programs run one puzzle at a time: every run on
-// the GPU goes through its one set of device buffers. The lines come out in the
+// writes its own readout and runs its own programs. The lines come out in the
 // dataset's order, as they did one puzzle at a time.
 #include "16_solver.hpp"
 #include "14_puzzle_loader.hpp"
-#include "20_cuda_solver.cuh"
 #include "in_parallel.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -50,7 +47,7 @@ struct said_one {
     bool spoke = false, panes = false, fitted = false, right = false;
     string program;
     bool loaded = false;
-    double total_ms = 0, infer_ms = 0, report_ms = 0, gpu_wait_ms = 0, score_ms = 0;
+    double total_ms = 0, infer_ms = 0, report_ms = 0, run_ms = 0;
     inference_work_counts work;
     matching_work_counts matching;
     inference_times times;
@@ -67,20 +64,13 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
     for (const string& program : task.suggested_programs) {
         node* tree = environment::parse(program);
         if (!tree) continue;
-        const int nodes = environment::count_nodes(tree);
         bool all_fit = true;
-        for (const auto& pair : task.train) {
-            grid drawn; float score = 0; bool solved = false;
-            environment::execute_tree_via_flat(tree, pair, drawn, task, nodes, score, solved);
-            if (drawn != pair.output) { all_fit = false; break; }
-        }
+        for (const auto& pair : task.train)
+            if (environment::draw(tree, pair, task) != pair.output) { all_fit = false; break; }
         if (all_fit) {
             bool every = answers && answers->size() == task.test.size();
-            for (size_t i = 0; i < task.test.size() && every; ++i) {
-                grid drawn; float score = 0; bool solved = false;
-                environment::execute_tree_via_flat(tree, task.test[i], drawn, task, nodes, score, solved);
-                every = drawn == (*answers)[i];
-            }
+            for (size_t i = 0; i < task.test.size() && every; ++i)
+                every = environment::draw(tree, task.test[i], task) == (*answers)[i];
             one.fitted = true;
             one.right = every;
             one.program = program;
@@ -142,7 +132,6 @@ int main(int argc, char** argv) {
     const int dataset = named ? dataset_from_name(named) : DS_TRAIN;
     if (dataset != DS_TRAIN && dataset != DS_EVAL) { fprintf(stderr, "ARC_DATASET must be train or eval\n"); return 2; }
     task_set set = load_task_set(dataset);
-    if (!cuda_init()) { fprintf(stderr, "no GPU\n"); return 1; }
     // Each puzzle asked, by its place in the dataset, which its readout names.
     vector<int> asked;
     for (int at = 0; at < (int)set.tasks.size(); ++at)
@@ -165,7 +154,7 @@ int main(int argc, char** argv) {
     if (audit_preparations) filesystem::create_directories("preparations");
     FILE* timings = fopen("timings.csv", "w");
     if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
-    fputs("id,loaded,total_ms,infer_ms,report_ms,gpu_wait_ms,score_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges", timings);
+    fputs("id,loaded,total_ms,infer_ms,report_ms,run_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges", timings);
     for (const char* name : inference_times::names) fprintf(timings, ",%s_ms", name);
     fputs("\n", timings);
     fflush(timings);
@@ -175,7 +164,6 @@ int main(int argc, char** argv) {
     int spoke = 0, fitted = 0, right = 0, wrong = 0;
     int pane_spoke = 0, pane_fitted = 0, pane_right = 0, pane_wrong = 0;
     vector<said_one> said(asked.size());
-    mutex gpu;
     in_parallel((int)asked.size(), [&](int which) {
         const int at = asked[(size_t)which];
         const challenge_task& entry = set.tasks[(size_t)at];
@@ -225,21 +213,18 @@ int main(int argc, char** argv) {
         one.spoke = !task.suggested_programs.empty();
         one.panes = task.inf.pane_split.holds();
         if (one.spoke) {
-            const auto waiting = run_clock::now();
-            const lock_guard on_the_gpu(gpu);
-            one.gpu_wait_ms = milliseconds_since(waiting);
-            const auto scoring = run_clock::now();
+            const auto running = run_clock::now();
             run_what_it_said(task, set.solutions_for(entry.id), one);
-            one.score_ms = milliseconds_since(scoring);
+            one.run_ms = milliseconds_since(running);
         }
         one.total_ms = milliseconds_since(started);
     }, [&](int which) {
         const said_one& one = said[(size_t)which];
         const auto& work = one.work;
         const auto& matching = one.matching;
-        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu",
+        fprintf(timings, "%s,%d,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu",
                 set.tasks[(size_t)asked[(size_t)which]].id.c_str(), (int)one.loaded,
-                one.total_ms, one.infer_ms, one.report_ms, one.gpu_wait_ms, one.score_ms,
+                one.total_ms, one.infer_ms, one.report_ms, one.run_ms,
                 work.preparations, work.readings, work.later_readings, work.lines,
                 work.paint_replays, work.slide_replays, work.drop_replays, work.walks, work.lays,
                 matching.calls, matching.rematches, matching.gathers, matching.fixed_scans,

@@ -1,16 +1,16 @@
 // The words a program is written in, as 0_core.hpp holds the words a grid is.
 // Numbered after 7_infer.hpp, whose elected facts some ops name. The vocabulary
 // itself compiles against 0_core.hpp alone. Read by 9_sentences.hpp, which spells
-// programs, and 12_dsl.cuh, which runs them, from the same definitions.
+// programs, and src/ops.cpp, which runs them, from the same definitions.
 //
 // WORDS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says a word only
-// after replaying it on every training pair on the host, with the arithmetic the
-// GPU op runs, and seeing it at work in every pair. The ops below have no such
+// after replaying it on every training pair, with the arithmetic the op runs,
+// and seeing it at work in every pair. The ops below have no such
 // replay in the general reading: no inferred program uses them, except where one
 // special-case rule spells them for its own pattern. To unlock one:
-//   1. Move the op's arithmetic into a shared ARC_HOST_DEVICE helper in
-//      8b_op_math.hpp and have the GPU op in src/cuda_solver.cu call it, so
-//      the replay and the op cannot differ.
+//   1. Move the op's arithmetic into a shared helper in 8b_op_math.hpp and
+//      have the op in src/ops.cpp call it, so the replay and the op cannot
+//      differ.
 //   2. Replay it in 7_infer.hpp: a *_holds check on one of the replay templates
 //      (paint_holds, slides_hold, drops_hold) asked in finish_the_line for a
 //      same-size word, a frame kind in choose_piece_frame for a size change, or a
@@ -49,18 +49,18 @@ namespace arc {
 constexpr int COLOR_PAIR_COUNT = COLOR_COUNT * (COLOR_COUNT - 1) / 2;
 
 // Unordered color pairs, numbered {0,1}, {0,2}, ... {8,9}.
-// Inference, program text, and CUDA all use this same numbering.
+// Inference, program text, and the ops all use this same numbering.
 struct color_pair {
     int first = TRANSPARENT, second = TRANSPARENT;
 
-    ARC_HOST_DEVICE constexpr int index() const {
+    constexpr int index() const {
         if (!is_color(first) || !is_color(second) || first == second) return -1;
         const int low = first < second ? first : second;
         const int high = first < second ? second : first;
         return low * (2 * COLOR_COUNT - low - 1) / 2 + high - low - 1;
     }
 
-    ARC_HOST_DEVICE static constexpr color_pair from_index(int index) {
+    static constexpr color_pair from_index(int index) {
         if (index < 0 || index >= COLOR_PAIR_COUNT) return {};
         for (int first = 0; first < COLOR_COUNT - 1; ++first) {
             const int remaining = COLOR_COUNT - first - 1;
@@ -89,11 +89,11 @@ enum class op_role { get, reduce, select, translate, map, generate, combine, cou
 enum class inferred_amount { none, some, all };
 
 // --- Op vocabulary: the single home of the DSL op list ---
-// CPU (reading, GUI, serializer) and GPU (kernel dispatch) both derive from
-// this one macro, so the two sides cannot drift apart.
+// The reading, the GUI, the serializer and the ops all derive from this one
+// macro, so none can drift from the others.
 // INFERRED says how much the op depends on learned facts.
-// CLEARS means it removes selection marks. That describes kernel behavior, so
-// update both together.
+// CLEARS means it removes selection marks. That describes what the op does
+// (src/ops.cpp), so update both together.
 // The ID also supplies its text spelling (#id), so names cannot drift.
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
@@ -271,10 +271,6 @@ struct op_row {
     bool clears = false;
 };
 
-// SWITCHES, not tables: the kernel calls these, and a table would be host
-// memory the device cannot reach. Relaxed-constexpr compiles that silently and
-// it faults at runtime, so they must stay pure comparison with nothing to
-// dereference.
 inline constexpr op_row row_of(node_type t) {
     switch (t) {
 #define X(id, low, high, role, inferred, clears) \
@@ -285,27 +281,10 @@ inline constexpr op_row row_of(node_type t) {
     }
 }
 
-// THE TWO COLUMNS THE KERNEL READS on every op it runs (gpu_eval_program_warp)
-// keep a switch of their own. Read through row_of, the whole row cost that
-// function registers: 72 more bytes of spill stores and 176 of loads, measured
-// 2026-09-24. Every op's role, straight off the ROLE column, is the one thing
-// anyone reads to ask what an op does.
-inline constexpr op_role role_of(node_type t) {
-    switch (t) {
-#define X(id, low, high, role, inferred, clears) case node_type::id: return op_role::role;
-    NODE_PRIMITIVES
-#undef X
-    default: return op_row{}.role;
-    }
-}
-inline constexpr bool clears_the_marks(node_type t) {
-    switch (t) {
-#define X(id, low, high, role, inferred, clears) case node_type::id: return clears;
-    NODE_PRIMITIVES
-#undef X
-    default: return op_row{}.clears;
-    }
-}
+// Every op's role, straight off the ROLE column, is the one thing anyone reads
+// to ask what an op does.
+inline constexpr op_role role_of(node_type t) { return row_of(t).role; }
+inline constexpr bool clears_the_marks(node_type t) { return row_of(t).clears; }
 
 // THE POSE EACH TURN OR FLIP SETS ITS PIECE IN, numbered as 1_readings.hpp
 // numbers the eight: the op reads every cell through pose_source with it, and

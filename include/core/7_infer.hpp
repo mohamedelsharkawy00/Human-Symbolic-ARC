@@ -284,7 +284,7 @@ struct color_diff_facts {
 // can be said out loud.
 struct color_swap_candidates {
     // Indexed by the op's variant k = row-major pair {a,b}, a<b — the same
-    // encoding gpu_exec_bidi_color_map decodes
+    // encoding BidiColorMap decodes
     bool variant[COLOR_PAIR_COUNT] = {};
     // Subset a sentence may say. A swap is spoken over CurrentObjects, never
     // over the grid, and the background is in no piece -- so a color that only
@@ -510,7 +510,7 @@ struct partner_pieces {
     }
     // Piece i's one partner of `kind` (partner_of_kind) among the pieces not picked, or -1.
     int partner_of_kind(int kind, int i) const { return arc::partner_of_kind(kind, i, *this); }
-    // HOW FAR PIECE i GOES, as the partner moves take it (the kernel's AlignTo and
+    // HOW FAR PIECE i GOES, as the partner moves take it (the ops AlignTo and
     // MoveToward, through the same helpers), or false when it has no one partner.
     // Level with its partner's rows -- or, with `columns`, columns:
     bool goes_level(int i, bool columns, partner_by how, direction_step& by) const {
@@ -949,8 +949,8 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
 }
 
 // THE HAND DRAWN AS ITS SENTENCE LAYS IT: every piece, moved by `by(i)`, in the
-// order the list holds them, as the kernel's Union and Underlay draw a list
-// (gpu_each_picked_cell_warp) -- each over what the pieces before it put down,
+// order the list holds them, as the ops Union and Underlay draw a list
+// (each_picked_cell, src/ops.cpp) -- each over what the pieces before it put down,
 // or, laid `under`, only where nothing is yet. Where two pieces meet, Union
 // shows the later one and Underlay the earlier, whatever the output wants there
 // (833966f4's 9, slid level with the 0 after it in the list, lay under the 0).
@@ -966,7 +966,7 @@ inline bool draw_the_hand(grid& canvas, const vector<object>& hand, bool under, 
     return true;
 }
 
-// THE CANVAS A PROGRAM PAINTS ON, sized and closed as the kernel does it: the
+// THE CANVAS A PROGRAM PAINTS ON, sized and closed as the ops do it: the
 // size rule's box, or under BoundingBox the largest grid there is, cropped at
 // the end to what was painted. `paint` lays its cells on it, TRANSPARENT where
 // nothing is yet, or says false. What nothing painted stays empty -- what a
@@ -1889,7 +1889,7 @@ struct pane_gather_rule {
 
     // Draws what the sentence paints for one input, on the canvas the size rule
     // gives it -- or, under BoundingBox, on the largest canvas there is, closed on
-    // what was painted, as the kernel closes it. Declines when no pane holds
+    // what was painted, as the ops close it. Declines when no pane holds
     // anything, since then nothing is laid out at all.
     static bool draw(const grid& input, const pane_split_facts& split, const output_dimension_rule& size,
                      grid& drawn) {
@@ -1909,7 +1909,7 @@ struct pane_gather_rule {
             cell_h = max(cell_h, drawings[(size_t)p].height());
         }
         if (cell_w == 0 || cell_h == 0) return false;
-        // The bands come off the frames, the same grouping the kernel reads.
+        // The bands come off the frames, the same grouping Layout reads.
         int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
         auto frame = [&](int p) { return boxes[(size_t)p].box(); };
         const int rows = bands_of(count, true, frame, row_of), cols = bands_of(count, false, frame, col_of);
@@ -2285,7 +2285,7 @@ struct overlap_corner_rule {
 // names a piece by what it is -- so a grid where three colours share the work
 // is a movement with no sentence, and is not claimed here.
 //
-// shift_to_touch is shared with GPU execution, so both choose the same landing.
+// shift_to_touch is shared with the op, so both choose the same landing.
 struct slide_to_touch_rule {
     int8_t stays  = -1;   // the colour that is already where it belongs
     int8_t slides = -1;   // the colour that closes the gap until they touch
@@ -2378,7 +2378,7 @@ constexpr int direction_asked(int at) { return at < 4 ? 2 * at : 2 * (at - 4) + 
 // or one color's pieces, go one of the eight ways until they meet the edge of
 // the canvas, passing over whatever is in the way, and land over or under what
 // stays. That is MoveToEdge on a pick, so the replay steps each piece as the
-// kernel does (steps_to_edge), and how far is the canvas's to say -- it differs
+// op does (steps_to_edge), and how far is the canvas's to say -- it differs
 // from piece to piece, and no count of cells is written into the sentence.
 //
 // THE ELECTED CUT FIRST, THEN THE OTHERS. The election keeps the shortest
@@ -8039,7 +8039,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
     inf.mark_lattice = mark_lattice_rule::detect(train, inf.correspondence, tiles);
     inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence);
     // THE PUZZLE HAS ONE TABLE, the first pass's: the program carries that one
-    // (fill_puzzle_level), so a pass after it reads none (e760a62e's third pass
+    // (environment::draw), so a pass after it reads none (e760a62e's third pass
     // named its pieces' colors by a symmetry table the program never had).
     if (inf.pass == 1 && inf.size.Chosen == output_dimension_rule::Identity) {
         inf.shape_color_map = shape_color_map_rule::detect_body_recolor(train, inf.correspondence, tiles);

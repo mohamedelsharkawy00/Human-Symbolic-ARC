@@ -1,6 +1,6 @@
-// What each op does to the cells, said once. The GPU op calls it, and the
-// reading replays the op by calling the same (7_infer.hpp), so the two cannot
-// draw differently. A word's arithmetic goes here before the word is said.
+// What each op does to the cells, said once. The op calls it (src/ops.cpp),
+// and the reading replays the op by calling the same (7_infer.hpp), so the two
+// cannot draw differently. A word's arithmetic goes here before the word is said.
 // Grouped as 8_vocabulary.hpp groups the ops: reduce, select, translate, map,
 // generate, after what several of them share.
 #pragma once
@@ -45,21 +45,21 @@ enum class partner_by : int8_t { around_it, inside_it, same_row, same_column, ne
 // what each lets a shape change (shape_freedom), read off how far past
 // same_shape it is.
 constexpr int SHAPE_LIKENESSES = (int)partner_by::count - (int)partner_by::same_shape;
-ARC_HOST_DEVICE constexpr shape_freedom likeness_freedom(int like) {
+constexpr shape_freedom likeness_freedom(int like) {
     return { (like & 1) != 0, like / 2 == 1, like / 2 == 2 };
 }
 // The likeness a partner way is, -1 for a way that is none.
-ARC_HOST_DEVICE constexpr int likeness_of(partner_by how) {
+constexpr int likeness_of(partner_by how) {
     return how >= partner_by::same_shape && how < partner_by::count ? (int)how - (int)partner_by::same_shape : -1;
 }
 // Whether a likeness lets size change: at any size, or stretched.
-ARC_HOST_DEVICE constexpr bool sized_likeness(int like) { return like >= 2; }
+constexpr bool sized_likeness(int like) { return like >= 2; }
 static_assert(SHAPE_LIKENESSES == 6 && (int)partner_by::same_shape_stretched_turned == (int)partner_by::count - 1,
               "the likenesses are the last partner ways: as it lies or turned, at its size, any size, stretched");
 
 // The gap between two boxes, the empty rows plus the empty columns between
 // them; 0 when they touch or overlap.
-ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
+inline int box_gap(const cell_box& one, const cell_box& other) {
     const int rows = one.row0 > other.row1 ? one.row0 - other.row1 - 1
                    : other.row0 > one.row1 ? other.row0 - one.row1 - 1 : 0;
     const int cols = one.col0 > other.col1 ? one.col0 - other.col1 - 1
@@ -72,7 +72,7 @@ ARC_HOST_DEVICE inline int box_gap(const cell_box& one, const cell_box& other) {
 // a corner way, both of its two sides. SelectPartner's side of a partner: a
 // partner below a piece stays below it however far either slides across
 // (4364c1c4's stacks, each upper piece a step left, each lower one right).
-ARC_HOST_DEVICE inline bool lies_toward(const cell_box& from, const cell_box& to, int way) {
+inline bool lies_toward(const cell_box& from, const cell_box& to, int way) {
     const direction_step step = step_of(way);
     return (step.down == 0 || (step.down > 0 ? to.row0 > from.row1 : to.row1 < from.row0)) &&
            (step.across == 0 || (step.across > 0 ? to.col0 > from.col1 : to.col1 < from.col0));
@@ -82,7 +82,7 @@ ARC_HOST_DEVICE inline bool lies_toward(const cell_box& from, const cell_box& to
 // on a cell of the other, or beside one at a side -- or, unless `sides_only`,
 // at a corner. The pieces are asked as each_partner asks them, below.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, direction_step by, bool sides_only) {
+inline bool touches(const Pieces& pieces, int mine, int other, direction_step by, bool sides_only) {
     const cell_box own = pieces.box(mine);
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) {
@@ -97,7 +97,7 @@ ARC_HOST_DEVICE inline bool touches(const Pieces& pieces, int mine, int other, d
 
 // Whether pieces mine and other are one shape, as the likeness `like` lets them differ.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
+inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
     const cell_box own = pieces.box(mine), box = pieces.box(other);
     const bool sized = sized_likeness(like);
     return same_shape_in_blocks(
@@ -119,8 +119,8 @@ ARC_HOST_DEVICE inline bool shapes_alike(const Pieces& pieces, int mine, int oth
 // for the color questions below, `color(i)`, the color an op reads off its first
 // cell, and `holds(i, color)`, whether it holds a cell of that color.
 template <class Pieces, class Visit>
-ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
-                                         bool among_all = false) {
+inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
+                         bool among_all = false) {
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
     auto may_partner = [&](int other) { return other != mine && (among_all || !pieces.is_picked(other)); };
@@ -169,7 +169,7 @@ ARC_HOST_DEVICE inline void each_partner(partner_by how, int mine, const Pieces&
 // The color the piece `mine` takes from its partners: the one color every
 // partner wears, or -1 when it has none or they disagree.
 template <class Pieces>
-ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, const Pieces& pieces) {
+inline int partner_color(partner_by how, int mine, const Pieces& pieces) {
     int color = -1;
     bool clash = false;
     each_partner(how, mine, pieces, [&](int other) {
@@ -183,7 +183,7 @@ ARC_HOST_DEVICE inline int partner_color(partner_by how, int mine, const Pieces&
 // The piece `mine`'s one partner, or -1 when it has none or several: a place
 // is read off one piece, never agreed among many.
 template <class Pieces>
-ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, const Pieces& pieces) {
+inline int partner_of(partner_by how, int mine, const Pieces& pieces) {
     int found = -1, partners = 0;
     each_partner(how, mine, pieces, [&](int other) {
         found = other;
@@ -196,7 +196,7 @@ ARC_HOST_DEVICE inline int partner_of(partner_by how, int mine, const Pieces& pi
 // the pieces not picked: what a piece like another asks (like_the_key), where
 // partner_of asks for the one.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
+inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
     bool any = false;
     each_partner(how, mine, pieces, [&](int) { any = true; });
     return any;
@@ -209,7 +209,7 @@ ARC_HOST_DEVICE inline bool any_partner(partner_by how, int mine, const Pieces& 
 // none, or several.
 constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
 template <class Pieces>
-ARC_HOST_DEVICE inline int partner_of_kind(int kind, int mine, const Pieces& pieces) {
+inline int partner_of_kind(int kind, int mine, const Pieces& pieces) {
     if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, pieces);
     int found = -1;
     for (int other = 0; other < pieces.count(); ++other) {
@@ -221,7 +221,7 @@ ARC_HOST_DEVICE inline int partner_of_kind(int kind, int mine, const Pieces& pie
 }
 
 // Share the executor's span grouping between inference and Layout/SelectRow/SelectColumn.
-ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
+inline int overlapping_bands(int count, const int16_t* lows,
                                                const int16_t* highs, int8_t* band_of,
                                                int* order) {
     for (int i = 0; i < count; ++i) order[i] = i;
@@ -255,7 +255,7 @@ ARC_HOST_DEVICE inline int overlapping_bands(int count, const int16_t* lows,
 // The boundary used by Outline: any missing eight-way neighbour makes an edge.
 // The caller supplies occupancy, including false outside its own frame.
 template <class Occupied>
-ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) {
+inline bool on_object_edge(int row, int col, Occupied occupied) {
     for (int way = 0; way < direction::count; ++way)
         if (!occupied(row + step_of(way).down, col + step_of(way).across)) return true;
     return false;
@@ -266,7 +266,7 @@ ARC_HOST_DEVICE inline bool on_object_edge(int row, int col, Occupied occupied) 
 // Reading and execution ask the same helper.
 enum class fit_to : int8_t { input, canvas, painted, count };
 template <class Canvas>
-ARC_HOST_DEVICE inline cell_box fit_frame(int to, int input_width, int input_height,
+inline cell_box fit_frame(int to, int input_width, int input_height,
                                          const Canvas& canvas) {
     if (to == (int)fit_to::input) return {0, 0, input_height - 1, input_width - 1};
     if (to == (int)fit_to::canvas) return {0, 0, canvas.height - 1, canvas.width - 1};
@@ -277,7 +277,7 @@ ARC_HOST_DEVICE inline cell_box fit_frame(int to, int input_width, int input_hei
                 if (is_color(canvas.data[r][c])) box.include_cell(r, c);
     return box;
 }
-ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int target_size) {
+inline int fit_source_cell(int target_cell, int source_size, int target_size) {
     return target_cell * source_size / target_size;
 }
 
@@ -288,7 +288,7 @@ ARC_HOST_DEVICE inline int fit_source_cell(int target_cell, int source_size, int
 // many cells of its `height` by `width` box. Counted here for the op and for
 // the reading that replays it, so the two cannot pick different pieces.
 template <class Occupied>
-ARC_HOST_DEVICE inline bool paints_at_least(int height, int width, Occupied occupied, int at_least) {
+inline bool paints_at_least(int height, int width, Occupied occupied, int at_least) {
     int cells = 0;
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) cells += occupied(row, col) ? 1 : 0;
@@ -300,7 +300,7 @@ ARC_HOST_DEVICE inline bool paints_at_least(int height, int width, Occupied occu
 // Shared by inference and SelectObjectsWithHoles so learned keys mean the same
 // at runtime.
 template <class Occupied>
-ARC_HOST_DEVICE inline int object_hole_count(int height, int width, Occupied occupied) {
+inline int object_hole_count(int height, int width, Occupied occupied) {
     if (width <= 0 || height <= 0) return 0;
     // Walked: outside, or in a hole already counted.
     bool walked[MAX_GRID_DIM][MAX_GRID_DIM];
@@ -330,7 +330,7 @@ ARC_HOST_DEVICE inline int object_hole_count(int height, int width, Occupied occ
 // TRANSPARENT where it paints none. Said once for the ops and the reading.
 enum class count_kind : int8_t { cells, colors, holes, of_color, count = of_color + COLOR_COUNT };
 template <class ColorAt>
-ARC_HOST_DEVICE inline int count_of(int kind, int height, int width, ColorAt color_at) {
+inline int count_of(int kind, int height, int width, ColorAt color_at) {
     if (kind == (int)count_kind::holes)
         return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
     uint32_t colors = 0;
@@ -357,7 +357,7 @@ constexpr int SIZE_RANKS = 10;
 // counts, handed to pick(i), ties and all; none where every one counts the
 // same, which tells none apart. Said once for the op and for the reading.
 template <class Value, class Pick>
-ARC_HOST_DEVICE inline void each_extreme(int count, bool most, Value value, Pick pick) {
+inline void each_extreme(int count, bool most, Value value, Pick pick) {
     if (count <= 0) return;
     int best = value(0), other = best;
     for (int i = 1; i < count; ++i) {
@@ -380,7 +380,7 @@ enum class twin_by : int8_t { drawing, shape, shape_turned, colors, by_count,
 // The number twins by colors or by a count share: the colors a piece wears,
 // a bit each, or what it counts (count_of); -1 for the twins by shape.
 template <class ColorAt>
-ARC_HOST_DEVICE inline int twin_key(int how, int height, int width, ColorAt color_at) {
+inline int twin_key(int how, int height, int width, ColorAt color_at) {
     if (how >= (int)twin_by::by_count) return count_of(how - (int)twin_by::by_count, height, width, color_at);
     if (how != (int)twin_by::colors) return -1;
     int colors = 0;
@@ -394,7 +394,7 @@ ARC_HOST_DEVICE inline int twin_key(int how, int height, int width, ColorAt colo
 // or several are without one, or where there are fewer than three -- two
 // unlike each other are each the other's odd one.
 template <class Twins>
-ARC_HOST_DEVICE inline int lone_one(int count, Twins twins) {
+inline int lone_one(int count, Twins twins) {
     if (count < 3) return -1;
     int found = -1;
     for (int i = 0; i < count; ++i) {
@@ -414,7 +414,7 @@ ARC_HOST_DEVICE inline int lone_one(int count, Twins twins) {
 // none (lone_one). Said once for SelectUnique and for the reading that picks
 // by it, which reads a key once a piece (twin_key) where twins share one.
 template<class Width, class Height, class ColorAt>
-ARC_HOST_DEVICE inline int unique_piece(int how, int count, Width width, Height height, ColorAt color_at) {
+inline int unique_piece(int how, int count, Width width, Height height, ColorAt color_at) {
     if (how < 0 || how >= (int)twin_by::count) return -1;
     return lone_one(count, [&](int i, int j) {
         auto cell_of = [&](int piece) { return [&, piece](int r, int c) { return (int)color_at(piece, r, c); }; };
@@ -432,7 +432,7 @@ ARC_HOST_DEVICE inline int unique_piece(int how, int count, Width width, Height 
 // middle lines, or the line falls outside it. SelectRowFromMiddle and
 // SelectColumnFromMiddle read the span every piece's paint covers, and the
 // reading replays them here (d23f8c26 keeps the middle column).
-ARC_HOST_DEVICE inline int line_from_middle(int lo, int hi, int from) {
+inline int line_from_middle(int lo, int hi, int from) {
     if (lo > hi || (hi - lo) % 2 != 0) return -1;
     const int line = (lo + hi) / 2 + from;
     return line >= lo && line <= hi ? line : -1;
@@ -448,7 +448,7 @@ ARC_HOST_DEVICE inline int line_from_middle(int lo, int hi, int from) {
 // into its gap would be the same question answered with the place. The pieces
 // are asked as each_partner asks them.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, const Pieces& pieces) {
+inline bool would_fit(int mine, int partner, const Pieces& pieces) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
@@ -537,7 +537,7 @@ ARC_HOST_DEVICE inline bool would_fit(int mine, int partner, const Pieces& piece
 // `wall(row, col)` says whether a cell is a wall. Partition cuts on these parts
 // and SelectPartition picks by them, so a part is one thing wherever it is asked.
 template <class Wall>
-ARC_HOST_DEVICE inline int fence_parts(int width, int height, Wall wall, int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+inline int fence_parts(int width, int height, Wall wall, int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
     for (int row = 0; row < MAX_GRID_DIM; ++row)
         for (int col = 0; col < MAX_GRID_DIM; ++col) part[row][col] = -1;
     if (width > MAX_GRID_DIM) width = MAX_GRID_DIM;
@@ -564,7 +564,7 @@ ARC_HOST_DEVICE inline int fence_parts(int width, int height, Wall wall, int16_t
 // piece paints, as Partition and SelectPartition read them. The pieces are
 // asked as each_partner asks them.
 template <class Pieces>
-ARC_HOST_DEVICE inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
+inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
                                                 int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
     bool wall[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     for (int i = 0; i < pieces.count(); ++i) {
@@ -582,8 +582,8 @@ ARC_HOST_DEVICE inline int parts_the_pick_fences(const Pieces& pieces, int width
 // it paints a cell, and every cell it paints is in that part. A piece over a
 // wall, or across two parts, lies in none. SelectPartition[which] picks these.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool lies_in_part(const Pieces& pieces, int mine, int which,
-                                         const int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+inline bool lies_in_part(const Pieces& pieces, int mine, int which,
+                         const int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
     const cell_box box = pieces.box(mine);
     if (box.empty()) return false;
     for (int row = box.row0; row <= box.row1; ++row)
@@ -603,7 +603,7 @@ ARC_HOST_DEVICE inline bool lies_in_part(const Pieces& pieces, int mine, int whi
 // are asked as each_partner asks them.
 constexpr int KEY_LIKENESSES = SHAPE_LIKENESSES;
 template <class Pieces>
-ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces) {
+inline bool like_the_key(int how, int mine, const Pieces& pieces) {
     return how >= 0 && how < KEY_LIKENESSES &&
            any_partner((partner_by)((int)partner_by::same_shape + how), mine, pieces);
 }
@@ -619,11 +619,11 @@ ARC_HOST_DEVICE inline bool like_the_key(int how, int mine, const Pieces& pieces
 // asks them.
 constexpr int PARTNER_SIDES = 1 + direction::count;
 constexpr int SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)partner_by::count;
-ARC_HOST_DEVICE constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
+constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
 // The side a SelectPartner value names: -1 for any, else the direction.
-ARC_HOST_DEVICE constexpr int partner_side_of(int value) { return value / (int)partner_by::count - 1; }
+constexpr int partner_side_of(int value) { return value / (int)partner_by::count - 1; }
 template <class Pieces, class Mark>
-ARC_HOST_DEVICE inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
+inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
     if (value < 0 || value >= SELECT_PARTNER_VALUES) return;
     const partner_by way = partner_way_of(value);
     const int side = partner_side_of(value);
@@ -642,11 +642,11 @@ ARC_HOST_DEVICE inline void each_partner_picked(int value, const Pieces& pieces,
 // reads one transposed, so its long way runs down, and a square one as it
 // stands. Asked here by the op and by any reading that replays it, so the two
 // cannot turn different grids.
-ARC_HOST_DEVICE constexpr bool lies_on_its_side(int width, int height) { return width > height; }
+constexpr bool lies_on_its_side(int width, int height) { return width > height; }
 
 // The color most of a `factor` by `factor` block wears, as ScaleDown votes.
 template <class Mask>
-ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
+inline int8_t majority_vote(const Mask& mask, int row, int col,
                                              int factor, int height, int width) {
     color_tally tally;
     for (int dr = 0; dr < factor; ++dr)
@@ -659,9 +659,9 @@ ARC_HOST_DEVICE inline int8_t majority_vote(const Mask& mask, int row, int col,
 }
 
 // WHERE SHIFT MOVES A BOX, its own size away: one step that way (step_of), its
-// height a step down or up and its width a step across. The kernel and the
+// height a step down or up and its width a step across. The op and the
 // reading that replays it take the move from here; a way out of range stays.
-ARC_HOST_DEVICE inline direction_step shift_by(int way, int width, int height) {
+inline direction_step shift_by(int way, int width, int height) {
     if (way < 0 || way >= direction::count) return { 0, 0 };
     const direction_step step = step_of(way);
     return { step.down * height, step.across * width };
@@ -670,7 +670,7 @@ ARC_HOST_DEVICE inline direction_step shift_by(int way, int width, int height) {
 // How far a box goes that way before its far side meets the edge of a canvas
 // this size, as MoveToEdge takes it: negative when that side already lies past
 // the edge, and on a diagonal whichever edge comes first.
-ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
+inline int steps_to_edge(const cell_box& box, int width, int height, int way) {
     const direction_step step = step_of(way);
     const int room_down = step.down > 0 ? height - 1 - box.row1 : box.row0;
     const int room_across = step.across > 0 ? width - 1 - box.col1 : box.col0;
@@ -685,7 +685,7 @@ ARC_HOST_DEVICE inline int steps_to_edge(const cell_box& box, int width, int hei
 // off the rows goes up or down, and one flatter than that off the columns goes
 // across; tan 22.5 is sqrt 2 - 1, irrational, so with whole cells no line lies
 // on an edge, and the test needs no fractions. -1 when the middles coincide.
-ARC_HOST_DEVICE inline int direction_toward(const cell_box& from, const cell_box& to) {
+inline int direction_toward(const cell_box& from, const cell_box& to) {
     // Twice the middles' distance, so a middle between two cells is whole.
     const int down = (to.row0 + to.row1) - (from.row0 + from.row1);
     const int across = (to.col0 + to.col1) - (from.col0 + from.col1);
@@ -708,10 +708,10 @@ enum class toward_by : int8_t { a_step, its_size, touching, count };
 // it goes; or step by step until a cell of it touches a cell of the partner, at
 // a side or a corner, as partner_by::touching asks, on a canvas `width` by
 // `height`. A piece that touches already, or that would leave the canvas first,
-// stays. Hands back how far down and across; the kernel and the reading's replay
+// stays. Hands back how far down and across; the op and the reading's replay
 // both take the move from here. The pieces are asked as each_partner asks them.
 template <class Pieces>
-ARC_HOST_DEVICE inline direction_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
+inline direction_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
                                                 int width, int height) {
     const cell_box own = pieces.box(mine);
     const int way = direction_toward(own, pieces.box(partner));
@@ -732,8 +732,8 @@ ARC_HOST_DEVICE inline direction_step move_toward(toward_by far, int mine, int p
 // Read from the original cells and write into separate, already-cleared storage.
 // Returns whether any cell moved. Selection and dimension limits belong to callers.
 template <class At, class Put>
-ARC_HOST_DEVICE inline bool slam_cells(int width, int height, bool rows, int step,
-                                       At at, Put put) {
+inline bool slam_cells(int width, int height, bool rows, int step,
+                       At at, Put put) {
     const int lines = rows ? height : width;
     const int length = rows ? width : height;
     const int direction = step > 0 ? 1 : -1;
@@ -758,7 +758,7 @@ ARC_HOST_DEVICE inline bool slam_cells(int width, int height, bool rows, int ste
 // The larger gap chooses the axis (ties go across); the nearer side chooses
 // the shift (ties go left or up). Overlapping boxes have negative gaps.
 // The result is {down, across}, in grid coordinates.
-ARC_HOST_DEVICE inline std::pair<int, int> shift_to_touch(const cell_box& moving,
+inline std::pair<int, int> shift_to_touch(const cell_box& moving,
                                                          const cell_box& target) {
     const int left = target.col0 - moving.col1 - 1;
     const int right = target.col1 - moving.col0 + 1;
@@ -779,7 +779,7 @@ ARC_HOST_DEVICE inline std::pair<int, int> shift_to_touch(const cell_box& moving
 // Recolor and AddColor's relative color sources, shared by reading and execution.
 // Ties choose the lowest color, and an empty object stays transparent.
 template <class ColorAt>
-ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t value, ColorAt color_at) {
+inline int8_t object_paint_color(int height, int width, int8_t value, ColorAt color_at) {
     if (value < COLOR_COUNT) return value;
     color_tally tally;
     for (int row = 0; row < height; ++row)
@@ -792,7 +792,7 @@ ARC_HOST_DEVICE inline int8_t object_paint_color(int height, int width, int8_t v
 // cells and all, a bit each (pose_source, the turns' and flips' own reading):
 // 1 for a drawing only the same as it lies, 255 for one the same every way.
 template <class ColorAt>
-ARC_HOST_DEVICE inline uint32_t symmetry_of(int width, int height, ColorAt color_at) {
+inline uint32_t symmetry_of(int width, int height, ColorAt color_at) {
     uint32_t poses = 0;
     for (int pose = 0; pose < POSE_COUNT; ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, width, height);
@@ -815,7 +815,7 @@ ARC_HOST_DEVICE inline uint32_t symmetry_of(int width, int height, ColorAt color
 // op looks it up here, so the two cannot know a piece by different keys.
 enum class shape_key : int8_t { shape, symmetry, count };
 template <class ColorAt>
-ARC_HOST_DEVICE inline uint32_t shape_key_of(int kind, int width, int height, ColorAt color_at) {
+inline uint32_t shape_key_of(int kind, int width, int height, ColorAt color_at) {
     if (kind == (int)shape_key::symmetry) return symmetry_of(width, height, color_at);
     return key_of_shape(width, height, color_at, ANY_WAY_ROUND);
 }
@@ -831,8 +831,8 @@ struct shape_table {
     int8_t colors[MAX_KEYS] = {};
     int count = 0;
     int8_t otherwise = -1;
-    ARC_HOST_DEVICE bool holds() const { return count > 0; }
-    ARC_HOST_DEVICE int color_of(uint32_t key) const {
+    bool holds() const { return count > 0; }
+    int color_of(uint32_t key) const {
         for (int i = 0; i < count && i < MAX_KEYS; ++i)
             if (keys[i] == key) return colors[i];
         return otherwise;
@@ -863,7 +863,7 @@ struct shape_table {
 // The piece that shows a cell of the key's drawing, the last not picked to
 // paint it, or -1 where none does.
 template <class Pieces>
-ARC_HOST_DEVICE inline int key_piece_at(const Pieces& pieces, int row, int col) {
+inline int key_piece_at(const Pieces& pieces, int row, int col) {
     int found = -1;
     for (int i = 0; i < pieces.count(); ++i)
         if (!pieces.is_picked(i) && pieces.painted(i, row, col)) found = i;
@@ -871,7 +871,7 @@ ARC_HOST_DEVICE inline int key_piece_at(const Pieces& pieces, int row, int col) 
 }
 // The color the key's drawing shows at a cell, TRANSPARENT where it shows none.
 template <class Pieces>
-ARC_HOST_DEVICE inline int key_color_at(const Pieces& pieces, int row, int col) {
+inline int key_color_at(const Pieces& pieces, int row, int col) {
     const int i = pieces.key_piece(row, col);
     return i < 0 ? (int)TRANSPARENT : (int)pieces.color_at(i, row, col);
 }
@@ -880,7 +880,7 @@ ARC_HOST_DEVICE inline int key_color_at(const Pieces& pieces, int row, int col) 
 // row -- or, `along_rows` false, a column -- are an entry, handed to
 // `visit(first, second)`, the first cell's color and the second's.
 template <class Pieces, class Visit>
-ARC_HOST_DEVICE inline void each_key_entry(const Pieces& pieces, bool along_rows, Visit visit) {
+inline void each_key_entry(const Pieces& pieces, bool along_rows, Visit visit) {
     auto key_at = [&](int row, int col) { return key_color_at(pieces, row, col); };
     const int down = along_rows ? 0 : 1, across = along_rows ? 1 : 0;
     for (int i = 0; i < pieces.count(); ++i) {
@@ -903,7 +903,7 @@ ARC_HOST_DEVICE inline void each_key_entry(const Pieces& pieces, bool along_rows
 // entry names. False, and no color traded, where the key names no entry, or
 // names a color with two partners: a table that is no swap.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
+inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
     for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
     bool any = false, swaps = true;
     each_key_entry(pieces, along_rows, [&](int first, int second) {
@@ -922,7 +922,7 @@ ARC_HOST_DEVICE inline bool key_swaps(const Pieces& pieces, bool along_rows, int
 // a key drawn in the grid names (key_swaps), read along its rows or its
 // columns. False where it trades nothing.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
+inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
     if (value == KEY_PAIRS_ALONG_ROWS || value == KEY_PAIRS_ALONG_COLUMNS)
         return key_swaps(pieces, value == KEY_PAIRS_ALONG_ROWS, to);
     for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
@@ -938,7 +938,7 @@ ARC_HOST_DEVICE inline bool swaps_of(int value, const Pieces& pieces, int8_t* to
 // every one but those of its ground, the color most of its cells wear
 // (color_tally), as a grid's ground is: the panel the entries are drawn on.
 template <class Pieces, class Visit>
-ARC_HOST_DEVICE inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
+inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
     cell_box box;
     for (int i = 0; i < pieces.count(); ++i) {
         if (pieces.is_picked(i)) continue;
@@ -978,7 +978,7 @@ constexpr int COLORS_FROM_ITS_SHAPE = KEY_BY_PLACE + 1;
 // and grown to it). False where it has no one partner. Colors never decide
 // the fit: they are what it carries over.
 template <class Pieces, class Paint>
-ARC_HOST_DEVICE inline bool colors_from_its_shape(int like, int mine, const Pieces& pieces, Paint paint) {
+inline bool colors_from_its_shape(int like, int mine, const Pieces& pieces, Paint paint) {
     if (like < 0 || like >= SHAPE_LIKENESSES) return false;
     const int partner = partner_of((partner_by)((int)partner_by::same_shape + like), mine, pieces);
     if (partner < 0) return false;
@@ -1012,8 +1012,8 @@ ARC_HOST_DEVICE inline bool colors_from_its_shape(int like, int mine, const Piec
 // pieces and the entries are still not as many. `lows`, `highs`, `band` and
 // `order` are scratch, as many as the pieces.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows, int16_t* highs,
-                                             int8_t* band, int* order) {
+inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows, int16_t* highs,
+                             int8_t* band, int* order) {
     // Past every row, a piece not picked bands after every picked one, apart.
     constexpr int16_t past = 2 * MAX_GRID_DIM;
     const int count = pieces.count();
@@ -1057,7 +1057,7 @@ ARC_HOST_DEVICE inline bool key_place_colors(const Pieces& pieces, int8_t* color
     return false;
 }
 
-// VoteDenoise's arithmetic, in one place for the kernel and for inference.
+// VoteDenoise's arithmetic, in one place for the op and for inference.
 // Period per axis: a spacing qualifies when the structure it aligns agrees
 // >=70% (pairs with both cells non-background), and the winner is the
 // qualifier with the best agreements-minus-disagreements margin, where
@@ -1077,7 +1077,7 @@ ARC_HOST_DEVICE inline bool key_place_colors(const Pieces& pieces, int8_t* color
 // empty cells; otherwise the color most of it wears, the lowest on a tie. No
 // puzzle-level background is consulted, by the op or by the reading.
 template <typename At>
-ARC_HOST_DEVICE inline int8_t denoise_ground(int w, int h, At at) {
+inline int8_t denoise_ground(int w, int h, At at) {
     color_tally tally;
     for (int r = 0; r < h; ++r)
         for (int c = 0; c < w; ++c) {
@@ -1090,13 +1090,13 @@ ARC_HOST_DEVICE inline int8_t denoise_ground(int w, int h, At at) {
 
 // An empty value votes in a slot of its own, past the ten colors, and comes
 // back out empty: a ground deleted upstream is evidence like any other.
-ARC_HOST_DEVICE inline int vote_slot(int8_t v) { return is_color(v) ? (int)v : COLOR_COUNT; }
-ARC_HOST_DEVICE inline int8_t slot_value(int slot) {
+inline int vote_slot(int8_t v) { return is_color(v) ? (int)v : COLOR_COUNT; }
+inline int8_t slot_value(int slot) {
     return slot == COLOR_COUNT ? (int8_t)TRANSPARENT : (int8_t)slot;
 }
 
 template <typename At, typename Put>
-ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At ground_at, Put put) {
+inline bool vote_denoise_cells(int w, int h, int8_t bg, At ground_at, Put put) {
     // Period per axis (0 = no repeat found).
     int px = 0, py = 0;
     for (int axis = 0; axis < 2; ++axis) {
@@ -1178,7 +1178,7 @@ ARC_HOST_DEVICE inline bool vote_denoise_cells(int w, int h, int8_t bg, At groun
 // A BODY TURNED ONE OF THE EIGHT WAYS: the offset (row, col) from the cell it
 // turns about, `way` & 3 quarter turns clockwise, then from 4 on flipped top to
 // bottom -- the turns SnapToAnchors tries.
-ARC_HOST_DEVICE inline void snap_turn(int way, int row, int col, int& to_row, int& to_col) {
+inline void snap_turn(int way, int row, int col, int& to_row, int& to_col) {
     for (int turn = 0; turn < (way & 3); ++turn) {
         const int turned = col;
         col = -row;
@@ -1208,8 +1208,8 @@ ARC_HOST_DEVICE inline void snap_turn(int way, int row, int col, int& to_row, in
 // anchors its keys cover used up, so no later body can take them.
 constexpr int SNAP_MOST_RUNS = 64, SNAP_MOST_KEYS = 12, SNAP_MOST_ANCHORS = 16;
 template <class At, class Place>
-ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
-                                            int8_t (&label)[MAX_GRID_DIM][MAX_GRID_DIM], Place place) {
+inline void snap_to_anchors(int width, int height, At at,
+                            int8_t (&label)[MAX_GRID_DIM][MAX_GRID_DIM], Place place) {
     for (int row = 0; row < MAX_GRID_DIM; ++row)
         for (int col = 0; col < MAX_GRID_DIM; ++col) label[row][col] = -1;
     color_tally worn;
@@ -1317,8 +1317,8 @@ ARC_HOST_DEVICE inline void snap_to_anchors(int width, int height, At at,
 // Calls land(row, col) for each stamp of tpl along marker until it leaves the
 // canvas or land returns false.
 template <class Land>
-ARC_HOST_DEVICE inline void project_along(const cell_box& tpl, const cell_box& marker,
-                                          int width, int height, Land land) {
+inline void project_along(const cell_box& tpl, const cell_box& marker,
+                          int width, int height, Land land) {
     const int across = (marker.col0 + marker.col1) / 2 - (tpl.col0 + tpl.col1) / 2;
     const int down   = (marker.row0 + marker.row1) / 2 - (tpl.row0 + tpl.row1) / 2;
     int col = tpl.col0, row = tpl.row0;
@@ -1342,9 +1342,9 @@ ARC_HOST_DEVICE inline void project_along(const cell_box& tpl, const cell_box& m
 
 // Align like anchors of two spans: 0 = first cell, 1 = middle cell,
 // 2 = last cell. Even spans use the earlier of the two middle cells.
-// Copy placement shares this arithmetic between the reading and the GPU.
-ARC_HOST_DEVICE constexpr int aligned_copy_start(int source_size, int target_start,
-                                                 int target_size, int anchor) {
+// Copy placement shares this arithmetic between the reading and the op.
+constexpr int aligned_copy_start(int source_size, int target_start,
+                                 int target_size, int anchor) {
     return target_start + (target_size - 1) * anchor / 2 - (source_size - 1) * anchor / 2;
 }
 
@@ -1374,13 +1374,13 @@ ARC_HOST_DEVICE constexpr int aligned_copy_start(int source_size, int target_sta
 // THE PIECES ARE ASKED as partner_of_kind asks them, in the op's own order;
 // `color(i)` is the colour the op reads off piece i's first cell, -1 for none.
 // land(bar, colour) sees each bar in the order the op lays them into its one
-// drawing of every bar, and may say false to stop. gpu_exec_bridge calls it, so
+// drawing of every bar, and may say false to stop. The op calls it, so
 // a reading and the op cannot draw different bars. Answers whether an L it
 // drew turned: both its legs had cells to fill.
 constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS,
               BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
 template <class Pieces, class Land>
-ARC_HOST_DEVICE inline bool bridge_bars(int way, int width, int height, const Pieces& pieces, Land land) {
+inline bool bridge_bars(int way, int width, int height, const Pieces& pieces, Land land) {
     if (way < 0 || way >= BRIDGE_VALUES) return false;
     const int count = pieces.count();
     auto box_of_piece = [&](int i) { return pieces.box(i); };
@@ -1489,7 +1489,7 @@ ARC_HOST_DEVICE inline bool bridge_bars(int way, int width, int height, const Pi
 // reading that replays a paint laid onto or off what is down: MaskBy keeps a
 // cell where the canvas shows `color` -- any color at all, with `any`, as
 // MaskBy[10] -- and MaskOut every other.
-ARC_HOST_DEVICE inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bool keep_match) {
+inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bool keep_match) {
     const bool match = any ? canvas != TRANSPARENT : canvas == color;
     return match == keep_match;
 }
@@ -1500,8 +1500,8 @@ ARC_HOST_DEVICE inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bo
 // through the piece's own cells -- `own(row, col)` and `taken(row, col)` say
 // which -- and each cell passed that is not its own handed to `lay(row, col)`.
 template <class Own, class Taken, class Lay>
-ARC_HOST_DEVICE inline void march_trail(int row, int col, direction_step step, int width, int height,
-                                        Own own, Taken taken, Lay lay) {
+inline void march_trail(int row, int col, direction_step step, int width, int height,
+                        Own own, Taken taken, Lay lay) {
     for (int at_row = row + step.down, at_col = col + step.across;
          at_row >= 0 && at_row < height && at_col >= 0 && at_col < width;
          at_row += step.down, at_col += step.across) {
@@ -1525,7 +1525,7 @@ enum class grown_along : int8_t {
 
 // The ways a track grows, one bit for each heading (1_readings.hpp): a line
 // both ways along it, or the sides, the corners, or both, of every cell.
-ARC_HOST_DEVICE constexpr uint8_t grown_ways(grown_along track) {
+constexpr uint8_t grown_ways(grown_along track) {
     auto both = [](int one, int other) { return (uint8_t)(1u << one | 1u << other); };
     const uint8_t sides = (uint8_t)(both(direction::up, direction::down) | both(direction::right, direction::left));
     const uint8_t corners =
@@ -1545,7 +1545,7 @@ ARC_HOST_DEVICE constexpr uint8_t grown_ways(grown_along track) {
 // Whether a track spreads: every cell taken grows every way of the track, so
 // the piece floods the open cells. Otherwise the track is lines, rays that
 // keep their heading.
-ARC_HOST_DEVICE constexpr bool grown_spreads(grown_along track) {
+constexpr bool grown_spreads(grown_along track) {
     return track == grown_along::sides || track == grown_along::canvas_edge || track == grown_along::sides_and_corners;
 }
 
@@ -1570,8 +1570,8 @@ ARC_HOST_DEVICE constexpr bool grown_spreads(grown_along track) {
 // (21f83797's lines cross; 1190bc91's rays meet in one turn and stop). `met(cell,
 // way, piece)` hears of each ray stopped by meeting another.
 template <class Grows, class Met>
-ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along track, Grows grows,
-                                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways, Met met) {
+inline void grow_in_step(int width, int height, grown_along track, Grows grows,
+                         int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* ways, Met met) {
     auto on_track = [&](int row, int col) {
         return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
     };
@@ -1669,8 +1669,8 @@ ARC_HOST_DEVICE inline void grow_in_step(int width, int height, grown_along trac
 struct ray_seed { int row = -1, col = -1; };
 
 template <class Cell>
-ARC_HOST_DEVICE inline ray_seed nearest_ray_seed(int height, int width,
-                                                 int center_row, int center_col, Cell cell) {
+inline ray_seed nearest_ray_seed(int height, int width,
+                                 int center_row, int center_col, Cell cell) {
     ray_seed seed;
     int best = MAX_GRID_CELLS;
     for (int row = 0; row < height; ++row)
@@ -1686,7 +1686,7 @@ ARC_HOST_DEVICE inline ray_seed nearest_ray_seed(int height, int width,
 // The rays run the four sides of the compass, its even ways, or the four
 // diagonals, its odd ones (heading, 1_readings.hpp).
 template <class Paint>
-ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
+inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
                                                Paint paint) {
     if (seed.row < 0) return;
     for (int way = diagonal ? 1 : 0; way < direction::count; way += 2) {
@@ -1703,7 +1703,7 @@ ARC_HOST_DEVICE inline void each_extended_ray(ray_seed seed, int radius, bool di
 // that falls past the piece's `size` cells. Counted from the canvas's edge
 // instead, a piece off that count -- 4f537728's marker at column 11, three
 // apart -- is laid in the gaps beside its own place.
-ARC_HOST_DEVICE inline int tiled_source(int at, int start, int period, int size) {
+inline int tiled_source(int at, int start, int period, int size) {
     if (period <= 0) return -1;
     const int source = ((at - start) % period + period) % period;
     return source < size ? source : -1;
@@ -1720,7 +1720,7 @@ ARC_HOST_DEVICE inline int tiled_source(int at, int start, int period, int size)
 // row -- and the op then hands its marks back as they were. No two rows of one
 // grid stand the largest grid apart, so that gap doubles as none found.
 template <class RowOf>
-ARC_HOST_DEVICE inline int mark_lattice_period(int count, RowOf row_of) {
+inline int mark_lattice_period(int count, RowOf row_of) {
     int gap = MAX_GRID_DIM;
     for (int i = 0; i < count; ++i)
         for (int j = i + 1; j < count; ++j) {
@@ -1734,7 +1734,7 @@ ARC_HOST_DEVICE inline int mark_lattice_period(int count, RowOf row_of) {
 // `height` rows tall, standing at `top`, comes round on, with which of its own
 // rows lands there.
 template <class Lay>
-ARC_HOST_DEVICE inline void each_lattice_row(int top, int height, int period, int rows, Lay lay) {
+inline void each_lattice_row(int top, int height, int period, int rows, Lay lay) {
     if (period <= 0) return;
     for (int row = top > 0 ? top : 0; row < rows; ++row) {
         const int source = (row - top) % period;
@@ -1743,7 +1743,7 @@ ARC_HOST_DEVICE inline void each_lattice_row(int top, int height, int period, in
 }
 
 // Seat on the colour cycle; lean 0 walks row + col, lean 1 row - col.
-ARC_HOST_DEVICE inline int diagonal_seat(int row, int col, int lean, int colors) {
+inline int diagonal_seat(int row, int col, int lean, int colors) {
     const int diagonal = lean ? row - col : row + col;
     return ((diagonal % colors) + colors) % colors;
 }
@@ -1760,8 +1760,8 @@ constexpr int MIRROR_PARTNERS = (int)partner_by::count + 1;
 // among the pieces not picked (partner_of), or past those the grid's own --
 // false for a piece with no one partner, which gets no copy.
 template <class Pieces>
-ARC_HOST_DEVICE inline bool mirror_middle(int how, int mine, const Pieces& pieces, int width, int height,
-                                          int& row2, int& col2) {
+inline bool mirror_middle(int how, int mine, const Pieces& pieces, int width, int height,
+                          int& row2, int& col2) {
     row2 = height - 1;
     col2 = width - 1;
     if (how >= (int)partner_by::count) return true;
@@ -1776,17 +1776,17 @@ ARC_HOST_DEVICE inline bool mirror_middle(int how, int mine, const Pieces& piece
 // across for left to right, down for top to bottom, and all four ways each
 // alone and then both.
 template <class Copy>
-ARC_HOST_DEVICE inline void each_mirror(mirror_by mirror, Copy copy) {
+inline void each_mirror(mirror_by mirror, Copy copy) {
     for (int way = 0; way < 3; ++way)
         if (mirror == mirror_by::four_ways || way == (int)mirror) copy(way != 0, way != 1);
 }
 // Where a copy lies, its far side where the piece's near side was, and the pose
 // its cells are read through (pose_source): flipped top to bottom where it is
 // mirrored down, left to right where across.
-ARC_HOST_DEVICE inline cell_box mirrored_box(const cell_box& box, int row2, int col2, bool down, bool across) {
+inline cell_box mirrored_box(const cell_box& box, int row2, int col2, bool down, bool across) {
     return { down ? row2 - box.row1 : box.row0, across ? col2 - box.col1 : box.col0,
              down ? row2 - box.row0 : box.row1, across ? col2 - box.col0 : box.col1 };
 }
-ARC_HOST_DEVICE constexpr int mirror_pose(bool down, bool across) { return (down ? 2 : 0) | (across ? 4 : 0); }
+constexpr int mirror_pose(bool down, bool across) { return (down ? 2 : 0) | (across ? 4 : 0); }
 
 }  // namespace arc

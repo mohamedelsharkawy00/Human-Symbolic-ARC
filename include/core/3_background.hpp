@@ -194,7 +194,7 @@ struct background_evidence {
     // Total cells per color over the whole side
     long long global_cells[COLOR_COUNT] = {};
 
-    ARC_HOST_DEVICE background_evidence() {
+    background_evidence() {
         for (int i = 0; i < COLOR_COUNT; ++i) {
             embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
             only_windows[i] = true;
@@ -205,7 +205,7 @@ struct background_evidence {
 // Per-color background-ness prior, most-background first. The LAST tiebreak
 // only, when area/embeds/story can't separate two candidates — a prior, not a
 // verdict, and structure always overrides it.
-ARC_HOST_DEVICE inline int background_rank(int color) {
+inline int background_rank(int color) {
     constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
     for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
     return COLOR_COUNT;
@@ -214,7 +214,7 @@ ARC_HOST_DEVICE inline int background_rank(int color) {
 // The box each color's cells fill, with one color left out if asked; a color
 // no cell wears keeps an empty box.
 template <class Grid>
-ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
+inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
                         int skip = TRANSPARENT) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
     one_grid.for_each_colored_cell(skip, [&](int row, int col, int color) {
@@ -225,7 +225,7 @@ ARC_HOST_DEVICE inline void color_boxes(const Grid& one_grid, cell_box boxes[COL
 // STAGE 1 — how much of this grid each color holds, how far it reaches, and
 // which color reads as the background here.
 template <class Grid>
-ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
+inline void measure_area_and_reach(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
                                    background_evidence& evidence) {
     const int area = one_grid.width * one_grid.height;
     for (int i = 0; i < COLOR_COUNT; ++i) evidence.global_cells[i] += cells_of_color[i];
@@ -272,19 +272,19 @@ ARC_HOST_DEVICE inline void measure_area_and_reach(const Grid& one_grid, const i
 }
 
 // The objects of one grid — same-color cells that touch, corners counting —
-// labelled once (the same walk gpu_flood_fill does). `cells` holds every
-// object's cells, object by object, with first_cell naming where each starts.
+// labelled once. `cells` holds every object's cells, object by object, with
+// first_cell naming where each starts.
 struct object_map {
     int16_t id[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t color[MAX_GRID_DIM * MAX_GRID_DIM], size[MAX_GRID_DIM * MAX_GRID_DIM];
     int16_t first_cell[MAX_GRID_DIM * MAX_GRID_DIM], cells[MAX_GRID_DIM * MAX_GRID_DIM];
     bool on_border[MAX_GRID_DIM * MAX_GRID_DIM];
     int object_count = 0, cell_count = 0;
-    ARC_HOST_DEVICE int count() const { return object_count; }
+    int count() const { return object_count; }
 };
 
 template <class Grid>
-ARC_HOST_DEVICE inline void label_objects(const Grid& one_grid, object_map& objects) {
+inline void label_objects(const Grid& one_grid, object_map& objects) {
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
     object_walk_scratch scratch;
@@ -309,14 +309,14 @@ ARC_HOST_DEVICE inline void label_objects(const Grid& one_grid, object_map& obje
 }
 
 // Whether a cell sits in the outermost ring of a height x width grid.
-ARC_HOST_DEVICE constexpr bool on_border(int row, int col, int height, int width) {
+constexpr bool on_border(int row, int col, int height, int width) {
     return row == 0 || col == 0 || row == height - 1 || col == width - 1;
 }
 
 // Mark cells reachable from the border without crossing a blocked cell.
 // Space uses four-way connectivity, so it cannot leak through touching corners.
 template <class Blocked>
-ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
+inline void mark_outside(int height, int width, Blocked blocked,
                          bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
     int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
     for (int row = 0; row < height; ++row)
@@ -343,7 +343,7 @@ ARC_HOST_DEVICE inline void mark_outside(int height, int width, Blocked blocked,
 // a color is believable as ground showing through only if it is the quietest
 // present and appears solely as enclosed windows.
 template <class Grid>
-ARC_HOST_DEVICE inline void measure_embedding(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
+inline void measure_embedding(const Grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               background_evidence& evidence) {
     object_map objects;
     label_objects(one_grid, objects);
@@ -419,7 +419,7 @@ ARC_HOST_DEVICE inline void measure_embedding(const Grid& one_grid, const int ce
 // STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The
 // coverer is the global area leader; if it is solid, no color may claim
 // underneath.
-ARC_HOST_DEVICE inline void close_underneath(background_evidence& evidence) {
+inline void close_underneath(background_evidence& evidence) {
     int coverer = -1;
     for (int i = 0; i < COLOR_COUNT; ++i)
         if (evidence.global_cells[i] > 0 &&
@@ -435,7 +435,7 @@ ARC_HOST_DEVICE inline void close_underneath(background_evidence& evidence) {
 // KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
 template <class Candidates>
-ARC_HOST_DEVICE inline void score_candidates(Candidates& ranked,
+inline void score_candidates(Candidates& ranked,
                              const background_evidence& evidence, const bool in_every[COLOR_COUNT]) {
     long long total_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
@@ -469,7 +469,7 @@ ARC_HOST_DEVICE inline void score_candidates(Candidates& ranked,
 // STAGE 5 — best background first. The top score elects IF it clears BG_FLOOR,
 // else the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
 template <class Candidates>
-ARC_HOST_DEVICE inline void rank_candidates(Candidates& ranked) {
+inline void rank_candidates(Candidates& ranked) {
     const auto before = [](const auto& left, const auto& right) {
         const bool left_electable  = (left.color >= 0 && left.score >= BG_FLOOR);
         const bool right_electable = (right.color >= 0 && right.score >= BG_FLOOR);
@@ -494,7 +494,7 @@ ARC_HOST_DEVICE inline void rank_candidates(Candidates& ranked) {
 
 // The same candidate construction and arithmetic for pooled and local elections.
 template <class Candidates>
-ARC_HOST_DEVICE inline void finish_background_election(Candidates& ranked,
+inline void finish_background_election(Candidates& ranked,
         const background_evidence& evidence, const bool in_every[COLOR_COUNT],
         const bool* persists = nullptr) {
     ranked.push_back({ .color = -1, .appears_in_any_output = false });  // "none" always a candidate
@@ -517,17 +517,17 @@ ARC_HOST_DEVICE inline void finish_background_election(Candidates& ranked,
 struct local_background_candidates {
     background_election::hypothesis values[COLOR_COUNT + 1];
     int used = 0;
-    ARC_HOST_DEVICE int size() const { return used; }
-    ARC_HOST_DEVICE auto* begin() { return values; }
-    ARC_HOST_DEVICE auto* end() { return values + used; }
-    ARC_HOST_DEVICE const auto* begin() const { return values; }
-    ARC_HOST_DEVICE const auto* end() const { return values + used; }
-    ARC_HOST_DEVICE auto& operator[](int i) { return values[i]; }
-    ARC_HOST_DEVICE void push_back(background_election::hypothesis h) { values[used++] = h; }
+    int size() const { return used; }
+    auto* begin() { return values; }
+    auto* end() { return values + used; }
+    const auto* begin() const { return values; }
+    const auto* end() const { return values + used; }
+    auto& operator[](int i) { return values[i]; }
+    void push_back(background_election::hypothesis h) { values[used++] = h; }
 };
 
 template <class Grid>
-ARC_HOST_DEVICE inline local_background_candidates elect_grid_background(const Grid& one_grid) {
+inline local_background_candidates elect_grid_background(const Grid& one_grid) {
     local_background_candidates ranked;
     if (one_grid.width <= 0 || one_grid.height <= 0) return ranked;
     const color_tally counts(one_grid);
@@ -582,7 +582,7 @@ inline vector<background_election::hypothesis> elect_side_background(
 // having a BODY rather than being a separator skeleton. This is what keeps a
 // BACKGROUNDLESS puzzle from reading as per-pair. -1 when none is confident.
 template <class Candidates>
-ARC_HOST_DEVICE inline int8_t confident_background(const Candidates& local) {
+inline int8_t confident_background(const Candidates& local) {
     int best_dominance = 0, second_dominance = 0;
     for (const auto& candidate : local) {
         if (candidate.color < 0) continue;

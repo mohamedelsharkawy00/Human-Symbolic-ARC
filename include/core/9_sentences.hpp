@@ -259,8 +259,8 @@ inline string without_redundant_steps(const string& words, int background) {
 // the paint was for: every sentence this file spells means to paint the whole
 // hand. So where the words have not left all of it marked, the hand is said out
 // loud before the paint. Withhold lands nothing, so it asks for nothing.
-// Said at the one point every sentence goes through, for the reason the kernel
-// carries its marks at one point: a branch that never heard of the rule cannot
+// Said at the one point every sentence goes through, for the reason the ops
+// carry their marks at one point: a branch that never heard of the rule cannot
 // forget it, and the next branch written here will not either.
 inline string closed_with(const string& words, const string& combine) {
     const bool paints = combine != "Withhold";

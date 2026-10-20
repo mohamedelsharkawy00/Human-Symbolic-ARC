@@ -23,7 +23,7 @@ import sys
 
 ROOTS = ["include", "src"]
 EXCLUDE_DIRS = {"third_party"}
-EXTENSIONS = (".hpp", ".h", ".cpp", ".cu", ".cuh")
+EXTENSIONS = (".hpp", ".h", ".cpp")
 WINDOW = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 
 

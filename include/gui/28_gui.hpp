@@ -3,7 +3,6 @@
 #include "9_sentences.hpp"  // sentences_of: the pane says a program the way the log does
 #include "23_grid_buffer.hpp"
 #include "24_global_app_state.hpp"
-#include "12_dsl.cuh"
 #include "26_vulkan_context.hpp"
 #include "27_sound_manager.hpp"
 
@@ -585,12 +584,10 @@ inline grid_place place_grid_cell(const grid &m, int col_idx, int row_y,
   if (m.width <= 0 || m.height <= 0) return p;
   int pad = lay.base_margin / 2;
   int outline = lay.scale;
-  // The dimension label (and the score, on the solver columns) sits to the
-  // right of the grid, so it eats into the width the grid may scale into.
+  // The dimension label sits to the right of the grid, so it eats into the
+  // width the grid may scale into.
   int dim_w = text_w("00x00", lay.scale) + outline * 2;
-  int score_space = (col_idx >= 2) ? text_w("0000.00", lay.scale) + outline * 2 : 0;
-  int side_space = max(dim_w, score_space);
-  p.scale = min((col_w - pad * 2 - side_space - outline * 2) / m.width,
+  p.scale = min((col_w - pad * 2 - dim_w - outline * 2) / m.width,
                 (slot_h - pad * 2 - outline * 2) / m.height);
   if (p.scale < 1) return p;
   p.x = col_idx * col_w + lay.base_margin + outline;
@@ -599,8 +596,8 @@ inline grid_place place_grid_cell(const grid &m, int col_idx, int row_y,
   return p;
 }
 
-// Draws the grid view (INPUT / OUTPUT / BEST), a quarter of the screen to a
-// column. Returns false if there is no data to draw.
+// Draws the grid view (INPUT / OUTPUT), a quarter of the screen to a column.
+// Returns false if there is no data to draw.
 inline bool draw_grid_view(
     vulkan_context *context,
     const map<uint32_t, display_grid> &font,
@@ -620,22 +617,13 @@ inline bool draw_grid_view(
   int col_w = lay.screen_w / 4;
   int cur_y = lay.grid_data_start_y;
 
-  // The cells come from wherever they live -- the puzzle's own pair, or the
-  // display's picture of what the reading drew -- and `at` says where they
-  // were uploaded.
-  auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y,
-                       float score_val = SCORE_MIN - 1.0f) {
+  // The cells are the puzzle's own pair, and `at` says where they were
+  // uploaded.
+  auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y) {
     if (m.width <= 0 || m.height <= 0)
       return;
 
-    bool is_scored_column = (col_idx >= 2);
-    bool has_score = (score_val > SCORE_MIN + 0.1f);
-
-    if (is_scored_column && !has_score)
-      return;
-
     int outline = lay.scale;
-    int info_h = 5 * lay.scale;
     string dim = to_text("%02dx%02d", m.width, m.height);
     grid_place p = place_grid_cell(m, col_idx, row_y, lay, col_w, slot_h);
     if (!p.fits) return; // grid band too small (e.g. footers ate the space) — skip
@@ -649,11 +637,6 @@ inline bool draw_grid_view(
 
     int info_x = x + grid_w + outline * 2;
     draw_text(context, font, dim, info_x, y, lay.scale);
-
-    if (has_score) {
-      string s = to_text("%07.2f", abs(score_val));
-      draw_text(context, font, s, info_x, y + grid_h - info_h, lay.scale);
-    }
   };
 
   // WHETHER THE ANSWER IS SHOWN is not a thing anyone stores: a training pair
@@ -676,12 +659,11 @@ inline bool draw_grid_view(
       draw_cell(ex.input, v->input, 0, cur_y);
       if (show_output)
         draw_cell(ex.output, v->output, 1, cur_y);
-      draw_cell(v->best, v->best.at, 2, cur_y, task.best_score_or_worst(is_test, i));
       cur_y += slot_h;
     }
   };
 
-  string heads[] = {"INPUT", "OUTPUT", "BEST"};
+  string heads[] = {"INPUT", "OUTPUT"};
   int grid_pad = 2 * lay.scale;
   for (int i = 0; i < (int)size(heads); ++i) {
     int header_label_x = i * col_w + lay.base_margin;
@@ -700,7 +682,7 @@ inline bool draw_grid_view(
 // the in-GUI composer (next step: click a token to append it to a draft program
 // and let the existing hover-preview engine show the effect live).
 // Which tab an op is drawn under is its role, read straight off the op list
-// (role_of, 12_dsl.cuh). See notes/2 - DSL/Op Algebra.md.
+// (role_of, 8_vocabulary.hpp). See notes/2 - DSL/Op Algebra.md.
 
 // Top-edge drawer overlay: a full-width panel that floats on top of the live
 // frame, covering the header band from the top of the screen down to the
@@ -1100,8 +1082,8 @@ inline void draw_selection(vulkan_context *context, const puzzle &task,
 // changed, what correspondence made of each pair — and no lines are drawn. On a
 // correspondence step the lines are on the grids and the pane says only what
 // their colors mean, and the readout doubles as the controls: every row that
-// names a choice is the thing you click to change it. Parked over the BEST
-// column and the quarter beside it.
+// names a choice is the thing you click to change it. Parked over the right
+// half (cols 2-3).
 inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, display_grid> &font,
                                 global_app_state &app_state,
                                 const puzzle &task, const frame_layout &lay,
@@ -1118,7 +1100,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
   int pad = 2 * scale;
   int line_h = 7 * scale;
   int sw = 5 * scale;                 // color swatch side
-  // Park it over the BEST column and the quarter beside it (cols 2-3).
+  // Park it over the right half (cols 2-3).
   int col_w = lay.screen_w / 4;
   int x0 = 2 * col_w + lay.base_margin, y0 = lay.grid_data_start_y;
   int panel_w = 2 * col_w - lay.base_margin * 2;
@@ -2068,7 +2050,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
     return;
 
   // Hover preview: draw the subtree output for every train+test example,
-  // overlaid on the BEST column and the quarter beside it. Only the solver's
+  // overlaid on the right half (cols 2-3). Only the solver's
   // process can run a program, so a subtree not seen yet is asked for, and
   // drawn once the answer is back.
   {
@@ -2126,8 +2108,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 
         // Backdrop spans cols 2 and 3 for every example row, giving the
         // preview ~half the screen width to lay out accumulator + object
-        // strip. It also extends upward to cover the BEST header label so the
-        // preview takes over the whole right half.
+        // strip. It also extends upward over the header row, so the preview
+        // takes the whole right half.
         int back_x = 2 * col_w + lay.base_margin;
         int back_w = 2 * col_w - lay.base_margin * 2;
 
@@ -2150,7 +2132,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
           int grid_pad = 2 * lay.scale;
           int lw = text_w("PREVIEW", lay.scale) + grid_pad * 2;
           int lh = 5 * lay.scale + grid_pad * 2;
-          // Flush-left at the BEST column's label x (col index 2).
+          // Flush-left at column 2's label x.
           int label_x = 2 * col_w + lay.base_margin;
           draw_boxed_text(context, font, "PREVIEW", label_x, lay.grid_labels_y,
                           lay.scale, lw, lh, 5);

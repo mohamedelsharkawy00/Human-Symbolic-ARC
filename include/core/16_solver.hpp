@@ -6,7 +6,6 @@
 // Nothing in this folder may include anything from gui/.
 
 #include "13_environment.hpp"
-#include "12_dsl.cuh"   // the cuda_dsl_* calls
 #include "14_puzzle_loader.hpp"
 #include "15_solver_log.hpp"
 
@@ -32,17 +31,13 @@ struct search_news {
 };
 
 // WHAT THE SOLVER SHOWS SOMEBODY WATCHING. The solver never draws: it says what
-// it did, and a watcher that wants pictures makes them. Every call arrives on
-// the thread driving the solver, most with progress().mtx held, so a watcher
-// drawing under that lock sees a whole update or none of it. With no watcher
-// the solver skips the work that only makes pictures.
+// it did. Every call arrives on the thread driving the solver, most with
+// progress().mtx held, so a watcher drawing under that lock sees a whole update
+// or none of it.
 struct solver_observer {
   virtual ~solver_observer() = default;
   // A puzzle was just parsed, or failed to parse and is empty.
   virtual void loaded(const puzzle & /*p*/) {}
-  // One example's picture: what the best program painted there, or nullptr for
-  // nothing.
-  virtual void painted(bool /*is_test*/, size_t /*example*/, const grid * /*g*/) {}
   // Something visible changed.
   virtual void changed() {}
   // The reading is done. Arrives with the lock NOT held.
@@ -85,23 +80,19 @@ public:
   // running any program on the puzzle needs first.
   void read_facts();
 
-  // A whole program in the solver's own spelling, made the best and scored.
-  // The import path, and how what inference spelled is tried.
+  // A whole program in the solver's own spelling, made the best and checked
+  // on every pair. The import path, and how what inference spelled is tried.
   void apply_program(const string &program);
 
 private:
   // apply_program without the lock, for a caller already holding it.
-  void score_program(const string &program);
+  void check_program(const string &program);
   bool try_what_inference_said(puzzle &p);
   // Gated on the ATTEMPT, not on `inferred`: the pane can infer a puzzle long
   // before anything asks what its reading spelled.
   bool asked_inference_yet = false;
-  void clear_views(puzzle &p, bool is_test);
 
   // What a watcher is told, each a no-op with nobody watching.
-  void show(bool is_test, size_t i, const grid *g) {
-    if (m_observer) m_observer->painted(is_test, i, g);
-  }
   void changed() {
     if (m_observer) m_observer->changed();
   }
@@ -120,6 +111,4 @@ private:
 
 }
 
-#include "17_fixed_dsl.hpp"
-#include "18_dsl_executor.hpp"
 #include "19_solver_executor.hpp"

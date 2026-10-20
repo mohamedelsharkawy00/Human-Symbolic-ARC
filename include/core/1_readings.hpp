@@ -17,28 +17,28 @@ using namespace std;
 struct color_tally {
     int counts[COLOR_COUNT] = {};
 
-    ARC_HOST_DEVICE constexpr color_tally() = default;
+    constexpr color_tally() = default;
 
     // Read off a grid, leaving out `skip` (the background, wherever a caller
     // wants it ignored; TRANSPARENT counts all ten).
-    ARC_HOST_DEVICE explicit color_tally(const grid& one_grid, int skip = TRANSPARENT) {
+    explicit color_tally(const grid& one_grid, int skip = TRANSPARENT) {
         one_grid.for_each_colored_cell(skip, [&](int, int, int color) { add(color); });
     }
 
-    ARC_HOST_DEVICE int operator[](int color) const { return counts[color]; }
-    ARC_HOST_DEVICE int& operator[](int color) { return counts[color]; }
+    int operator[](int color) const { return counts[color]; }
+    int& operator[](int color) { return counts[color]; }
 
-    ARC_HOST_DEVICE void add(int color) { if (is_color(color)) ++counts[color]; }
-    ARC_HOST_DEVICE bool has(int color) const { return is_color(color) && counts[color] > 0; }
-    ARC_HOST_DEVICE int8_t most() const { return leading(true); }
-    ARC_HOST_DEVICE int8_t least() const { return leading(false); }
+    void add(int color) { if (is_color(color)) ++counts[color]; }
+    bool has(int color) const { return is_color(color) && counts[color] > 0; }
+    int8_t most() const { return leading(true); }
+    int8_t least() const { return leading(false); }
 
-    ARC_HOST_DEVICE static color_tally of(const grid& one_grid, int skip = TRANSPARENT) {
+    static color_tally of(const grid& one_grid, int skip = TRANSPARENT) {
         return color_tally(one_grid, skip);
     }
 
 private:
-    ARC_HOST_DEVICE int8_t leading(bool most) const {
+    int8_t leading(bool most) const {
         int8_t best = TRANSPARENT;
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (counts[color] && (best < 0 || (most ? counts[color] > counts[best] : counts[color] < counts[best])))
@@ -58,12 +58,12 @@ struct cell_box {
     // Its own size, so no caller has to spell the +1 out and none can spell it
     // differently. A box nobody wrote to has no cells, and says so itself
     // rather than leaving the reader to check the tally beside it.
-    ARC_HOST_DEVICE bool empty() const { return row1 < row0 || col1 < col0; }
-    ARC_HOST_DEVICE int height() const { return empty() ? 0 : row1 - row0 + 1; }
-    ARC_HOST_DEVICE int width()  const { return empty() ? 0 : col1 - col0 + 1; }
-    ARC_HOST_DEVICE int area()   const { return width() * height(); }
+    bool empty() const { return row1 < row0 || col1 < col0; }
+    int height() const { return empty() ? 0 : row1 - row0 + 1; }
+    int width()  const { return empty() ? 0 : col1 - col0 + 1; }
+    int area()   const { return width() * height(); }
 
-    ARC_HOST_DEVICE void include_cell(int row, int col) {
+    void include_cell(int row, int col) {
         if (empty()) {
             row0 = row1 = row;
             col0 = col1 = col;
@@ -75,7 +75,7 @@ struct cell_box {
         if (col > col1) col1 = col;
     }
     // Grown to hold another box as well; an empty one adds nothing.
-    ARC_HOST_DEVICE void include(const cell_box& other) {
+    void include(const cell_box& other) {
         if (other.empty()) return;
         include_cell(other.row0, other.col0);
         include_cell(other.row1, other.col1);
@@ -90,19 +90,19 @@ struct cell_box {
 // vs carrying each cell as its own entity.
 
 // An object's box and cell count, usable without storing its cells.
-// Packed small for the device; box() reads it as a cell_box.
+// Packed small; box() reads it as a cell_box.
 struct object_summary {
     // Declared column first, so the braces that build one ({ col, row, width,
     // height, count }) read left, top, then size.
     int8_t  col = 0, row = 0;        // top-left in grid coordinates
     int8_t  width = 0, height = 0;   // box width and height
     int16_t count = 0;               // number of cells in the object
-    ARC_HOST_DEVICE cell_box box() const { return { row, col, row + height - 1, col + width - 1 }; }
+    cell_box box() const { return { row, col, row + height - 1, col + width - 1 }; }
 };
 
 // A box as an object's summary has it, with its cell count (object_summary::box
 // reads it back).
-ARC_HOST_DEVICE inline object_summary summary_of(const cell_box& box, int count) {
+inline object_summary summary_of(const cell_box& box, int count) {
     return { (int8_t)box.col0, (int8_t)box.row0, (int8_t)box.width(), (int8_t)box.height(),
              (int16_t)count };
 }
@@ -127,7 +127,7 @@ struct object {
 
     // Object cell accessors here take grid coordinates, not box-local coordinates; they do the shift.
     // Gaps or holes within the box read as TRANSPARENT, and so does anything outside it.
-    ARC_HOST_DEVICE int8_t color_at(int row, int col) const {
+    int8_t color_at(int row, int col) const {
         const int local_row = row - summary.row;
         const int local_col = col - summary.col;
         if (local_row < 0 || local_row >= summary.height ||
@@ -135,14 +135,14 @@ struct object {
         return data[local_row][local_col];
     }
 
-    ARC_HOST_DEVICE bool holds(int row, int col) const {
+    bool holds(int row, int col) const {
         return color_at(row, col) != (int8_t)TRANSPARENT;
     }
 
     // The color of its first cell in reading order, which is the cell the walk
     // started from and the one an op reads a piece's color off. TRANSPARENT
     // when it has no cells.
-    ARC_HOST_DEVICE int8_t first_color() const {
+    int8_t first_color() const {
         for (int row = 0; row < summary.height; ++row)
             for (int col = 0; col < summary.width; ++col)
                 if (data[row][col] != (int8_t)TRANSPARENT) return data[row][col];
@@ -196,10 +196,9 @@ struct direction {
     enum : int8_t { up, up_right, right, down_right, down, down_left, left, up_left, count };
 };
 
-// One step that way. A switch and not a table, so the kernel reads the same
-// steps the host does; a direction out of range goes up.
+// One step that way; a direction out of range goes up.
 struct direction_step { int down, across; };
-ARC_HOST_DEVICE inline direction_step step_of(int way) {
+inline direction_step step_of(int way) {
     switch (way) {
     case direction::up_right:   return { -1,  1 };
     case direction::right:      return {  0,  1 };
@@ -235,7 +234,7 @@ constexpr int every_nth_way = Ways == 4 ? 2 : 1;
 // Walks connected cells: eight directions for objects, four for surrounding space.
 // `claim` decides membership into that group and must mark what it accepts, or the walk never ends.
 template <int Directions = 8, class Claim, class See>
-ARC_HOST_DEVICE inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
+inline int walk_out(int rows, int cols, int16_t queue_row[], int16_t queue_col[], int seeded,
                     Claim claim, See see) {
     static_assert(Directions == 4 || Directions == 8);
     int head = 0, tail = seeded;
@@ -268,7 +267,7 @@ enum class grouping : int8_t {
     touching_sides_same_color,
 };
 
-// Caller-owned so host and device can lend memory they already hold.
+// Caller-owned so a caller can lend memory it already holds.
 struct object_walk_scratch {
     bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t queue_row[MAX_GRID_CELLS];
@@ -280,8 +279,8 @@ struct object_walk_scratch {
 struct tile_size { int width = 0, height = 0; };
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
-// and length. Grid is anything with width, height and data[row][col], so host
-// and device share one answer about what one object is.
+// and length. Grid is anything with width, height and data[row][col], so the
+// reading and the ops share one answer about what one object is.
 //
 // The cells point into `scratch`, which the next group overwrites -- `take`
 // must COPY anything it keeps. That is what lets this run without allocating.
@@ -289,7 +288,7 @@ struct tile_size { int width = 0, height = 0; };
 // `background` is the color the grid was found to sit on, read off inference,
 // not assumed. Pass -1 to exclude nothing but TRANSPARENT.
 template <class Grid, class Take>
-ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
+inline void each_object(const Grid& one_grid, int background,
                                  grouping how, object_walk_scratch& scratch, Take take, tile_size tiles = {}) {
     const bool any_color = (how == grouping::touching_any_color);
     // One object per color takes every cell of the color at once, wherever it
@@ -360,13 +359,14 @@ ARC_HOST_DEVICE inline void each_object(const Grid& one_grid, int background,
 // Turn a shape into one number, so "is this the same shape?" becomes "are these
 // two numbers equal?". Shape here means which cells of the box around it are
 // filled, plus w and h. Not the color, not where it sits on the grid.
-// The CPU stores these numbers and the GPU looks them up, so if the two ever
-// hashed differently every lookup would miss. Hence one function, called by both.
+// One side stores these numbers and the other looks them up, so if the two
+// ever hashed differently every lookup would miss. Hence one function, called
+// by both.
 //
 // occ(i) says whether cell i is filled, counting across each row in turn. Every
 // caller must count the same way or the two sides hash the same shape apart.
 template <typename OccupancyAt>
-ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
+inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt occ) {
     uint32_t hsh = 2166136261u;
     auto mix = [&](uint8_t b) { hsh = (hsh ^ b) * 16777619u; };
     mix((uint8_t)w); mix((uint8_t)h);
@@ -384,13 +384,13 @@ ARC_HOST_DEVICE inline uint32_t shape_occupancy_hash(int w, int h, OccupancyAt o
 constexpr int POSE_COUNT = 8;
 
 // How big a grid reads once posed. Only the trade changes the size.
-ARC_HOST_DEVICE inline pair<int, int> posed_size(int pose, int width, int height) {
+inline pair<int, int> posed_size(int pose, int width, int height) {
     return (pose & 1) ? pair<int, int>{ height, width } : pair<int, int>{ width, height };
 }
 
 // Which cell of the ORIGINAL a posed cell reads from. Width and height are the
 // original's own, which is what the mirrors are measured against.
-ARC_HOST_DEVICE inline pair<int, int> pose_source(int pose, int width, int height,
+inline pair<int, int> pose_source(int pose, int width, int height,
                                   int posed_row, int posed_col) {
     int row = (pose & 1) ? posed_col : posed_row;
     int col = (pose & 1) ? posed_row : posed_col;
@@ -401,7 +401,7 @@ ARC_HOST_DEVICE inline pair<int, int> pose_source(int pose, int width, int heigh
 
 // Where a cell of the ORIGINAL lands once posed, so a place can be carried into
 // the frame a pair is compared in. The exact inverse of pose_source.
-ARC_HOST_DEVICE inline pair<int, int> posed_place(int pose, int width, int height,
+inline pair<int, int> posed_place(int pose, int width, int height,
                                   int row, int col) {
     const int down   = (pose & 2) ? height - 1 - row : row;
     const int across = (pose & 4) ? width  - 1 - col : col;
@@ -413,8 +413,8 @@ ARC_HOST_DEVICE inline pair<int, int> posed_place(int pose, int width, int heigh
 // quarter turn left, then flipped left to right, top to bottom, and across
 // either diagonal. Where two ways lay a shape on another, the first is how it
 // lies there (103eff5b's key, which a flip lays on the azure shape too, in the
-// wrong colors). A switch and not a table, so the kernel asks the same order.
-ARC_HOST_DEVICE constexpr int pose_asked(int asked) {
+// wrong colors).
+constexpr int pose_asked(int asked) {
     switch (asked) {
     case 1: return 3;
     case 2: return 6;
@@ -433,7 +433,7 @@ struct shape_freedom { bool turn = false, scale = false, stretch = false, recolo
 constexpr shape_freedom AS_IT_LIES{}, ANY_WAY_ROUND{ true }, DRAWING{ false, false, false, false };
 
 // Whether two cells of shapes are alike, as `free` lets their colors differ.
-ARC_HOST_DEVICE constexpr bool cells_alike(int one, int other, shape_freedom free) {
+constexpr bool cells_alike(int one, int other, shape_freedom free) {
     return free.recolor ? (one != TRANSPARENT) == (other != TRANSPARENT) : one == other;
 }
 
@@ -444,7 +444,7 @@ ARC_HOST_DEVICE constexpr bool cells_alike(int one, int other, shape_freedom fre
 // so the largest shrinks it all the way.
 struct shape_blocks { int down = 1, across = 1; };
 template <class Cell>
-ARC_HOST_DEVICE inline shape_blocks blocks_of(int width, int height, Cell cell, shape_freedom free) {
+inline shape_blocks blocks_of(int width, int height, Cell cell, shape_freedom free) {
     auto repeats = [&](int factor, bool rows) {
         if ((rows ? height : width) % factor != 0) return false;
         for (int row = 0; row < height; ++row)
@@ -466,14 +466,14 @@ ARC_HOST_DEVICE inline shape_blocks blocks_of(int width, int height, Cell cell, 
 // a dot or a filled box, is every filled box at some size, so a likeness at
 // another size says nothing of it. It keeps its own size: at any size it is
 // the same only as itself. Its blocks, as a shape may shrink by them.
-ARC_HOST_DEVICE inline shape_blocks sized_blocks(shape_blocks blocks, int width, int height) {
+inline shape_blocks sized_blocks(shape_blocks blocks, int width, int height) {
     return blocks.down == height && blocks.across == width ? shape_blocks{} : blocks;
 }
 
 // The blocks a shape is shrunk by, as `free` lets its size change: none
 // where it may not, nor where it has no size but its own (sized_blocks).
 template <class Cell>
-ARC_HOST_DEVICE inline shape_blocks shrunk_by(int width, int height, Cell cell, shape_freedom free) {
+inline shape_blocks shrunk_by(int width, int height, Cell cell, shape_freedom free) {
     return free.scale || free.stretch ? sized_blocks(blocks_of(width, height, cell, free), width, height)
                                       : shape_blocks{};
 }
@@ -488,7 +488,7 @@ ARC_HOST_DEVICE inline shape_blocks shrunk_by(int width, int height, Cell cell, 
 // up, both here, so a shape the pairs showed one way round is the same shape
 // the test shows another (e8593010's L, turned).
 template <class Cell>
-ARC_HOST_DEVICE inline uint32_t key_of_shape(int width, int height, Cell cell, shape_freedom free) {
+inline uint32_t key_of_shape(int width, int height, Cell cell, shape_freedom free) {
     const shape_blocks blocks = shrunk_by(width, height, cell, free);
     const int small_width = width / blocks.across, small_height = height / blocks.down;
     uint32_t best = 0xFFFFFFFFu;
@@ -520,7 +520,7 @@ struct shape_fit {
 
 // The cell of the second shape that the first's cell (row, col) lies on,
 // read from the top-left of its block, both from their boxes' top-left.
-ARC_HOST_DEVICE inline pair<int, int> fit_place(const shape_fit& fit, int row, int col) {
+inline pair<int, int> fit_place(const shape_fit& fit, int row, int col) {
     const auto [down, across] = posed_place(fit.pose, fit.small_width, fit.small_height,
                                             row / fit.mine.down, col / fit.mine.across);
     return { down * fit.theirs.down, across * fit.theirs.across };
@@ -536,9 +536,9 @@ ARC_HOST_DEVICE inline pair<int, int> fit_place(const shape_fit& fit, int row, i
 // pose_source), lies on the second cell for cell alike. How it lies there is
 // handed to `fit`.
 template <class Cell, class Other>
-ARC_HOST_DEVICE inline bool same_shape_in_blocks(int width, int height, Cell cell, shape_blocks mine,
-                                                 int other_width, int other_height, Other other, shape_blocks theirs,
-                                                 shape_freedom free, shape_fit* fit = nullptr) {
+inline bool same_shape_in_blocks(int width, int height, Cell cell, shape_blocks mine,
+                                 int other_width, int other_height, Other other, shape_blocks theirs,
+                                 shape_freedom free, shape_fit* fit = nullptr) {
     if (!free.scale && !free.stretch) mine = theirs = shape_blocks{};
     mine = sized_blocks(mine, width, height);
     theirs = sized_blocks(theirs, other_width, other_height);
@@ -564,8 +564,8 @@ ARC_HOST_DEVICE inline bool same_shape_in_blocks(int width, int height, Cell cel
 }
 // The same, each shape's blocks read here.
 template <class Cell, class Other>
-ARC_HOST_DEVICE inline bool same_shape(int width, int height, Cell cell, int other_width, int other_height,
-                                       Other other, shape_freedom free, shape_fit* fit = nullptr) {
+inline bool same_shape(int width, int height, Cell cell, int other_width, int other_height,
+                       Other other, shape_freedom free, shape_fit* fit = nullptr) {
     return same_shape_in_blocks(width, height, cell, shrunk_by(width, height, cell, free),
                                 other_width, other_height, other, shrunk_by(other_width, other_height, other, free),
                                 free, fit);

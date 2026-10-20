@@ -4,7 +4,6 @@
 // itself is libc's, which every compiler this project builds on already has.
 #include <cstdarg>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 // Let the compiler check every format string against its arguments, which is
@@ -34,33 +33,6 @@ inline string to_text(ARC_FORMAT_ARG const char *form, ...) {
     if (length > 0) vsnprintf(text.data(), (size_t)length + 1, form, args);
     va_end(args);
     return text;
-}
-
-// The shortest text that still reads back as the same number. printf has no
-// spelling for it, so ask for more digits until the number survives the trip
-// home. A float is asked as a float, or it would answer with a double's tail.
-// PLAIN DIGITS BEAT AN EXPONENT: %g reaches for one the moment a value outgrows
-// the digits asked for, so a score of 2530 came back as 2.53e+03 -- the same
-// number said worse, and longer. Keep looking for a plain spelling, and settle
-// for an exponent only when no number of digits gives one.
-template <typename Number, typename Parse>
-inline string shortest_number(Number value, int max_digits, Parse parse) {
-    string with_exponent;
-    for (int digits = 1; digits <= max_digits; ++digits) {
-        string text = to_text("%.*g", digits, (double)value);
-        if (parse(text.c_str(), nullptr) != value) continue;
-        if (text.find('e') == string::npos) return text;
-        if (with_exponent.empty()) with_exponent = text;
-    }
-    return with_exponent.empty() ? to_text("%.*g", max_digits, (double)value) : with_exponent;
-}
-
-inline string shortest(float value) {
-    return shortest_number(value, 9, strtof);
-}
-
-inline string shortest(double value) {
-    return shortest_number(value, 17, strtod);
 }
 
 // printf has every alignment the panel uses except centred, so that one is here.

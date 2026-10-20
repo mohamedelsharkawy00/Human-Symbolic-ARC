@@ -18,13 +18,6 @@ namespace arc {
     m_progress.start_time = chrono::steady_clock::now();
     asked_inference_yet = false;
     changed();
-
-    // A puzzle just parsed has no best and no scores yet; this says so to
-    // whoever is watching.
-    if (m_puzzle_loaded) {
-      clear_views(m_puzzle, false);
-      clear_views(m_puzzle, true);
-    }
     return m_puzzle_loaded;
   }
 
@@ -53,10 +46,10 @@ namespace arc {
     news({m_puzzle.is_solved, m_puzzle.is_test_solved});
   }
 
-  // A WHOLE PROGRAM, MADE THE BEST AND SCORED on every example. The puzzle is
-  // solved if it solves the train set; its test verdict is read the same way.
-  // Caller holds the lock.
-  inline void solver::score_program(const string &program) {
+  // A WHOLE PROGRAM, MADE THE BEST AND CHECKED on every example. The puzzle is
+  // solved if it draws every training output; its test verdict is read the
+  // same way. Caller holds the lock.
+  inline void solver::check_program(const string &program) {
     puzzle &task = m_puzzle;
     // Re-import (or import onto a puzzle that loaded with a solved tree) would
     // otherwise leak the whole prior node subtree.
@@ -71,69 +64,31 @@ namespace arc {
         return;
     }
     // A program whose sentences do not each open with a source runs and draws
-    // and is wrong; say so rather than let it score.
+    // and is wrong; say so rather than let it pass.
     if (const char* wrong = sentence_with_no_source(program))
         log_debug(string(wrong) + ": " + program);
-    const int nodes = environment::count_nodes(task.best_tree);
-    // Longer than one batch slot never reaches the GPU: every example would come
-    // back empty, which reads as a program that draws nothing rather than one
-    // that was never run. Say which it is, and keep the old verdict cleared.
-    if (too_long_to_run(nodes)) {
-        log_debug(to_text("%d ops is past the %d a program may be, so this one was "
-                          "not run: %s", nodes, flat_program::MAX_OPS, program.c_str()));
-        return;
-    }
-
-    string tree_str = environment::stringify_tree_via_flat(task.best_tree);
-    // Straight from the kernel that scored it, so the printed sum IS the score.
-    auto log_score = [&](int ei, const gpu_score_terms &t, const char *phase) {
-      log_debug(t.say(tree_str, ei, phase));
+    // Whether it draws every output of one side, said pair by pair.
+    const auto draws_every = [&](const vector<example> &pairs, const char *side) {
+      bool every = true;
+      for (size_t i = 0; i < pairs.size(); ++i) {
+        const bool fits = environment::draw(task.best_tree, pairs[i], task) == pairs[i].output;
+        log_debug(to_text("%s pair %zu %s", side, i, fits ? "fits" : "does not fit"));
+        every = every && fits;
+      }
+      return every;
     };
-
-    grid temp;
-    bool all_solved = true;
-    for (int i = 0; i < (int)task.train.size(); ++i) {
-      auto &ex = task.train[i];
-      gpu_score_terms terms;
-      auto [s, solved] = environment::score_tree_output(
-          task.best_tree, ex, temp, task, nodes, &terms);
-
-      log_debug(to_text("Example score: %s (Solved: %s)", shortest(s).c_str(), solved ? "YES" : "NO"));
-      log_score(i, terms, "import_train");
-
-      task.best_score(false, i) = s;
-      show(false, i, &temp);
-      if (!solved)
-        all_solved = false;
-    }
-
-    if (all_solved) {
-      task.is_solved = true;
-      bool test_all_solved = true;
-      for (int i = 0; i < (int)task.test.size(); ++i) {
-        auto &ex = task.test[i];
-        gpu_score_terms terms;
-        auto [s, solved] = environment::score_tree_output(
-            task.best_tree, ex, temp, task, nodes, &terms);
-        log_score(i, terms, "import_test");
-        task.best_score(true, i) = s;
-        show(true, i, &temp);
-        if (!solved) test_all_solved = false;
-      }
-      if (!task.test.empty() && test_all_solved) {
-        task.is_test_solved = true;
-      }
-    }
+    task.is_solved = draws_every(task.train, "train");
+    task.is_test_solved = task.is_solved && !task.test.empty() && draws_every(task.test, "test");
   }
 
   inline void solver::apply_program(const string &program) {
     if (!m_puzzle_loaded || program.empty()) return;
-    // Scoring wants the facts, so it asks for them. Ops that learn a table
+    // Checking wants the facts, so it asks for them. Ops that learn a table
     // (ShapeColorMap and kin) have nothing to say about a puzzle nobody has
     // read, and would paint an empty grid for every example.
     read_facts();
     scoped_lock lock(m_progress.mtx);
-    score_program(program);
+    check_program(program);
     changed();
     log_debug("Manual solution imported.");
   }
@@ -144,26 +99,17 @@ namespace arc {
   inline bool solver::try_what_inference_said(puzzle &p) {
     if (p.suggested_programs.empty()) return false;
     for (const string &program : p.suggested_programs) {
-      score_program(program);
+      check_program(program);
       if (p.is_solved) {
         log_debug("!!!! SOLVED BY WHAT INFERENCE SAID: " + program + " !!!!");
         return true;
       }
     }
     // NOTHING FITTED, so the reading's most likely program (its first) stays on
-    // as the best, drawn on every pair: what inference came to is there to see.
-    // The last one tried is no likelier than the rest.
-    if (p.suggested_programs.size() > 1) score_program(p.suggested_programs.front());
+    // as the best: what inference came to is there to see. The last one tried
+    // is no likelier than the rest.
+    if (p.suggested_programs.size() > 1) check_program(p.suggested_programs.front());
     return false;
-  }
-
-  // Blank every picture on one side. The scores go with them: an example with
-  // nothing shown has nothing scored either.
-  inline void solver::clear_views(puzzle &p, bool is_test) {
-    for (size_t i = 0; i < (is_test ? p.test : p.train).size(); ++i) {
-      p.best_score(is_test, i) = SCORE_MIN - 1.0f;
-      show(is_test, i, nullptr);
-    }
   }
 
 }

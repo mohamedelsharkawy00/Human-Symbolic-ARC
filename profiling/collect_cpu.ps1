@@ -12,8 +12,8 @@ $scorePath = Join-Path $runDirectory 'score.txt'
 $runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_said.exe" -ArgumentList (@('--as','profile') + $Ids) -WorkingDirectory "$PSScriptRoot/.." -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
 try {
     $runner.PriorityClass = 'AboveNormal'
-    # Let CUDA initialize before VTune injects its sampler. The score still
-    # covers every puzzle; the profile excludes startup and attachment time.
+    # Attach once the puzzles are loaded. The score still covers every
+    # puzzle; the profile excludes startup and attachment time.
     $startup = [Diagnostics.Stopwatch]::StartNew()
     while (!(Select-String -LiteralPath $scorePath -Pattern 'dataset flags' -Quiet)) {
         if ($runner.HasExited) { throw 'arc_said exited before profiler attachment.' }

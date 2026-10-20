@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0.."
 
 :: CPU profile of dataset inference and DSL replay, through normal completion.
-:: Attach after CUDA startup: launching under user-mode sampling stalls the driver.
+:: VTune attaches once the puzzles are loaded, so the profile leaves startup out.
 ::   scripts\profile.bat [id...]   the puzzles named, else every training puzzle.
 set "VTUNE_EXE=C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\vtune.exe"
 if not exist "%VTUNE_EXE%" (
@@ -17,7 +17,7 @@ if errorlevel 1 exit /b 1
 :: (arc_said otherwise reads a puzzle on every CPU thread).
 set "ARC_THREADS=1"
 
-:: Keep each run separate, including score output; never mix old GPU reports in.
+:: Keep each run separate, including score output.
 for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss-fff"') do set "PROFILE_OUT=profiling\output\cpu-%%T"
 mkdir "%PROFILE_OUT%"
 if errorlevel 1 exit /b 1

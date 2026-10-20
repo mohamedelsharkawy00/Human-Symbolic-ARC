@@ -39,14 +39,14 @@ DATASET_METADATA = {
 }
 
 # The complete set of files the Kaggle build needs: its two mains (the
-# submission's and the scored run's), the CUDA kernel, the one header arc_said
-# keeps beside itself, and every header in include/core. The folder IS the list
+# submission's and the scored run's), the ops, the one header arc_said keeps
+# beside itself, and every header in include/core. The folder IS the list
 # -- the solver is built from include/core alone, locally too (the arc_headless
 # target), so a header it needs cannot be missing from it, and none of
 # include/gui is sent.
 CORE = os.path.join(ROOT, "include", "core")
 FOLDERS = {
-    "src": (os.path.join(ROOT, "src"), ["kaggle_main.cpp", "cuda_solver.cu"]),
+    "src": (os.path.join(ROOT, "src"), ["kaggle_main.cpp", "ops.cpp"]),
     "scripts": (os.path.join(ROOT, "scripts"), ["said.cpp", "in_parallel.hpp"]),
     "include": (CORE, sorted(f for f in os.listdir(CORE) if os.path.isfile(os.path.join(CORE, f)))),
 }

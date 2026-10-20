@@ -8,10 +8,8 @@
 //
 // What the process says, one message per line, first word saying which:
 //   L                                   a puzzle was loaded
-//   P side example -                    a picture cleared (side 0 train, 1 test)
-//   P side example w h cells...         what the best program painted there
 //   N train_solved test_solved          the reading is done
-//   B solved test_solved train_count scores... test_count scores... | program
+//   B solved test_solved | program      the best program and its verdicts
 //   V hash examples, then per example:  what a program paints (a hover preview)
 //     w h cells...  objects, then per object: x0 y0 x1 y1 w h cells...
 //
@@ -20,7 +18,6 @@
 #include "16_solver.hpp"
 #include <chrono>
 #include <cstdio>
-#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,10 +35,9 @@ struct preview_payload {
   vector<vector<bbox>> object_bboxes; // [example][object] world bbox + tile canvas dims
 };
 
-// Runs `target` on every example on the GPU. The solver's process answers
-// this; the GUI only ever reads the result.
+// Runs `target` on every example. The solver's process answers this; the
+// GUI only ever reads the result.
 inline preview_payload preview_of(const puzzle &task, const node *target) {
-  const int nc = environment::count_nodes(target);
   preview_payload payload;
   const int total = (int)(task.train.size() + task.test.size());
   payload.accumulators.resize(total);
@@ -50,65 +46,48 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
   int slot = 0;
   auto run_section = [&](const vector<example> &vec) {
     for (const auto &ex : vec) {
-      grid out;
-      float score = 0; bool solved = false;
-      if (environment::execute_tree_via_flat(target, ex, out, task, nc, score, solved))
-        payload.accumulators[slot] = out;
-
-      // Pull whatever object list the hovered op produced (if any). Canvas
-      // must be large enough to hold every object's painted extent --
-      // input-sized isn't enough when ops like Fractal/Tile produce
-      // output-sized masks. Use max(input, output, every object's x1+1/y1+1)
-      // so test examples (output dims = 0) and multi-scale ops both display.
-      // On the heap: a list as long as a grid has cells is too big for the stack.
-      static thread_local auto fetched = std::make_unique<gpu_object_list>();
-      gpu_object_list& ol = *fetched;
-      int work_w = 0, work_h = 0;
-      if (cuda_dsl_fetch_last_object_list(0, ol, &work_w, &work_h)) {
-        int n_obj = min((int)ol.count, GPU_KERNEL_MAX_OBJECTS);
-        payload.object_lists[slot].reserve(n_obj);
-        payload.object_bboxes[slot].reserve(n_obj);
-        // Base the tile canvas on the job's working output canvas, which
-        // reflects rotate ops (RotateToPortrait yields a portrait canvas) so
-        // the background rotates with the objects. Fall back to the example
-        // dims when the kernel reported nothing; grow to fit any object that
-        // paints beyond the canvas either way.
-        int canvas_w = (work_w > 0) ? work_w : max((int)ex.input.width,  (int)ex.output.width);
-        int canvas_h = (work_h > 0) ? work_h : max((int)ex.input.height, (int)ex.output.height);
-        for (int k = 0; k < n_obj; ++k) {
-          const auto &o = ol.objects[k];
-          if (o.x1 + 1 > canvas_w) canvas_w = o.x1 + 1;
-          if (o.y1 + 1 > canvas_h) canvas_h = o.y1 + 1;
-        }
-        canvas_w = min(canvas_w, MAX_GRID_DIM);
-        canvas_h = min(canvas_h, MAX_GRID_DIM);
-        for (int k = 0; k < n_obj; ++k) {
-          const auto &o = ol.objects[k];
-          grid g;
-          g.width = canvas_w;
-          g.height = canvas_h;
-          // Default-fill canvas with transparent; only paint mask cells that
-          // are themselves non-transparent.
-          for (int r = 0; r < canvas_h; ++r)
-            for (int c = 0; c < canvas_w; ++c)
-              g.data[r][c] = GPU_TRANSPARENT;
-          int mh = min((int)o.height, MAX_GRID_DIM);
-          int mw = min((int)o.width, MAX_GRID_DIM);
-          for (int r = 0; r < mh; ++r) {
-            int dst_r = o.y0 + r;
-            if (dst_r < 0 || dst_r >= canvas_h) continue;
-            for (int c = 0; c < mw; ++c) {
-              int dst_c = o.x0 + c;
-              if (dst_c < 0 || dst_c >= canvas_w) continue;
-              int8_t v = o.mask[r][c];
-              if (v != GPU_TRANSPARENT)
-                g.data[dst_r][dst_c] = (int)v;
-            }
+      // The object list the hovered op held, beside what it drew. On the
+      // heap: a list as long as a grid has cells is too big for the stack.
+      static thread_local auto held = std::make_unique<object_list>();
+      const grid out = environment::draw(target, ex, task, held.get());
+      payload.accumulators[slot] = out;
+      const object_list &ol = *held;
+      payload.object_lists[slot].reserve(ol.count);
+      payload.object_bboxes[slot].reserve(ol.count);
+      // Each object on a canvas as big as what was drawn -- which a turn
+      // (NormalizeOrientation) leaves on its side, so the background turns with
+      // the objects -- else as the example, and grown to hold every object's
+      // painted extent: Fractal and Tile hand back output-sized masks.
+      int canvas_w = out.width > 0 ? out.width : max(ex.input.width, ex.output.width);
+      int canvas_h = out.height > 0 ? out.height : max(ex.input.height, ex.output.height);
+      for (int k = 0; k < ol.count; ++k) {
+        const auto &o = ol.objects[k];
+        canvas_w = max(canvas_w, o.x1 + 1);
+        canvas_h = max(canvas_h, o.y1 + 1);
+      }
+      canvas_w = min(canvas_w, MAX_GRID_DIM);
+      canvas_h = min(canvas_h, MAX_GRID_DIM);
+      for (int k = 0; k < ol.count; ++k) {
+        const auto &o = ol.objects[k];
+        grid g;
+        g.width = canvas_w;
+        g.height = canvas_h;
+        int mh = min((int)o.height, MAX_GRID_DIM);
+        int mw = min((int)o.width, MAX_GRID_DIM);
+        for (int r = 0; r < mh; ++r) {
+          int dst_r = o.y0 + r;
+          if (dst_r < 0 || dst_r >= canvas_h) continue;
+          for (int c = 0; c < mw; ++c) {
+            int dst_c = o.x0 + c;
+            if (dst_c < 0 || dst_c >= canvas_w) continue;
+            int8_t v = o.mask[r][c];
+            if (v != TRANSPARENT)
+              g.data[dst_r][dst_c] = v;
           }
-          payload.object_lists[slot].push_back(std::move(g));
-          payload.object_bboxes[slot].push_back({
-            (int)o.x0, (int)o.y0, (int)o.x1, (int)o.y1, canvas_w, canvas_h});
         }
+        payload.object_lists[slot].push_back(std::move(g));
+        payload.object_bboxes[slot].push_back({
+          (int)o.x0, (int)o.y0, (int)o.x1, (int)o.y1, canvas_w, canvas_h});
       }
       ++slot;
     }
@@ -137,24 +116,16 @@ inline void read_grid(istream &in, grid &g) {
     }
 }
 
-// THE WATCHED SIDE: a solver_observer that writes the lines. Pictures are held
-// and only the latest of each goes out, at most every `interval`.
+// THE WATCHED SIDE: a solver_observer that writes the lines. The best program
+// goes out when it changes, at most every `interval`.
 class search_stream_writer : public solver_observer {
 public:
   explicit search_stream_writer(FILE *out, chrono::milliseconds interval = chrono::milliseconds(50))
       : m_out(out), m_interval(interval) {}
 
   void loaded(const puzzle &) override {
-    m_pending.clear();
     m_best.clear();
     line("L");
-  }
-
-  void painted(bool is_test, size_t i, const grid *g) override {
-    string text = to_text("P %d %zu", (int)is_test, i);
-    if (g) write_grid(text, *g);
-    else text += " -";
-    m_pending[key(is_test, i)] = std::move(text);
   }
 
   void news(const search_news &n) override {
@@ -186,16 +157,8 @@ public:
     }
     m_last = t;
 
-    for (auto &entry : m_pending) line(entry.second);
-    m_pending.clear();
-
     const puzzle &p = reader.get_puzzle();
-    string best = to_text("B %d %d %zu", (int)p.is_solved, (int)p.is_test_solved, p.train.size());
-    for (size_t i = 0; i < p.train.size(); ++i)
-      best += " " + shortest(p.best_score_or_worst(false, i));
-    best += to_text(" %zu", p.test.size());
-    for (size_t i = 0; i < p.test.size(); ++i)
-      best += " " + shortest(p.best_score_or_worst(true, i));
+    string best = to_text("B %d %d", (int)p.is_solved, (int)p.is_test_solved);
     best += " | " + (p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : string());
     if (best != m_best) line(m_best = best);
 
@@ -203,7 +166,6 @@ public:
   }
 
 private:
-  static int key(bool is_test, size_t i) { return (int)is_test * 1024 + (int)i; }
   void line(const string &text) {
     fputs(text.c_str(), m_out);
     fputc('\n', m_out);
@@ -212,7 +174,6 @@ private:
   FILE *m_out;
   chrono::milliseconds m_interval;
   chrono::steady_clock::time_point m_last{};
-  map<int, string> m_pending;
   string m_best;
 };
 
@@ -252,7 +213,7 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
       read_grid(in, payload.accumulators[i]);
       size_t objects = 0;
       in >> objects;
-      objects = min(objects, (size_t)GPU_KERNEL_MAX_OBJECTS);
+      objects = min(objects, (size_t)MAX_OBJECTS_IN_A_LIST);
       for (size_t k = 0; k < objects; ++k) {
         preview_payload::bbox b{};
         in >> b.x0 >> b.y0 >> b.x1 >> b.y1;
@@ -271,26 +232,11 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
   scoped_lock lock(progress.mtx);
   if (kind == "L") {
     watcher.loaded(p);
-  } else if (kind == "P") {
-    int side = 0;
-    size_t i = 0;
-    in >> side >> i;
-    if (in >> ws && in.peek() == '-') {
-      watcher.painted(side != 0, i, nullptr);
-    } else {
-      grid g;
-      read_grid(in, g);
-      watcher.painted(side != 0, i, &g);
-    }
   } else if (kind == "B") {
     int solved = 0, test_solved = 0;
-    size_t count = 0;
-    in >> solved >> test_solved >> count;
+    in >> solved >> test_solved;
     p.is_solved = solved != 0;
     p.is_test_solved = test_solved != 0;
-    for (size_t i = 0; i < count; ++i) in >> p.best_score(false, i);
-    in >> count;
-    for (size_t i = 0; i < count; ++i) in >> p.best_score(true, i);
     string bar, program;
     in >> bar;  // the "|" before the program, which may be empty
     getline(in >> ws, program);

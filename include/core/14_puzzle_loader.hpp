@@ -240,9 +240,6 @@ inline void take_the_reading(puzzle& task, inference read, const puzzle_label& l
     const inference& inf = task.inf;
     if (write_report)
         log_inference(task.id, inf, label.idx, label.count, label.dataset_flags);
-    task.rule = inf.size;                              // size - across_input_output
-    if (inf.ground_election.input_elected() >= 0)              // color - across_inputs
-        task.invariant_colors[inf.ground_election.input_elected()] = true;  // (bg only - see CAVEAT)
 
     // THE READING, SAID AS PROGRAMS. The election could not separate the tied
     // openings, so each is its own whole program rather than a claim that one
@@ -363,9 +360,10 @@ inline bool load_task_from_content(const string &content, const string &id,
 
         // Test outputs are absent from the challenges JSON (the answers live in a
         // separate solutions file). If one was supplied for this test example,
-        // attach it here so it behaves exactly like an inline output: scored,
-        // distance-mapped, and able to light up "TEST SET SOLVED". One solution
-        // grid per test input, in order (out_vec.size() == this example's index).
+        // attach it here so it behaves exactly like an inline output: what a
+        // program draws is checked against it, and it can light up "TEST SET
+        // SOLVED". One solution grid per test input, in order (out_vec.size() ==
+        // this example's index).
         if (!is_train && !has_output && test_solutions &&
             out_vec.size() < test_solutions->size()) {
           const grid &sol = (*test_solutions)[out_vec.size()];
