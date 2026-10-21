@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -47,17 +48,19 @@ namespace arc {
 
 	// --- Shared node-type metadata helpers (used by serializer, GUI) ---
 
-	// An op takes an argument only when its range holds more than one value.
+	// An op takes an argument when its range holds more than one value, or
+	// when it says its choices in slots.
 	inline bool is_annotated(node_type type) {
-		return row_of(type).low != row_of(type).high;
+		return row_of(type).low != row_of(type).high || said_in_slots(type);
 	}
 
-	// The printed annotation IS the value, so reading one back is reading a
-	// number: no op translates its own argument, so nothing has to be undone.
-	inline void append_annotation(node_type type, int16_t value, string& out) {
+	// The printed annotation IS the value -- a number, or Tile's slots by name
+	// (tile_written) -- so reading one back is reading what was written: no op
+	// translates its own argument, so nothing has to be undone.
+	inline void append_annotation(node_type type, int16_t value, const tile_value& tile, string& out) {
 		if (is_annotated(type)) {
 			out += '[';
-			out += to_string((int)value);
+			out += said_in_slots(type) ? tile_written(tile) : to_string((int)value);
 			out += ']';
 		}
 	}
@@ -71,6 +74,8 @@ namespace arc {
 		uint64_t hash = 0;
 		node_type type{};
 		int16_t value = 0;
+		// What a Tile says; every other op says its one number in `value`.
+		tile_value tile;
 	};
 
 	struct puzzle {
@@ -95,6 +100,7 @@ namespace arc {
 	struct flat_program_op {
 		node_type type;
 		int16_t value = 0;
+		tile_value tile;
 	};
 
 	// A program in the order it runs, its first op first.
@@ -114,10 +120,29 @@ namespace arc {
 			return mix64(h);
 		}
 
+		// A Tile's slots folded into one number for its node's hash.
+		static inline uint64_t tile_hash(const tile_value& tile) {
+			uint64_t h = (uint64_t)tile.step_count;
+			auto fold_number = [&](const tile_number& number) {
+				h = hash_fold(h, (uint64_t)(uint8_t)number.times);
+				h = hash_fold(h, (uint64_t)number.first);
+				h = hash_fold(h, (uint64_t)number.second);
+			};
+			for (int which = 0; which < tile.step_count; ++which) {
+				fold_number(tile.steps[which].down);
+				fold_number(tile.steps[which].across);
+			}
+			for (const tile_bound& bound : { tile.start, tile.end }) {
+				h = hash_fold(h, (uint64_t)bound.edge);
+				h = hash_fold(h, (uint64_t)(uint8_t)bound.steps);
+			}
+			return hash_fold(h, (uint64_t)tile.spread);
+		}
+
 		static inline void update_hash(node* n) {
 			if (!n)
 				return;
-			n->hash = node_hash(to_underlying(n->type), (uint64_t)n->value,
+			n->hash = node_hash(to_underlying(n->type), said_in_slots(n->type) ? tile_hash(n->tile) : (uint64_t)n->value,
 			                    n->arg ? n->arg->hash : 0, n->arg != nullptr);
 		}
 
@@ -140,7 +165,7 @@ namespace arc {
 		// The chain from its leaf up, in the order it runs.
 		static inline flat_program flatten_unary_program(const node* n) {
 			flat_program out;
-			for (; n; n = n->arg) out.push_back({ n->type, n->value });
+			for (; n; n = n->arg) out.push_back({ n->type, n->value, n->tile });
 			reverse(out.begin(), out.end());
 			return out;
 		}
@@ -152,7 +177,7 @@ namespace arc {
 				if (!out.empty())
 					out += ' ';
 				out += type_name[to_underlying(op.type)];
-				append_annotation(op.type, op.value, out);
+				append_annotation(op.type, op.value, op.tile, out);
 			}
 			return out;
 		}
@@ -170,7 +195,7 @@ namespace arc {
 		// Parse pipeline format: "A -> B[v] -> C" (deepest leaf first, root last).
 		// All ops must be unary except the leaf (arity 0). Returns nullptr on failure.
 		static inline node* parse_pipeline(const string& str) {
-			vector<pair<node_type, int16_t>> tokens;
+			vector<flat_program_op> tokens;
 			size_t pos = 0;
 			auto skip_ws = [&]() {
 				while (pos < str.size() && isspace((unsigned char)str[pos]))
@@ -195,27 +220,39 @@ namespace arc {
 					}
 				}
 				if (match == -1) return nullptr;
-				int16_t value = 0;
+				flat_program_op token{ (node_type)match };
+				const bool slots = said_in_slots(token.type);
 				if (pos < str.size() && str[pos] == '[') {
 					pos++;
 					size_t vs = pos;
 					while (pos < str.size() && str[pos] != ']') pos++;
-					int parsed = 0;
-					try { parsed = stoi(str.substr(vs, pos - vs)); } catch (...) { parsed = 0; }
-					value = (int16_t)parsed;
+					const string written = str.substr(vs, pos - vs);
+					if (slots) {
+						const optional<tile_value> tile = tile_read(written);
+						if (!tile) return nullptr;
+						token.tile = *tile;
+					} else {
+						int parsed = 0;
+						try { parsed = stoi(written); } catch (...) { parsed = 0; }
+						token.value = (int16_t)parsed;
+					}
 					if (pos < str.size() && str[pos] == ']') pos++;
+				} else if (slots) {
+					return nullptr;
 				}
-				tokens.push_back({(node_type)match, value});
+				tokens.push_back(token);
 			}
 			if (tokens.empty()) return nullptr;
 			node* curr = new node();
-			curr->type = tokens[0].first;
-			curr->value = tokens[0].second;
+			curr->type = tokens[0].type;
+			curr->value = tokens[0].value;
+			curr->tile = tokens[0].tile;
 			update_hash(curr);
 			for (size_t i = 1; i < tokens.size(); ++i) {
 				node* parent = new node();
-				parent->type = tokens[i].first;
-				parent->value = tokens[i].second;
+				parent->type = tokens[i].type;
+				parent->value = tokens[i].value;
+				parent->tile = tokens[i].tile;
 				parent->arg = curr;
 				update_hash(parent);
 				curr = parent;

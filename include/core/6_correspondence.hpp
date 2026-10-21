@@ -12,6 +12,7 @@
 // and choose the grouping and allowed changes that best explain them.
 #pragma once
 #include "5_matching.hpp"
+#include "8_vocabulary.hpp"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -290,8 +291,7 @@ struct correspondence_election {
         // moved their own size or grown a trail the direction `value` names,
         // their boxes filled in `paint`,
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
-        // repeated down their columns for `value` past 32 and otherwise along
-        // their rows, every `value` % 32 cells, or folded into one figure and
+        // repeated as the Tile in `tile` says (tiled_along), or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
         // partner as MoveToward's `value` says (move_toward), or recolored to
         // the color its own shape names (shape_recolor), or the picture so far
@@ -312,6 +312,8 @@ struct correspondence_election {
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
                                 own_sentences, kind_count } as = unsaid;
         int8_t value = 0;
+        // The Tile it says, where it says one (tiled_along).
+        tile_value tile;
         piece_pick pick = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.
         int8_t paint = -1;

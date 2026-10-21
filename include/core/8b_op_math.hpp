@@ -1338,7 +1338,7 @@ inline void project_along(const cell_box& tpl, const cell_box& marker,
 }
 
 // GENERATE · CopyTo, Bridge, ExtendTo, ExtendDiagonal and ExtendOrthogonal,
-// TileX and TileY, Tile, DiagTile, MirrorAround
+// Tile, MirrorAround
 
 // Align like anchors of two spans: 0 = first cell, 1 = middle cell,
 // 2 = last cell. Even spans use the earlier of the two middle cells.
@@ -1695,57 +1695,156 @@ inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
     }
 }
 
-// TileX's and TileY's step, shared by inference and execution. A tiled piece is
-// laid again and again `period` cells apart, counted from where it stands, its
-// first column (TileX) or row (TileY) at `start`: it stays put, and its copies
-// run both ways from it to the edges. So the cell `at` along that axis shows
-// the piece's own cell `(at - start) mod period` along it -- or none, -1, where
-// that falls past the piece's `size` cells. Counted from the canvas's edge
-// instead, a piece off that count -- 4f537728's marker at column 11, three
-// apart -- is laid in the gaps beside its own place.
-inline int tiled_source(int at, int start, int period, int size) {
-    if (period <= 0) return -1;
-    const int source = ((at - start) % period + period) % period;
-    return source < size ? source : -1;
-}
+// TILE, SAID ONCE FOR THE OP AND FOR THE READINGS THAT REPLAY IT: what its
+// steps measure, how much of a piece one copy is, and where the copies lie.
 
-// TILE[3]'S LATTICE, READ OFF THE MARKS THEMSELVES. They stand one smallest
-// gap apart and take turns, so each comes round again after as many gaps as
-// there are marks, starting on its own row and never above it. Said once for
-// the op and for the reading that replays it, so the two cannot read a
-// different lattice off the same marks.
-//
-// The period over `count` marks whose top rows row_of(i) gives, or 0 when
-// there is no lattice to read -- fewer than two marks, or all of them on one
-// row -- and the op then hands its marks back as they were. No two rows of one
-// grid stand the largest grid apart, so that gap doubles as none found.
-template <class RowOf>
-inline int mark_lattice_period(int count, RowOf row_of) {
-    int gap = MAX_GRID_DIM;
-    for (int i = 0; i < count; ++i)
-        for (int j = i + 1; j < count; ++j) {
-            const int apart = row_of(i) > row_of(j) ? row_of(i) - row_of(j) : row_of(j) - row_of(i);
-            if (apart > 0 && apart < gap) gap = apart;
-        }
-    return gap < MAX_GRID_DIM ? count * gap : 0;
-}
-
-// Calls lay(row, source) for every row of a `rows`-tall canvas that a mark
-// `height` rows tall, standing at `top`, comes round on, with which of its own
-// rows lands there.
-template <class Lay>
-inline void each_lattice_row(int top, int height, int period, int rows, Lay lay) {
-    if (period <= 0) return;
-    for (int row = top > 0 ? top : 0; row < rows; ++row) {
-        const int source = (row - top) % period;
-        if (source < height) lay(row, source);
+// WHAT A Tile'S STEPS MEASURE IN THE HAND, read once off the picked pieces:
+// along rows [0] and columns [1], how many places they start at, and the
+// smallest spacing between two of those, 0 where there is one place; and how
+// many colors they hold. `picked(i)` says whether piece i is picked,
+// `start(i, along)` where it starts that way, `palette(i)` its colors, a bit each.
+struct hand_measures {
+    int count[2] = {}, spacing[2] = {};
+    int colors = 0;
+};
+template <class Picked, class Start, class Palette>
+inline hand_measures measure_hand(int pieces, Picked picked, Start start, Palette palette) {
+    hand_measures hand;
+    // A hand holds a piece a cell at most.
+    int starts[MAX_GRID_CELLS];
+    uint32_t colors = 0;
+    for (int along = 0; along < 2; ++along) {
+        int taken = 0;
+        for (int i = 0; i < pieces && taken < MAX_GRID_CELLS; ++i)
+            if (picked(i)) starts[taken++] = start(i, along);
+        sort(starts, starts + taken);
+        hand.count[along] = (int)(unique(starts, starts + taken) - starts);
+        for (int place = 1; place < hand.count[along]; ++place)
+            if (hand.spacing[along] == 0 || starts[place] - starts[place - 1] < hand.spacing[along])
+                hand.spacing[along] = starts[place] - starts[place - 1];
     }
+    for (int i = 0; i < pieces; ++i)
+        if (picked(i)) colors |= palette(i);
+    for (; colors; colors >>= 1) hand.colors += (int)(colors & 1);
+    return hand;
 }
 
-// Seat on the colour cycle; lean 0 walks row + col, lean 1 row - col.
-inline int diagonal_seat(int row, int col, int lean, int colors) {
-    const int diagonal = lean ? row - col : row + col;
-    return ((diagonal % colors) + colors) % colors;
+// A Tile's steps as moves in cells, for one piece `height` by `width` in that
+// hand. A step that moves nothing is dropped: every copy of it lies on the piece.
+struct tile_moves {
+    int down[tile_value::MOST_STEPS] = {}, across[tile_value::MOST_STEPS] = {};
+    int count = 0;
+};
+inline tile_moves moves_of(const tile_value& tile, int height, int width, const hand_measures& hand) {
+    auto cells = [&](const tile_number& number, int along) {
+        auto measured = [&](tile_measure measure) {
+            switch (measure) {
+            case tile_measure::own:     return along == 0 ? height : width;
+            case tile_measure::spacing: return hand.spacing[along];
+            case tile_measure::count:   return hand.count[along];
+            case tile_measure::colors:  return hand.colors;
+            default:                    return 1;
+            }
+        };
+        return number.times * measured(number.first) * measured(number.second);
+    };
+    tile_moves moves;
+    for (int which = 0; which < tile.step_count && which < tile_value::MOST_STEPS; ++which) {
+        const int down = cells(tile.steps[which].down, 0), across = cells(tile.steps[which].across, 1);
+        if (down == 0 && across == 0) continue;
+        moves.down[moves.count] = down;
+        moves.across[moves.count] = across;
+        ++moves.count;
+    }
+    return moves;
+}
+
+// HOW MUCH OF A PIECE `height` BY `width` ONE COPY IS: its first rows and
+// columns, as many as the shortest move a step makes that way, where that is
+// shorter than the piece, so no copy lies over the next (5117e062's 3s carried
+// down its columns in its first row's colors). {rows, columns}.
+inline std::pair<int, int> copy_size(const tile_moves& moves, int height, int width) {
+    for (int which = 0; which < moves.count; ++which) {
+        if (moves.down[which] != 0) height = min(height, abs(moves.down[which]));
+        if (moves.across[which] != 0) width = min(width, abs(moves.across[which]));
+    }
+    return { height, width };
+}
+
+// Whole division rounded down, and up, whatever the signs.
+constexpr int floor_div(int a, int b) { return a / b - (a % b != 0 && (a < 0) != (b < 0) ? 1 : 0); }
+constexpr int ceil_div(int a, int b) { return -floor_div(-a, b); }
+
+// WHERE A Tile LAYS ITS COPIES of one piece -- `rows` by `columns` of it, its
+// top-left at (top, left) -- each offset handed once to visit(down, across),
+// which says false to stop: every copy from `start` steps to `end`, as far as
+// the grid goes where either says the edge, that still shows on a canvas
+// `width` by `height`. Counted from where the piece stands, so a piece off the
+// canvas's own count is laid where it lies (4f537728's marker at column 11,
+// three apart). In lines each step is taken from the piece alone, step by step,
+// each count of it in order; in a grid every copy takes every step again, the
+// first step's count outermost.
+template <class Visit>
+inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, int top, int left, int rows,
+                             int columns, int width, int height, Visit visit) {
+    // A copy shows where its offset lies strictly between these.
+    const int down_low = -top - rows, down_high = height - top;
+    const int across_low = -left - columns, across_high = width - left;
+    constexpr int edge = 1 << 20;
+    const int start = tile.start.edge ? -edge : tile.start.steps, end = tile.end.edge ? edge : tile.end.steps;
+    bool seen[2 * MAX_GRID_DIM][2 * MAX_GRID_DIM] = {};
+    auto lay = [&](int down, int across) {
+        if (down <= down_low || down >= down_high || across <= across_low || across >= across_high) return true;
+        const int row = top + down + MAX_GRID_DIM, col = left + across + MAX_GRID_DIM;
+        if (row >= 0 && col >= 0 && row < 2 * MAX_GRID_DIM && col < 2 * MAX_GRID_DIM) {
+            if (seen[row][col]) return true;
+            seen[row][col] = true;
+        }
+        return visit(down, across);
+    };
+    if (tile.spread == tile_spread::lines || moves.count < 2) {
+        for (int which = 0; which < moves.count; ++which) {
+            // The counts of this step whose copy can show, within start and end.
+            int least = start, most = end;
+            auto within = [&](int low, int high, int move) {
+                if (move == 0) return;
+                if (move < 0) {
+                    move = -move;
+                    low = -low;
+                    high = -high;
+                    std::swap(low, high);
+                }
+                least = max(least, floor_div(low, move) + 1);
+                most = min(most, ceil_div(high, move) - 1);
+            };
+            within(down_low, down_high, moves.down[which]);
+            within(across_low, across_high, moves.across[which]);
+            for (int steps = least; steps <= most; ++steps)
+                if (!lay(steps * moves.down[which], steps * moves.across[which])) return;
+        }
+        return;
+    }
+    // A GRID: the counts of the two steps that reach the canvas's corners bound
+    // every copy that shows. Two steps along one line bound nothing that way,
+    // and every count as far as the grid is wide is asked.
+    int least[2] = { -2 * MAX_GRID_DIM, -2 * MAX_GRID_DIM }, most[2] = { 2 * MAX_GRID_DIM, 2 * MAX_GRID_DIM };
+    if (const int det = moves.down[0] * moves.across[1] - moves.down[1] * moves.across[0]; det != 0) {
+        least[0] = least[1] = edge;
+        most[0] = most[1] = -edge;
+        for (const int down : { down_low, down_high })
+            for (const int across : { across_low, across_high }) {
+                const int first = down * moves.across[1] - across * moves.down[1];
+                const int second = across * moves.down[0] - down * moves.across[0];
+                least[0] = min(least[0], floor_div(first, det));
+                most[0] = max(most[0], ceil_div(first, det));
+                least[1] = min(least[1], floor_div(second, det));
+                most[1] = max(most[1], ceil_div(second, det));
+            }
+    }
+    for (int first = max(least[0], start); first <= min(most[0], end); ++first)
+        for (int second = max(least[1], start); second <= min(most[1], end); ++second)
+            if (!lay(first * moves.down[0] + second * moves.down[1], first * moves.across[0] + second * moves.across[1]))
+                return;
 }
 
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,

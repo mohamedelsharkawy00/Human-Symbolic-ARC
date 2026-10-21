@@ -1,4 +1,4 @@
-Input SelectAll Pattern Withhold CurrentObjects SelectAll Tile[0] Union
+Input SelectAll Pattern Withhold CurrentObjects SelectAll Tile[steps: (own,0) (0,own), start: 0, end: edge, spread: grid] Union
 
 Puzzle:       963e52fc
 Train:        Solved

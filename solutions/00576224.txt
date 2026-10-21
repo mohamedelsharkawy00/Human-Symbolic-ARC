@@ -1,4 +1,4 @@
-Input SelectAll Tile[0] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] FlipHorizontal SelectAll Union
+Input SelectAll Tile[steps: (own,0) (0,own), start: 0, end: edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] FlipHorizontal SelectAll Union
 
 Puzzle:       00576224
 Train:        Solved

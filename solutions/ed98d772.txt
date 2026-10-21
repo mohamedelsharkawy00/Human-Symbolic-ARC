@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Tile[0] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] TurnLeft SelectAll Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Tile[steps: (own,0) (0,own), start: 0, end: edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] TurnLeft SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       ed98d772
 Train:        Solved

@@ -1,4 +1,4 @@
-Input Colors Withhold CurrentObjects SelectAll Trim Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] TileX[3] Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] TileY[3] Union
+Input Colors Withhold CurrentObjects SelectAll Trim Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Tile[steps: (0,3), start: edge, end: edge, spread: lines] Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Tile[steps: (3,0), start: edge, end: edge, spread: lines] Union
 
 Puzzle:       4f537728
 Train:        Solved

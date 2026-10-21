@@ -848,14 +848,22 @@ struct motif_continuation_rule {
     }
 };
 
+// THE INPUT TILED BY ITS OWN SIZE, from where it stands onward, every copy
+// taking both steps again: what a tiled frame, the input's blocks and a motif
+// carried over the grid say.
+inline constexpr tile_value tiled_by_its_own_size{
+    .steps = { { .down = { 1, tile_measure::own }, .across = { 0 } },
+               { .down = { 0 }, .across = { 1, tile_measure::own } } },
+    .step_count = 2, .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
+
 // THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
 // are crossed, the input paints part of that cycle, and the output is the cycle
 // carried over every cell -- the motif above with diagonals in place of a box.
 //
-// THE PERIOD IS HOW MANY COLORS THERE ARE, which is DiagTile's arithmetic and
-// not a choice made here: the op counts the colors it was handed and steps the
-// cycle by that count. Diagonals that repeat on any other period are a reading
-// this has no way to say, so it does not claim them.
+// THE PERIOD IS HOW MANY COLORS THERE ARE, a measure the Tile reads on each
+// grid, not a choice made here: every cell steps along its diagonal, and across
+// by as many cells as there are colors. Diagonals that repeat on any other
+// period are a reading this has no way to say, so it does not claim them.
 //
 // ONE COLOR IS NO CYCLE. With a single color every diagonal is the same
 // diagonal, the claim comes out true of any grid painted all one color, and it
@@ -865,10 +873,17 @@ struct motif_continuation_rule {
 // redrawn where it already sat, which says nothing about diagonals either.
 struct diagonal_continuation_rule {
     bool held = false;
-    // DiagTile's own argument: 0 for the diagonals of constant row + column,
-    // 1 for those of constant row - column.
+    // Which diagonals: 0 those of constant row + column, stepped down and to
+    // the left; 1 those of constant row - column, down and to the right.
     int8_t lean = 0;
     bool holds() const { return held; }
+
+    // The Tile that says it, on the input's own cells, one piece each (Split[2]).
+    static constexpr tile_value tile_of(int8_t lean) {
+        return { .steps = { { .down = { 1 }, .across = { (int8_t)(lean ? 1 : -1) } },
+                            { .down = { 0 }, .across = { 1, tile_measure::colors } } },
+                 .step_count = 2, .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::grid };
+    }
 
     // Reads the cycle off each input and keeps the lean that redraws every
     // output exactly. Nothing about the colors is kept: which color sits on
@@ -880,33 +895,33 @@ struct diagonal_continuation_rule {
         // be the input's own cells in the input's own frame.
         if (train.empty() || !boxed_by_its_cells(correspondence.segmentation)) return {};
         auto redraws_every_output = [&](int8_t lean) {
+            const tile_value tile = tile_of(lean);
             bool carried_something = false;
             for (const auto& pair : train) {
-                const color_tally counts(pair.input, TRANSPARENT);
-                int colors = 0;
-                for (int color = 0; color < COLOR_COUNT; ++color) colors += counts[color] > 0;
-                if (colors < 2) return false;
-                auto seat_of = [&](int row, int col) { return diagonal_seat(row, col, lean, colors); };
-                int8_t cycle[COLOR_COUNT];
-                for (int seat = 0; seat < colors; ++seat) cycle[seat] = -1;
-                bool agrees = true;
+                // The input's own cells in reading order, each laid again where
+                // the Tile lays it, a later cell's copies over an earlier one's.
+                struct cell_at { int row, col, color; };
+                vector<cell_at> cells;
                 pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
-                    int8_t& seated = cycle[seat_of(row, col)];
-                    agrees = agrees && (seated < 0 || seated == color);
-                    seated = (int8_t)color;
+                    cells.push_back({ row, col, color });
                 });
-                if (!agrees) return false;
-                // A seat no cell sat in is a color the cycle never named. The op
-                // hands the pieces back untouched rather than guess it, so a
-                // cycle with a hole in it is not a sentence.
-                for (int seat = 0; seat < colors; ++seat) if (cycle[seat] < 0) return false;
+                const hand_measures hand = measure_hand((int)cells.size(), [](int) { return true; },
+                    [&](int i, int along) { return along == 0 ? cells[(size_t)i].row : cells[(size_t)i].col; },
+                    [&](int i) { return 1u << cells[(size_t)i].color; });
+                if (hand.colors < 2) return false;
+                const tile_moves moves = moves_of(tile, 1, 1, hand);
+                grid drawn(pair.output.width, pair.output.height);
+                for (const cell_at& cell : cells)
+                    each_tile_offset(tile, moves, cell.row, cell.col, 1, 1, drawn.width, drawn.height, [&](int down, int across) {
+                        drawn.data[cell.row + down][cell.col + across] = (int8_t)cell.color;
+                        return true;
+                    });
+                if (drawn != pair.output) return false;
                 for (int row = 0; row < pair.output.height; ++row)
-                    for (int col = 0; col < pair.output.width; ++col) {
-                        if (pair.output.data[row][col] != cycle[seat_of(row, col)]) return false;
+                    for (int col = 0; col < pair.output.width; ++col)
                         carried_something = carried_something ||
                             row >= pair.input.height || col >= pair.input.width ||
                             pair.input.data[row][col] != pair.output.data[row][col];
-                    }
             }
             return carried_something;
         };
@@ -2760,8 +2775,9 @@ struct bridge_rule {
 
 // THE MARKS AS LINES THAT TAKE TURNS DOWN THE GRID. Every mark becomes a line
 // across the grid, and the lines come round again in the order the marks
-// stand, to the far edge. That is TileX[1], which spreads a mark's first
-// column into its line, then Tile[3], which lays the lattice; with
+// stand, to the far edge. That is two Tiles: `lines`, which lays a mark's
+// first column across the grid, then `lattice`, which lays each of those down
+// from its own row, a whole turn of the marks apart; with
 // NormalizeOrientation[0] in front, a pair lying on its side is read turned,
 // so its lines cross the short way. Only held when replaying those words
 // redraws every output exactly, which is what makes the lattice a rule read
@@ -2785,34 +2801,65 @@ struct mark_lattice_rule {
     bool portrait = false;
     bool holds() const { return held; }
 
+    // The Tiles that say it: each mark's first column laid across the grid
+    // both ways, a step at a time; then each of those laid down from its own
+    // row onward, as many rows apart as the marks start on times the smallest
+    // spacing between those rows.
+    static constexpr tile_value lines{ .steps = { { .down = { 0 }, .across = { 1 } } }, .step_count = 1,
+                                       .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::lines };
+    static constexpr tile_value lattice{
+        .steps = { { .down = { 1, tile_measure::count, tile_measure::spacing }, .across = { 0 } } }, .step_count = 1,
+        .start = {}, .end = { .edge = true }, .spread = tile_spread::lines };
+
     // What the words draw on one input: the cut's marks, trimmed and read the
     // way the pair is turned, each laid as its line wherever the lattice puts
-    // it, the rest left empty.
+    // it, the rest left empty. False where there is no lattice to read -- the
+    // marks all start on one row -- or where the copies would not fit the one
+    // list the op is handed.
     static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn, tile_size tiles = {}) {
         const vector<object> marks = pieces_as_said(input, cut, tiles);
-        // One list is all the op is handed.
-        if (marks.size() > MAX_OBJECTS_IN_A_LIST) return false;
         // Read turned, the marks' rows are their columns, and the other way round.
         const bool turned = portrait && lies_on_its_side(input.width, input.height);
-        auto top = [&](const object& mark) { return turned ? mark.summary.col : mark.summary.row; };
-        const int period = mark_lattice_period((int)marks.size(),
-                                               [&](int i) { return (int)top(marks[i]); });
-        if (period <= 0) return false;
+        auto top = [&](const object& mark) { return (int)(turned ? mark.summary.col : mark.summary.row); };
+        auto left = [&](const object& mark) { return (int)(turned ? mark.summary.row : mark.summary.col); };
+        auto tall = [&](const object& mark) { return (int)(turned ? mark.summary.width : mark.summary.height); };
+        auto wide = [&](const object& mark) { return (int)(turned ? mark.summary.height : mark.summary.width); };
+        // The lines stand on the marks' own rows, so they measure what the marks do.
+        const hand_measures hand = measure_hand((int)marks.size(), [](int) { return true; },
+            [&](int i, int along) { return along == 0 ? top(marks[(size_t)i]) : left(marks[(size_t)i]); },
+            [&](int i) { return (uint32_t)palette(marks[(size_t)i]); });
+        if (moves_of(lattice, 1, 1, hand).count == 0) return false;
         drawn = grid(input.width, input.height);
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
         auto at = [&](int row, int col) -> int8_t& {
             return turned ? drawn.data[col][row] : drawn.data[row][col];
         };
-        for (const object& mark : marks)
-            each_lattice_row(top(mark), turned ? mark.summary.width : mark.summary.height, period, rows,
-                             [&](int row, int source) {
-                // The line wears the mark's first column, as TileX[1] spreads it.
-                const int8_t color = turned ? mark.data[0][source] : mark.data[source][0];
-                if (color == TRANSPARENT) return;
-                for (int col = 0; col < across; ++col) at(row, col) = color;
+        int laid_lines = 0, laid_copies = 0;
+        for (const object& mark : marks) {
+            const tile_moves spread = moves_of(lines, tall(mark), wide(mark), hand);
+            const auto [line_rows, line_columns] = copy_size(spread, tall(mark), wide(mark));
+            each_tile_offset(lines, spread, top(mark), left(mark), line_rows, line_columns, across, rows,
+                             [&](int, int sideways) {
+                ++laid_lines;
+                const tile_moves down = moves_of(lattice, line_rows, line_columns, hand);
+                const auto [copy_rows, copy_columns] = copy_size(down, line_rows, line_columns);
+                each_tile_offset(lattice, down, top(mark), left(mark) + sideways, copy_rows, copy_columns, across, rows,
+                                 [&](int lower, int) {
+                    ++laid_copies;
+                    for (int row = 0; row < copy_rows; ++row)
+                        for (int col = 0; col < copy_columns; ++col) {
+                            const int8_t color = turned ? mark.data[col][row] : mark.data[row][col];
+                            const int at_row = top(mark) + lower + row, at_col = left(mark) + sideways + col;
+                            if (color != TRANSPARENT && at_row >= 0 && at_row < rows && at_col >= 0 && at_col < across)
+                                at(at_row, at_col) = color;
+                        }
+                    return true;
+                });
+                return true;
             });
-        return true;
+        }
+        return laid_lines <= MAX_OBJECTS_IN_A_LIST && laid_copies <= MAX_OBJECTS_IN_A_LIST;
     }
 
     static mark_lattice_rule detect(const vector<example>& train,
@@ -4198,8 +4245,9 @@ inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, i
 // THE WHOLE INPUT FRAMED: scaled up `factor` times, each cell a block, as ScaleUp
 // scales the input's one object; scaled down `factor` times, each block the
 // color most of it wears, as ScaleDown votes (majority_vote); or tiled from the
-// corner over the canvas the size rule gives, a copy per input, as Tile[0] lays
-// them -- as many as one list holds; turned to a pose (posed_place, the pose the
+// corner over the canvas the size rule gives, a copy per input, as Tile lays
+// them by its own size (tiled_by_its_own_size) -- as many as one list holds;
+// turned to a pose (posed_place, the pose the
 // turns and flips said for it make); a fractal, each cell of the input scaled
 // up to a copy of the input where it holds a figure, as Fractal draws the input
 // without its ground; or the unit it repeats (repeat_periods), as Pattern cuts it.
@@ -4253,12 +4301,19 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
                     canvas.data[row][col] = majority_vote(input.data, row, col, factor, input.height, input.width);
             return true;
         case kind::tiled: {
-            const int down = (canvas.height + input.height - 1) / input.height;
-            const int across = (canvas.width + input.width - 1) / input.width;
-            if (down * across > MAX_OBJECTS_IN_A_LIST) return false;
-            for (int row = 0; row < canvas.height; ++row)
-                for (int col = 0; col < canvas.width; ++col)
-                    canvas.data[row][col] = input.data[row % input.height][col % input.width];
+            const tile_moves moves = moves_of(tiled_by_its_own_size, input.height, input.width, {});
+            int copies = 0;
+            each_tile_offset(tiled_by_its_own_size, moves, 0, 0, input.height, input.width, canvas.width, canvas.height,
+                             [&](int, int) { return ++copies <= MAX_OBJECTS_IN_A_LIST; });
+            if (copies > MAX_OBJECTS_IN_A_LIST) return false;
+            each_tile_offset(tiled_by_its_own_size, moves, 0, 0, input.height, input.width, canvas.width, canvas.height,
+                             [&](int down, int across) {
+                for (int row = 0; row < input.height; ++row)
+                    for (int col = 0; col < input.width; ++col)
+                        if (canvas.contains(down + row, across + col))
+                            canvas.data[down + row][across + col] = input.data[row][col];
+                return true;
+            });
             return true;
         }
         default: return false;
@@ -5493,32 +5548,42 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
     });
 }
 
-// A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, walked. TileX lays each
-// picked piece again every `period` cells across the whole canvas, in its own
-// rows; TileY the same down the canvas, in its own columns -- counted from where
-// the piece stands, both ways, tiled_source (8b_op_math.hpp), the step the op
-// takes (walk_paint), laid every way the line asks (lay_paint): one cell at
-// least new in each pair is, the first copy being the piece itself, a second
-// copy in each.
-inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<partner_pieces>& handed, bool down,
-                                      int period) {
+// A PIECE REPEATED, walked: each picked piece laid again where its Tile lays it
+// (each_tile_offset, 8b_op_math.hpp, the arithmetic the op runs), each step read
+// off the pieces the pair's cut hands over, a copy one step of the piece where
+// a step is shorter (copy_size) -- walked (walk_paint) and laid every way the
+// line asks (lay_paint). A piece no step moves is drawn where it lies, as the
+// op hands it on.
+inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                      const tile_value& tile) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
-        const int along = down ? output.height : output.width;
+        const hand_measures hand = measure_hand(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
+            [&](int i, int along) {
+                const auto& box = cut.pieces[(size_t)i].summary;
+                return along == 0 ? (int)box.row : (int)box.col;
+            },
+            [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
             const auto& box = piece.summary;
-            for (int at = 0; at < along; ++at) {
-                const int source = tiled_source(at, down ? box.row : box.col, period, down ? box.height : box.width);
-                if (source < 0) continue;
-                for (int other = 0; other < (down ? box.width : box.height); ++other) {
-                    const int row = down ? at : box.row + other, col = down ? box.col + other : at;
-                    const int8_t color = down ? piece.data[source][other] : piece.data[other][source];
-                    if (color == (int8_t)TRANSPARENT || !output.contains(row, col)) continue;
-                    if (!put(row, col, color)) return false;
-                }
-            }
+            const tile_moves moves = moves_of(tile, box.height, box.width, hand);
+            const auto [rows, columns] = copy_size(moves, box.height, box.width);
+            bool laid = true;
+            auto lay_copy = [&](int down, int across) {
+                for (int row = 0; row < rows && laid; ++row)
+                    for (int col = 0; col < columns && laid; ++col) {
+                        const int8_t color = piece.data[row][col];
+                        const int at_row = box.row + down + row, at_col = box.col + across + col;
+                        if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col))
+                            laid = put(at_row, at_col, color);
+                    }
+                return laid;
+            };
+            if (moves.count == 0) lay_copy(0, 0);
+            else each_tile_offset(tile, moves, box.row, box.col, rows, columns, output.width, output.height, lay_copy);
+            if (!laid) return false;
         }
         return true;
     });
@@ -6072,8 +6137,8 @@ static_assert([] {
     return true;
 }(), "every word belongs to a group; duplicate entries fail the switch");
 
-// Rays and repeats keep a length/period below 32, plus 32 for the second
-// choice. This is their stored value, not the argument written in the DSL.
+// Rays keep their length below 32, plus 32 for the diagonals. This is their
+// stored value, not the argument written in the DSL.
 struct paint_value {
     static constexpr int second_bit = 32;
     static constexpr int packed(bool second, int number) { return (second ? second_bit : 0) + number; }
@@ -7265,43 +7330,59 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         }, laid_by(best.seen) };
     };
 
-    // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, every so many cells, to
-    // the edges -- asked again, like the rays, while a repeat accounts for any
-    // cell, so one piece can be repeated both ways. A tie goes to the shorter
-    // period, the tighter spacing the pairs bear out.
-    const auto tiles = row_of(node_type::TileX);
-    static_assert(row_of(node_type::TileX).low == row_of(node_type::TileY).low &&
-                  row_of(node_type::TileX).high == row_of(node_type::TileY).high &&
-                  row_of(node_type::TileY).high < paint_value::second_bit,
-                  "one period is said the same both ways round, and fits under the columns' 32");
-    // THE NARROWEST PAIR'S GRID, across and down: a repeat as far apart as that
+    // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, to the edges both ways
+    // -- as far apart as its own size, read on each grid, or every so many cells
+    // -- asked again, like the rays, while a repeat accounts for any cell, so one
+    // piece can be repeated both ways. A tie goes to its own size, which grows
+    // with the piece on a test, then to the tighter spacing the pairs bear out.
+    // THE NARROWEST PAIR'S GRID, across and down: so many cells apart as that
     // lays no copy beside the piece itself there, and is not at work.
     int narrowest[2] = { MAX_GRID_DIM, MAX_GRID_DIM };
     for (const example& pair : opened.train) {
         narrowest[0] = min(narrowest[0], pair.output.width);
         narrowest[1] = min(narrowest[1], pair.output.height);
     }
+    // The repeats asked, in the order asked; a repeat's value is its place here.
+    // ITS OWN SIZE IS A SHAPE'S: a whole color layer's is only the span its
+    // scattered cells happen to cover, and a layer repeated by it fits the
+    // pairs by coincidence (62b74c02's last nine cells, wrong on its test).
+    const bool cut_into_shapes = election.segmentation != segmentation_methods::all_cells_of_one_color;
+    vector<tile_value> repeats;
+    for (const bool down : { false, true }) {
+        auto apart = [&](tile_number cells) {
+            tile_value repeat{ .step_count = 1, .start = { .edge = true }, .end = { .edge = true },
+                               .spread = tile_spread::lines };
+            repeat.steps[0] = down ? tile_value::step{ cells, { 0 } } : tile_value::step{ { 0 }, cells };
+            repeats.push_back(repeat);
+        };
+        if (cut_into_shapes) apart({ 1, tile_measure::own });
+        for (int cells = 1; cells < narrowest[down]; ++cells) apart({ (int8_t)cells });
+    }
     auto repeat_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
         for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
-                for (const bool down : { false, true })
-                    for (int period = tiles.low; period <= tiles.high && period < narrowest[down]; ++period) {
-                        const auto& seen = laid_once(3, at, lay, paint_value::packed(down, period), laying::as_drawn, [&] {
-                            return tile_walk(opened, handed_by_pick[at], down, period); });
-                        if (!seen) continue;
-                        const int before = best.said;
-                        weigh_paint(best, paint_value::packed(down, period), draw_picks[at], *seen,
-                                    covered_claims(seen->drawn));
-                        if (best.said > before) best_lay = lay;
-                    }
+                for (int asked = 0; asked < (int)repeats.size(); ++asked) {
+                    const auto& seen = laid_once(3, at, lay, asked, laying::as_drawn, [&] {
+                        return tile_walk(opened, handed_by_pick[at], repeats[(size_t)asked]); });
+                    if (!seen) continue;
+                    const int before = best.said;
+                    weigh_paint(best, asked, draw_picks[at], *seen, covered_claims(seen->drawn));
+                    if (best.said > before) best_lay = lay;
+                }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
+            const tile_value& repeat = repeats[(size_t)best.value];
+            const bool down = repeat.steps[0].down.times != 0;
+            const tile_number& cells = down ? repeat.steps[0].down : repeat.steps[0].across;
             const int8_t said = say_paint(best, rule::tiled_along,
-                "is repeated every " + to_string(paint_value::number(best.value)) + " cells " +
-                    (paint_value::second(best.value) ? "down its columns" : "along its rows") + laid_words(best_lay));
-            read.fired[said].lay = best_lay; }, laid_by(best.seen) };
+                "is repeated " +
+                    (cells.first == tile_measure::own ? string("its own size apart ")
+                                                      : "every " + to_string(cells.times) + " cells ") +
+                    (down ? "down its columns" : "along its rows") + laid_words(best_lay));
+            read.fired[said].lay = best_lay;
+            read.fired[said].tile = repeat; }, laid_by(best.seen) };
     };
 
     // THE WHOLE FIGURE DRAWN AGAIN TURNED in its own box -- a quarter turn

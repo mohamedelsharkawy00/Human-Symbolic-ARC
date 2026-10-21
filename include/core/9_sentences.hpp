@@ -46,6 +46,11 @@ inline string spell(const string& op, int value) {
     return op + "[" + to_string(value) + "]";
 }
 
+// A Tile, its slots by name: Tile[steps: (0,3), start: edge, end: edge, spread: lines].
+inline string spell(const tile_value& tile) {
+    return "Tile[" + tile_written(tile) + "]";
+}
+
 // A color layer is an object before it is picked or deleted. These are
 // compositions, not executor modes: every program carries the actual color.
 // Only a plan says them (say_the_plan); the reading reads figures. The input a
@@ -491,7 +496,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
                 if (!fits) continue;
                 vector<beat> spelled = opening;
                 say_pose(spelled, "SelectAll", input);
-                if (several) spelled.push_back({"SelectAll", "Tile[0]"});
+                if (several) spelled.push_back({"SelectAll", spell(tiled_by_its_own_size)});
                 say_bands(spelled, row, "SelectRow");
                 say_bands(spelled, col, "SelectColumn");
                 if (!found || ops_in(spelled) < ops_in(beats)) beats = move(spelled);
@@ -837,7 +842,7 @@ inline bool say_mark_lattice(const inference& inf, said_reading& said) {
     if (cut.empty()) return false;
     string words = string("Input ") + cut + " SelectAll Trim";
     if (rule.portrait) words += " NormalizeOrientation[0]";
-    words += " TileX[1] Tile[3]";
+    words += " " + spell(mark_lattice_rule::lines) + " " + spell(mark_lattice_rule::lattice);
     if (rule.portrait) words += " RestoreOrientation";
     say_closed(said, words, "Union");
     return true;
@@ -859,7 +864,7 @@ inline bool say_ranked_layout(const inference& inf, said_reading& said) {
 
 // THE INPUT REPEATS, AND THE OUTPUT CARRIES THE REPEAT. Pattern cuts the input
 // into its repeating block, the block's own cell-level map is spelled once, and
-// Tile[0] carries it across. A claim about the grid, read off the block's own
+// Tile carries it across by its own size. A claim about the grid, read off the block's own
 // matching, so it is said whichever way of seeing objects won the election; the
 // generic object recolor of the cut's own line has another scope.
 inline bool say_motif_continuation(const inference& inf, said_reading& said) {
@@ -873,7 +878,7 @@ inline bool say_motif_continuation(const inference& inf, said_reading& said) {
     }
     vector<beat> beats = { {"SelectAll", word_for_segmentation(segmentation_methods::minimal_repeating_set)} };
     if (!map_word->empty()) beats.push_back({"SelectAll", *map_word});
-    beats.push_back({"SelectAll", "Tile[0]"});
+    beats.push_back({"SelectAll", spell(tiled_by_its_own_size)});
     say_beats(said, "Input", beats, "Union");
     return true;
 }
@@ -1064,7 +1069,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             paint = laid_paint(rule);
             return true;
         case said_as::tiled_along:
-            drawn = { pick, spell(paint_value::second(rule.value) ? "TileY" : "TileX", paint_value::number(rule.value)) + onto_words(rule) };
+            drawn = { pick, spell(rule.tile) + onto_words(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::turned_copy: {
@@ -1096,7 +1101,7 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
     switch (frame.kind) {
     case piece_frame_rule::scaled_up:   framed = whole + " " + spell("ScaleUp", frame.factor); break;
     case piece_frame_rule::scaled_down: framed = whole + " " + spell("ScaleDown", frame.factor); break;
-    case piece_frame_rule::tiled:       framed = whole + " " + spell("Tile", 0); break;
+    case piece_frame_rule::tiled:       framed = whole + " " + spell(tiled_by_its_own_size); break;
     case piece_frame_rule::fractal:     framed = whole + " Fractal"; break;
     case piece_frame_rule::repeat_unit: framed = whole + " Pattern"; break;
     case piece_frame_rule::posed:
@@ -1133,7 +1138,7 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         const size_t end = sentence.find(' ', start);
         const string word = sentence.substr(start, end == string::npos ? string::npos : end - start);
         if (word.rfind("Split[", 0) != 0 && word != "Colors") return false;
-        sentence.insert(end == string::npos ? sentence.size() : end, " SelectAll " + spell("Tile", 0));
+        sentence.insert(end == string::npos ? sentence.size() : end, " SelectAll " + spell(tiled_by_its_own_size));
         return true;
     };
     auto reframe = [&](string& sentence) {
@@ -1228,13 +1233,15 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     const said_as whole = read.line.empty() ? said_as::unsaid : read.fired[read.line.front()].as;
 
     // THE SAME CONTINUATION, READ ALONG THE DIAGONALS. Which color sits on which
-    // diagonal is read off the grid in hand, so the sentence carries the lean and
-    // nothing else -- that is what makes DiagTile a rule and not a table. Said
-    // below the tied openings rather than above them, because all the op reads is
-    // the input's own cells where they sat, and any opening that hands those over
-    // is as good as the one the election happened to pick.
+    // diagonal is read off the grid in hand, so the sentence carries which
+    // diagonals and nothing else -- that is what makes it a rule and not a
+    // table. Said below the tied openings rather than above them, because all
+    // the Tile reads is the input's own cells, one piece each (Split[2]), where
+    // they sat, and any opening that hands those over is as good as the one the
+    // election happened to pick.
     if (whole == said_as::diagonal_tile) {
-        say(spell("DiagTile", inf.diagonal_continuation.lean));
+        say(spell("Split", 2));
+        say(spell(diagonal_continuation_rule::tile_of(inf.diagonal_continuation.lean)));
         return spoken();
     }
 

@@ -22,7 +22,7 @@ inline constexpr string_view font_data =
     "A75755B65656C74447D65556E74747F74644G74557H55755I72227J11157K55655L44447"
     "M57555N75555O75557P75744Q75531R75655S74717T72222U55557V55552W55575X55255"
     "Y55222Z71247075557126227271747371717455711574717674757771111875757975717"
-    ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700";
+    ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700*05250";
 
 constexpr int UI_COLOR_LINE = COLOR_COUNT;
 constexpr int UI_COLOR_PASTEL_START = COLOR_COUNT * 2;
@@ -157,12 +157,12 @@ inline void draw_boxed_text(vulkan_context *context,
   draw_text(context, box_font, text, text_x, text_y, scale);
 }
 
-inline string get_node_label(node_type type, int16_t value) {
-  if (to_underlying(type) < 0 ||
-      to_underlying(type) >= to_underlying(node_type::type_count))
+inline string get_node_label(const node &n) {
+  if (to_underlying(n.type) < 0 ||
+      to_underlying(n.type) >= to_underlying(node_type::type_count))
     return "?";
-  string label = type_name[to_underlying(type)];
-  append_annotation(type, value, label);
+  string label = type_name[to_underlying(n.type)];
+  append_annotation(n.type, n.value, n.tile, label);
   return label;
 }
 
@@ -530,7 +530,7 @@ inline void draw_footer_rows(
         continue;
       }
       node *n = ops[i];
-      string label = get_node_label(n->type, n->value);
+      string label = get_node_label(*n);
       int bw = text_w(label, scale) + pad * 2;
       int color_idx = 1;
       if (n->hash != 0 && hh == n->hash)
@@ -1853,7 +1853,11 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display
     vector<string> labels;
     for (int i : ids) {
       string s = type_name[i];
-      if (is_annotated((node_type)i))
+      if (said_in_slots((node_type)i)) {
+        string slots;
+        for (const string_view slot : tile_slot_names) slots += (slots.empty() ? "" : ", ") + string(slot);
+        s += "[" + slots + "]";
+      } else if (is_annotated((node_type)i))
         s += to_text("[%d-%d]", row_of((node_type)i).low, row_of((node_type)i).high);
       labels.push_back(s);
     }

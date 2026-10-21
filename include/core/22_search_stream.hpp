@@ -57,7 +57,8 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
       // Each object on a canvas as big as what was drawn -- which a turn
       // (NormalizeOrientation) leaves on its side, so the background turns with
       // the objects -- else as the example, and grown to hold every object's
-      // painted extent: Fractal and Tile hand back output-sized masks.
+      // painted extent: Fractal hands back output-sized masks, and a Tile's
+      // copies can hang off the edge.
       int canvas_w = out.width > 0 ? out.width : max(ex.input.width, ex.output.width);
       int canvas_h = out.height > 0 ? out.height : max(ex.input.height, ex.output.height);
       for (int k = 0; k < ol.count; ++k) {

@@ -1785,92 +1785,48 @@ object_list& op_trim(program_run& run, const object_list& from) {
     return res;
 }
 
-// TileX[period] / TileY[period]: each picked object repeated across the whole
-// canvas on one axis, a copy every `period` cells counted from where it stands
-// (tiled_source), its own box kept on the other axis. A degenerate list or
-// period hands everything on as it came.
-object_list& op_tile_along(program_run& run, const object_list& from, int8_t period, bool across) {
+// Tile[steps, start, end, spread]: each picked piece laid again where its
+// Tile says (each_tile_offset, 8b_op_math.hpp, the arithmetic the readings
+// replay), each step read off this hand: the piece's own size, and what the
+// picked pieces measure together (measure_hand). A COPY IS A PIECE, keeping the
+// piece's mark, so a row of copies can be picked and turned; want one sheet? Say
+// UnionList after. A copy is one step of the piece where a step is shorter
+// (copy_size). A piece no step moves, and every piece not picked, rides
+// through as it came; copies past the list's room are dropped, as Split[2]
+// drops cells past it.
+object_list& op_tile(program_run& run, const object_list& from, const tile_value& tile) {
     object_list& res = run.fresh();
-    const int count = from.count;
-    int16_t least_x = MAX_GRID_DIM, least_y = MAX_GRID_DIM, most_x = -1, most_y = -1;
-    for (int i = 0; i < count; ++i) {
-        const held_object& one = from.objects[i];
-        least_x = min(least_x, one.x0); least_y = min(least_y, one.y0);
-        most_x = max(most_x, one.x1); most_y = max(most_y, one.y1);
-    }
-    least_x = max(least_x, (int16_t)0); least_y = max(least_y, (int16_t)0);
-    most_x = min(most_x, (int16_t)(MAX_GRID_DIM - 1));
-    most_y = min(most_y, (int16_t)(MAX_GRID_DIM - 1));
-    if (period <= 0 || count == 0 || most_x < 0 || most_y < 0 ||
-        most_x - least_x + 1 <= 0 || most_y - least_y + 1 <= 0) {
-        copy_objects(res, from, min(count, MAX_OBJECTS_IN_A_LIST));
-        return res;
-    }
-    const int kept = min(count, MAX_OBJECTS_IN_A_LIST);
-    for (int i = 0; i < kept; ++i) {
+    const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
+    const hand_measures hand = measure_hand(count, [&](int i) { return from.objects[i].selected; },
+        [&](int i, int along) { return along == 0 ? (int)from.objects[i].y0 : (int)from.objects[i].x0; },
+        [&](int i) {
+            uint32_t colors = 0;
+            each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) colors |= 1u << color; });
+            return colors;
+        });
+    for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
-        held_object& tiled = res.objects[i];
-        // Only what was picked is tiled; the rest ride through as they are.
-        if (!source.selected) { tiled = source; continue; }
-        const int width = across ? run.canvas.width : source.width;
-        const int height = across ? source.height : run.canvas.height;
-        const int left = across ? 0 : source.x0, top = across ? source.y0 : 0;
-        tiled.x0 = (int16_t)left; tiled.y0 = (int16_t)top;
-        tiled.width = (int16_t)width; tiled.height = (int16_t)height;
-        tiled.x1 = (int16_t)(left + width - 1); tiled.y1 = (int16_t)(top + height - 1);
-        // A tiled object is the SAME object, grown -- so it keeps its mark,
-        // like Trim, Fit and Pattern.
-        tiled.selected = source.selected;
-        for (int at = 0; at < MAX_GRID_CELLS; ++at) {
-            const int row = cell_row(at), col = cell_col(at);
-            int8_t color = TRANSPARENT;
-            if (row < height && col < width) {
-                const int from_row = across ? row : tiled_source(row, source.y0, period, source.height);
-                const int from_col = across ? tiled_source(col, source.x0, period, source.width) : col;
-                if (from_row >= 0 && from_row < source.height && from_col >= 0 && from_col < source.width)
-                    color = source.mask[from_row][from_col];
-            }
-            tiled.mask.values[at] = color;
+        const tile_moves moves = source.selected ? moves_of(tile, source.height, source.width, hand) : tile_moves{};
+        if (moves.count == 0 || source.width <= 0 || source.height <= 0) {
+            res.objects[res.count++] = source;
+            continue;
         }
+        const auto [rows, columns] = copy_size(moves, source.height, source.width);
+        each_tile_offset(tile, moves, source.y0, source.x0, rows, columns, run.canvas.width, run.canvas.height,
+            [&](int down, int across) {
+                if (res.count >= MAX_OBJECTS_IN_A_LIST) return false;
+                held_object& copy = res.objects[res.count++] = source;
+                copy.y0 = (int16_t)(source.y0 + down);
+                copy.x0 = (int16_t)(source.x0 + across);
+                copy.height = (int16_t)rows;
+                copy.width = (int16_t)columns;
+                copy.y1 = (int16_t)(copy.y0 + rows - 1);
+                copy.x1 = (int16_t)(copy.x0 + columns - 1);
+                for (int at = 0; at < MAX_GRID_CELLS; ++at)
+                    if (cell_row(at) >= rows || cell_col(at) >= columns) copy.mask.values[at] = TRANSPARENT;
+                return true;
+            });
     }
-    res.count = kept;
-    return res;
-}
-
-// DiagTile[lean]: the canvas painted in the held colors along its diagonals,
-// each diagonal the color seated there (diagonal_seat). Every color must have
-// a seat, or everything is handed on as it came.
-object_list& op_diag_tile(program_run& run, const object_list& from, int8_t lean) {
-    bool seen[COLOR_COUNT] = {};
-    int color_count = 0;
-    for (int i = 0; i < from.count; ++i)
-        each_painted(from.objects[i], [&](int, int, int8_t color) {
-            if (is_color(color) && !seen[color]) { seen[color] = true; ++color_count; }
-        });
-    object_list& res = run.fresh();
-    if (color_count == 0) { copy_list(res, from); return res; }
-    int8_t seated[COLOR_COUNT] = {};
-    bool filled[COLOR_COUNT] = {};
-    for (int i = 0; i < from.count; ++i) {
-        const held_object& one = from.objects[i];
-        each_painted(one, [&](int row, int col, int8_t color) {
-            if (!is_color(color)) return;
-            const int seat = diagonal_seat(one.y0 + row, one.x0 + col, lean, color_count);
-            seated[seat] = color;
-            filled[seat] = true;
-        });
-    }
-    for (int i = 0; i < color_count; ++i)
-        if (!filled[i]) { copy_list(res, from); return res; }
-    const int width = run.canvas.width, height = run.canvas.height;
-    held_object& tiled = res.objects[0];
-    tiled.x0 = 0; tiled.y0 = 0;
-    tiled.x1 = (int16_t)(width - 1); tiled.y1 = (int16_t)(height - 1);
-    tiled.width = (int16_t)width; tiled.height = (int16_t)height;
-    tiled.mask.clear();
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) tiled.mask[row][col] = seated[diagonal_seat(row, col, lean, color_count)];
-    res.count = 1;
     return res;
 }
 
@@ -1902,74 +1858,6 @@ object_list& op_fractal(program_run& run, const object_list& from) {
             }
         }
         if (any) ++res.count;
-    }
-    return res;
-}
-
-// Tile[0]=both axes, Tile[1]=X only, Tile[2]=Y only — period driven from object size.
-// Tile[3]=seed-lattice vertical: infers the periodic lattice from the marks
-// themselves (spacing = smallest row-gap, color cycle = the marks in order) and
-// completes it down the canvas, each mark stamped at its own row + k*period (anchor
-// preserved, rows before the first mark stay blank). Generalizes the "two pixels ->
-// alternating tiled lines" pattern (puzzle 0a938d79) to N marks / repeated colors;
-// use after NormalizeOrientation + TileX[1] expands each mark to a full row, then
-// RestoreOrientation to restore orientation. The lattice is read from the input (a
-// rule, not a constant); the line-fill/orientation stay separate ops.
-object_list& op_tile(program_run& run, const object_list& from, int8_t variant) {
-    object_list& res = run.fresh();
-    const int width = run.canvas.width, height = run.canvas.height;
-    if (width <= 0 || height <= 0) return res;
-    if (variant == 3) {
-        // The lattice is read off the marks themselves (mark_lattice_period):
-        // with fewer than two marks, or all on one row, there is none, and the
-        // marks pass through unchanged.
-        const int period = mark_lattice_period(from.count, [&](int i) { return (int)from.objects[i].y0; });
-        if (period <= 0) { copy_list(res, from); return res; }
-        // One full-canvas object per mark, stamped every `period` rows from
-        // its own y0, and never above it.
-        for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
-            const held_object& mark = from.objects[i];
-            if (mark.width <= 0 || mark.height <= 0) continue;
-            held_object& lattice = res.objects[res.count];
-            lattice.x0 = 0; lattice.y0 = 0;
-            lattice.x1 = (int16_t)(width - 1); lattice.y1 = (int16_t)(height - 1);
-            lattice.width = (int16_t)width; lattice.height = (int16_t)height;
-            lattice.mask.clear();
-            bool any = false;
-            each_lattice_row(mark.y0, mark.height, period, height, [&](int row, int from_row) {
-                for (int col = 0; col < width && col < mark.width; ++col) {
-                    const int8_t color = mark.mask[from_row][col];
-                    if (color != TRANSPARENT) { lattice.mask[row][col] = color; any = true; }
-                }
-            });
-            if (any) ++res.count;
-        }
-        return res;
-    }
-    // A COPY IS A PIECE. Handing back one sheet with the pattern baked into it
-    // said the tiling made one thing, and then nothing downstream could speak
-    // about the copies -- no pick could reach the middle row of them, because
-    // there was no middle row to reach. Want the sheet? Say UnionList after.
-    // Copies past the list's room are dropped, the same way Split[2] drops
-    // cells past it.
-    const bool tile_across = variant == 0 || variant == 1;
-    const bool tile_down = variant == 0 || variant == 2;
-    for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
-        const held_object& source = from.objects[i];
-        if (source.width <= 0 || source.height <= 0) continue;
-        const int copies_across = tile_across ? (width + source.width - 1) / source.width : 1;
-        const int copies_down = tile_down ? (height + source.height - 1) / source.height : 1;
-        for (int down = 0; down < copies_down && res.count < MAX_OBJECTS_IN_A_LIST; ++down)
-            for (int across = 0; across < copies_across && res.count < MAX_OBJECTS_IN_A_LIST; ++across) {
-                const int top = down * source.height, left = across * source.width;
-                // The copy is the same object moved, so it keeps its mask and
-                // its mark; the combine clips whatever hangs off the canvas.
-                held_object& copy = res.objects[res.count++] = source;
-                copy.x0 = (int16_t)left;
-                copy.y0 = (int16_t)top;
-                copy.x1 = (int16_t)(left + source.width - 1);
-                copy.y1 = (int16_t)(top + source.height - 1);
-            }
     }
     return res;
 }
@@ -2484,10 +2372,12 @@ object_list& op_snap_to_anchors(program_run& run, const object_list& from) {
 
 // --- The program ---
 
-// The op `type` with its value on the list in hand, `from`: the list it hands
-// on. With nothing in hand only a source makes anything; every other op hands
-// on an empty list.
-object_list& one_op(program_run& run, node_type type, int8_t value, const object_list* from) {
+// The op with its value, or its Tile, on the list in hand, `from`: the list it
+// hands on. With nothing in hand only a source makes anything; every other op
+// hands on an empty list.
+object_list& one_op(program_run& run, const flat_program_op& op, const object_list* from) {
+    const node_type type = op.type;
+    const int8_t value = (int8_t)op.value;
     if (type == node_type::Input) return op_input(run);
     if (type == node_type::Output) return op_output(run);
     if (!from) return run.fresh();
@@ -2499,8 +2389,6 @@ object_list& one_op(program_run& run, node_type type, int8_t value, const object
     case node_type::FlipVertical:            return op_turn(run, in, type);
     case node_type::ScaleUp:                 return op_scale_up(run, in, value);
     case node_type::ScaleDown:               return op_scale_down(run, in, value);
-    case node_type::TileX:                   return op_tile_along(run, in, value, true);
-    case node_type::TileY:                   return op_tile_along(run, in, value, false);
     // [0] lays a landscape example upright; [1] sets every example in its
     // canonical pose, the whole grid voting, which works on square grids too.
     case node_type::NormalizeOrientation:    return value == 1 ? op_canonical(run, in, true) : op_rotate(run, in, true);
@@ -2547,9 +2435,8 @@ object_list& one_op(program_run& run, node_type type, int8_t value, const object
     case node_type::Fit:                     return op_fit(run, in, value);
     case node_type::Skew:                    return op_skew(run, in, value);
     case node_type::Trim:                    return op_trim(run, in);
-    case node_type::DiagTile:                return op_diag_tile(run, in, value);
     case node_type::Fractal:                 return op_fractal(run, in);
-    case node_type::Tile:                    return op_tile(run, in, value);
+    case node_type::Tile:                    return op_tile(run, in, op.tile);
     case node_type::Pattern:                 return op_pattern(run, in);
     case node_type::ProjectOnSeeds:          return op_project_on_seeds(run, in);
     case node_type::CopyTo:                  return op_copy_to(run, in, value);
@@ -2605,7 +2492,6 @@ void carry_the_marks(node_type type, const object_list* last, object_list& made)
 void run_ops(program_run& run, const flat_program& program) {
     for (size_t i = 0; i < program.size(); ++i) {
         const node_type type = program[i].type;
-        const int8_t value = (int8_t)program[i].value;
         // The chain starts from the input: the FIRST op sees the input rather
         // than an empty list, so no program needs a leading Input.
         if (i == 0 && !run.current && !is_get_op(type)) run.current = &op_input(run);
@@ -2619,7 +2505,7 @@ void run_ops(program_run& run, const flat_program& program) {
         if (type == node_type::CurrentObjects) continue;
         if (type == node_type::Seeds) { run.current = &run.lists.seeds; continue; }
         object_list* const last = run.current;
-        object_list& made = one_op(run, type, value, last);
+        object_list& made = one_op(run, program[i], last);
         carry_the_marks(type, last, made);
         run.current = &made;
     }

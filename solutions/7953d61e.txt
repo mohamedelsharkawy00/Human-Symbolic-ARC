@@ -1,4 +1,4 @@
-Input SelectAll Tile[0] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] TurnLeft SelectAll Union
+Input SelectAll Tile[steps: (own,0) (0,own), start: 0, end: edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] TurnRight Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] TurnLeft SelectAll Union
 
 Puzzle:       7953d61e
 Train:        Solved
