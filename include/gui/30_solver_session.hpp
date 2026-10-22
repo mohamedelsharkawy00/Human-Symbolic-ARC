@@ -571,23 +571,23 @@ private:
   // Everything below arrives on the control thread, most of it under
   // m_search.mtx, which is the lock the frame draws under.
   void loaded(const puzzle &p) override {
+    m_view.views = {};
     puzzle_views &views = m_view.views;
-    views.train.clear();
-    views.test.clear();
     m_view.preview_cache.clear();
     m_view.preview_uploaded_hash = 0;
     m_view.preview_wanted = 0;
     if (!m_gpu_buffer) return;
     // Drop the last puzzle's cells; its views pointed into them.
     m_gpu_buffer->resize(m_base_gpu_buffer_size);
-    // Where each pair's cells landed, one entry per example, same index as the
-    // puzzle's own.
+    // Where each pair's cells landed, and a slot for what the best program
+    // draws there, one entry per example, same index as the puzzle's own.
     auto build = [&](const vector<example> &side, vector<example_views> &out) {
       for (const example &ex : side) {
         example_views view;
         view.input = upload_grid(ex.input, *m_gpu_buffer);
         if (ex.output.width > 0)
           view.output = upload_grid(ex.output, *m_gpu_buffer);
+        view.best = allocate_empty_grid(*m_gpu_buffer);
         out.push_back(view);
       }
     };
@@ -597,8 +597,20 @@ private:
 
   void changed() override { m_app.needs_upload = true; }
 
+  // Kept for the hover; the best program's also goes into the BEST slots,
+  // train then test, as the payload holds them.
   void previewed(uint64_t hash, preview_payload &&payload) override {
     scoped_lock lock(m_search.mtx);
+    if (m_gpu_buffer && m_puzzle.best_tree && hash == m_puzzle.best_tree->hash) {
+      puzzle_views &views = m_view.views;
+      size_t at = 0;
+      for (vector<example_views> *side : {&views.train, &views.test})
+        for (example_views &view : *side)
+          if (at < payload.accumulators.size())
+            update_display_buffer(view.best, payload.accumulators[at++], *m_gpu_buffer);
+      views.best_drawn_by = hash;
+      m_app.needs_upload = true;
+    }
     m_view.preview_cache[hash] = std::move(payload);
   }
 

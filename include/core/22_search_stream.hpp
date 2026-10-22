@@ -12,6 +12,8 @@
 //   B solved test_solved | program      the best program and its verdicts
 //   V hash examples, then per example:  what a program paints (a hover preview)
 //     w h cells...  objects, then per object: x0 y0 x1 y1 w h cells...
+// Each B is followed by a V of what its program paints, under the hash the
+// watcher's own reading of the program gives it.
 //
 // What it is told, on stdin:
 //   infer | verbose 0|1 | import <program> | preview <hash> <program> | quit
@@ -27,7 +29,8 @@ using namespace std;
 
 // WHAT ONE PROGRAM PAINTS ON EVERY EXAMPLE, train then test: its output, and
 // the object list its last op held, each object on a canvas of its own. What
-// the GUI shows when a program in the footer is hovered.
+// the GUI shows when a program in the footer is hovered, and the best
+// program's in the BEST column.
 struct preview_payload {
   struct bbox { int x0, y0, x1, y1, canvas_w, canvas_h; };
   vector<grid> accumulators;          // size = #examples
@@ -117,8 +120,8 @@ inline void read_grid(istream &in, grid &g) {
     }
 }
 
-// THE WATCHED SIDE: a solver_observer that writes the lines. The best program
-// goes out when it changes, at most every `interval`.
+// THE WATCHED SIDE: a solver_observer that writes the lines. The best program,
+// and what it paints, go out when it changes, at most every `interval`.
 class search_stream_writer : public solver_observer {
 public:
   explicit search_stream_writer(FILE *out, chrono::milliseconds interval = chrono::milliseconds(50))
@@ -148,6 +151,15 @@ public:
     fflush(m_out);
   }
 
+  // What `program` paints on every example, said under `hash`, or, with none
+  // named, under the program's own.
+  void preview(const puzzle &p, const string &program, uint64_t hash = 0) {
+    node *target = environment::parse(program);
+    if (!target) return;
+    previewed(hash ? hash : target->hash, preview_of(p, target));
+    environment::remove(target);
+  }
+
   // Called from the loop driving the solver: sends what changed since last
   // time. `now` sends it whatever the interval.
   void tick(const solver &reader, bool now = false) {
@@ -159,9 +171,12 @@ public:
     m_last = t;
 
     const puzzle &p = reader.get_puzzle();
-    string best = to_text("B %d %d", (int)p.is_solved, (int)p.is_test_solved);
-    best += " | " + (p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : string());
-    if (best != m_best) line(m_best = best);
+    const string program = p.best_tree ? environment::stringify_tree_via_flat(p.best_tree) : string();
+    const string best = to_text("B %d %d | ", (int)p.is_solved, (int)p.is_test_solved) + program;
+    if (best != m_best) {
+      line(m_best = best);
+      preview(p, program);
+    }
 
     fflush(m_out);
   }
@@ -181,7 +196,8 @@ private:
 // THE WATCHING SIDE: what a watcher hears besides what the solver told its
 // own observer.
 struct stream_receiver : solver_observer {
-  // The answer to "preview <hash> <program>".
+  // The answer to "preview <hash> <program>", or what the best program
+  // paints, after its B.
   virtual void previewed(uint64_t /*hash*/, preview_payload && /*p*/) {}
 };
 

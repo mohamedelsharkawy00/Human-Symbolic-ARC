@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,45 +23,48 @@ inline constexpr string_view font_data =
     "A75755B65656C74447D65556E74747F74644G74557H55755I72227J11157K55655L44447"
     "M57555N75555O75557P75744Q75531R75655S74717T72222U55557V55552W55575X55255"
     "Y55222Z71247075557126227271747371717455711574717674757771111875757975717"
-    ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700*05250";
+    ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700*05250'22000";
 
 constexpr int UI_COLOR_LINE = COLOR_COUNT;
 constexpr int UI_COLOR_PASTEL_START = COLOR_COUNT * 2;
 
-inline display_grid create_character_grid(uint32_t ch) {
-  static map<uint32_t, int> glyphs;
-  if (glyphs.empty()) {
-    for (size_t i = 0; i < font_data.size(); i += 6) {
-      char c = font_data[i];
-      int v = 0;
-      from_chars(font_data.data() + i + 1, font_data.data() + i + 6, v, 8);
-      glyphs[toupper((unsigned char)c)] = v;
-      glyphs[tolower((unsigned char)c)] = v;
-    }
-    // Hardcoded special symbols
-    glyphs[0x25B2] = 027777; // (Solid Triangle Up)
-    glyphs[0x25BC] = 077772; // (Solid Triangle Down)
-    glyphs['|']    = 022222; // (Vertical Bar: middle column lit every row)
-    // Mute-toggle icons (3x5 each). Private-use codepoints so they never
-    // collide with text. The muted state renders the cone followed by the X in
-    // the next cell, giving a two-cell speaker-with-X (no per-glyph width
-    // support needed in the font pipeline).
-    glyphs[0xE000] = 017771; // SPEAKER right: rows 001 111 111 111 001 (taller left base, mouth flares right)
-    glyphs[0xE001] = 055255; // X overlay    : rows 101 101 010 101 101
-    glyphs[0xE002] = 067773; // COPY  : two overlapping pages (back top-left corner, front bottom-right corner)
-    glyphs[0xE003] = 027557; // PASTE : clipboard (clip tab on top, board below)
-  }
+// What a character the font has no glyph for draws as: a solid block, so a
+// missing glyph is seen the first time it is drawn, not read as a space.
+constexpr uint32_t NO_GLYPH = 0xE004;
+
+// EVERY GLYPH THE FONT HAS, by codepoint: font_data's, then the symbols. The
+// atlas loads all of them, so a glyph added here is one it draws. Lower case
+// is drawn with the upper (draw_text).
+inline map<uint32_t, int> glyph_shapes() {
+  map<uint32_t, int> shapes;
+  for (size_t i = 0; i < font_data.size(); i += 6)
+    from_chars(font_data.data() + i + 1, font_data.data() + i + 6,
+               shapes[(unsigned char)font_data[i]], 8);
+  shapes[0x25B2] = 027777; // (Solid Triangle Up)
+  shapes[0x25BC] = 077772; // (Solid Triangle Down)
+  shapes['|']    = 022222; // (Vertical Bar: middle column lit every row)
+  // Mute-toggle icons (3x5 each). Private-use codepoints so they never
+  // collide with text. The muted state renders the cone followed by the X in
+  // the next cell, giving a two-cell speaker-with-X (no per-glyph width
+  // support needed in the font pipeline).
+  shapes[0xE000] = 017771; // SPEAKER right: rows 001 111 111 111 001 (taller left base, mouth flares right)
+  shapes[0xE001] = 055255; // X overlay    : rows 101 101 010 101 101
+  shapes[0xE002] = 067773; // COPY  : two overlapping pages (back top-left corner, front bottom-right corner)
+  shapes[0xE003] = 027557; // PASTE : clipboard (clip tab on top, board below)
+  shapes[NO_GLYPH] = 077777; // (Solid Block)
+  return shapes;
+}
+
+// One glyph's shape as cells, the lit ones in the line color.
+inline display_grid create_character_grid(int shape) {
   display_grid g;
   g.height = 5;
   g.width = 3;
   g.at.stride = 3;
-  if (glyphs.count(ch)) {
-    int v = glyphs[ch];
-    for (int row_idx = 0; row_idx < 5; ++row_idx) {
-      int row_bits = (v >> (3 * (4 - row_idx))) & 7;
-      for (int col_idx = 0; col_idx < 3; ++col_idx) {
-        g.data[row_idx][col_idx] = (row_bits & (1 << (2 - col_idx))) ? UI_COLOR_LINE : 0;
-      }
+  for (int row_idx = 0; row_idx < 5; ++row_idx) {
+    int row_bits = (shape >> (3 * (4 - row_idx))) & 7;
+    for (int col_idx = 0; col_idx < 3; ++col_idx) {
+      g.data[row_idx][col_idx] = (row_bits & (1 << (2 - col_idx))) ? UI_COLOR_LINE : 0;
     }
   }
   return g;
@@ -104,21 +108,16 @@ inline void draw_text(vulkan_context *context, const map<uint32_t, display_grid>
         len = 2;
     }
 
-    if (font.count(cp)) {
-      const display_grid &g = font.at(cp);
-      context->draw(g.at.offset, g.width, g.height, cur_x, y, scale, g.at.stride);
-      cur_x += (g.width + 1) * scale;
-    } else if (cp == ' ') {
+    // Lower case draws with the upper; a character with no glyph, as a block.
+    auto glyph = font.find(cp);
+    if (glyph == font.end() && cp < 128) glyph = font.find((uint32_t)toupper((int)cp));
+    if (glyph == font.end()) glyph = font.find(NO_GLYPH);
+    if (glyph == font.end()) {
       cur_x += 4 * scale;
     } else {
-      uint32_t up = toupper((unsigned char)cp);
-      if (font.count(up)) {
-        const display_grid &g = font.at(up);
-        context->draw(g.at.offset, g.width, g.height, cur_x, y, scale, g.at.stride);
-        cur_x += (g.width + 1) * scale;
-      } else {
-        cur_x += 4 * scale;
-      }
+      const display_grid &g = glyph->second;
+      context->draw(g.at.offset, g.width, g.height, cur_x, y, scale, g.at.stride);
+      cur_x += (g.width + 1) * scale;
     }
     i += len;
   }
@@ -134,6 +133,43 @@ inline void fill_rect(vulkan_context *context, int color, int x, int y, int w, i
   const int tile = 200;   // comfortably inside the sheet
   for (int fx = 0; fx < w; fx += tile)
     context->draw(off, min(tile, w - fx), h, x + fx, y, 1, 1);
+}
+
+// A straight line between two points, any angle. The sheets only draw
+// rectangles, so walk the longer axis and stamp a square every t pixels.
+inline void draw_line(vulkan_context *context, int color,
+                      int x0, int y0, int x1, int y1, int t) {
+  if (!solid_sheets.count(color)) return;
+  int off = solid_sheets[color].at.offset;
+  int dx = x1 - x0, dy = y1 - y0;
+  int steps = max(abs(dx), abs(dy)) / max(1, t);
+  for (int i = 0; i <= steps; ++i) {
+    int x = steps ? x0 + dx * i / steps : x0;
+    int y = steps ? y0 + dy * i / steps : y0;
+    context->draw(off, t, t, x - t / 2, y - t / 2, 1, 1);
+  }
+}
+
+// WHETHER A PICTURE IS THE ANSWER: a tick on green or a cross on red, drawn
+// in strokes one font pixel thick. Not a letter: a letter is three pixels
+// wide, too narrow for a tick whose arms meet at a right angle with the long
+// one twice the short. The mark is 7 pixels by 5, the height of text.
+inline void draw_mark(vulkan_context *context, bool right, int x, int y, int scale) {
+  const int pad = 2 * scale;
+  fill_rect(context, UI_COLOR_PASTEL_START + (int)(right ? arc_color::green : arc_color::red),
+            x, y, 7 * scale + pad * 2, 5 * scale + pad * 2);
+  // A stroke from the middle of one font pixel to the middle of another.
+  auto stroke = [&](int col0, int row0, int col1, int row1) {
+    auto mid = [&](int at) { return pad + at * scale + scale / 2; };
+    draw_line(context, UI_COLOR_LINE, x + mid(col0), y + mid(row0), x + mid(col1), y + mid(row1), scale);
+  };
+  if (right) {
+    stroke(0, 2, 2, 4);
+    stroke(2, 4, 6, 0);
+  } else {
+    stroke(1, 0, 5, 4);
+    stroke(1, 4, 5, 0);
+  }
 }
 
 // Draws a centered text label inside a colored background box.
@@ -158,9 +194,6 @@ inline void draw_boxed_text(vulkan_context *context,
 }
 
 inline string get_node_label(const node &n) {
-  if (to_underlying(n.type) < 0 ||
-      to_underlying(n.type) >= to_underlying(node_type::type_count))
-    return "?";
   string label = type_name[to_underlying(n.type)];
   append_annotation(n.type, n.value, n.tile, label);
   return label;
@@ -389,7 +422,6 @@ inline int draw_header_rows(
   // Dataset checkmarks: TRN / EVL / TST / CUS. Each toggles whether that set's tasks
   // are concatenated into the loaded list; clicking reloads the merged list live
   // (handled by the worker). On = lit box with a '+' prefix, off = dim with '-'.
-  // (The font has '+'/'-' but no tick glyph, so the +/- reads the state.)
   {
     int ds = app_state.dataset_flags.load();
     int w = box_w("+TRN");
@@ -596,8 +628,8 @@ inline grid_place place_grid_cell(const grid &m, int col_idx, int row_y,
   return p;
 }
 
-// Draws the grid view (INPUT / OUTPUT), a quarter of the screen to a column.
-// Returns false if there is no data to draw.
+// Draws the grid view (INPUT / OUTPUT / BEST), a quarter of the screen to a
+// column. Returns false if there is no data to draw.
 inline bool draw_grid_view(
     vulkan_context *context,
     const map<uint32_t, display_grid> &font,
@@ -617,9 +649,12 @@ inline bool draw_grid_view(
   int col_w = lay.screen_w / 4;
   int cur_y = lay.grid_data_start_y;
 
-  // The cells are the puzzle's own pair, and `at` says where they were
-  // uploaded.
-  auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y) {
+  // The cells come from wherever they live -- the puzzle's own pair, or the
+  // display's picture of what the best program drew -- and `at` says where
+  // they were uploaded. `right`, when given, is whether the picture is the
+  // answer: a green tick under its size, or a red cross.
+  auto draw_cell = [&](const grid &m, placement at, int col_idx, int row_y,
+                       optional<bool> right = nullopt) {
     if (m.width <= 0 || m.height <= 0)
       return;
 
@@ -637,11 +672,16 @@ inline bool draw_grid_view(
 
     int info_x = x + grid_w + outline * 2;
     draw_text(context, font, dim, info_x, y, lay.scale);
+    if (right)
+      draw_mark(context, *right, info_x, y + 5 * lay.scale + lay.v_gap, lay.scale);
   };
 
   // WHETHER THE ANSWER IS SHOWN is not a thing anyone stores: a training pair
   // shows its output because that is what training means, and a test pair shows
   // its output once the puzzle is solved and there is nothing left to spoil.
+  // The best pictures show once they are of the program on screen: what it
+  // draws arrives just after it does.
+  const bool show_best = task.best_tree && views.best_drawn_by == task.best_tree->hash;
   auto draw_section = [&](const vector<example> &vec, bool is_test) {
     if (vec.empty())
       return;
@@ -659,11 +699,16 @@ inline bool draw_grid_view(
       draw_cell(ex.input, v->input, 0, cur_y);
       if (show_output)
         draw_cell(ex.output, v->output, 1, cur_y);
+      // Right or wrong wherever the answer is known: every training pair, and
+      // a test whose dataset ships its answers.
+      if (show_best)
+        draw_cell(v->best, v->best.at, 2, cur_y,
+                  ex.output.width > 0 ? optional<bool>(v->best == ex.output) : nullopt);
       cur_y += slot_h;
     }
   };
 
-  string heads[] = {"INPUT", "OUTPUT"};
+  string heads[] = {"INPUT", "OUTPUT", "BEST"};
   int grid_pad = 2 * lay.scale;
   for (int i = 0; i < (int)size(heads); ++i) {
     int header_label_x = i * col_w + lay.base_margin;
@@ -740,21 +785,6 @@ inline void draw_op_handle(vulkan_context *context, global_app_state &app_state,
   app_state.op_handle_y.store(hy);
   app_state.op_handle_w.store(hw);
   app_state.op_handle_h.store(box_h);
-}
-
-// A straight line between two points, any angle. The sheets only draw
-// rectangles, so walk the longer axis and stamp a square every t pixels.
-inline void draw_line(vulkan_context *context, int color,
-                      int x0, int y0, int x1, int y1, int t) {
-  if (!solid_sheets.count(color)) return;
-  int off = solid_sheets[color].at.offset;
-  int dx = x1 - x0, dy = y1 - y0;
-  int steps = max(abs(dx), abs(dy)) / max(1, t);
-  for (int i = 0; i <= steps; ++i) {
-    int x = steps ? x0 + dx * i / steps : x0;
-    int y = steps ? y0 + dy * i / steps : y0;
-    context->draw(off, t, t, x - t / 2, y - t / 2, 1, 1);
-  }
 }
 
 // THE PIECES NO LINE ANSWERS — the only ones the LINE stepper cannot reach, and
@@ -2368,20 +2398,9 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 }
 
 inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, display_grid> &chars) {
-  string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZx.eE+ -() :<>,_/[ ]|";
-  vector<uint32_t> cps;
-  cps.reserve(128);
-  for (char ch : charset) cps.push_back((unsigned char)ch);
-  cps.push_back(0x25B2); // triangle up
-  cps.push_back(0x25BC); // triangle down
-  cps.push_back(0xE000); // speaker on  (mute toggle)
-  cps.push_back(0xE001); // speaker muted
-  cps.push_back(0xE002); // copy icon
-  cps.push_back(0xE003); // paste icon
-
-  for (uint32_t cp : cps) {
+  for (const auto &[cp, shape] : glyph_shapes()) {
     pad_buffer(gpu_buffer);
-    display_grid g = create_character_grid(cp);
+    display_grid g = create_character_grid(shape);
     g.at.offset = (int)gpu_buffer.size();
     g.at.stride = 4;
     for (int r = 0; r < 5; ++r) {
@@ -2407,9 +2426,6 @@ inline void load_font_atlas(vector<int> &gpu_buffer, map<uint32_t, display_grid>
     solid_sheets[c_idx].at.stride = 256;
     gpu_buffer.insert(gpu_buffer.end(), 256 * 256, c_idx);
     for (auto const &[k, v] : chars) {
-      if ((k < 32 || k > 126) && k != 0x25B2 && k != 0x25BC &&
-          k != 0xE000 && k != 0xE001 && k != 0xE002 && k != 0xE003)
-        continue;
       pad_buffer(gpu_buffer);
       display_grid cv = v;
       cv.at.offset = (int)gpu_buffer.size();

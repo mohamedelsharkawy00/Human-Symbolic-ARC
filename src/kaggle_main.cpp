@@ -242,10 +242,7 @@ static int solve_one(int argc, char **argv) {
 				in >> hash;
 				getline(in >> ws, program);
 				puzzle_solver.read_facts();
-				if (node *target = environment::parse(program)) {
-					stream.previewed(hash, preview_of(puzzle_solver.get_puzzle(), target));
-					environment::remove(target);
-				}
+				stream.preview(puzzle_solver.get_puzzle(), program, hash);
 			}
 		}
 		if (quit) break;

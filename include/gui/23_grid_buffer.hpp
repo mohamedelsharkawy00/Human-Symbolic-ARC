@@ -19,8 +19,9 @@ struct placement {
   int stride = 0;
 };
 
-// A grid THE DISPLAY ITSELF OWNS: font glyphs, color sheets and preview slots.
-// Data and placement travel together because nothing in core holds these. Core functions taking `const grid&` accept one unchanged;
+// A grid THE DISPLAY ITSELF OWNS: font glyphs, color sheets, preview slots and
+// the best pictures. Data and placement travel together because nothing in
+// core holds these. Core functions taking `const grid&` accept one unchanged;
 // assigning one INTO a grid drops the placement, which is what core wants.
 struct display_grid : grid {
   placement at;
@@ -28,15 +29,20 @@ struct display_grid : grid {
 
 // WHAT THE GUI KEEPS BESIDE AN EXAMPLE, never inside it. The puzzle's own input
 // and output live in core and are only pointed at here, by where their cells
-// were uploaded.
+// were uploaded. `best` is the picture of what the best program drew, for a
+// person to watch, so the display owns it outright.
 struct example_views {
   placement input, output;
+  display_grid best;
 };
 
 // One of the above per example, in the same order as puzzle::train and
 // puzzle::test, so an index into either side names the same pair in both.
 struct puzzle_views {
   vector<example_views> train, test;
+  // Which program the best pictures were drawn by, as its hash; 0 while there
+  // are none.
+  uint64_t best_drawn_by = 0;
 
   // Empty until a puzzle is loaded, so every reader asks rather than indexes
   // blind.
