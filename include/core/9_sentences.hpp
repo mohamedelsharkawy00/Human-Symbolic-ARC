@@ -41,14 +41,14 @@ using namespace std;
 // search knows exactly which one slot it has to fill.
 inline constexpr const char* a_blank = "?";
 
-// An op's word with its argument, as a program spells it: Recolor[3].
+// An op's word with its argument, as a program spells it: Recolor [3].
 inline string spell(const string& op, int value) {
-    return op + "[" + to_string(value) + "]";
+    return op + " [" + to_string(value) + "]";
 }
 
-// A Tile, its slots by name: Tile[steps: (0,3), start: edge, end: edge, spread: lines].
+// A Tile, its slots by name: Tile [steps: (0,3) (0,0), start: edge, end: edge, spread: lines].
 inline string spell(const tile_value& tile) {
-    return "Tile[" + tile_written(tile) + "]";
+    return "Tile [" + tile_written(tile) + "]";
 }
 
 // A color layer is an object before it is picked or deleted. These are
@@ -233,11 +233,11 @@ inline string without_redundant_steps(const string& words, int background) {
     for (size_t i = 0; i < tokens.size(); ++i) {
         const string& word = tokens[i];
         if (word == "SelectAll" && i + 1 < tokens.size() &&
-            (tokens[i + 1] == "Colors" || tokens[i + 1].starts_with("Split["))) continue;
+            (tokens[i + 1] == "Colors" || operation_named(tokens[i + 1]) == node_type::Split)) continue;
         if (is_color(background) && word == "Colors" && i + 2 < tokens.size() &&
             tokens[i + 1] == spell("SelectColor", background) && tokens[i + 2] == "DeleteSelection") {
             // A following Split consumes the painted cells, not the color layers.
-            if (!(ground_absent && i + 3 < tokens.size() && tokens[i + 3].starts_with("Split[")))
+            if (!(ground_absent && i + 3 < tokens.size() && operation_named(tokens[i + 3]) == node_type::Split))
                 append(word);
             if (!ground_absent) { append(tokens[i + 1]); append(tokens[i + 2]); }
             ground_absent = true;
@@ -315,7 +315,7 @@ inline void say_beats(said_reading& said, const string& source,
 inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
     if (!rule.holds()) return nullptr;
     switch (rule.claimed_by) {
-        case shape_color_map_rule::body_recolor:  return "ShapeColorMap[0]";
+        case shape_color_map_rule::body_recolor:  return "ShapeColorMap [0]";
         case shape_color_map_rule::interior_fill: return "ShapeToInteriorColorMap";
         default:                                  return nullptr;
     }
@@ -537,7 +537,7 @@ inline bool say_panes(const inference& inf, said_reading& said) {
             return false;
         }
         // Every pane but the first: name the first's band and take the others.
-        turn = (split.down == 1 ? " SelectColumn[0]" : " SelectRow[0]") + string(" InvertSelection");
+        turn = (split.down == 1 ? " SelectColumn [0]" : " SelectRow [0]") + string(" InvertSelection");
         for (const string& word : words_for_pose(mask.posed)) turn += " " + word;
         turn += " SelectAll";
     }
@@ -715,7 +715,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         // Size counts opaque cells, so remove the ground before cutting panes.
         // Restore it after painting; the selected pane keeps its full frame.
         const string selector = pick.way == pane_pick_rule::Emptiest
-                              ? "SelectSmallestObject[0]" : "SelectLargestObject[0]";
+                              ? "SelectSmallestObject [0]" : "SelectLargestObject [0]";
         say_closed(said, "Input Panes " + selector + " InvertSelection DeleteSelection SelectAll " +
             spell("Fit", (int)fit_to::input), "Union");
         say_closed(said, ("Input " + string("Colors") + " ") + spell("SelectColor", split.color) +
@@ -818,8 +818,8 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
     for (const auto& branch : rule.branches) {
         string layer = ("Input " + string("Colors") + " ") + spell("SelectSmallestObject", branch.rank) +
                        " InvertSelection DeleteSelection SelectAll Trim";
-        if (branch.fill_interior) layer += " InteriorColor[-1]";
-        layer += " Split[1] SelectAll Trim";
+        if (branch.fill_interior) layer += " InteriorColor [-1]";
+        layer += " Split [1] SelectAll Trim";
         const string extend = spell(branch.ray_kind == ray_extension_rule::Orthogonal
                                     ? "ExtendOrthogonal" : "ExtendDiagonal", branch.radius);
         if (branch.stamp_body) {
@@ -841,7 +841,7 @@ inline bool say_mark_lattice(const inference& inf, said_reading& said) {
     const string cut = word_for_segmentation(rule.segmentation);
     if (cut.empty()) return false;
     string words = string("Input ") + cut + " SelectAll Trim";
-    if (rule.portrait) words += " NormalizeOrientation[0]";
+    if (rule.portrait) words += " NormalizeOrientation [0]";
     words += " " + spell(mark_lattice_rule::lines) + " " + spell(mark_lattice_rule::lattice);
     if (rule.portrait) words += " RestoreOrientation";
     say_closed(said, words, "Union");
@@ -918,7 +918,7 @@ inline bool say_interior_spread(const inference& inf, said_reading& said) {
     if (!inf.interior_spread.holds()) return false;
     say_closed(said, "Input", "Union");
     const string pieces = ("Input " + spell("Split", 0) + " SelectAll");
-    say_closed(said, pieces + " Recolor[10]", "Union");
+    say_closed(said, pieces + " Recolor [10]", "Union");
     say_closed(said, pieces + " Outline", "Union");
     return true;
 }
@@ -940,9 +940,9 @@ inline bool say_copy_to(const inference& inf, said_reading& said) {
     if (!inf.copy_to.holds()) return false;
     say_closed(said, "Input", "Union");
     const string pieces = (inf.copy_to.panes
-        ? string("Input") + " Panes Split[0]"
+        ? string("Input") + " Panes Split [0]"
         : "Input " + spell("Split", 0)) +
-        " SelectAll Trim InvertSelection SelectLargestObject[0] ";
+        " SelectAll Trim InvertSelection SelectLargestObject [0] ";
     said.sentences.push_back(closed_on_the_pick(pieces + spell("CopyTo", inf.copy_to.anchor), "Union"));
     return true;
 }
@@ -951,7 +951,7 @@ inline bool say_copy_to(const inference& inf, said_reading& said) {
 // sentence only picks that color and paints it where it lies.
 inline bool say_rarest_color(const inference& inf, said_reading& said) {
     if (!inf.rarest_color.holds()) return false;
-    said.sentences.push_back(closed_on_the_pick(("Input " + string("Colors") + " SelectSmallestObject[0]"), "Union"));
+    said.sentences.push_back(closed_on_the_pick(("Input " + string("Colors") + " SelectSmallestObject [0]"), "Union"));
     return true;
 }
 
@@ -1002,7 +1002,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
             if (inf.correspondence.segmentation == segmentation_methods::all_cells_of_one_color)
                 beats.push_back({"SelectAll", spell("Split", 0)});
             // SizeRankColorMap reads list order, so say the sort too.
-            beats.push_back({"SelectAll", "SortBySize[0]"});
+            beats.push_back({"SelectAll", "SortBySize [0]"});
             beats.push_back({"SelectAll", "SizeRankColorMap"});
             break;
         default: break;
@@ -1135,10 +1135,10 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
     auto cut_then_tile = [&](string& sentence) {
         size_t start = 6;  // past "Input "
         if (sentence.compare(start, 10, "SelectAll ") == 0) start += 10;
-        const size_t end = sentence.find(' ', start);
-        const string word = sentence.substr(start, end == string::npos ? string::npos : end - start);
-        if (word.rfind("Split[", 0) != 0 && word != "Colors") return false;
-        sentence.insert(end == string::npos ? sentence.size() : end, " SelectAll " + spell(tiled_by_its_own_size));
+        const size_t end = start + program_word_end(string_view(sentence).substr(start));
+        const node_type cut = operation_named(string_view(sentence).substr(start, end - start));
+        if (cut != node_type::Split && cut != node_type::Colors) return false;
+        sentence.insert(end, " SelectAll " + spell(tiled_by_its_own_size));
         return true;
     };
     auto reframe = [&](string& sentence) {
@@ -1290,7 +1290,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         // stamps -- the projection working, not a piece laid beneath another.
         // Underlay would answer that by leaving every marker showing through.
         combine = "Union";
-        say("SortBySize[0]");
+        say("SortBySize [0]");
         say("ProjectOnSeeds");
         const int8_t worn = inf.project_on_seeds.worn;
         if (!is_color(worn)) return spoken();
@@ -1300,7 +1300,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         // would otherwise paint the whole canvas. The pick starts from none,
         // since the stamps come back marked. Then the input's own cells go on
         // top, so a stamp shows only where the input had ground.
-        beats.push_back({"SelectAll InvertSelection SelectLargestObject[0]", "DeleteSelection"});
+        beats.push_back({"SelectAll InvertSelection SelectLargestObject [0]", "DeleteSelection"});
         say(spell("Recolor", worn));
         spoken();
         say_closed(said, "Input", "Union");
@@ -1411,7 +1411,7 @@ inline void restore_background(said_reading& said, background_source ground,
         return;
     }
     if (ground.per_grid)
-        said.sentences.push_back("Input Colors SelectElectedBackground AddColor[11] " +
+        said.sentences.push_back("Input Colors SelectElectedBackground AddColor [11] " +
                                  spell("Fit", (int)fit) + " Underlay");
     else
         said.sentences.push_back("Output SelectAll " + string(fit == fit_to::painted ? "Trim " : "") +

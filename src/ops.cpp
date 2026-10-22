@@ -1785,7 +1785,7 @@ object_list& op_trim(program_run& run, const object_list& from) {
     return res;
 }
 
-// Tile[steps, start, end, spread]: each picked piece laid again where its
+// Tile [steps, start, end, spread]: each picked piece laid again where its
 // Tile says (each_tile_offset, 8b_op_math.hpp, the arithmetic the readings
 // replay), each step read off this hand: the piece's own size, and what the
 // picked pieces measure together (measure_hand). A COPY IS A PIECE, keeping the

@@ -79,9 +79,9 @@ struct color_pair {
 constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS = COLOR_PAIR_COUNT + 1;
 
 // TILE'S CHOICES, A NAME EACH (P2, notes/2 - DSL/Design Principles.md). A program
-// writes them slot by slot, Tile[steps: (0,3), start: edge, end: edge, spread:
-// lines], and that is their only form: tile_written writes it, tile_read reads
-// it back, and each list below names its choices for both.
+// writes them slot by slot, Tile [steps: (0,3) (0,0), start: edge, end: edge,
+// spread: lines], and that is their only form: tile_written writes it,
+// tile_read reads it back, and each list below names its choices for both.
 #define TILE_SLOTS X(steps) X(start) X(end) X(spread)
 inline constexpr std::string_view tile_slot_names[] = {
 #define X(name) #name,
@@ -90,19 +90,20 @@ inline constexpr std::string_view tile_slot_names[] = {
 };
 
 // WHAT A STEP MAY MEASURE on each picture, so it grows with what it is read
-// off: the piece's own size along the step's way; across the picked pieces,
-// the smallest spacing between where they start along that way, and how many
+// off: the piece's own width and own height; across the picked pieces, the
+// smallest spacing between where they start along the step's way, and how many
 // places they start at; how many colors they hold.
-#define TILE_MEASURES X(own) X(spacing) X(count) X(colors)
+#define TILE_MEASURES X(own_width, "own width") X(own_height, "own height") X(spacing, "spacing") \
+                      X(count, "count") X(colors, "colors")
 enum class tile_measure : int8_t {
     none,
-#define X(name) name,
+#define X(id, name) id,
     TILE_MEASURES
 #undef X
 };
 inline constexpr std::string_view tile_measure_names[] = {
     "",
-#define X(name) #name,
+#define X(id, name) name,
     TILE_MEASURES
 #undef X
 };
@@ -137,16 +138,16 @@ struct tile_bound {
     bool operator==(const tile_bound&) const = default;
 };
 
-// WHAT A Tile SAYS: its steps, each a move down and a move across; the first
-// copy and the last; and how the copies grow.
+// WHAT A Tile SAYS: its two steps, each a move down and a move across, (0,0)
+// for a step that goes nowhere; the first copy and the last; and how the
+// copies grow.
 struct tile_value {
-    static constexpr int MOST_STEPS = 2;
+    static constexpr int STEPS = 2;
     struct step {
         tile_number down, across;
         bool operator==(const step&) const = default;
     };
-    step steps[MOST_STEPS] = {};
-    int8_t step_count = 0;
+    step steps[STEPS] = {};
     tile_bound start, end;
     tile_spread spread = tile_spread::lines;
     bool operator==(const tile_value&) const = default;
@@ -163,8 +164,8 @@ inline std::string number_written(const tile_number& number) {
 inline std::string tile_written(const tile_value& tile) {
     auto bound = [](const tile_bound& at) { return at.edge ? std::string("edge") : std::to_string(at.steps); };
     std::string written = std::string(tile_slot_names[0]) + ":";
-    for (int which = 0; which < tile.step_count; ++which)
-        written += " (" + number_written(tile.steps[which].down) + "," + number_written(tile.steps[which].across) + ")";
+    for (const tile_value::step& step : tile.steps)
+        written += " (" + number_written(step.down) + "," + number_written(step.across) + ")";
     return written + ", " + std::string(tile_slot_names[1]) + ": " + bound(tile.start) + ", " +
            std::string(tile_slot_names[2]) + ": " + bound(tile.end) + ", " + std::string(tile_slot_names[3]) + ": " +
            std::string(tile_spread_names[(int)tile.spread]);
@@ -226,18 +227,18 @@ inline std::optional<tile_value> tile_read(std::string_view text) {
         text.remove_prefix(end == text.size() ? end : end + 1);
     }
     if (!trimmed(text).empty()) return std::nullopt;
-    for (std::string_view steps = slots[0]; !steps.empty(); steps = trimmed(steps)) {
+    std::string_view steps = slots[0];
+    for (tile_value::step& step : tile.steps) {
         const auto close = steps.find(')');
         const auto comma = steps.find(',');
-        if (!steps.starts_with('(') || close == std::string_view::npos || comma > close ||
-            tile.step_count == tile_value::MOST_STEPS)
-            return std::nullopt;
+        if (!steps.starts_with('(') || close == std::string_view::npos || comma > close) return std::nullopt;
         const auto down = number_read(trimmed(steps.substr(1, comma - 1)));
         const auto across = number_read(trimmed(steps.substr(comma + 1, close - comma - 1)));
         if (!down || !across) return std::nullopt;
-        tile.steps[tile.step_count++] = { *down, *across };
-        steps.remove_prefix(close + 1);
+        step = { *down, *across };
+        steps = trimmed(steps.substr(close + 1));
     }
+    if (!steps.empty()) return std::nullopt;
     auto bound = [](std::string_view written) -> std::optional<tile_bound> {
         if (written == "edge") return tile_bound{ true };
         const auto steps = count_read(written);
@@ -247,7 +248,7 @@ inline std::optional<tile_value> tile_read(std::string_view text) {
     const auto start = bound(slots[1]), end = bound(slots[2]);
     int spread = 0;
     while (spread < (int)std::size(tile_spread_names) && tile_spread_names[spread] != slots[3]) ++spread;
-    if (!start || !end || spread == (int)std::size(tile_spread_names) || tile.step_count == 0) return std::nullopt;
+    if (!start || !end || spread == (int)std::size(tile_spread_names)) return std::nullopt;
     tile.start = *start;
     tile.end = *end;
     tile.spread = (tile_spread)spread;
@@ -500,25 +501,34 @@ inline constexpr bool said_in_slots(node_type t) { return t == node_type::Tile; 
 // Read a word's operation name; arguments remain the caller's concern.
 // Unknown words (including the inference placeholder "?") have no operation.
 inline constexpr node_type operation_named(std::string_view word) {
-    word = word.substr(0, word.find('['));
+    word = word.substr(0, word.find_first_of(" ["));
 #define X(id, low, high, role, inferred, clears) if (word == #id) return node_type::id;
     NODE_PRIMITIVES
 #undef X
     return node_type::type_count;
 }
 
+// Where the program word `text` opens with ends: at the first space outside
+// its brackets, unless that space only parts its name from them, Recolor [3],
+// Tile [steps: ...].
+inline size_t program_word_end(std::string_view text) {
+    size_t end = 0;
+    for (int depth = 0; end < text.size(); ++end) {
+        if (text[end] == ' ' && depth == 0 && text.substr(end + 1, 1) != "[") break;
+        depth += text[end] == '[' ? 1 : text[end] == ']' ? -1 : 0;
+    }
+    return end;
+}
+
 // Visit space-separated program words without allocating temporary strings.
-// Keep the original spelling so callers can reproduce arguments unchanged. A
-// word ends at the first space outside its brackets, since slots are spaced.
+// Keep the original spelling so callers can reproduce arguments unchanged.
 template <class See>
 inline void each_program_word(std::string_view program, See see) {
     while (!program.empty()) {
         const auto first = program.find_first_not_of(' ');
         if (first == std::string_view::npos) break;
         program.remove_prefix(first);
-        size_t end = 0;
-        for (int depth = 0; end < program.size() && (depth > 0 || program[end] != ' '); ++end)
-            depth += program[end] == '[' ? 1 : program[end] == ']' ? -1 : 0;
+        const size_t end = program_word_end(program);
         const auto word = program.substr(0, end);
         see(word, operation_named(word));
         if (end == program.size()) break;

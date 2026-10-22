@@ -1732,14 +1732,15 @@ inline hand_measures measure_hand(int pieces, Picked picked, Start start, Palett
 // A Tile's steps as moves in cells, for one piece `height` by `width` in that
 // hand. A step that moves nothing is dropped: every copy of it lies on the piece.
 struct tile_moves {
-    int down[tile_value::MOST_STEPS] = {}, across[tile_value::MOST_STEPS] = {};
+    int down[tile_value::STEPS] = {}, across[tile_value::STEPS] = {};
     int count = 0;
 };
 inline tile_moves moves_of(const tile_value& tile, int height, int width, const hand_measures& hand) {
     auto cells = [&](const tile_number& number, int along) {
         auto measured = [&](tile_measure measure) {
             switch (measure) {
-            case tile_measure::own:     return along == 0 ? height : width;
+            case tile_measure::own_width:  return width;
+            case tile_measure::own_height: return height;
             case tile_measure::spacing: return hand.spacing[along];
             case tile_measure::count:   return hand.count[along];
             case tile_measure::colors:  return hand.colors;
@@ -1749,7 +1750,7 @@ inline tile_moves moves_of(const tile_value& tile, int height, int width, const 
         return number.times * measured(number.first) * measured(number.second);
     };
     tile_moves moves;
-    for (int which = 0; which < tile.step_count && which < tile_value::MOST_STEPS; ++which) {
+    for (int which = 0; which < tile_value::STEPS; ++which) {
         const int down = cells(tile.steps[which].down, 0), across = cells(tile.steps[which].across, 1);
         if (down == 0 && across == 0) continue;
         moves.down[moves.count] = down;

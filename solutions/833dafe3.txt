@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Tile[steps: (own,0) (0,own), start: 0, end: edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[0] FlipVertical Withhold CurrentObjects SelectAll InvertSelection SelectColumn[0] FlipHorizontal SelectAll Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[0] FlipVertical Withhold CurrentObjects SelectAll InvertSelection SelectColumn[0] FlipHorizontal SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       833dafe3
 Train:        Solved

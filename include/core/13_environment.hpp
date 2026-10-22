@@ -59,7 +59,7 @@ namespace arc {
 	// translates its own argument, so nothing has to be undone.
 	inline void append_annotation(node_type type, int16_t value, const tile_value& tile, string& out) {
 		if (is_annotated(type)) {
-			out += '[';
+			out += " [";
 			out += said_in_slots(type) ? tile_written(tile) : to_string((int)value);
 			out += ']';
 		}
@@ -122,15 +122,15 @@ namespace arc {
 
 		// A Tile's slots folded into one number for its node's hash.
 		static inline uint64_t tile_hash(const tile_value& tile) {
-			uint64_t h = (uint64_t)tile.step_count;
+			uint64_t h = 0;
 			auto fold_number = [&](const tile_number& number) {
 				h = hash_fold(h, (uint64_t)(uint8_t)number.times);
 				h = hash_fold(h, (uint64_t)number.first);
 				h = hash_fold(h, (uint64_t)number.second);
 			};
-			for (int which = 0; which < tile.step_count; ++which) {
-				fold_number(tile.steps[which].down);
-				fold_number(tile.steps[which].across);
+			for (const tile_value::step& step : tile.steps) {
+				fold_number(step.down);
+				fold_number(step.across);
 			}
 			for (const tile_bound& bound : { tile.start, tile.end }) {
 				h = hash_fold(h, (uint64_t)bound.edge);
@@ -222,8 +222,11 @@ namespace arc {
 				if (match == -1) return nullptr;
 				flat_program_op token{ (node_type)match };
 				const bool slots = said_in_slots(token.type);
-				if (pos < str.size() && str[pos] == '[') {
-					pos++;
+				// A space may part the name from its brackets: Recolor [3].
+				size_t bracket = pos;
+				while (bracket < str.size() && str[bracket] == ' ') bracket++;
+				if (bracket < str.size() && str[bracket] == '[') {
+					pos = bracket + 1;
 					size_t vs = pos;
 					while (pos < str.size() && str[pos] != ']') pos++;
 					const string written = str.substr(vs, pos - vs);

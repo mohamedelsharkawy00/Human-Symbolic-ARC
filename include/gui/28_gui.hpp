@@ -22,8 +22,8 @@ using namespace std;
 inline constexpr string_view font_data =
     "A75755B65656C74447D65556E74747F74644G74557H55755I72227J11157K55655L44447"
     "M57555N75555O75557P75744Q75531R75655S74717T72222U55557V55552W55575X55255"
-    "Y55222Z71247075557126227271747371717455711574717674757771111875757975717"
-    ":02020.00002+02720(24442)21112<12421>42124,00224_00007/11244 00000[74447]71117-00700*05250'22000";
+    "Y55222Z71247035556126227271747371717455711574717674757771111875757975717"
+    ":02020.00002+02720(12221)42224<12421>42124,00224_00007/11244 00000[32223]62226-00700*05250'22000";
 
 constexpr int UI_COLOR_LINE = COLOR_COUNT;
 constexpr int UI_COLOR_PASTEL_START = COLOR_COUNT * 2;
@@ -1886,9 +1886,9 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display
       if (said_in_slots((node_type)i)) {
         string slots;
         for (const string_view slot : tile_slot_names) slots += (slots.empty() ? "" : ", ") + string(slot);
-        s += "[" + slots + "]";
+        s += " [" + slots + "]";
       } else if (is_annotated((node_type)i))
-        s += to_text("[%d-%d]", row_of((node_type)i).low, row_of((node_type)i).high);
+        s += to_text(" [%d-%d]", row_of((node_type)i).low, row_of((node_type)i).high);
       labels.push_back(s);
     }
     if (out_ids) *out_ids = ids;

@@ -852,9 +852,9 @@ struct motif_continuation_rule {
 // taking both steps again: what a tiled frame, the input's blocks and a motif
 // carried over the grid say.
 inline constexpr tile_value tiled_by_its_own_size{
-    .steps = { { .down = { 1, tile_measure::own }, .across = { 0 } },
-               { .down = { 0 }, .across = { 1, tile_measure::own } } },
-    .step_count = 2, .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
+    .steps = { { .down = { 1, tile_measure::own_height }, .across = { 0 } },
+               { .down = { 0 }, .across = { 1, tile_measure::own_width } } },
+    .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
 
 // THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
 // are crossed, the input paints part of that cycle, and the output is the cycle
@@ -882,7 +882,7 @@ struct diagonal_continuation_rule {
     static constexpr tile_value tile_of(int8_t lean) {
         return { .steps = { { .down = { 1 }, .across = { (int8_t)(lean ? 1 : -1) } },
                             { .down = { 0 }, .across = { 1, tile_measure::colors } } },
-                 .step_count = 2, .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::grid };
+                 .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::grid };
     }
 
     // Reads the cycle off each input and keeps the lean that redraws every
@@ -2805,10 +2805,10 @@ struct mark_lattice_rule {
     // both ways, a step at a time; then each of those laid down from its own
     // row onward, as many rows apart as the marks start on times the smallest
     // spacing between those rows.
-    static constexpr tile_value lines{ .steps = { { .down = { 0 }, .across = { 1 } } }, .step_count = 1,
+    static constexpr tile_value lines{ .steps = { { .down = { 0 }, .across = { 1 } } },
                                        .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::lines };
     static constexpr tile_value lattice{
-        .steps = { { .down = { 1, tile_measure::count, tile_measure::spacing }, .across = { 0 } } }, .step_count = 1,
+        .steps = { { .down = { 1, tile_measure::count, tile_measure::spacing }, .across = { 0 } } },
         .start = {}, .end = { .edge = true }, .spread = tile_spread::lines };
 
     // What the words draw on one input: the cut's marks, trimmed and read the
@@ -7331,9 +7331,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
 
     // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, to the edges both ways
-    // -- as far apart as its own size, read on each grid, or every so many cells
-    // -- asked again, like the rays, while a repeat accounts for any cell, so one
-    // piece can be repeated both ways. A tie goes to its own size, which grows
+    // -- as far apart as its own width along its rows, or its own height down
+    // its columns, read on each grid, or every so many cells -- asked again,
+    // like the rays, while a repeat accounts for any cell, so one piece can be
+    // repeated both ways. A tie goes to its own width or height, which grows
     // with the piece on a test, then to the tighter spacing the pairs bear out.
     // THE NARROWEST PAIR'S GRID, across and down: so many cells apart as that
     // lays no copy beside the piece itself there, and is not at work.
@@ -7343,19 +7344,19 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         narrowest[1] = min(narrowest[1], pair.output.height);
     }
     // The repeats asked, in the order asked; a repeat's value is its place here.
-    // ITS OWN SIZE IS A SHAPE'S: a whole color layer's is only the span its
-    // scattered cells happen to cover, and a layer repeated by it fits the
-    // pairs by coincidence (62b74c02's last nine cells, wrong on its test).
+    // ITS OWN WIDTH AND HEIGHT ARE A SHAPE'S: a whole color layer's are only the
+    // span its scattered cells happen to cover, and a layer repeated by them fits
+    // the pairs by coincidence (62b74c02's last nine cells, wrong on its test).
     const bool cut_into_shapes = election.segmentation != segmentation_methods::all_cells_of_one_color;
     vector<tile_value> repeats;
     for (const bool down : { false, true }) {
         auto apart = [&](tile_number cells) {
-            tile_value repeat{ .step_count = 1, .start = { .edge = true }, .end = { .edge = true },
+            tile_value repeat{ .start = { .edge = true }, .end = { .edge = true },
                                .spread = tile_spread::lines };
             repeat.steps[0] = down ? tile_value::step{ cells, { 0 } } : tile_value::step{ { 0 }, cells };
             repeats.push_back(repeat);
         };
-        if (cut_into_shapes) apart({ 1, tile_measure::own });
+        if (cut_into_shapes) apart({ 1, down ? tile_measure::own_height : tile_measure::own_width });
         for (int cells = 1; cells < narrowest[down]; ++cells) apart({ (int8_t)cells });
     }
     auto repeat_paint = [&]() -> offer {
@@ -7378,8 +7379,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const tile_number& cells = down ? repeat.steps[0].down : repeat.steps[0].across;
             const int8_t said = say_paint(best, rule::tiled_along,
                 "is repeated " +
-                    (cells.first == tile_measure::own ? string("its own size apart ")
-                                                      : "every " + to_string(cells.times) + " cells ") +
+                    (cells.first == tile_measure::none ? "every " + to_string(cells.times) + " cells "
+                                                       : "its " + string(tile_measure_names[(int)cells.first]) + " apart ") +
                     (down ? "down its columns" : "along its rows") + laid_words(best_lay));
             read.fired[said].lay = best_lay;
             read.fired[said].tile = repeat; }, laid_by(best.seen) };

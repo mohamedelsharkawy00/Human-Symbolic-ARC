@@ -131,17 +131,19 @@ then the walk (a repeat keeps every place, a move only the last), then the copy
 
 ### Applied: Tile (2026-10-21)
 
-`Tile[steps: ..., start: ..., end: ..., spread: lines|grid]` replaces TileX,
-TileY, Tile[0-3] and DiagTile. The invariant: the same drawing laid again,
-shifted, at every count of each step from `start` to `end`. A step part is a
-count, or a measure read on each picture (`own`, `spacing`, `count`, `colors`),
-or two multiplied. `lines` takes each step from the piece alone; `grid` has
+`Tile[steps: (a,b) (c,d), start: ..., end: ..., spread: lines|grid]` replaces
+TileX, TileY, Tile[0-3] and DiagTile. The invariant: the same drawing laid
+again, shifted, at every count of each step from `start` to `end`. A step is
+always written as two pairs, rows down and columns right, `(0,0)` where there
+is no second one. A step part is a count, or a measure read on each picture
+(`own width`, `own height`, `spacing`, `count`, `colors`), or two multiplied. `lines` takes each step from the piece alone; `grid` has
 every copy take every step again, which is a lattice (and, once `end` can stop
 at the first thing in the way, a flood with step 1).
 Copies are pieces; a copy is one step of the piece where a step is shorter.
 
-The line's repeat asks `own` first, but only on a cut into shapes: a whole color
-layer's own size is the span of scattered cells, and repeated by it the layer
+The line's repeat asks `own width` (along rows) or `own height` (down columns)
+first, but only on a cut into shapes: a whole color layer's own size is the
+span of scattered cells, and repeated by it the layer
 fit 62b74c02's pairs by coincidence and missed its test. Training: 267 right
 (266), 40 wrong (39), gained 9b30e358, lost none.
 
