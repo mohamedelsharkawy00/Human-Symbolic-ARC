@@ -79,7 +79,7 @@ struct color_pair {
 constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS = COLOR_PAIR_COUNT + 1;
 
 // TILE'S CHOICES, A NAME EACH (P2, notes/2 - DSL/Design Principles.md). A program
-// writes them slot by slot, Tile [steps: (0,3) (0,0), start: edge, end: edge,
+// writes them slot by slot, Tile [steps: (0,3) (0,0), start: grid edge, end: grid edge,
 // spread: lines], and that is their only form: tile_written writes it,
 // tile_read reads it back, and each list below names its choices for both.
 #define TILE_SLOTS X(steps) X(start) X(end) X(spread)
@@ -90,11 +90,11 @@ inline constexpr std::string_view tile_slot_names[] = {
 };
 
 // WHAT A STEP MAY MEASURE on each picture, so it grows with what it is read
-// off: the piece's own width and own height; across the picked pieces, the
-// smallest spacing between where they start along the step's way, and how many
-// places they start at; how many colors they hold.
-#define TILE_MEASURES X(own_width, "own width") X(own_height, "own height") X(spacing, "spacing") \
-                      X(count, "count") X(colors, "colors")
+// off: the piece's own width and own height, and the fewest empty rows or
+// columns lying between two of its parts; and how many colors the picked
+// pieces hold together.
+#define TILE_MEASURES X(own_width, "own width") X(own_height, "own height") X(row_gap, "row gap") \
+                      X(column_gap, "column gap") X(color_count, "color count")
 enum class tile_measure : int8_t {
     none,
 #define X(id, name) id,
@@ -122,13 +122,24 @@ inline constexpr std::string_view tile_spread_names[] = {
 #undef X
 };
 
-// ONE PART OF A STEP: a count, the count `times` each measure it names, two at
-// most -- "own", "-own", "count*spacing".
+// ONE PART OF A STEP: a count, plus or minus up to two measures -- "3", "own
+// width", "-own width", "own height+row gap".
 struct tile_number {
-    int8_t times = 0;
-    tile_measure first = tile_measure::none, second = tile_measure::none;
+    static constexpr int MOST_MEASURES = 2;
+    struct term {
+        bool minus = false;
+        tile_measure measure = tile_measure::none;
+        bool operator==(const term&) const = default;
+    };
+    int8_t count = 0;
+    term terms[MOST_MEASURES] = {};
     bool operator==(const tile_number&) const = default;
 };
+
+// A step part that is a measure, or two added.
+constexpr tile_number measured(tile_measure first, tile_measure second = tile_measure::none) {
+    return { .terms = { { false, first }, { false, second } } };
+}
 
 // WHERE THE COPIES BEGIN OR END: so many steps from the piece -- the piece
 // itself 0, behind it negative -- or as far as the grid goes.
@@ -154,15 +165,19 @@ struct tile_value {
 };
 
 inline std::string number_written(const tile_number& number) {
-    if (number.first == tile_measure::none) return std::to_string(number.times);
-    std::string written = number.times == 1 ? "" : number.times == -1 ? "-" : std::to_string(number.times) + "*";
-    written += tile_measure_names[(int)number.first];
-    if (number.second != tile_measure::none) written += "*" + std::string(tile_measure_names[(int)number.second]);
+    std::string written;
+    for (const tile_number::term& term : number.terms) {
+        if (term.measure == tile_measure::none) continue;
+        written += term.minus ? "-" : written.empty() ? "" : "+";
+        written += tile_measure_names[(int)term.measure];
+    }
+    if (written.empty()) return std::to_string(number.count);
+    if (number.count != 0) written += (number.count > 0 ? "+" : "") + std::to_string(number.count);
     return written;
 }
 
 inline std::string tile_written(const tile_value& tile) {
-    auto bound = [](const tile_bound& at) { return at.edge ? std::string("edge") : std::to_string(at.steps); };
+    auto bound = [](const tile_bound& at) { return at.edge ? std::string("grid edge") : std::to_string(at.steps); };
     std::string written = std::string(tile_slot_names[0]) + ":";
     for (const tile_value::step& step : tile.steps)
         written += " (" + number_written(step.down) + "," + number_written(step.across) + ")";
@@ -179,27 +194,27 @@ inline std::optional<int> count_read(std::string_view text) {
     return count;
 }
 
-// A number written as number_written writes it, or none.
+// A number written as number_written writes it, or none: counts and measures,
+// each after a plus or a minus but the first, which may have a minus.
 inline std::optional<tile_number> number_read(std::string_view text) {
-    tile_number number{ 1 };
-    if (text.starts_with('-') && !count_read(text)) {
-        number.times = -1;
-        text.remove_prefix(1);
-    }
-    while (!text.empty()) {
-        const auto star = text.find('*');
-        const std::string_view term = text.substr(0, star);
-        if (const auto count = count_read(term)) number.times = (int8_t)(number.times * *count);
+    if (text.empty()) return std::nullopt;
+    tile_number number;
+    int measures = 0;
+    for (bool first = true; !text.empty(); first = false) {
+        const bool minus = text.front() == '-';
+        if (minus || (!first && text.front() == '+')) text.remove_prefix(1);
+        else if (!first) return std::nullopt;
+        const auto next = text.find_first_of("+-");
+        const std::string_view term = text.substr(0, next);
+        if (const auto count = count_read(term)) number.count = (int8_t)(number.count + (minus ? -*count : *count));
         else {
             int measure = 1;
             while (measure < (int)std::size(tile_measure_names) && tile_measure_names[measure] != term) ++measure;
-            if (measure == (int)std::size(tile_measure_names)) return std::nullopt;
-            tile_measure& free = number.first == tile_measure::none ? number.first : number.second;
-            if (free != tile_measure::none) return std::nullopt;
-            free = (tile_measure)measure;
+            if (measure == (int)std::size(tile_measure_names) || measures == tile_number::MOST_MEASURES)
+                return std::nullopt;
+            number.terms[measures++] = { minus, (tile_measure)measure };
         }
-        if (star == std::string_view::npos) break;
-        text.remove_prefix(star + 1);
+        text.remove_prefix(next == std::string_view::npos ? text.size() : next);
     }
     return number;
 }
@@ -240,7 +255,7 @@ inline std::optional<tile_value> tile_read(std::string_view text) {
     }
     if (!steps.empty()) return std::nullopt;
     auto bound = [](std::string_view written) -> std::optional<tile_bound> {
-        if (written == "edge") return tile_bound{ true };
+        if (written == "grid edge") return tile_bound{ true };
         const auto steps = count_read(written);
         if (!steps) return std::nullopt;
         return tile_bound{ false, (int8_t)*steps };

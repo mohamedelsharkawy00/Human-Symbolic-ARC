@@ -135,8 +135,12 @@ then the walk (a repeat keeps every place, a move only the last), then the copy
 TileX, TileY, Tile[0-3] and DiagTile. The invariant: the same drawing laid
 again, shifted, at every count of each step from `start` to `end`. A step is
 always written as two pairs, rows down and columns right, `(0,0)` where there
-is no second one. A step part is a count, or a measure read on each picture
-(`own width`, `own height`, `spacing`, `count`, `colors`), or two multiplied. `lines` takes each step from the piece alone; `grid` has
+is no second one. A step part is a count plus or minus up to two measures read
+on each picture: `own width`, `own height`, `row gap` and `column gap` (the
+fewest empty rows or columns between the piece's parts), and `color count`
+(how many colors the picked pieces hold). The mark lattice (0a938d79) is its
+lines made one drawing (UnionList), then tiled by `own height+row gap`: the
+whole thing again, its gap after it. `lines` takes each step from the piece alone; `grid` has
 every copy take every step again, which is a lattice (and, once `end` can stop
 at the first thing in the way, a flood with step 1).
 Copies are pieces; a copy is one step of the piece where a step is shorter.

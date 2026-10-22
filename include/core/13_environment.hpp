@@ -124,9 +124,11 @@ namespace arc {
 		static inline uint64_t tile_hash(const tile_value& tile) {
 			uint64_t h = 0;
 			auto fold_number = [&](const tile_number& number) {
-				h = hash_fold(h, (uint64_t)(uint8_t)number.times);
-				h = hash_fold(h, (uint64_t)number.first);
-				h = hash_fold(h, (uint64_t)number.second);
+				h = hash_fold(h, (uint64_t)(uint8_t)number.count);
+				for (const tile_number::term& term : number.terms) {
+					h = hash_fold(h, (uint64_t)term.minus);
+					h = hash_fold(h, (uint64_t)term.measure);
+				}
 			};
 			for (const tile_value::step& step : tile.steps) {
 				fold_number(step.down);

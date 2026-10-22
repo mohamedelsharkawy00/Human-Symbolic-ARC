@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Split[2] SelectAll Tile[steps: (1,-1) (0,colors), start: edge, end: edge, spread: grid] Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Split[2] SelectAll Tile[steps: (1,-1) (0,color count), start: grid edge, end: grid edge, spread: grid] Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       05269061
 Train:        Solved

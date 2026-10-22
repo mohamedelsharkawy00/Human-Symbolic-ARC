@@ -1,4 +1,4 @@
-Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: edge, spread: grid] SelectAll Union CurrentObjects Colors SelectColor[0] DeleteSelection Colors SelectColor[0] DeleteSelection Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: edge, spread: grid] Colors SelectColor[0] DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
+Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] SelectAll Union CurrentObjects Colors SelectColor[0] DeleteSelection Colors SelectColor[0] DeleteSelection Split[2] SelectAll ExtendDiagonal[1] SelectAll Recolor[8] Union Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Colors SelectColor[0] DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       10fcaaa3
 Train:        Solved

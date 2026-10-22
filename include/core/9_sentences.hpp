@@ -46,7 +46,7 @@ inline string spell(const string& op, int value) {
     return op + " [" + to_string(value) + "]";
 }
 
-// A Tile, its slots by name: Tile [steps: (0,3) (0,0), start: edge, end: edge, spread: lines].
+// A Tile, its slots by name: Tile [steps: (0,3) (0,0), start: grid edge, end: grid edge, spread: lines].
 inline string spell(const tile_value& tile) {
     return "Tile [" + tile_written(tile) + "]";
 }
@@ -842,7 +842,7 @@ inline bool say_mark_lattice(const inference& inf, said_reading& said) {
     if (cut.empty()) return false;
     string words = string("Input ") + cut + " SelectAll Trim";
     if (rule.portrait) words += " NormalizeOrientation [0]";
-    words += " " + spell(mark_lattice_rule::lines) + " " + spell(mark_lattice_rule::lattice);
+    words += " " + spell(mark_lattice_rule::lines) + " UnionList " + spell(mark_lattice_rule::lattice);
     if (rule.portrait) words += " RestoreOrientation";
     say_closed(said, words, "Union");
     return true;

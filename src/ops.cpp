@@ -1787,26 +1787,26 @@ object_list& op_trim(program_run& run, const object_list& from) {
 
 // Tile [steps, start, end, spread]: each picked piece laid again where its
 // Tile says (each_tile_offset, 8b_op_math.hpp, the arithmetic the readings
-// replay), each step read off this hand: the piece's own size, and what the
-// picked pieces measure together (measure_hand). A COPY IS A PIECE, keeping the
-// piece's mark, so a row of copies can be picked and turned; want one sheet? Say
-// UnionList after. A copy is one step of the piece where a step is shorter
-// (copy_size). A piece no step moves, and every piece not picked, rides
-// through as it came; copies past the list's room are dropped, as Split[2]
-// drops cells past it.
+// replay), each step measured on this hand: the piece's own size and gaps,
+// and how many colors the picked pieces hold together (measures_of). A COPY
+// IS A PIECE, keeping the piece's mark, so a row of copies can be picked and
+// turned; want one sheet? Say UnionList after. A copy is one step of the
+// piece where a step is shorter (copy_size). A piece no step moves, and every
+// piece not picked, rides through as it came; copies past the list's room are
+// dropped, as Split[2] drops cells past it.
 object_list& op_tile(program_run& run, const object_list& from, const tile_value& tile) {
     object_list& res = run.fresh();
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
-    const hand_measures hand = measure_hand(count, [&](int i) { return from.objects[i].selected; },
-        [&](int i, int along) { return along == 0 ? (int)from.objects[i].y0 : (int)from.objects[i].x0; },
-        [&](int i) {
-            uint32_t colors = 0;
-            each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) colors |= 1u << color; });
-            return colors;
-        });
+    const int colors = color_count(count, [&](int i) { return from.objects[i].selected; }, [&](int i) {
+        uint32_t held = 0;
+        each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) held |= 1u << color; });
+        return held;
+    });
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
-        const tile_moves moves = source.selected ? moves_of(tile, source.height, source.width, hand) : tile_moves{};
+        const tile_moves moves = !source.selected ? tile_moves{}
+            : moves_of(tile, measures_of(tile, source.height, source.width,
+                                         [&](int row, int col) { return source.mask[row][col] != TRANSPARENT; }, colors));
         if (moves.count == 0 || source.width <= 0 || source.height <= 0) {
             res.objects[res.count++] = source;
             continue;

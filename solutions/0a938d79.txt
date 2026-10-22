@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] SelectAll Trim NormalizeOrientation[0] Tile[steps: (0,1) (0,0), start: edge, end: edge, spread: lines] Tile[steps: (count*spacing,0) (0,0), start: 0, end: edge, spread: lines] RestoreOrientation Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[1] SelectAll Trim NormalizeOrientation[0] Tile[steps: (0,1) (0,0), start: grid edge, end: grid edge, spread: lines] UnionList Tile[steps: (own height+row gap,0) (0,0), start: 0, end: grid edge, spread: lines] RestoreOrientation Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       0a938d79
 Train:        Solved

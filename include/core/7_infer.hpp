@@ -852,8 +852,8 @@ struct motif_continuation_rule {
 // taking both steps again: what a tiled frame, the input's blocks and a motif
 // carried over the grid say.
 inline constexpr tile_value tiled_by_its_own_size{
-    .steps = { { .down = { 1, tile_measure::own_height }, .across = { 0 } },
-               { .down = { 0 }, .across = { 1, tile_measure::own_width } } },
+    .steps = { { .down = measured(tile_measure::own_height), .across = { 0 } },
+               { .down = { 0 }, .across = measured(tile_measure::own_width) } },
     .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
 
 // THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
@@ -881,7 +881,7 @@ struct diagonal_continuation_rule {
     // The Tile that says it, on the input's own cells, one piece each (Split[2]).
     static constexpr tile_value tile_of(int8_t lean) {
         return { .steps = { { .down = { 1 }, .across = { (int8_t)(lean ? 1 : -1) } },
-                            { .down = { 0 }, .across = { 1, tile_measure::colors } } },
+                            { .down = { 0 }, .across = measured(tile_measure::color_count) } },
                  .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::grid };
     }
 
@@ -905,11 +905,10 @@ struct diagonal_continuation_rule {
                 pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                     cells.push_back({ row, col, color });
                 });
-                const hand_measures hand = measure_hand((int)cells.size(), [](int) { return true; },
-                    [&](int i, int along) { return along == 0 ? cells[(size_t)i].row : cells[(size_t)i].col; },
-                    [&](int i) { return 1u << cells[(size_t)i].color; });
-                if (hand.colors < 2) return false;
-                const tile_moves moves = moves_of(tile, 1, 1, hand);
+                const int colors = color_count((int)cells.size(), [](int) { return true; },
+                                               [&](int i) { return 1u << cells[(size_t)i].color; });
+                if (colors < 2) return false;
+                const tile_moves moves = moves_of(tile, { 1, 1, 0, 0, colors });
                 grid drawn(pair.output.width, pair.output.height);
                 for (const cell_at& cell : cells)
                     each_tile_offset(tile, moves, cell.row, cell.col, 1, 1, drawn.width, drawn.height, [&](int down, int across) {
@@ -2773,11 +2772,11 @@ struct bridge_rule {
     }
 };
 
-// THE MARKS AS LINES THAT TAKE TURNS DOWN THE GRID. Every mark becomes a line
-// across the grid, and the lines come round again in the order the marks
-// stand, to the far edge. That is two Tiles: `lines`, which lays a mark's
-// first column across the grid, then `lattice`, which lays each of those down
-// from its own row, a whole turn of the marks apart; with
+// THE MARKS AS LINES, REPEATED DOWN THE GRID. Every mark becomes a line
+// across the grid, and the lines together come round again, the same gap
+// after them as between them, to the far edge. That is two Tiles: `lines`,
+// which lays a mark's first column across the grid, then, the lines made one
+// drawing, `lattice`, which lays it down by its own height and its gap; with
 // NormalizeOrientation[0] in front, a pair lying on its side is read turned,
 // so its lines cross the short way. Only held when replaying those words
 // redraws every output exactly, which is what makes the lattice a rule read
@@ -2802,20 +2801,19 @@ struct mark_lattice_rule {
     bool holds() const { return held; }
 
     // The Tiles that say it: each mark's first column laid across the grid
-    // both ways, a step at a time; then each of those laid down from its own
-    // row onward, as many rows apart as the marks start on times the smallest
-    // spacing between those rows.
+    // both ways, a step at a time; then those lines, made one drawing
+    // (UnionList), laid down from where it stands onward, by its own height and
+    // the gap between its lines -- the whole thing again, its gap after it.
     static constexpr tile_value lines{ .steps = { { .down = { 0 }, .across = { 1 } } },
                                        .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::lines };
     static constexpr tile_value lattice{
-        .steps = { { .down = { 1, tile_measure::count, tile_measure::spacing }, .across = { 0 } } },
+        .steps = { { .down = measured(tile_measure::own_height, tile_measure::row_gap), .across = { 0 } } },
         .start = {}, .end = { .edge = true }, .spread = tile_spread::lines };
 
     // What the words draw on one input: the cut's marks, trimmed and read the
-    // way the pair is turned, each laid as its line wherever the lattice puts
-    // it, the rest left empty. False where there is no lattice to read -- the
-    // marks all start on one row -- or where the copies would not fit the one
-    // list the op is handed.
+    // way the pair is turned, each laid as its line, the lines laid again
+    // wherever the lattice puts them, the rest left empty. False where the
+    // lines would not fit the one list the op is handed.
     static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn, tile_size tiles = {}) {
         const vector<object> marks = pieces_as_said(input, cut, tiles);
         // Read turned, the marks' rows are their columns, and the other way round.
@@ -2824,42 +2822,47 @@ struct mark_lattice_rule {
         auto left = [&](const object& mark) { return (int)(turned ? mark.summary.row : mark.summary.col); };
         auto tall = [&](const object& mark) { return (int)(turned ? mark.summary.width : mark.summary.height); };
         auto wide = [&](const object& mark) { return (int)(turned ? mark.summary.height : mark.summary.width); };
-        // The lines stand on the marks' own rows, so they measure what the marks do.
-        const hand_measures hand = measure_hand((int)marks.size(), [](int) { return true; },
-            [&](int i, int along) { return along == 0 ? top(marks[(size_t)i]) : left(marks[(size_t)i]); },
-            [&](int i) { return (uint32_t)palette(marks[(size_t)i]); });
-        if (moves_of(lattice, 1, 1, hand).count == 0) return false;
-        drawn = grid(input.width, input.height);
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
-        auto at = [&](int row, int col) -> int8_t& {
-            return turned ? drawn.data[col][row] : drawn.data[row][col];
-        };
-        int laid_lines = 0, laid_copies = 0;
+        // The lines, as the one drawing UnionList makes of them, and the rows it spans.
+        int8_t picture[MAX_GRID_DIM][MAX_GRID_DIM];
+        for (auto& row : picture) std::fill(std::begin(row), std::end(row), (int8_t)TRANSPARENT);
+        int first_row = rows, last_row = -1, laid_lines = 0;
         for (const object& mark : marks) {
-            const tile_moves spread = moves_of(lines, tall(mark), wide(mark), hand);
+            const tile_moves spread = moves_of(lines, {});
             const auto [line_rows, line_columns] = copy_size(spread, tall(mark), wide(mark));
             each_tile_offset(lines, spread, top(mark), left(mark), line_rows, line_columns, across, rows,
                              [&](int, int sideways) {
                 ++laid_lines;
-                const tile_moves down = moves_of(lattice, line_rows, line_columns, hand);
-                const auto [copy_rows, copy_columns] = copy_size(down, line_rows, line_columns);
-                each_tile_offset(lattice, down, top(mark), left(mark) + sideways, copy_rows, copy_columns, across, rows,
-                                 [&](int lower, int) {
-                    ++laid_copies;
-                    for (int row = 0; row < copy_rows; ++row)
-                        for (int col = 0; col < copy_columns; ++col) {
-                            const int8_t color = turned ? mark.data[col][row] : mark.data[row][col];
-                            const int at_row = top(mark) + lower + row, at_col = left(mark) + sideways + col;
-                            if (color != TRANSPARENT && at_row >= 0 && at_row < rows && at_col >= 0 && at_col < across)
-                                at(at_row, at_col) = color;
-                        }
-                    return true;
-                });
+                for (int row = 0; row < line_rows; ++row)
+                    for (int col = 0; col < line_columns; ++col) {
+                        const int8_t color = turned ? mark.data[col][row] : mark.data[row][col];
+                        const int at_row = top(mark) + row, at_col = left(mark) + sideways + col;
+                        if (color != TRANSPARENT && at_row >= 0 && at_row < rows && at_col >= 0 && at_col < across)
+                            picture[at_row][at_col] = color;
+                    }
                 return true;
             });
+            first_row = min(first_row, top(mark));
+            last_row = max(last_row, top(mark) + tall(mark) - 1);
         }
-        return laid_lines <= MAX_OBJECTS_IN_A_LIST && laid_copies <= MAX_OBJECTS_IN_A_LIST;
+        if (last_row < first_row || laid_lines > MAX_OBJECTS_IN_A_LIST) return false;
+        const int height = last_row - first_row + 1;
+        const tile_moves down = moves_of(lattice, measures_of(lattice, height, across, [&](int row, int col) {
+            return picture[first_row + row][col] != TRANSPARENT; }, 0));
+        const auto [copy_rows, copy_columns] = copy_size(down, height, across);
+        drawn = grid(input.width, input.height);
+        auto at = [&](int row, int col) -> int8_t& {
+            return turned ? drawn.data[col][row] : drawn.data[row][col];
+        };
+        each_tile_offset(lattice, down, first_row, 0, copy_rows, copy_columns, across, rows, [&](int lower, int) {
+            for (int row = 0; row < copy_rows && first_row + lower + row < rows; ++row)
+                for (int col = 0; col < copy_columns; ++col)
+                    if (const int8_t color = picture[first_row + row][col]; color != TRANSPARENT)
+                        at(first_row + lower + row, col) = color;
+            return true;
+        });
+        return true;
     }
 
     static mark_lattice_rule detect(const vector<example>& train,
@@ -4301,7 +4304,7 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
                     canvas.data[row][col] = majority_vote(input.data, row, col, factor, input.height, input.width);
             return true;
         case kind::tiled: {
-            const tile_moves moves = moves_of(tiled_by_its_own_size, input.height, input.width, {});
+            const tile_moves moves = moves_of(tiled_by_its_own_size, { input.width, input.height });
             int copies = 0;
             each_tile_offset(tiled_by_its_own_size, moves, 0, 0, input.height, input.width, canvas.width, canvas.height,
                              [&](int, int) { return ++copies <= MAX_OBJECTS_IN_A_LIST; });
@@ -5558,17 +5561,14 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
                                       const tile_value& tile) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
-        const hand_measures hand = measure_hand(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
-            [&](int i, int along) {
-                const auto& box = cut.pieces[(size_t)i].summary;
-                return along == 0 ? (int)box.row : (int)box.col;
-            },
-            [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
+        const int colors = color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
+                                       [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
             const auto& box = piece.summary;
-            const tile_moves moves = moves_of(tile, box.height, box.width, hand);
+            const tile_moves moves = moves_of(tile, measures_of(tile, box.height, box.width, [&](int row, int col) {
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }, colors));
             const auto [rows, columns] = copy_size(moves, box.height, box.width);
             bool laid = true;
             auto lay_copy = [&](int down, int across) {
@@ -7356,7 +7356,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             repeat.steps[0] = down ? tile_value::step{ cells, { 0 } } : tile_value::step{ { 0 }, cells };
             repeats.push_back(repeat);
         };
-        if (cut_into_shapes) apart({ 1, down ? tile_measure::own_height : tile_measure::own_width });
+        if (cut_into_shapes) apart(measured(down ? tile_measure::own_height : tile_measure::own_width));
         for (int cells = 1; cells < narrowest[down]; ++cells) apart({ (int8_t)cells });
     }
     auto repeat_paint = [&]() -> offer {
@@ -7375,12 +7375,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
             const tile_value& repeat = repeats[(size_t)best.value];
-            const bool down = repeat.steps[0].down.times != 0;
+            const bool down = repeat.steps[0].down != tile_number{};
             const tile_number& cells = down ? repeat.steps[0].down : repeat.steps[0].across;
             const int8_t said = say_paint(best, rule::tiled_along,
                 "is repeated " +
-                    (cells.first == tile_measure::none ? "every " + to_string(cells.times) + " cells "
-                                                       : "its " + string(tile_measure_names[(int)cells.first]) + " apart ") +
+                    (cells.terms[0].measure == tile_measure::none
+                         ? "every " + to_string(cells.count) + " cells "
+                         : "its " + string(tile_measure_names[(int)cells.terms[0].measure]) + " apart ") +
                     (down ? "down its columns" : "along its rows") + laid_words(best_lay));
             read.fired[said].lay = best_lay;
             read.fired[said].tile = repeat; }, laid_by(best.seen) };
