@@ -722,6 +722,8 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
         const ground_plan plan{ deleted, filled, election.overlays };
         if (find(plans.begin(), plans.end(), plan) == plans.end()) plans.push_back(plan);
     };
+    // Where every input has a ground of its own and they differ, that is the plan.
+    if (election.is_per_pair()) offer(background_source::elected(), background_source::elected());
     // The input side leads: where the outputs abstain, the ground the inputs
     // name comes back (kept, as most puzzles keep it). Deleting it and filling
     // nothing is never asked: filling it back does as well wherever no cell

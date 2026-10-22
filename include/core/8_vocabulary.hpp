@@ -27,11 +27,13 @@
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
-//   (fence_parts, the parts SelectPartition picks by); overlaps the pane rules.
+//   (fence_parts, the parts SelectPartition picks by), each part's empty cells
+//   handed back as a room for a recolor to paint; overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
-// Fit: nearest-neighbor stretch to the input frame [0], output frame [1], or
-//   painted output bounds [2] (fit_to, 8b_op_math.hpp). Pane-pick uses [0];
-//   explicit background fill uses [1] or [2]; the filled frame uses [1] on
+// Fit: nearest-neighbor stretch to the input frame [0], output frame [1],
+//   painted output bounds [2], or one pane's box [3] (fit_to, 8b_op_math.hpp).
+//   Pane-pick uses [0]; explicit background fill uses [1], [2], or [3] where
+//   the answer is one pane; the filled frame uses [1] on
 //   pieces of one color, filled to their boxes. General piece-stretch readings
 //   still need a replay.
 // NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
@@ -75,8 +77,10 @@ struct color_pair {
 };
 
 // PAST ITS FIXED PAIRS, BidiColorMap trades the pairs a key drawn in the grid
-// names (key_swaps, 8b_op_math.hpp), read along the key's rows, or its columns.
+// names (key_swaps, 8b_op_math.hpp), read along the key's rows, or its columns;
+// past those, one color with empty, EMPTY_PAIRS + the color (traded_with_empty).
 constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS = COLOR_PAIR_COUNT + 1;
+constexpr int EMPTY_PAIRS = KEY_PAIRS_ALONG_COLUMNS + 1;
 
 // TILE'S CHOICES, A NAME EACH (P2, notes/2 - DSL/Design Principles.md). A program
 // writes them slot by slot, Tile [steps: (0,3) (0,0), start: grid edge, end: grid edge,
@@ -324,7 +328,7 @@ enum class inferred_amount { none, some, all };
   /* Withhold closes the beat without painting, so a sentence that only sets  */ \
   /* up the hand is sayable and does not read as damage to the canvas.        */ \
   X(Withhold                    , 0                 , 0                        , combine  , none, false)        \
-  X(Fit                         , 0                 , 2                        , reduce   , none, false)        \
+  X(Fit                         , 0                 , 3                        , reduce   , none, false)        \
   X(Intersection                , 0                 , 0                        , combine  , none, false)        \
   X(Fractal                     , 0                 , 0                        , generate , none, false)        \
   X(Difference                  , 0                 , 0                        , combine  , none, false)        \
@@ -390,7 +394,8 @@ enum class inferred_amount { none, some, all };
   X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
   X(ScaleUp                     , 2                 , 10                       , translate, none, false)        \
   X(ScaleDown                   , 2                 , 10                       , translate, none, false)        \
-  X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false)        \
+  /* Past the ten colors, BLANK: the rooms, Partition's empty pieces.        */ \
+  X(SelectColor                 , 0                 , arc::BLANK               , select   , none, false)        \
   /* The one picked-from piece with no twin (unique_piece, 8b_op_math.hpp):  */ \
   /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
   /* or past those the same count of what count_kind names [4-16].            */ \
@@ -418,8 +423,9 @@ enum class inferred_amount { none, some, all };
   X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* The picked pieces trade the colors of one fixed pair, color_pair's      */ \
   /* numbering, or past those, the pairs a key drawn in the grid names: the  */ \
-  /* pieces not picked, read along their rows, then their columns.           */ \
-  X(BidiColorMap                , 0                 , arc::KEY_PAIRS_ALONG_COLUMNS, map   , none, false)        \
+  /* pieces not picked, read along their rows, then their columns; past      */ \
+  /* those, one color with the empty cells of their frames.                  */ \
+  X(BidiColorMap                , 0                 , arc::EMPTY_PAIRS + arc::COLOR_COUNT - 1, map, none, false) \
   /* The move IS the number of cells, so the whole grid is sayable in one. */    \
   X(MoveRow                     , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, false)        \
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, false)        \

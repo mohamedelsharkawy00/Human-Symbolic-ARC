@@ -263,14 +263,17 @@ inline bool on_object_edge(int row, int col, Occupied occupied) {
 }
 
 // WHAT Fit STRETCHES TO, its value: the input's frame, the canvas the output is
-// drawn on, or the box of what is painted on it -- none where nothing is.
-// Reading and execution ask the same helper.
-enum class fit_to : int8_t { input, canvas, painted, count };
+// drawn on, the box of what is painted on it -- none where nothing is -- or one
+// pane's box at the canvas's corner, `pane` the size every pane of the input
+// shares -- none where they differ or there are none. Reading and execution
+// ask the same helper.
+enum class fit_to : int8_t { input, canvas, painted, pane, count };
 template <class Canvas>
-inline cell_box fit_frame(int to, int input_width, int input_height,
-                                         const Canvas& canvas) {
+inline cell_box fit_frame(int to, int input_width, int input_height, const Canvas& canvas, tile_size pane) {
     if (to == (int)fit_to::input) return {0, 0, input_height - 1, input_width - 1};
     if (to == (int)fit_to::canvas) return {0, 0, canvas.height - 1, canvas.width - 1};
+    if (to == (int)fit_to::pane)
+        return pane.width > 0 && pane.height > 0 ? cell_box{0, 0, pane.height - 1, pane.width - 1} : cell_box{};
     cell_box box;
     if (to == (int)fit_to::painted)
         for (int r = 0; r < canvas.height; ++r)
@@ -577,6 +580,37 @@ inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
                 wall[row][col] = wall[row][col] || pieces.painted(i, row, col);
     }
     return fence_parts(width, height, [&](int row, int col) { return wall[row][col]; }, part);
+}
+
+// WHAT Partition HANDS BACK past the walls, part by part in reading order
+// (parts_the_pick_fences): every piece not picked, clipped to the part,
+// `clip(i, box, in_part)`, then the part's cells no piece holds as one room,
+// `room(part, box, empty)`. `box` is the part's; in_part(row, col) and
+// empty(row, col) say which of its cells. The pieces are asked as each_partner
+// asks them.
+template <class Pieces, class Clip, class Room>
+inline void each_partition_piece(const Pieces& pieces, int width, int height, Clip clip, Room room) {
+    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
+    const int parts = parts_the_pick_fences(pieces, width, height, part);
+    bool held[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    for (int i = 0; i < pieces.count(); ++i) {
+        const cell_box box = pieces.box(i);
+        if (box.empty()) continue;
+        for (int row = box.row0 < 0 ? 0 : box.row0; row <= box.row1 && row < MAX_GRID_DIM; ++row)
+            for (int col = box.col0 < 0 ? 0 : box.col0; col <= box.col1 && col < MAX_GRID_DIM; ++col)
+                held[row][col] = held[row][col] || pieces.painted(i, row, col);
+    }
+    for (int which = 0; which < parts; ++which) {
+        cell_box box;
+        for (int row = 0; row < MAX_GRID_DIM; ++row)
+            for (int col = 0; col < MAX_GRID_DIM; ++col)
+                if (part[row][col] == which) box.include_cell(row, col);
+        if (box.empty()) continue;
+        auto in_part = [&](int row, int col) { return part[row][col] == which; };
+        for (int i = 0; i < pieces.count(); ++i)
+            if (!pieces.is_picked(i)) clip(i, box, in_part);
+        room(which, box, [&](int row, int col) { return in_part(row, col) && !held[row][col]; });
+    }
 }
 
 // WHETHER THE PIECE `mine` LIES IN PART `which` of `part` (parts_the_pick_fences):
@@ -918,15 +952,24 @@ inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
     return false;
 }
 
+// WHAT A CELL OF A PICKED PIECE'S FRAME COMES OUT AS where BidiColorMap trades
+// `color` with empty (EMPTY_PAIRS): that color's cells empty, the empty ones --
+// empty, or a room's -- that color, the rest as they were (d511f180's 8s and
+// the ground the plan deleted, 5s, trading places).
+constexpr int8_t traded_with_empty(int8_t cell, int color) {
+    return cell == color ? (int8_t)TRANSPARENT : !is_color(cell) ? (int8_t)color : cell;
+}
+
 // WHAT BidiColorMap[value] TRADES, as `to[color]`, -1 for a color it leaves as
 // it was: the fixed pair `value` numbers (color_pair), or past those, the pairs
 // a key drawn in the grid names (key_swaps), read along its rows or its
-// columns. False where it trades nothing.
+// columns. False where it trades nothing, or trades with empty.
 template <class Pieces>
 inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
     if (value == KEY_PAIRS_ALONG_ROWS || value == KEY_PAIRS_ALONG_COLUMNS)
         return key_swaps(pieces, value == KEY_PAIRS_ALONG_ROWS, to);
     for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
+    if (value >= EMPTY_PAIRS) return false;
     const color_pair pair = color_pair::from_index(value);
     if (!is_color(pair.first)) return false;
     to[pair.first] = (int8_t)pair.second;

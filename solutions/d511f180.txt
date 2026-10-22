@@ -1,6 +1,6 @@
-Input SelectAll BidiColorMap[37] Union
-
+Input SelectAll BidiColorMap [37] Union
 Puzzle:       d511f180
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.4365
+Nodes:        4

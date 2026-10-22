@@ -57,12 +57,20 @@ constexpr int8_t COLOR_ANY = COLOR_COUNT;
 
 // --- Shared building blocks ---
 
-// Every painted cell of an object, in its own frame: see(row, col, color).
+// Every cell an object holds, in its own frame: see(row, col, color), a room's
+// empty cells (BLANK) too.
 template <class See>
 void each_painted(const held_object& one, See see) {
     for (int row = 0; row < one.height; ++row)
         for (int col = 0; col < one.width; ++col)
             if (const int8_t color = one.mask[row][col]; color != TRANSPARENT) see(row, col, color);
+}
+
+// Every cell of an object a grid shows, in its own frame: its colored ones, a
+// room's empty cells showing nothing.
+template <class See>
+void each_shown(const held_object& one, See see) {
+    each_painted(one, [&](int row, int col, int8_t color) { if (is_color(color)) see(row, col, color); });
 }
 
 int painted_count(const held_object& one) {
@@ -115,7 +123,7 @@ void paint_objects(const object_list& from, int width, int height, grid& out) {
     out.clear_cells();
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
-        each_painted(one, [&](int row, int col, int8_t color) {
+        each_shown(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < MAX_GRID_DIM && at_col >= 0 && at_col < MAX_GRID_DIM)
                 out.data[at_row][at_col] = color;
@@ -146,7 +154,7 @@ void segment_objects(const grid& g, object_list& out, grouping how, int x0, int 
     });
 }
 
-// Calls cell(row, col, color) for each painted, on-canvas cell of the picked
+// Calls cell(row, col, color) for each shown, on-canvas cell of the picked
 // objects among from's first `count`, one object at a time so later objects win
 // shared cells.
 template <class Cell>
@@ -154,7 +162,7 @@ void each_picked_cell(const program_run& run, const object_list& from, int count
     for (int i = 0; i < count; ++i) {
         const held_object& one = from.objects[i];
         if (!one.selected) continue;
-        each_painted(one, [&](int row, int col, int8_t color) {
+        each_shown(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < run.canvas.height && at_col >= 0 && at_col < run.canvas.width)
                 cell(at_row, at_col, color);
@@ -241,17 +249,11 @@ struct partner_view {
     int color_from(partner_by how, int i) const { return partner_color(how, i, *this); }
 };
 
-// The glyph's key, read off the paint: the learned table's key of the `kind`
-// shape_key_of names -- its shape, the same whichever way round the glyph
-// lies, or its symmetry. Inference learns its keys from tight color boxes, so
-// applying must key a tight box too or a padded object keys a different glyph
-// and every lookup misses. Untrimmed input is therefore accepted rather than
-// required to arrive trimmed.
-uint32_t shape_key_of_paint(const held_object& one, int kind) {
-    const cell_box box = painted_box(one);
-    if (box.empty()) return 0;
-    return shape_key_of(kind, box.width(), box.height(), [&](int row, int col) {
-        return (int8_t)one.mask[box.row0 + row][box.col0 + col];
+// Read the key in the piece's current box, as inference does. Only Trim
+// removes empty margins before the key is read.
+uint32_t shape_key_of_piece(const held_object& one, int kind) {
+    return shape_key_of(kind, one.width, one.height, [&](int row, int col) {
+        return one.mask[row][col];
     });
 }
 
@@ -599,14 +601,14 @@ object_list& op_underlay(program_run& run, const object_list& from) {
     return res;
 }
 
-// Difference: erase from the canvas every cell a picked object paints. Only
+// Difference: erase from the canvas every cell a picked object shows. Only
 // what was picked lands: a paint that ignored the mark would undo the pick the
 // sentence just made.
 object_list& op_difference(program_run& run, const object_list& from) {
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (!one.selected) continue;
-        each_painted(one, [&](int row, int col, int8_t) {
+        each_shown(one, [&](int row, int col, int8_t) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < run.canvas.height && at_col >= 0 && at_col < run.canvas.width)
                 run.canvas.data[at_row][at_col] = TRANSPARENT;
@@ -731,6 +733,17 @@ object_list& op_bridge(program_run& run, const object_list& from, int8_t way) {
 object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t value) {
     object_list& res = run.fresh();
     copy_list(res, from);
+    // One color with empty, over every cell of each picked object's frame.
+    if (value >= EMPTY_PAIRS) {
+        for (int i = 0; i < res.count; ++i) {
+            held_object& one = res.objects[i];
+            if (!one.selected) continue;
+            for (int row = 0; row < one.height; ++row)
+                for (int col = 0; col < one.width; ++col)
+                    one.mask[row][col] = traded_with_empty(one.mask[row][col], value - EMPTY_PAIRS);
+        }
+        return res;
+    }
     int8_t to[COLOR_COUNT];
     if (!swaps_of(value, partner_view{ from }, to)) return res;
     for (int i = 0; i < res.count; ++i) {
@@ -864,38 +877,51 @@ object_list& op_select_partition(program_run& run, const object_list& from, int 
     return res;
 }
 
-// Partition: the selection marks the PARTITIONER: selected cells are walls, only
-// VIEWED to fence the parts, never merged into the output. Strict, like every
-// act: no selection means no walls, so the whole thing stays one part --
-// Partition NEVER falls back to "all painted are walls". The parts are the ones
-// the walls fence off, whatever their shape (parts_the_pick_fences, the parts
-// SelectPartition picks by), each cut from the SOURCE objects: every object not
-// a wall, clipped to the cells of a part, comes back in the part's box, part
-// after part in reading order -- walls across the whole grid fence the tiles of
-// a lattice, row by row. A source object crossing into two parts is severed
-// there -- that is what partitioning means. No merge: distinct source layers stay
-// distinct; want parts as single masks? place a UnionList yourself.
+// Partition: the selected objects are the walls. Strict, like every act: no
+// selection means no walls, so the whole thing stays one part -- Partition
+// NEVER falls back to "all painted are walls". The walls come back first,
+// unmarked, so SelectPartition can still read them; then the parts they fence
+// off, whatever their shape, part after part in reading order
+// (each_partition_piece, 8b_op_math.hpp, the parts SelectPartition picks by):
+// every other object clipped to the part, in the part's box -- severed where it
+// crosses into another, which is what partitioning means -- and the part's
+// empty cells as one more object, a room, BLANK until a recolor paints it.
+// Walls across the whole grid fence the tiles of a lattice, row by row. No
+// merge: distinct source layers stay distinct; want parts as single masks?
+// place a UnionList yourself.
 object_list& op_partition(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     const int grid_width = run.input.width, grid_height = run.input.height;
     if (grid_width <= 0 || grid_height <= 0) return res;
-    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
-    const int parts = parts_the_pick_fences(partner_view{ from }, grid_width, grid_height, part);
-    for (int which = 0; which < parts; ++which) {
-        cell_box box;
-        for (int row = 0; row < grid_height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < grid_width && col < MAX_GRID_DIM; ++col)
-                if (part[row][col] == which) box.include_cell(row, col);
-        if (box.empty()) continue;
-        for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
-            const held_object& source = from.objects[i];
-            if (source.selected) continue;  // walls are not content
-            held_object one;
-            if (clip_to(source, box.row0, box.col0, box.row1 + 1, box.col1 + 1,
-                        [&](int row, int col) { return part[row][col] == which; }, one))
-                res.objects[res.count++] = one;
+    for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i)
+        if (from.objects[i].selected) {
+            res.objects[res.count] = from.objects[i];
+            res.objects[res.count++].selected = false;
         }
-    }
+    each_partition_piece(partner_view{ from }, grid_width, grid_height,
+        [&](int i, const cell_box& box, auto in_part) {
+            held_object one;
+            if (res.count < MAX_OBJECTS_IN_A_LIST &&
+                clip_to(from.objects[i], box.row0, box.col0, box.row1 + 1, box.col1 + 1, in_part, one))
+                res.objects[res.count++] = one;
+        },
+        [&](int, const cell_box& box, auto empty) {
+            if (res.count >= MAX_OBJECTS_IN_A_LIST) return;
+            held_object& room = res.objects[res.count];
+            room.x0 = (int16_t)box.col0; room.y0 = (int16_t)box.row0;
+            room.x1 = (int16_t)box.col1; room.y1 = (int16_t)box.row1;
+            room.width = (int16_t)box.width(); room.height = (int16_t)box.height();
+            room.selected = false;
+            room.mask.clear();
+            bool any = false;
+            for (int row = box.row0; row <= box.row1; ++row)
+                for (int col = box.col0; col <= box.col1; ++col)
+                    if (empty(row, col)) {
+                        room.mask[row - box.row0][col - box.col0] = (int8_t)BLANK;
+                        any = true;
+                    }
+            if (any) ++res.count;
+        });
     return res;
 }
 
@@ -1072,7 +1098,7 @@ object_list& op_select_elected_background(program_run& run, const object_list& f
     laid.height = max(0, min(MAX_GRID_DIM, y1 - y0));
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
-        each_painted(one, [&](int row, int col, int8_t color) {
+        each_shown(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row - y0, at_col = one.x0 + col - x0;
             if (at_row >= 0 && at_row < laid.height && at_col >= 0 && at_col < laid.width)
                 laid.data[at_row][at_col] = color;
@@ -1107,11 +1133,11 @@ object_list& op_invert_selection(program_run& run, const object_list& from) {
 }
 
 // The color the puzzle-level table names for a piece's key of `kind` (its
-// paint's key, shape_key_of_paint), as the reading looks it up
+// key, shape_key_of_piece), as the reading looks it up
 // (shape_table::color_of): -1 where it names none. The one lookup both shape
 // ops make.
 int shape_color(const program_run& run, const held_object& one, int kind) {
-    return run.shape_colors.color_of(shape_key_of_paint(one, kind));
+    return run.shape_colors.color_of(shape_key_of_piece(one, kind));
 }
 
 // ShapeColorMap[kind]: every picked piece takes the color its own key names in
@@ -1621,9 +1647,11 @@ object_list& op_outline(program_run& run, const object_list& from) {
 }
 
 // Fit[to]: each picked object stretched, nearest cell, over the frame `to`
-// names (fit_frame): the input's, the canvas's, or what is painted on it.
+// names (fit_frame): the input's, the canvas's, what is painted on it, or one
+// of this example's panes.
 object_list& op_fit(program_run& run, const object_list& from, int to) {
-    const cell_box target = fit_frame(to, run.input.width, run.input.height, run.canvas);
+    const cell_box target = fit_frame(to, run.input.width, run.input.height, run.canvas,
+                                      pane_split_facts::shared_size(run.panes));
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];

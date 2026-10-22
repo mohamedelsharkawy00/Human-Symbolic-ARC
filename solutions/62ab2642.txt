@@ -1,6 +1,6 @@
-Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[1] Recolor[8] Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Recolor[7] SelectAll Union
-
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [1] Recolor [8] Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject [0] Recolor [7] SelectAll Union
 Puzzle:       62ab2642
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.4197
+Nodes:        20

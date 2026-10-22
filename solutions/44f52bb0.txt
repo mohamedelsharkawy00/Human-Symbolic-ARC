@@ -1,0 +1,6 @@
+Input Split [0] SelectAll Trim SelectAll ShapeColorMap [1] AddColor [11] Fit [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay
+Puzzle:       44f52bb0
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3446
+Nodes:        14

@@ -1,0 +1,6 @@
+Input Split [0] Withhold CurrentObjects SelectAll Trim Union Input Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal [1] Recolor [1] Union Output Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] ExtendDiagonal [29] Union Output Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] SelectPartition [0] ExtendOrthogonal [29] Recolor [1] Union Output Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] Tile [steps: (0,2) (0,0), start: grid edge, end: grid edge, spread: lines] Union
+Puzzle:       332efdb3
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.7774
+Nodes:        60

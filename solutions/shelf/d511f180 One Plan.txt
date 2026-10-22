@@ -1,0 +1,6 @@
+Input Colors SelectColor [5] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [5] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll AddColor [8] Underlay Output SelectAll AddColor [5] Underlay
+Puzzle:       d511f180
+Train:        Unsolved
+Test:         N/A
+Elapsed:      00:00:00.7637
+Nodes:        30

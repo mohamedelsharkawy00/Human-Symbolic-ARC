@@ -1,0 +1,6 @@
+Input Colors SelectColor [7] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [2] InvertSelection MirrorAround [13] SelectAll Union Input Colors SelectColor [7] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [20] Tile [steps: (0,own width) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [7] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [2] InvertSelection ExtendTo [8] Union Input Colors SelectColor [7] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [93] Tile [steps: (own height,0) (0,0), start: grid edge, end: grid edge, spread: lines] Underlay Output Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] Tile [steps: (1,0) (0,0), start: grid edge, end: grid edge, spread: lines] Underlay Output SelectAll AddColor [7] Underlay
+Puzzle:       9344f635
+Train:        Solved
+Test:         Failed
+Elapsed:      00:00:01.2294
+Nodes:        84

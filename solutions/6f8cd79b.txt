@@ -1,0 +1,6 @@
+Input Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Recolor [8] Union Output Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Outline InteriorColor [0] Union
+Puzzle:       6f8cd79b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3745
+Nodes:        23

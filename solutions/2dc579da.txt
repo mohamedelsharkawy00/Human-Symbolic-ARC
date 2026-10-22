@@ -1,6 +1,6 @@
-Input Panes SelectUnique[0] Origin Union
-
+Input Panes SelectUnique [0] Origin Union
 Puzzle:       2dc579da
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3276
+Nodes:        5

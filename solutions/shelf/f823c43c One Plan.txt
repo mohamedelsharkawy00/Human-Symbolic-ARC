@@ -1,0 +1,6 @@
+Input Colors SelectColor [8] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [8] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] Tile [steps: (0,2) (0,0), start: grid edge, end: grid edge, spread: lines] MaskBy [10] Union Input Colors SelectColor [8] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] Tile [steps: (6,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Output SelectAll Withhold CurrentObjects SelectAll Difference CurrentObjects Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject [0] DeleteSelection SelectAll Underlay Output Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] ExtendOrthogonal [29] Union Output SelectAll AddColor [8] Underlay
+Puzzle:       f823c43c
+Train:        Unsolved
+Test:         N/A
+Elapsed:      00:00:03.8203
+Nodes:        83

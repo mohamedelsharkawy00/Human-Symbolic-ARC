@@ -289,7 +289,9 @@ struct correspondence_election {
         // or hollowed to the outline; or the pieces a pick by holes or by size takes,
         // recolored to `value`; or the picked pieces removed, slid to the edge,
         // moved their own size or grown a trail the direction `value` names,
-        // their boxes filled in `paint`,
+        // their boxes filled in `paint`, or every room they fence off, or the
+        // one `value` names by size or by part, filled in `paint`, or every
+        // room in the color its key names (filled_room, ROOM_PARTS),
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
         // repeated as the Tile in `tile` says (tiled_along), or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
@@ -297,7 +299,8 @@ struct correspondence_election {
         // the color its own shape names (shape_recolor), or the picture so far
         // made symmetric the way symmetry `value` names (symmetric), or their
         // colors traded as a key drawn in the grid pairs them, the pieces not
-        // picked read the way BidiColorMap's `value` reads them (key_swap) -- or a
+        // picked read the way BidiColorMap's `value` reads them (key_swap), or
+        // one color traded with the empty cells of their boxes (empty_swap) -- or a
         // swap of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
@@ -306,11 +309,11 @@ struct correspondence_election {
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
-                                shifted, trailed, boxed, copied_onto, tiled_along, diagonal_tile,
+                                shifted, trailed, boxed, filled_room, copied_onto, tiled_along, diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
-                                own_sentences, kind_count } as = unsaid;
+                                empty_swap, own_sentences, kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along).
         tile_value tile;

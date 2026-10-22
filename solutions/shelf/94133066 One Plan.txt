@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Output SelectAll Trim AddColor [1] Underlay
+Puzzle:       94133066
+Train:        Unsolved
+Test:         N/A
+Elapsed:      00:00:00.7202
+Nodes:        16

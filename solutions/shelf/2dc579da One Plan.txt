@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground DeleteSelection UnionList Panes SelectAll Origin Underlay Input Colors SelectElectedBackground AddColor [11] Fit [2] Underlay
+Puzzle:       2dc579da
+Train:        Unsolved
+Test:         N/A
+Elapsed:      00:00:00.3124
+Nodes:        15

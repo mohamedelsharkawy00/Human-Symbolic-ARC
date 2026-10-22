@@ -1,0 +1,6 @@
+Input Split [3] Withhold CurrentObjects SelectAll Trim Union Input Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] SelectPartition [3] InvertSelection SelectLikeKey [0] Tile [steps: (0,own width) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] SelectPartition [3] Tile [steps: (0,own width) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] SelectPartition [0] Tile [steps: (own height,0) (0,0), start: grid edge, end: grid edge, spread: lines] MaskBy [7] Union Output Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeastCells [3] InvertSelection Tile [steps: (own height,0) (0,0), start: grid edge, end: grid edge, spread: lines] MaskBy [7] Union
+Puzzle:       9344f635
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:01.2452
+Nodes:        67

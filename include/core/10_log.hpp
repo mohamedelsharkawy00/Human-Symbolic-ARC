@@ -638,7 +638,8 @@ inline void log_inference(const string& id, const inference& inf,
         report << "  laid out  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << pick.colors
                << "  cell " << (int)inf.frame.factor;
     else if (inf.frame.holds() && inf.frame.kind == piece_frame_rule::filled)
-        report << "  filled  cut " << segmentation_names[(int)inf.frame.cut] << "  colors " << pick.colors
+        report << "  filled  cut " << (inf.frame.cut == segmentation_methods::unset ? "Whole Input" :
+                                      segmentation_names[(int)inf.frame.cut]) << "  colors " << pick.colors
                << pick_said << "  keyed " << (int)inf.frame.keyed;
     else if (inf.frame.holds() && inf.frame.kind != piece_frame_rule::cut_out)
         report << "  " << frame_kinds[inf.frame.kind] << "  factor " << (int)inf.frame.factor;

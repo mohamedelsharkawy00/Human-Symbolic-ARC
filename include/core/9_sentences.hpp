@@ -119,6 +119,11 @@ struct said_reading {
     // holds over every cell, so only the cut's own line leaves any.
     int left_unexplained = 0;
     bool background_filled = false;
+    // Whether the answer is one pane laid at the corner, so the plan's fill
+    // covers one pane's box (restore_background).
+    bool one_pane = false;
+    // The chosen frame before words change its paint.
+    string output_frame;
     // THE SENTENCES THAT LAY THE HAND, the first so many of the cut's line: the
     // cut and the words on it, before any paint; and whether it says a word.
     size_t hand_sentences = 0;
@@ -525,6 +530,8 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     const auto& split = inf.pane_split;
     const auto& mask = inf.pane_mask;
     if (!split.holds() || !mask.holds()) return false;
+    // The panes stack at the corner: the answer is one pane.
+    said.one_pane = true;
     // A PANE TURNED BEFORE IT STACKS. Panes facing each other across a wall are
     // mirrored, not shifted, and pane_mask reads every pane after the first
     // through one pose. Saying that needs those panes named, and a band names a
@@ -727,11 +734,12 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         return false;
     }
     if (pick.way == pane_pick_rule::OddOneOut) {
-        // Keep every cell of the pane, including its background. Panes clears
-        // marks; the selector names exactly one complete drawing, then Origin
-        // moves only that pane. No crop-to-ink or background restoration.
+        // Panes clears marks; the selector names exactly one complete drawing,
+        // then Origin moves only that pane to the corner. The answer is that
+        // pane, so a plan's fill covers its box (2dc579da: one dot on each
+        // input's own ground).
         said.sentences.push_back("Input Panes " + spell("SelectUnique", (int)twin_by::drawing) + " Origin Union");
-        said.background_filled = true;  // The selected pane supplies its full frame.
+        said.one_pane = true;
         return true;
     }
     if (pick.way != pane_pick_rule::AtIndex) {
@@ -758,6 +766,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     // pane sitting where it was cut instead of stacking it at the corner.
     say_closed(said, "Input Panes " + spell(band, pick.which) +
                      " InvertSelection DeleteSelection SelectAll Origin", "Union");
+    said.one_pane = true;
     return true;
 }
 
@@ -980,7 +989,8 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;
-        case said_as::key_swap:    beats.push_back({pick, spell("BidiColorMap", rule.value)}); break;
+        case said_as::key_swap:
+        case said_as::empty_swap:  beats.push_back({pick, spell("BidiColorMap", rule.value)}); break;
         case said_as::learned_table:
             // A key's shape naming the figure's color (detect_body_recolor), in
             // three words: the key -- the smallest -- takes the color its own shape
@@ -1064,6 +1074,32 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             paint = laid_paint(rule);
             return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
+        case said_as::filled_room: {
+            // Partition hands the walls back unmarked, then each part's pieces
+            // and its room (SelectColor of BLANK picks the rooms): every room,
+            // picked; by size, every piece but the rooms goes first, so the
+            // rooms alone are ranked; by part, the walls picked again -- every
+            // piece but the rooms, where every piece was a wall -- fence the
+            // part the room lies in.
+            const string rooms = spell("SelectColor", BLANK);
+            string act = "Partition ";
+            if (rule.value == ROOM_EVERY)
+                act += rooms + " " + spell("Recolor", rule.paint);
+            else if (rule.value >= ROOM_TABLE)
+                // Every room, each in the color the puzzle's table names for its key.
+                act += rooms + " InvertSelection DeleteSelection SelectAll " +
+                       spell("ShapeColorMap", rule.value - ROOM_TABLE);
+            else if (room_by_size(rule.value))
+                act += rooms + " InvertSelection DeleteSelection " +
+                       spell(room_largest(rule.value) ? "SelectLargestObject" : "SelectSmallestObject",
+                             room_rank(rule.value)) + " " + spell("Recolor", rule.paint);
+            else
+                act += (rule.pick.every() ? rooms + " InvertSelection" : pick) + " " +
+                       spell("SelectPartition", room_part(rule.value)) + " " + spell("Recolor", rule.paint);
+            drawn = { pick, act };
+            paint = laid_paint(rule);
+            return true;
+        }
         case said_as::copied_onto:
             drawn = { pick, spell("CopyTo", rule.value) + onto_words(rule) };
             paint = laid_paint(rule);
@@ -1109,11 +1145,12 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         for (const string& word : words_for_pose(frame.factor)) framed += " " + word;
         break;
     default: {
+        const bool uncut = frame.kind == piece_frame_rule::filled && frame.cut == segmentation_methods::unset;
         const string cut = word_for_segmentation(frame.cut);
-        if (cut.empty()) return false;
+        if (cut.empty() && !uncut) return false;
         // Every piece needs no pick, and nothing to delete.
         const bool every = frame.pick.every();
-        framed = string("Input SelectAll ") + cut + " SelectAll Trim " +
+        framed = uncut ? whole + " " : string("Input SelectAll ") + cut + " SelectAll Trim " +
                  (every ? string() : pick_words(frame.pick) +
                                      " InvertSelection DeleteSelection ") + "SelectAll ";
         switch (frame.kind) {
@@ -1126,6 +1163,7 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
         }
     }
     }
+    said.output_frame = framed;
     // THE TILED FRAME CUTS BEFORE IT TILES: its copies are the input's pieces,
     // each laid down again in every copy and never joined with a piece of the
     // next copy, as the reading through it reads them (framed_whole). So the
@@ -1396,6 +1434,9 @@ inline void say_the_rest(const inference& inf, said_reading& said) {
 
 // Fill is part of the chosen explanation, including a reading through a frame.
 // The Fit target is spelled, never inferred by the op from a hidden size mode.
+// Where the output's size is what is drawn, the fill covers what is drawn, or,
+// where the answer is one pane or a chosen frame, that box before its paint
+// changes: its ground is part of it, and without it the answer would shrink.
 inline void restore_background(said_reading& said, background_source ground,
                                const output_dimension_rule& size) {
     if (said.sentences.empty() || said.background_filled || !ground.removes_color()) return;
@@ -1404,7 +1445,7 @@ inline void restore_background(said_reading& said, background_source ground,
     case output_dimension_rule::Identity:
     case output_dimension_rule::Fixed:
     case output_dimension_rule::Scale: break;
-    case output_dimension_rule::BoundingBox: fit = fit_to::painted; break;
+    case output_dimension_rule::BoundingBox: fit = said.one_pane ? fit_to::pane : fit_to::painted; break;
     case output_dimension_rule::NotInferredYet:
     default:
         said.no_word_for.push_back("the output frame has not been inferred");
@@ -1413,6 +1454,13 @@ inline void restore_background(said_reading& said, background_source ground,
     if (ground.per_grid)
         said.sentences.push_back("Input Colors SelectElectedBackground AddColor [11] " +
                                  spell("Fit", (int)fit) + " Underlay");
+    else if (fit == fit_to::painted && !said.output_frame.empty())
+        said.sentences.push_back(said.output_frame + " SelectAll UnionList Trim " +
+                                 spell("Recolor", ground.color) + " " + spell("AddColor", ground.color) + " Underlay");
+    else if (fit == fit_to::pane)
+        // The input stretched over the pane's box, every cell of it in the ground.
+        said.sentences.push_back("Input SelectAll " + spell("Fit", (int)fit) + " " + spell("Recolor", ground.color) +
+                                 " Underlay");
     else
         said.sentences.push_back("Output SelectAll " + string(fit == fit_to::painted ? "Trim " : "") +
                                  spell("AddColor", ground.color) + " Underlay");
@@ -1432,6 +1480,7 @@ inline void say_the_plan(said_reading& said, const ground_plan& plan, const outp
         };
         for (string& sentence : said.sentences) open_on_figures(sentence);
         for (string& opening : said.other_openings) open_on_figures(opening);
+        open_on_figures(said.output_frame);
     }
     restore_background(said, plan.filled, size);
 }

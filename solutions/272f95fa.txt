@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] SelectAll Partition Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] SelectPartition[1] Recolor[2] Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] SelectPartition[3] Recolor[4] Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] SelectPartition[4] Recolor[6] Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] SelectPartition[5] Recolor[3] Withhold CurrentObjects SelectAll InvertSelection SelectColor[8] SelectPartition[7] Recolor[1] Withhold CurrentObjects SelectAll Union Output SelectAll AddColor[0] Underlay
-
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] SelectPartition [7] Recolor [1] Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] SelectPartition [1] Recolor [2] Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] SelectPartition [4] Recolor [6] Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] SelectPartition [5] Recolor [3] Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] SelectPartition [3] Recolor [4] SelectAll Union
 Puzzle:       272f95fa
 Train:        Solved
 Test:         Solved
-Found by:     manual, empty rooms (Partition)
+Elapsed:      00:00:00.4971
+Nodes:        43

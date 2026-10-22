@@ -49,7 +49,7 @@ struct inference_times {
     static constexpr const char* names[] = { "strict", "tolerant", "partners", "preparing",
         "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
         "recolor", "shape", "key", "removal", "ray", "trail", "copy", "repeat", "turned", "bar",
-        "fill", "box", "symmetry", "picture" };
+        "fill", "box", "room", "symmetry", "picture" };
     enum at { strict, tolerant, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
     double ms[size(names)] = {};
 };
@@ -652,16 +652,22 @@ struct shape_color_map_rule : shape_table {
     // detect_body_recolor, so infer() runs this only when that one finds nothing.
     // A table that only ever fills with the ground paints nothing, and as the
     // word for a recolor it stood in for changes it never makes -- so one shape
-    // at least has to be filled with a color the ground is not.
+    // at least has to be filled with a color the ground is not. Nor is a table
+    // whose every key is seen in one pair alone, all filled in one color: that
+    // is the color for everything, and no shape decides it (272f95fa's lattice,
+    // a new shape in every pair, its middle always 6).
     static shape_color_map_rule detect_interior_fill(const vector<example>& train, const tiled_pieces& tiles) {
         shape_color_map_rule rule;
         if (!pairs_overlay(train)) return {};
         bool fills_something = false;
+        // The pairs each key is seen in, a bit each.
+        vector<std::pair<uint32_t, uint32_t>> seen_in;
 
         object_walk_scratch scratch;
         bool occupied[MAX_GRID_CELLS] = {};
         bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
-        for (const auto& ex : train) {
+        for (size_t which = 0; which < train.size(); ++which) {
+            const example& ex = train[which];
             const grid& in = ex.input;
             const grid& out = ex.output;
             bool consistent = true;
@@ -701,10 +707,18 @@ struct shape_color_map_rule : shape_table {
                     [&](int row, int col) { return occupied[row * width + col] ? 0 : TRANSPARENT; }, ANY_WAY_ROUND);
                 consistent = rule.learn(object_shape, (int8_t)fill);
                 fills_something = fills_something || fill != TRANSPARENT;
+                const uint32_t pair_bit = 1u << min<size_t>(which, 31);
+                const auto known = ranges::find(seen_in, object_shape, &std::pair<uint32_t, uint32_t>::first);
+                if (known == seen_in.end()) seen_in.push_back({ object_shape, pair_bit });
+                else known->second |= pair_bit;
             }, tiles.of(ex));
             if (!consistent) return {};
         }
         if (!fills_something) return {};
+        const bool repeats = ranges::any_of(seen_in, [](const auto& one) { return popcount(one.second) >= 2; });
+        const bool one_color = all_of(rule.colors, rule.colors + rule.count,
+                                      [&](int8_t color) { return color == rule.colors[0]; });
+        if (!repeats && one_color) return {};
         if (rule.holds()) rule.claimed_by = shape_color_map_rule::interior_fill;
         return rule;
     }
@@ -993,7 +1007,7 @@ bool draw_on_canvas(const grid& input, const output_dimension_rule& size, grid& 
     if (!size.canvas_size_for(input.width, input.height, width, height)) return false;
     grid canvas(width, height);
     if (!paint(canvas)) return false;
-    const cell_box kept = fit_frame((int)(closes ? fit_to::painted : fit_to::canvas), input.width, input.height, canvas);
+    const cell_box kept = fit_frame((int)(closes ? fit_to::painted : fit_to::canvas), input.width, input.height, canvas, {});
     if (kept.empty()) return false;
     drawn = grid(kept.width(), kept.height());
     for (int r = 0; r < drawn.height; ++r)
@@ -1141,10 +1155,18 @@ struct ray_extension_rule {
                             if (!draw_layer(train[i].input, ranked[i][rank], trying.how, ink)) break;
                             trying.ink.push_back(std::move(ink));
                         }
-                        if (trying.ink.size() == train.size() &&
-                            none_of(options.begin(), options.end(), [&](const candidate& other) {
-                                return other.ink == trying.ink;
-                            })) options.push_back(std::move(trying));
+                        if (trying.ink.size() != train.size()) continue;
+                        const auto same = find_if(options.begin(), options.end(), [&](const candidate& other) {
+                            return other.ink == trying.ink;
+                        });
+                        if (same == options.end()) options.push_back(std::move(trying));
+                        // The same drawing with a longer ray: the shorter ran into the
+                        // edge, and a larger test grid is where it stops too soon
+                        // (ea786f4a), so the longer one takes its place, as on the line.
+                        else if (same->how.ray_kind == trying.how.ray_kind &&
+                                 same->how.fill_interior == trying.how.fill_interior &&
+                                 same->how.stamp_body == trying.how.stamp_body)
+                            same->how.radius = trying.how.radius;
                     }
             }
         }
@@ -1301,6 +1323,15 @@ struct pane_split_facts : pane_cut {
 
     bool held = false;
     bool holds() const { return held; }
+
+    // The size every one of `panes` shares, none where they differ or there
+    // are none: one pane's box, as Fit stretches over it (fit_to::pane).
+    static tile_size shared_size(const vector<pane>& panes) {
+        if (panes.empty()) return {};
+        for (const pane& one : panes)
+            if (one.width != panes[0].width || one.height != panes[0].height) return {};
+        return { panes[0].width, panes[0].height };
+    }
 
     // A pane this small is a cell, not a grid: without the floor any 3x3 can
     // claim to be nine panes. It is what keeps the lattice honest.
@@ -3191,6 +3222,18 @@ struct piece_frame_rule {
     // the color the puzzle's table names for its key of this kind (shape_key).
     int8_t keyed = -1;
     bool holds() const { return held; }
+    // No cut means Input's whole box, including its empty margins.
+    vector<object> pieces(const grid& input, tile_size tiles = {}) const {
+        if (cut != segmentation_methods::unset) return pieces_as_said(input, cut, tiles);
+        object whole;
+        whole.summary = { 0, 0, (int8_t)input.width, (int8_t)input.height, 0 };
+        for (int row = 0; row < input.height; ++row)
+            for (int col = 0; col < input.width; ++col) {
+                whole.data[row][col] = (int8_t)input.data[row][col];
+                whole.summary.count += input.data[row][col] != TRANSPARENT;
+            }
+        return { whole };
+    }
 };
 
 // Collects facts, rules, and elections about one puzzle.
@@ -4484,9 +4527,16 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         const int last_kind = inf.shape_color_map.holds() ? -1 : (int)shape_key::count - 1;
         vector<uint16_t> shown;
         for (const example& pair : train) shown.push_back(shape_color_map_rule::colors_shown(pair.input));
-        for (const segmentation_methods cut : frame_cuts) {
-            const replay_facts facts(train, cut, tiles);
-            for (const piece_pick& pick : picks_of(facts))
+        for (size_t which_cut = 0; which_cut <= size(frame_cuts); ++which_cut) {
+            piece_frame_rule source;
+            source.cut = which_cut < size(frame_cuts) ? frame_cuts[which_cut] : segmentation_methods::unset;
+            replay_facts facts(train, source.cut, tiles);
+            const bool whole = source.cut == segmentation_methods::unset;
+            if (whole)
+                for (size_t which = 0; which < train.size(); ++which)
+                    facts.change(which).hand = source.pieces(train[which].input);
+            const vector<piece_pick> picks = whole ? vector<piece_pick>{ piece_pick::all() } : picks_of(facts);
+            for (const piece_pick& pick : picks)
                 for (int keyed = -1; keyed <= last_kind; ++keyed) {
                     shape_color_map_rule table;
                     if (keyed >= 0) {
@@ -4513,7 +4563,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                     piece_frame_rule frame;
                     frame.kind = piece_frame_rule::filled;
                     frame.held = true;
-                    frame.cut = cut;
+                    frame.cut = source.cut;
                     frame.pick = pick;
                     frame.keyed = (int8_t)keyed;
                     const double before = best_share;
@@ -5002,6 +5052,25 @@ inline optional<replayed> key_swap_holds(const replay_facts& facts, const vector
     return repaints_hold(facts, handed, [&](size_t which, const partner_pieces&, int, int8_t* to) {
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (swaps[which][color] >= 0) to[color] = swaps[which][color];
+        return true;
+    });
+}
+
+// A COLOR TRADING PLACES WITH EMPTY, replayed: BidiColorMap past the key's two
+// over every cell of each picked piece's box (traded_with_empty, the op's own
+// rule) -- that color's cells left empty, the box's empty cells that color --
+// the box laid over what is down as it comes out (paint_holds).
+inline optional<replayed> empty_swap_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                           int color) {
+    return paint_holds(facts, handed, {}, [&](size_t, const partner_pieces& cut, auto&& put) {
+        for (int i = 0; i < cut.count(); ++i) {
+            if (!cut.picked[i]) continue;
+            const object& piece = cut.pieces[i];
+            for (int row = 0; row < piece.summary.height; ++row)
+                for (int col = 0; col < piece.summary.width; ++col)
+                    put(piece.summary.row + row, piece.summary.col + col,
+                        traded_with_empty((int8_t)piece.data[row][col], color));
+        }
         return true;
     });
 }
@@ -5845,6 +5914,168 @@ inline optional<replayed> box_holds(const replay_facts& facts, const vector<part
     });
 }
 
+// WHICH ROOM A ROOM PAINT FILLS (filled_room's value), in the order a tie goes:
+// every room (d511f180's ground, all of it 8); by size, ranked among the rooms
+// alone, as SelectLargestObject and SelectSmallestObject rank what is left once
+// every other piece is deleted -- the largest, the smallest, the 2nd largest,
+// the 2nd smallest... -- then the room of the part the picked pieces fence
+// off, numbered as SelectPartition numbers the parts.
+// Past those, every room at once, each in the color its own key names -- its
+// shape or its symmetry (shape_key) -- as a table read off the pairs says
+// (rooms_table).
+constexpr int ROOM_EVERY = 0, ROOM_SIZES = 1, ROOM_PARTS = ROOM_SIZES + 2 * SIZE_RANKS,
+              ROOM_CHOICES = ROOM_PARTS + row_of(node_type::SelectPartition).high + 1;
+constexpr int ROOM_TABLE = ROOM_CHOICES, ROOM_VALUES = ROOM_TABLE + (int)shape_key::count;
+constexpr bool room_by_size(int chosen) { return chosen >= ROOM_SIZES && chosen < ROOM_PARTS; }
+constexpr bool room_largest(int chosen) { return (chosen - ROOM_SIZES) % 2 == 0; }
+constexpr int room_rank(int chosen) { return (chosen - ROOM_SIZES) / 2; }
+constexpr int room_part(int chosen) { return chosen - ROOM_PARTS; }
+
+// A PART'S ROOM: the part it lies in, its cells, and whether another piece
+// shares its part.
+struct fenced_room {
+    int part = -1;
+    vector<int16_t> cells;
+    bool shared = false;
+};
+
+// THE ROOMS THE PICKED PIECES FENCE OFF on each pair, in the order Partition
+// hands them back (each_partition_piece, the op's own walk), on the canvas the
+// pieces lie on, as Partition reads it.
+inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const vector<partner_pieces>& handed) {
+    vector<vector<fenced_room>> rooms(handed.size());
+    for (size_t which = 0; which < handed.size() && which < facts.train.size(); ++which) {
+        const tile_size canvas = facts.canvas(which);
+        const partner_pieces& pieces = handed[which];
+        // Whether the part walked now holds a piece clipped to it, which
+        // SelectPartition picks with its room.
+        bool clipped = false;
+        each_partition_piece(pieces, canvas.width, canvas.height,
+            [&](int i, const cell_box& box, auto in_part) {
+                const cell_box own = pieces.box(i);
+                for (int row = max(box.row0, own.row0); row <= min(box.row1, own.row1) && !clipped; ++row)
+                    for (int col = max(box.col0, own.col0); col <= min(box.col1, own.col1) && !clipped; ++col)
+                        clipped = in_part(row, col) && pieces.painted(i, row, col);
+            },
+            [&](int part, const cell_box& box, auto empty) {
+                fenced_room room{ part, {}, clipped };
+                clipped = false;
+                for (int row = box.row0; row <= box.row1; ++row)
+                    for (int col = box.col0; col <= box.col1; ++col)
+                        if (empty(row, col)) room.cells.push_back((int16_t)cell_index(row, col));
+                if (!room.cells.empty()) rooms[which].push_back(std::move(room));
+            });
+    }
+    return rooms;
+}
+
+// THE ROOM `chosen` NAMES among one pair's rooms (ROOM_PARTS), by size or by
+// part, or none: the part's own room, where no other piece lies in that part;
+// or, by size, the room at that rank, where no other room has its size, so the
+// rank names it whatever order the op ranks ties in.
+inline const fenced_room* room_chosen(const vector<fenced_room>& rooms, int chosen) {
+    if (!room_by_size(chosen)) {
+        const auto found = ranges::find(rooms, room_part(chosen), &fenced_room::part);
+        return found == rooms.end() || found->shared ? nullptr : &*found;
+    }
+    const bool largest = room_largest(chosen);
+    const size_t rank = (size_t)room_rank(chosen);
+    if (rank >= rooms.size()) return nullptr;
+    vector<const fenced_room*> ranked;
+    for (const fenced_room& room : rooms) ranked.push_back(&room);
+    ranges::stable_sort(ranked, [&](const fenced_room* one, const fenced_room* other) {
+        return largest ? one->cells.size() > other->cells.size() : one->cells.size() < other->cells.size();
+    });
+    const size_t size = ranked[rank]->cells.size();
+    const bool tied = (rank > 0 && ranked[rank - 1]->cells.size() == size) ||
+                      (rank + 1 < ranked.size() && ranked[rank + 1]->cells.size() == size);
+    return tied ? nullptr : ranked[rank];
+}
+
+// A ROOM FILLED, replayed. Partition hands back each part the picked pieces
+// fence off, its empty cells as a room (rooms_fenced), and Recolor paints the
+// room `chosen` names -- or every room -- in one color, laid the way `lay`
+// says on what is down (paint_holds): over it, or under it, filling only what
+// nothing has painted.
+inline optional<replayed> room_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                     const vector<vector<fenced_room>>& rooms, const vector<cells>& canvas,
+                                     int chosen, int8_t lay) {
+    return paint_holds(facts, handed, { lay, &canvas, laying::in_one },
+                       [&](size_t which, const partner_pieces&, auto&& put) {
+        if (which >= rooms.size()) return false;
+        auto fill = [&](const fenced_room& room) {
+            for (const int16_t cell : room.cells) put(cell_row(cell), cell_col(cell), (int8_t)TRANSPARENT);
+        };
+        if (chosen == ROOM_EVERY) {
+            ranges::for_each(rooms[which], fill);
+            return !rooms[which].empty();
+        }
+        const fenced_room* room = room_chosen(rooms[which], chosen);
+        if (!room) return false;
+        fill(*room);
+        return true;
+    });
+}
+
+// A ROOM'S KEY of the kind `kind` names (shape_key_of), read as ShapeColorMap
+// reads a room Partition hands back: its cells, empty but its own (BLANK), in
+// the box they fill.
+inline uint32_t room_key(const fenced_room& room, int kind) {
+    cell_box box;
+    bool in_room[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    for (const int16_t cell : room.cells) {
+        box.include_cell(cell_row(cell), cell_col(cell));
+        in_room[cell_row(cell)][cell_col(cell)] = true;
+    }
+    return shape_key_of(kind, box.width(), box.height(), [&](int row, int col) {
+        return in_room[box.row0 + row][box.col0 + col] ? (int8_t)BLANK : (int8_t)TRANSPARENT;
+    });
+}
+
+// THE ROOMS' TABLE, read off the pairs (read_off) as the shape word reads its
+// pieces': each room's key of the kind `kind` names, and the one color the
+// output shows over it. A room the output leaves empty stays as it is and
+// says nothing. None where a room comes out in two colors, or none holds.
+inline shape_color_map_rule rooms_table(const replay_facts& facts, const vector<vector<fenced_room>>& rooms,
+                                        int kind) {
+    vector<shape_color_map_rule::seen_key> seen;
+    for (size_t which = 0; which < rooms.size() && which < facts.train.size(); ++which) {
+        const grid& output = facts.train[which].output;
+        const uint16_t shown = shape_color_map_rule::colors_shown(facts.train[which].input);
+        for (const fenced_room& room : rooms[which]) {
+            // -2 until a cell is read, -3 once two cells disagree.
+            int worn = -2;
+            for (const int16_t cell : room.cells) {
+                const int there = output.data[cell_row(cell)][cell_col(cell)];
+                worn = worn == -2 || worn == there ? there : -3;
+            }
+            if (worn == TRANSPARENT) continue;
+            if (!is_color(worn) ||
+                !shape_color_map_rule::see(seen, room_key(room, kind), (int8_t)worn, which, shown))
+                return {};
+        }
+    }
+    return shape_color_map_rule::read_off(seen);
+}
+
+// THE ROOMS, EACH IN THE COLOR ITS KEY NAMES, replayed: ShapeColorMap over
+// every room Partition hands back (rooms_fenced), in the color `table` names
+// for its key -- a room it names none for left as it is -- laid the way `lay`
+// says on what is down (paint_holds).
+inline optional<replayed> room_table_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                           const vector<vector<fenced_room>>& rooms, const vector<cells>& canvas,
+                                           const shape_color_map_rule& table, int kind, int8_t lay) {
+    return paint_holds(facts, handed, { lay, &canvas }, [&](size_t which, const partner_pieces&, auto&& put) {
+        if (which >= rooms.size()) return false;
+        for (const fenced_room& room : rooms[which]) {
+            const int color = table.color_of(room_key(room, kind));
+            if (color < 0) continue;
+            for (const int16_t cell : room.cells) put(cell_row(cell), cell_col(cell), (int8_t)color);
+        }
+        return true;
+    });
+}
+
 // BARS BETWEEN PIECES OF ONE COLOR, replayed. Bridge reaches from each picked
 // piece to the picked pieces of its own color whose middles share its row or its
 // column, the `way` it is told (bridge_bars, the walk the op takes), and fills
@@ -5892,21 +6123,45 @@ inline void each_hollow(const object& piece, See see) {
 }
 
 // THE HOLLOWS OF A PIECE, FILLED, replayed. InteriorColor fills each picked
-// piece's hollows (each_hollow) -- laid under what is down (paint_holds), so a
-// marker sitting in a hollow keeps its own -- in each piece's own color, or all
-// of them in one.
+// piece's hollows (each_hollow), in each piece's own color or all of them in
+// one, and its sentence lays the whole piece under what is down (paint_holds):
+// its own cells as they are -- a piece the line removed comes back with it
+// (d5d6de2d's ring) -- and a marker sitting in a hollow keeps its own. In its
+// own colors where they lay no cell wrong, else whichever says more, right
+// cells less wrong ones, its own colors on a tie; in one, the color a paint in
+// one color reads off the output where the hollows land (lay_paint).
 inline optional<replayed> fill_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                      const vector<cells>& canvas) {
     using rule = correspondence_election::fired_rule;
-    return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
-                       [&](size_t, const partner_pieces& cut, auto&& put) {
+    // Each picked piece, its own cells as they are and its hollows in `fill`,
+    // or in its own color where `fill` is no color.
+    auto filled = [&](int8_t fill) {
+        return paint_holds(facts, handed, { rule::laid_under, &canvas },
+                           [&](size_t, const partner_pieces& cut, auto&& put) {
+            for (int i = 0; i < cut.count(); ++i)
+                if (cut.picked[i]) {
+                    const object& piece = cut.pieces[i];
+                    piece.each_cell([&](int row, int col, int8_t color) { put(row, col, color); });
+                    const int8_t worn = is_color(fill) ? fill : piece.first_color();
+                    each_hollow(piece, [&](int row, int col) { put(row, col, worn); });
+                }
+            return true;
+        });
+    };
+    auto own = filled((int8_t)TRANSPARENT);
+    if (own && own->wrong_cells() == 0) return own;
+    const auto hollows = paint_holds(facts, handed, { rule::laid_under, &canvas, laying::in_one },
+                                     [&](size_t, const partner_pieces& cut, auto&& put) {
         for (int i = 0; i < cut.count(); ++i)
-            if (cut.picked[i]) {
-                const int8_t worn = cut.pieces[i].first_color();
-                each_hollow(cut.pieces[i], [&](int row, int col) { put(row, col, worn); });
-            }
+            if (cut.picked[i]) each_hollow(cut.pieces[i], [&](int row, int col) { put(row, col, (int8_t)TRANSPARENT); });
         return true;
     });
+    if (!hollows) return own;
+    auto one = filled(hollows->paint);
+    if (one) one->paint = hollows->paint;
+    if (one && (!own || one->right_cells() - one->wrong_cells() > own->right_cells() - own->wrong_cells()))
+        return one;
+    return own;
 }
 
 // THE INSIDE OF THE PICKED PIECES, IN ONE COLOR, replayed: Outline hollows each
@@ -6010,6 +6265,22 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
                 if (picked[i]) hand[i].repaint([&](int8_t now) { return to[now] >= 0 ? to[now] : now; });
             break;
         }
+        case said::empty_swap:
+            // Every cell of each picked piece's box comes out as the op's own
+            // rule says (traded_with_empty), the box kept.
+            for (size_t i = 0; i < hand.size(); ++i) {
+                if (!picked[i]) continue;
+                object& piece = hand[i];
+                int count = 0;
+                for (int row = 0; row < piece.summary.height; ++row)
+                    for (int col = 0; col < piece.summary.width; ++col) {
+                        int8_t& cell = piece.data[row][col];
+                        cell = traded_with_empty(cell, rule.value - EMPTY_PAIRS);
+                        count += cell != (int8_t)TRANSPARENT;
+                    }
+                piece.summary.count = (int16_t)count;
+            }
+            break;
         case said::color_from:
         case said::align_to:
         case said::move_toward: {
@@ -6115,12 +6386,13 @@ inline constexpr word_group group_of(correspondence_election::fired_rule::said_a
         case rule::turn: case rule::move_down: case rule::move_across:
         case rule::learned_table: case rule::align_to: case rule::mirror_around:
         case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
+        case rule::empty_swap:
             return word_group::changes_pieces;
         case rule::removed: return word_group::removes;
         // Paints: the hand on the line is left alone.
         case rule::extend_rays: case rule::bridged: case rule::filled: case rule::trailed:
-        case rule::boxed: case rule::copied_onto: case rule::tiled_along: case rule::turned_copy:
-        case rule::symmetric:
+        case rule::boxed: case rule::filled_room: case rule::copied_onto: case rule::tiled_along:
+        case rule::turned_copy: case rule::symmetric:
             return word_group::paints;
         // These rules redraw the whole output and spell their own programs.
         case rule::diagonal_tile: case rule::piece_slam: case rule::corner_chain:
@@ -6861,16 +7133,24 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                       string("takes the color its ") + keys_named[best.value] + " names" + rest, colors)); } };
     };
 
-    // A RECOLOR A KEY DECIDES: the colors of every picked piece trade places as a
-    // key drawn in the grid pairs them -- the pieces the pick leaves, read along
-    // their rows or their columns (key_swaps) -- BidiColorMap past its fixed
-    // pairs. Each grid brings its own key, so no swap fixed for every pair says it
-    // (0becf7df's corner: 1 and 3, 2 and 8, then 4 and 2, 3 and 7). It accounts
-    // for the cells it recolored.
+    // BidiColorMap PAST ITS FIXED PAIRS. A RECOLOR A KEY DECIDES: the colors of
+    // every picked piece trade places as a key drawn in the grid pairs them --
+    // the pieces the pick leaves, read along their rows or their columns
+    // (key_swaps). Each grid brings its own key, so no swap fixed for every pair
+    // says it (0becf7df's corner: 1 and 3, 2 and 8, then 4 and 2, 3 and 7). It
+    // accounts for the cells it recolored. OR A COLOR TRADING PLACES WITH EMPTY
+    // over each picked piece's box (empty_swap_holds), a color an unsaid recolor
+    // starts from (d511f180's 8s and the ground the plan deleted). It accounts for
+    // the cells it emptied and the ones it drew where the box was empty.
     static constexpr const char* keys_read[] = { "rows", "columns" };
     static_assert(size(keys_read) == (size_t)(KEY_PAIRS_ALONG_COLUMNS - KEY_PAIRS_ALONG_ROWS + 1) &&
-                  KEY_PAIRS_ALONG_COLUMNS == row_of(node_type::BidiColorMap).high);
-    auto key_word = [&]() -> offer {
+                  EMPTY_PAIRS + COLOR_COUNT - 1 == row_of(node_type::BidiColorMap).high);
+    auto swap_claims = [](const replayed& seen) -> claim {
+        return [changed = cell_marks(seen.drawn)](size_t which, const left_over_cell& cell) {
+            return (cell.answers_to(missing::a_recolor) || !cell.from_input) && on_cells(changed, which, cell.row, cell.col);
+        };
+    };
+    auto key_word = [&](bool changes_allowed) -> offer {
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
@@ -6881,12 +7161,21 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             for (int value = KEY_PAIRS_ALONG_ROWS; value <= KEY_PAIRS_ALONG_COLUMNS; ++value)
                 if (const auto seen = key_swap_holds(facts, handed, value))
                     weigh(best, value, pick, *seen, recolor_claims(*seen));
+            for (int color = 0; color < COLOR_COUNT; ++color)
+                if (changes_allowed && (from >> color & 1))
+                    if (const auto seen = empty_swap_holds(facts, handed, color))
+                        weigh(best, EMPTY_PAIRS + color, pick, *seen, swap_claims(*seen));
         }
         if (best.value < 0) return {};
         return { best.said, [&, best] {
-            carry(say(best, rule::key_swap,
-                      string("trades colors as the key's ") + keys_read[best.value - KEY_PAIRS_ALONG_ROWS] +
-                          " pair them", colors)); } };
+            if (best.value >= EMPTY_PAIRS)
+                carry(say(best, rule::empty_swap,
+                          "its " + to_string(best.value - EMPTY_PAIRS) + "s and the empty cells of its box trade places",
+                          colors));
+            else
+                carry(say(best, rule::key_swap,
+                          string("trades colors as the key's ") + keys_read[best.value - KEY_PAIRS_ALONG_ROWS] +
+                              " pair them", colors)); } };
     };
 
     // A PIECE REMOVED: every piece the pick takes is gone from every pair's output
@@ -7622,6 +7911,82 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.seen.paint)); }, laid_by(best.seen) };
     };
 
+    // THE ROOMS THE PICKED PIECES FENCE OFF, ONE FILLED in one color: the
+    // largest or smallest room, or a part's room (room_holds). The walls are
+    // every piece, or the pieces of one color, which the program can pick again
+    // once Partition hands them back. A room is cut from the input, not from what is down, so it is
+    // laid over what is down, and under it where that is known, a tie going
+    // over. A pick's rooms are walked once, for every room and canvas the line
+    // asks.
+    vector<optional<vector<vector<fenced_room>>>> rooms_by_pick(draw_picks.size());
+    auto room_named = [](int chosen) {
+        if (chosen == ROOM_EVERY) return string("every room");
+        if (!room_by_size(chosen)) return "the room of part " + to_string(room_part(chosen));
+        const int rank = room_rank(chosen);
+        return string("the ") + (rank > 0 ? to_string(rank + 1) + (rank == 1 ? "nd " : rank == 2 ? "rd " : "th ") : "") +
+               (room_largest(chosen) ? "largest" : "smallest") + " room";
+    };
+    // EVERY ROOM AT ONCE, EACH IN THE COLOR ITS OWN KEY NAMES (rooms_table): the
+    // puzzle's one table, so asked only in the first pass while nothing else
+    // holds one (shape_word), and said, it is the table the program carries.
+    optional<vector<vector<fenced_room>>> rooms_of_every_piece;
+    auto room_paint = [&]() -> offer {
+        heard best;
+        int8_t best_lay = rule::laid_over;
+        shape_color_map_rule best_table;
+        const bool tables = inf.pass == 1 && !inf.shape_color_map.holds();
+        // The rooms the walls `pick` takes fence off, `at` its place among the
+        // picks a paint is replayed for.
+        auto ask = [&](size_t at, const piece_pick& pick, const vector<partner_pieces>& handed,
+                       optional<vector<vector<fenced_room>>>& rooms) {
+            if (!rooms) rooms = rooms_fenced(opened, handed);
+            for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
+                if (lay == rule::laid_under && !down_known()) continue;
+                for (int chosen = 0; chosen < (tables ? ROOM_VALUES : ROOM_CHOICES); ++chosen) {
+                    shape_color_map_rule table;
+                    if (chosen >= ROOM_TABLE) {
+                        table = rooms_table(opened, *rooms, chosen - ROOM_TABLE);
+                        if (!table.holds()) continue;
+                    } else if (ranges::any_of(*rooms, [&](const auto& pair) {
+                                   return chosen == ROOM_EVERY ? pair.empty() : !room_chosen(pair, chosen); }))
+                        continue;
+                    const auto& seen = replayed_once(replays, 8, at, lay, chosen, [&] {
+                        return chosen >= ROOM_TABLE
+                            ? room_table_holds(opened, handed, *rooms, canvas, table, chosen - ROOM_TABLE, lay)
+                            : room_holds(opened, handed, *rooms, canvas, chosen, lay); });
+                    if (!seen) continue;
+                    const int before = best.said;
+                    weigh_paint(best, chosen, pick, *seen,
+                                lay == rule::laid_over ? covered_claims(seen->drawn) : drawn_claims(seen->drawn));
+                    if (best.said > before) {
+                        best_lay = lay;
+                        best_table = table;
+                    }
+                }
+            }
+        };
+        // The walls: every piece -- 83302e8f's are 1s, 8s and 9s, one color a
+        // pair -- then the pieces of each one color that are not every piece.
+        ask(draw_picks.size(), piece_pick::all(), every_piece_handed, rooms_of_every_piece);
+        for (const size_t at : asked_now) {
+            const piece_pick& pick = draw_picks[at];
+            if (has_single_bit(pick.colors) && pick == piece_pick::of_color(countr_zero(pick.colors)) &&
+                !takes_the_same(handed_by_pick[at], every_piece_handed))
+                ask(at, pick, handed_by_pick[at], rooms_by_pick[at]);
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best, best_lay, best_table] {
+            const bool by_table = best.value >= ROOM_TABLE;
+            if (by_table) inf.shape_color_map = best_table;
+            const int8_t said = say_paint(best, rule::filled_room,
+                (by_table ? "fences off its rooms, each taking the color its " +
+                                string(keys_named[best.value - ROOM_TABLE]) + " names"
+                          : "fences off " + room_named(best.value) + ", filled in color " + to_string(best.seen.paint)) +
+                    laid_words(best_lay));
+            read.fired[said].lay = best_lay;
+        }, laid_by(best.seen) };
+    };
+
     // THE WORDS AND THE PAINTS, THE ONE THAT SAYS THE MOST FIRST. Every kind of
     // word and of paint offers its best on the hand and the canvas the line
     // leaves so far, the one accounting for the most cells nothing claims yet is
@@ -7638,16 +8003,17 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // picture so far is said after the line too, last on a tie; once one is
     // said, no word on the hand is asked: every word is drawn before the
     // paints, under the picture it read.
+    bool frozen = false, picture_read = false;
     struct asked { std::function<offer()> offers; bool paint, changes_pieces; };
     const asked kinds[] = { { color_from_word, false, false }, { move_word, false, true },
                             { mirror_word, false, true }, { outline_word, false, true },
                             { recolor_word, false, false }, { shape_word, false, false },
-                            { key_word, false, false },
+                            { [&] { return key_word(!frozen); }, false, false },
                             { removal_word, false, true }, { ray_paint, true, false },
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },
-                            { symmetry_paint, true, false }, { picture_word, true, false } };
+                            { room_paint, true, false }, { symmetry_paint, true, false }, { picture_word, true, false } };
     static_assert(size(kinds) == size(inference_times::names) - inference_times::first_kind);
     // Whether a paint said reads what is down: laid under it or onto it, or the
     // whole figure where it lies.
@@ -7682,7 +8048,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                    group == word_group::removes;
         });
     };
-    bool frozen = false, picture_read = false;
     auto said_last = [&] {
         frozen = frozen || reads_what_is_down(read.fired[read.line.back()]);
         picture_read = picture_read || read.fired[read.line.back()].on_the_picture;
@@ -8207,7 +8572,6 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
                            inf.frame.kind == kind::filled;
         // The framed grid is what the frame leaves of the figures: nothing is
         // filled in it, and the reading inside it is a reading of figures too.
-        const replay_facts facts(train, picks ? inf.frame.cut : inf.correspondence.segmentation, tiles);
         const piece_pick& pick = inf.frame.pick;
         vector<example> framed(train.size());
         bool all = true;
@@ -8215,17 +8579,18 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
             framed[which].output = train[which].output;
             const grid& input = train[which].input;
             grid& into = framed[which].input;
+            const vector<object> pieces = picks ? inf.frame.pieces(input, tiles.of(train[which])) : vector<object>{};
             bool several = false;
             switch (inf.frame.kind) {
             case kind::laid_out:
-                all = laid_out_input(facts.cuts()[which], pick, inf.frame.factor, input, inf.size, into);
+                all = laid_out_input(pieces, pick, inf.frame.factor, input, inf.size, into);
                 break;
             case kind::filled:
-                all = filled_input(facts.cuts()[which], pick, inf.frame.keyed, inf.shape_color_map, input, inf.size,
+                all = filled_input(pieces, pick, inf.frame.keyed, inf.shape_color_map, input, inf.size,
                                    into);
                 break;
             case kind::cut_out:
-                all = framed_input(facts.cuts()[which], pick, input, inf.size, into, several);
+                all = framed_input(pieces, pick, input, inf.size, into, several);
                 break;
             default: all = framed_whole(input, inf.frame, inf.size, into);
             }
@@ -8255,7 +8620,7 @@ inline inference infer(const vector<example>& train) {
     // lays cells wrong can say so much that it is said first and crowds out
     // the words that would have said every cell (332efdb3's grid, every cell 1
     // at once and its holes wrong, where rays laid it right).
-    const int count = (int)plans.size();
+    const int count = 1;
     vector<optional<inference>> prepared((size_t)count);
     auto read_plan = [&](int at, bool tolerant, bool partners) {
         const vector<example> figures = figures_only(train, plans[(size_t)at]);
