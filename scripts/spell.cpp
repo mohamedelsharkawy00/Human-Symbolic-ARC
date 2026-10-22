@@ -9,7 +9,6 @@
 #include "14_puzzle_loader.hpp"
 #include <cstdio>
 #include <fstream>
-#include <iostream>
 #include <string>
 #include <vector>
 

@@ -420,9 +420,9 @@ private:
         return 0;
       }
       // Handle drag: the drawer's bottom edge follows the cursor. Dragging down
-      // opens/expands; dragging up shrinks; releasing near the top closes. Once
-      // the cursor has moved past a small deadzone it's a drag (consumed), so
-      // the ensuing button-up toggle doesn't fire.
+      // opens/expands; dragging up shrinks; releasing near the top closes. Any
+      // move makes it a drag (consumed), so the ensuing button-up toggle doesn't
+      // fire.
       if (m_dragging_handle) {
         m_drag_consumed = true;
         m_app_state.show_op_list.store(true);
@@ -488,7 +488,6 @@ private:
                             !point_over_click_zone(x, y);
       if (point_in_handle(x, y) || on_empty_panel) {
         m_dragging_handle = true;
-        m_drag_start_y = y;
         // Move the bottom edge WITH the cursor (preserve grab offset), not TO it.
         int cur_bottom = m_app_state.show_op_list.load()
                              ? m_app_state.op_drawer_bottom.load() : 0;
@@ -589,11 +588,10 @@ private:
   LARGE_INTEGER m_held_start{};
 
   // Drag-to-open state for the op-palette handle. Set on LBUTTONDOWN over the
-  // handle; a downward drag past the threshold opens the drawer and consumes
-  // the gesture (so the button-up toggle doesn't immediately re-close it).
+  // handle; any move opens the drawer and consumes the gesture (so the
+  // button-up toggle doesn't immediately re-close it).
   bool m_dragging_handle = false;
   bool m_drag_consumed = false;
-  int  m_drag_start_y = 0;
   int  m_drag_offset = 0; // drawer_bottom - grab_y, so the edge moves with, not to, the cursor
 
   inline bool point_in_handle(int x, int y) const {

@@ -1,7 +1,6 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -66,9 +65,6 @@ namespace arc {
 	}
 
 	struct node {
-		// Non-atomic: a tree shared across threads is only touched under the
-		// lock its owner holds (search_progress::mtx).
-		int ref_count = 1;
 		// every op is unary, so a program is a chain; null = chain start
 		node* arg = nullptr;
 		uint64_t hash = 0;
@@ -158,10 +154,8 @@ namespace arc {
 		static inline void remove(node* n) {
 			if (!n)
 				return;
-			if (--n->ref_count == 0) {
-				remove(n->arg);
-				delete n;
-			}
+			remove(n->arg);
+			delete n;
 		}
 
 		// The chain from its leaf up, in the order it runs.

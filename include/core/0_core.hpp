@@ -84,23 +84,17 @@ struct grid {
         return row >= 0 && row < height && col >= 0 && col < width;
     }
 
-    // Shared walk for grid-shaped storage, in reading order.
-    template <class Grid, class See>
-    static void walk_colored_cells(const Grid& one_grid, int skip, See see) {
-        for (int row = 0; row < one_grid.height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < one_grid.width && col < MAX_GRID_DIM; ++col) {
-                const int color = one_grid.data[row][col];
+    // Every colored cell but those of color `skip`, in reading order.
+    template <class See>
+    void for_each_colored_cell(int skip, See see) const {
+        for (int row = 0; row < height && row < MAX_GRID_DIM; ++row)
+            for (int col = 0; col < width && col < MAX_GRID_DIM; ++col) {
+                const int color = data[row][col];
                 if (is_color(color) && color != skip) see(row, col, color);
             }
     }
 
-    template <class See>
-    void for_each_colored_cell(int skip, See see) const {
-        walk_colored_cells(*this, skip, see);
-    }
-
     void clear_cells() { data.clear(); }
-    void clear() { data.clear(); width = height = 0; }
 
     bool same_size(const grid& other) const {
         return width == other.width && height == other.height;

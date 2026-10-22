@@ -53,19 +53,6 @@ inline bool same_corner(const object_summary& one, const object_summary& other) 
     return one.col == other.col && one.row == other.row;
 }
 
-// A set of permissions said as words: the names of the ones it may use, or
-// `none` when it may use none. Freedoms lists freedom_names and answers may().
-template <class Freedoms>
-string freedoms_said(const Freedoms& allowed, const char* none) {
-    string words;
-    for (int freedom = 0; freedom < Freedoms::FREEDOMS; ++freedom) {
-        if (!allowed.may(freedom)) continue;
-        if (!words.empty()) words += ", ";
-        words += Freedoms::freedom_names[freedom];
-    }
-    return words.empty() ? none : words;
-}
-
 // A reading combines a segmentation with the changes allowed when matching objects.
 struct degrees_of_freedom {
     bool translate = true;
@@ -85,22 +72,26 @@ struct degrees_of_freedom {
         return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0,
                  (packed & 8) != 0, (packed & SCALE_BIT) != 0 };
     }
-    constexpr int index() const {
-        return (translate ? 1 : 0) | (pose ? 2 : 0) | (recolor ? 4 : 0) |
-               (hang_off ? 8 : 0) | (scale ? SCALE_BIT : 0);
-    }
     // How many of the eight ways round a match may try: all, or only as it is.
     constexpr int poses() const { return pose ? POSE_COUNT : 1; }
 
-    // Heading and permission labels used to describe a reading.
-    static constexpr const char* freedom_names_lead = "And It May";
+    // Permission labels used to describe a reading.
     static constexpr const char* const freedom_names[FREEDOMS] =
         { "Move", "Turn", "Color", "Hang Off", "Scale" };
     constexpr bool may(int freedom) const {
         return freedom == 0 ? translate : freedom == 1 ? pose
              : freedom == 2 ? recolor   : freedom == 3 ? hang_off : scale;
     }
-    string label() const { return freedoms_said(*this, "As Is"); }
+    // The names of the freedoms it may use, or "As Is" when it may use none.
+    string label() const {
+        string words;
+        for (int freedom = 0; freedom < FREEDOMS; ++freedom) {
+            if (!may(freedom)) continue;
+            if (!words.empty()) words += ", ";
+            words += freedom_names[freedom];
+        }
+        return words.empty() ? "As Is" : words;
+    }
 };
 
 // A match links an object to another object or a position on the other grid.

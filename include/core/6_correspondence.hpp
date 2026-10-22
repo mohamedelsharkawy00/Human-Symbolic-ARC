@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
@@ -326,7 +325,7 @@ struct correspondence_election {
         // MaskOut of that color keep it: laid_onto_color and laid_off_color
         // plus the color.
         enum laid : int8_t { laid_over, laid_under, laid_onto, laid_onto_color,
-                             laid_off_color = laid_onto_color + COLOR_COUNT, laid_count = laid_off_color + COLOR_COUNT };
+                             laid_off_color = laid_onto_color + COLOR_COUNT };
         int8_t lay = laid_over;
         // A WORD READ OFF THE PICTURE THE LINE HAS DRAWN SO FAR -- the hand and
         // every paint said before it -- rather than off the hand: said after

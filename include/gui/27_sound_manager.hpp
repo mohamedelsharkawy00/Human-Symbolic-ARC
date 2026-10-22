@@ -23,15 +23,6 @@ public:
         return instance;
     }
 
-    void play(int freq, int duration_ms) {
-        if (m_muted.load(std::memory_order_relaxed)) return;
-        {
-            std::lock_guard<std::mutex> lock(m_mtx);
-            m_queue.push({freq, duration_ms});
-        }
-        m_cv.notify_one();
-    }
-
     void play_sequence(const std::vector<std::pair<int, int>>& sequence) {
         if (m_muted.load(std::memory_order_relaxed)) return;
         {

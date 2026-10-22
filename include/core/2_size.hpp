@@ -61,9 +61,6 @@ struct output_dimension_rule {
         out_width = (int)w; out_height = (int)h;
         return true;
     }
-    bool size_for(const grid& input, int& out_width, int& out_height) const {
-        return size_for(input.width, input.height, out_width, out_height);
-    }
 
     // The working frame is shared by the replays and the ops. BoundingBox
     // alone gets the full workspace; its final bounds come from painted cells.

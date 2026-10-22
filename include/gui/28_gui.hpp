@@ -8,8 +8,6 @@
 
 #include <charconv>
 #include <cmath>
-#include <filesystem>
-#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -208,7 +206,6 @@ struct frame_layout {
   int grid_labels_y, grid_data_start_y;
   // The footer rows. The grids end where the BEST row starts.
   int best_y, elapsed_y;
-  int h_gap_internal;
   int screen_w, screen_h;
 };
 
@@ -225,7 +222,6 @@ inline frame_layout compute_frame_layout(int screen_w, int screen_h) {
   // numbers only: the font is a bitmap and a fractional one is a smear.
   l.scale = max(1, min(screen_w * 3 / 2560, screen_h * 3 / 1440));
   l.v_gap = 2 * l.scale;
-  l.h_gap_internal = 12 * l.scale;
 
   int row_h = 9 * l.scale + l.v_gap;
 
@@ -1264,13 +1260,6 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           return;
         }
         draw_text(context, font, value, value_x, ty + pad, scale);
-      };
-      // A named line of plain text on the same column the controls use, so every
-      // label in the pane lines its value up on one edge.
-      auto named_line = [&](const string& name, const string& value) {
-        label_chip(name, ty);
-        draw_text(context, font, value, value_x, ty, scale);
-        ty += row_h;
       };
       // A track with a handle on the stop it's on, filling the rest of the row.
       // Press or drag anywhere along it to land there. The handle is one size

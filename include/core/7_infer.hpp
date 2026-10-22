@@ -1256,17 +1256,6 @@ struct split_freedom {
     // Panes that are not all one size: a picture beside a key, rather than a row
     // of things to compare.
     bool uneven = true;
-
-    static constexpr int FREEDOMS = 5;
-    static constexpr const char* freedom_names_lead = "The Cut May";
-    static constexpr const char* const freedom_names[FREEDOMS] =
-        { "Follow A Wall", "Follow A Blank", "Have No Line",
-          "Go Both Ways", "Leave Panes Uneven" };
-    constexpr bool may(int freedom) const {
-        return freedom == 0 ? wall : freedom == 1 ? blank : freedom == 2 ? bare
-             : freedom == 3 ? lattice : uneven;
-    }
-    string label() const { return freedoms_said(*this, "Not Cut At All"); }
 };
 
 // HOW A GRID WAS CUT INTO PANES, named by five numbers, so two pairs of

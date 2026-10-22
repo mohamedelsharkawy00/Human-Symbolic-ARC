@@ -10,7 +10,6 @@
 #include "15_solver_log.hpp"
 
 #include "11_text_format.hpp"
-#include <mutex>
 #include <string>
 #include <vector>
 

@@ -46,10 +46,6 @@ struct puzzle_views {
 
   // Empty until a puzzle is loaded, so every reader asks rather than indexes
   // blind.
-  example_views *of(bool is_test, size_t i) {
-    vector<example_views> &side = is_test ? test : train;
-    return i < side.size() ? &side[i] : nullptr;
-  }
   const example_views *of(bool is_test, size_t i) const {
     const vector<example_views> &side = is_test ? test : train;
     return i < side.size() ? &side[i] : nullptr;

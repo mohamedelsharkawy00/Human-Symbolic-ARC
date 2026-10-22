@@ -58,13 +58,6 @@ struct node_zone {
 	int x, y, w, h;
 	uint64_t node_hash;
 };
-// A counter that steps both ways, folded into [0, count). Plain % keeps the
-// sign, which would index off the front the first time you step back.
-inline int wrap_index(int value, int count) {
-	if (count <= 0) return 0;
-	return ((value % count) + count) % count;
-}
-
 // EVERY TRACK READS THE SAME WAY, because they all answer the same question
 // about a list: none of it at the left, one of them in the middle, all of it
 // at the right.

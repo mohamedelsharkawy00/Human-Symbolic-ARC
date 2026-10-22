@@ -26,16 +26,11 @@ struct color_tally {
     }
 
     int operator[](int color) const { return counts[color]; }
-    int& operator[](int color) { return counts[color]; }
 
     void add(int color) { if (is_color(color)) ++counts[color]; }
     bool has(int color) const { return is_color(color) && counts[color] > 0; }
     int8_t most() const { return leading(true); }
     int8_t least() const { return leading(false); }
-
-    static color_tally of(const grid& one_grid, int skip = TRANSPARENT) {
-        return color_tally(one_grid, skip);
-    }
 
 private:
     int8_t leading(bool most) const {
@@ -565,10 +560,10 @@ inline bool same_shape_in_blocks(int width, int height, Cell cell, shape_blocks 
 // The same, each shape's blocks read here.
 template <class Cell, class Other>
 inline bool same_shape(int width, int height, Cell cell, int other_width, int other_height,
-                       Other other, shape_freedom free, shape_fit* fit = nullptr) {
+                       Other other, shape_freedom free) {
     return same_shape_in_blocks(width, height, cell, shrunk_by(width, height, cell, free),
                                 other_width, other_height, other, shrunk_by(other_width, other_height, other, free),
-                                free, fit);
+                                free);
 }
 
 }  // namespace arc

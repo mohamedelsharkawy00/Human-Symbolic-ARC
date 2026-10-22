@@ -8,14 +8,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
 #include <string>
-#include <tuple>
-#include <unordered_set>
 #include <vector>
 
 namespace arc {

@@ -8,7 +8,6 @@
 #include "2_size.hpp"
 #include <algorithm>
 #include <cstdint>
-#include <memory>
 #include <utility>
 #include <vector>
 
@@ -211,13 +210,11 @@ inline int background_rank(int color) {
     return COLOR_COUNT;
 }
 
-// The box each color's cells fill, with one color left out if asked; a color
-// no cell wears keeps an empty box.
+// The box each color's cells fill; a color no cell wears keeps an empty box.
 template <class Grid>
-inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT],
-                        int skip = TRANSPARENT) {
+inline void color_boxes(const Grid& one_grid, cell_box boxes[COLOR_COUNT]) {
     for (int i = 0; i < COLOR_COUNT; ++i) boxes[i] = {};
-    one_grid.for_each_colored_cell(skip, [&](int row, int col, int color) {
+    one_grid.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
         boxes[color].include_cell(row, col);
     });
 }

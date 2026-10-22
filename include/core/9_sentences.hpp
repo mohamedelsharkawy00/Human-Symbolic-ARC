@@ -37,10 +37,6 @@
 namespace arc {
 using namespace std;
 
-// A beat nothing has a word for yet. Said out loud rather than left out, so the
-// search knows exactly which one slot it has to fill.
-inline constexpr const char* a_blank = "?";
-
 // An op's word with its argument, as a program spells it: Recolor [3].
 inline string spell(const string& op, int value) {
     return op + " [" + to_string(value) + "]";
