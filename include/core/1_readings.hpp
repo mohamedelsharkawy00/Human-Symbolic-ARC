@@ -193,6 +193,7 @@ struct direction {
 
 // One step in the given direction; a direction out of range goes up.
 struct direction_step { int down, across; };
+
 inline direction_step step_of(int step_direction) {
     switch (step_direction) {
     case direction::up_right:   return { -1,  1 };
@@ -274,16 +275,16 @@ struct object_walk_scratch {
 struct tile_size { int width = 0, height = 0; };
 
 // Find every touching group and hand it to `take`: summary, cells as pointer
-// and length. Grid is anything with width, height and data[row][col], so the
-// reading and the ops share one answer about what one object is.
+// and length. The reading and the ops both find objects here, so they share
+// one answer about what one object is.
 //
 // The cells point into `scratch`, which the next group overwrites -- `take`
 // must COPY anything it keeps. That is what lets this run without allocating.
 //
 // `background` is the color the grid was found to sit on, read off inference,
 // not assumed. Pass -1 to exclude nothing but TRANSPARENT.
-template <class Grid, class Take>
-inline void each_object(const Grid& one_grid, int background,
+template <class Take>
+inline void each_object(const grid& one_grid, int background,
                                  grouping how, object_walk_scratch& scratch, Take take, tile_size tiles = {}) {
     const bool any_color = (how == grouping::touching_any_color);
     // One object per color takes every cell of the color at once, wherever it

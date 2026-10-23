@@ -74,8 +74,7 @@ inline constexpr grouping grouping_of(segmentation_methods segmentation) {
 
 // The unit Pattern cuts: the smallest repeating width and height, or the grid's
 // own. Every cell counts, an empty one too; one copy and a matching fragment do.
-template <typename Grid>
-inline void repeat_periods(const Grid& g, int& width, int& height) {
+inline void repeat_periods(const grid& g, int& width, int& height) {
     // Does the grid repeat every `period` cells along one axis? `across` asks
     // about columns, otherwise rows. One test for both, so they cannot drift.
     auto repeats_every = [&](int period, bool across) {

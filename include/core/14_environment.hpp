@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -15,12 +14,6 @@
 
 namespace arc {
 	using namespace std;
-
-	// Official C++23 std::to_underlying implementation (available in C++20 via this helper)
-	template <typename Enum>
-	[[nodiscard]] constexpr std::underlying_type_t<Enum> to_underlying(Enum e) noexcept {
-		return static_cast<std::underlying_type_t<Enum>>(e);
-	}
 
 	// Squashing many numbers into one, so a program can be named by a single
 	// number. Start at 0, fold once per value, and finish with mix64 -- a raw
@@ -140,7 +133,7 @@ namespace arc {
 		static inline void update_hash(node* n) {
 			if (!n)
 				return;
-			n->hash = node_hash(to_underlying(n->type), said_in_slots(n->type) ? tile_hash(n->tile) : (uint64_t)n->value,
+			n->hash = node_hash((int)n->type, said_in_slots(n->type) ? tile_hash(n->tile) : (uint64_t)n->value,
 			                    n->arg ? n->arg->hash : 0, n->arg != nullptr);
 		}
 
@@ -172,7 +165,7 @@ namespace arc {
 			for (const flat_program_op& op : program) {
 				if (!out.empty())
 					out += ' ';
-				out += type_name[to_underlying(op.type)];
+				out += type_name[(int)op.type];
 				append_annotation(op.type, op.value, op.tile, out);
 			}
 			return out;

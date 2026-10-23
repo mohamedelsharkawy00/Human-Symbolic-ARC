@@ -192,7 +192,7 @@ inline void draw_boxed_text(vulkan_context *context,
 }
 
 inline string get_node_label(const node &n) {
-  string label = type_name[to_underlying(n.type)];
+  string label = type_name[(int)n.type];
   append_annotation(n.type, n.value, n.tile, label);
   return label;
 }

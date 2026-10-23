@@ -1730,13 +1730,6 @@ object_list& op_skew(program_run& run, const object_list& from, int8_t variant) 
     return res;
 }
 
-// Lets repeat_periods read an object: it wants width, height and data[r][c],
-// and a mask already indexes that way. No copy, no second period rule.
-struct object_view {
-    const cells& data;
-    int width, height;
-};
-
 // Pattern: each picked object reduced to its smallest repeating unit
 // (repeat_periods, 4_objects.hpp, one finder for everyone).
 object_list& op_pattern(program_run& run, const object_list& from) {
@@ -1746,7 +1739,7 @@ object_list& op_pattern(program_run& run, const object_list& from) {
         if (source.width <= 0 || source.height <= 0) continue;
         if (!source.selected) { res.objects[res.count++] = source; continue; }
         int unit_width = 0, unit_height = 0;
-        repeat_periods(object_view{ source.mask, source.width, source.height }, unit_width, unit_height);
+        repeat_periods(grid(source.width, source.height, source.mask), unit_width, unit_height);
         held_object unit;
         // The unit is the same object, so it keeps its mark.
         unit.selected = source.selected;

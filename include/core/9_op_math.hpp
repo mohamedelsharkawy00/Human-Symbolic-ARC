@@ -268,8 +268,7 @@ inline bool on_object_edge(int row, int col, Occupied occupied) {
 // shares -- none where they differ or there are none. Reading and execution
 // ask the same helper.
 enum class fit_to : int8_t { input, canvas, painted, pane, count };
-template <class Canvas>
-inline cell_box fit_frame(int to, int input_width, int input_height, const Canvas& canvas, tile_size pane) {
+inline cell_box fit_frame(int to, int input_width, int input_height, const grid& canvas, tile_size pane) {
     if (to == (int)fit_to::input) return {0, 0, input_height - 1, input_width - 1};
     if (to == (int)fit_to::canvas) return {0, 0, canvas.height - 1, canvas.width - 1};
     if (to == (int)fit_to::pane)
@@ -680,15 +679,14 @@ inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
 constexpr bool lies_on_its_side(int width, int height) { return width > height; }
 
 // The color most of a `factor` by `factor` block wears, as ScaleDown votes.
-template <class Mask>
-inline int8_t majority_vote(const Mask& mask, int row, int col,
-                                             int factor, int height, int width) {
+inline int8_t majority_vote(const cells& mask, int row, int col,
+                            int factor, int height, int width) {
     color_tally tally;
     for (int dr = 0; dr < factor; ++dr)
         for (int dc = 0; dc < factor; ++dc) {
             const int source_row = row * factor + dr;
             const int source_col = col * factor + dc;
-            if (source_row < height && source_col < width) tally.add((int8_t)mask[source_row][source_col]);
+            if (source_row < height && source_col < width) tally.add(mask[source_row][source_col]);
         }
     return tally.most();
 }

@@ -19,12 +19,13 @@ inline const char *debug_override(const char *name) {
   return std::getenv(name);
 }
 
-inline void *g_window_manager_ptr = nullptr;
+class window_manager;
+inline window_manager *g_window_manager_ptr = nullptr;
 
-template <typename SolverThreader> class window_manager {
+class window_manager {
 public:
   inline window_manager(global_app_state &app_state,
-                        SolverThreader &solver_threading)
+                        solver_session &solver_threading)
       : m_app_state(app_state), m_solver_threading(solver_threading) {
     g_window_manager_ptr = this;
   }
@@ -159,11 +160,8 @@ public:
 private:
   static LRESULT CALLBACK static_window_proc(HWND hwnd, UINT u_msg,
                                              WPARAM w_param, LPARAM l_param) {
-    if (g_window_manager_ptr) {
-      auto *wm =
-          static_cast<window_manager<SolverThreader> *>(g_window_manager_ptr);
-      return wm->handle_message(hwnd, u_msg, w_param, l_param);
-    }
+    if (g_window_manager_ptr)
+      return g_window_manager_ptr->handle_message(hwnd, u_msg, w_param, l_param);
     return DefWindowProc(hwnd, u_msg, w_param, l_param);
   }
 
@@ -556,7 +554,7 @@ private:
   }
 
   global_app_state &m_app_state;
-  SolverThreader &m_solver_threading;
+  solver_session &m_solver_threading;
 
   HWND m_hwnd = NULL;
   int m_width = 0;
