@@ -79,10 +79,10 @@ def sync():
                 shutil.rmtree(stale)
             elif entry not in files:
                 os.remove(stale)
-    with open(os.path.join(PKG, "dataset-metadata.json"), "w") as fh:
+    with open(os.path.join(PKG, "dataset-metadata.json"), "w", newline="\n") as fh:
         json.dump(DATASET_METADATA, fh, indent=2)
     # What the push waits to see Kaggle serve: the commit, and a digest of the files.
-    with open(os.path.join(PKG, "commit.txt"), "w") as fh:
+    with open(os.path.join(PKG, "commit.txt"), "w", newline="\n") as fh:
         fh.write(f"{commit()} {digest.hexdigest()[:12]}\n")
     print(f"synced {sum(len(files) for _, files in FOLDERS.values())} files -> {os.path.relpath(PKG, ROOT)}")
 
@@ -135,9 +135,9 @@ def push_kernel(environment=None, timeout=None):
         notebook["cells"][0]["source"].insert(0, f"import os; os.environ.update({environment!r})\n")
         kernel_dir = os.path.join(ROOT, "out", "arc-build")
         os.makedirs(kernel_dir, exist_ok=True)
-        with open(os.path.join(kernel_dir, "kernel-metadata.json"), "w") as fh:
+        with open(os.path.join(kernel_dir, "kernel-metadata.json"), "w", newline="\n") as fh:
             json.dump(meta, fh, indent=2)
-        with open(os.path.join(kernel_dir, meta["code_file"]), "w", encoding="utf-8") as fh:
+        with open(os.path.join(kernel_dir, meta["code_file"]), "w", encoding="utf-8", newline="\n") as fh:
             json.dump(notebook, fh, indent=1)
     command = ["kaggle", "kernels", "push", "-p", kernel_dir]
     if timeout:

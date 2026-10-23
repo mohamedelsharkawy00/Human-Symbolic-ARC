@@ -11,7 +11,7 @@
 4. Build with `scripts\build.bat`, it sets up the MSVC developer command line and Ninja for you, so every build runs in the same environment.
 5. Run it: `out\x64-Release\ARC.exe`, it walks up from itself to find the repo, so it works from anywhere.
 
-To measure build time, run `scripts\profile_build.bat` (Release), or pass
+To measure build time, run `python scripts\profile_build.py` (Release), or pass
 `x64-RelWithDebInfo` or `x64-Debug`. Each run creates a fresh directory under
 `out/build-profile-*`, including fresh shaders, without launching ARC. It writes
 `report.txt`, `report.json`, and logs for setup, configuration, and compilation.

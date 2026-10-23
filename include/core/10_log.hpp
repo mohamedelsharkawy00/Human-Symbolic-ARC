@@ -571,7 +571,7 @@ inline void log_inference(const string& id, const inference& inf,
                           int idx = -1, int count = 0, int dataset_flags = 0) {
     static once_flag dir_flag;
     call_once(dir_flag, [] { filesystem::create_directories("logs/inference"); });
-    ofstream report("logs/inference/" + (id.empty() ? "unknown" : id) + ".txt", ios::trunc);
+    ofstream report("logs/inference/" + (id.empty() ? "unknown" : id) + ".txt", ios::trunc | ios::binary);
     if (!report.is_open()) return;
 
     report_header(report, id, idx, count, dataset_flags);

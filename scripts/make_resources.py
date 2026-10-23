@@ -87,7 +87,7 @@ def generate_resources():
 
     # 2. Create .rc file
     print(f"[*] Creating {app_rc}...")
-    with open(app_rc, "w") as f:
+    with open(app_rc, "w", newline="\n") as f:
         f.write(f'IDI_ICON1 ICON "{os.path.abspath(icon_ico).replace("\\\\", "/").replace("\\", "/")}"\n')
 
 

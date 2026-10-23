@@ -124,7 +124,7 @@ private:
   // record. Fresh each launch, so the log is this session, not history.
   inline void open_log(unsigned short port) {
     if (m_log.is_open()) return;
-    m_log.open(to_text("logs/commands_%d.txt", port), ios::trunc);
+    m_log.open(to_text("logs/commands_%d.txt", port), ios::trunc | ios::binary);
   }
 
   // Read up to the first newline (or timeout/limit); trims trailing \r\n.

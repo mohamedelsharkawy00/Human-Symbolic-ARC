@@ -125,7 +125,7 @@ def split_answers(tasks):
 
 def write_json(directory, name, payload):
     path = os.path.join(directory, name)
-    with open(path, "w") as handle:
+    with open(path, "w", newline="\n") as handle:
         json.dump(payload, handle)
     print(f"[*] Wrote {name} ({len(payload)} tasks, {os.path.getsize(path) / 1024:.0f} KB)")
 
@@ -165,7 +165,7 @@ def main():
     # Record where this came from, so --check can compare without downloading.
     try:
         sha, date = upstream_commit()
-        with open(os.path.join(args.out, STAMP_NAME), "w") as handle:
+        with open(os.path.join(args.out, STAMP_NAME), "w", newline="\n") as handle:
             json.dump({"sha": sha, "date": date}, handle, indent=2)
         print(f"[*] Fetched from commit {sha[:7]} ({date[:10]})")
     except Exception as problem:

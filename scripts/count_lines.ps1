@@ -78,7 +78,7 @@ if ($sortedResults.Count -gt 0) {
     # Nothing came in under the limit, so the rule belongs at the foot
     if (-not $ruleDrawn) { $lines += $rule }
 
-    $lines | Set-Content -Path "$PSScriptRoot\line_counts.txt"
+    [System.IO.File]::WriteAllText("$PSScriptRoot\line_counts.txt", ($lines -join "`n") + "`n")
 
     $overLimit = @($sortedResults | Where-Object { $_.LineCount -gt $lineLimit }).Count
     Write-Host "$overLimit of $($sortedResults.Count) files over the $lineLimit line limit"

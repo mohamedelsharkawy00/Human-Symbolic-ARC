@@ -24,17 +24,13 @@ if errorlevel 1 exit /b 1
 echo Collecting full dataset CPU profile in %PROFILE_OUT%...
 powershell -NoProfile -ExecutionPolicy Bypass -File profiling\collect_cpu.ps1 -Vtune "%VTUNE_EXE%" -OutputDirectory "%PROFILE_OUT%" %*
 if errorlevel 1 exit /b 1
-call :report function cpu_stacks_vtune.csv
+"%VTUNE_EXE%" -q -report hotspots -result-dir "%PROFILE_OUT%\vtune_results" -group-by function -format csv -csv-delimiter comma -report-output "%PROFILE_OUT%\cpu_stacks_vtune.csv"
 if errorlevel 1 exit /b 1
-call :report source-line source_lines.csv
+"%VTUNE_EXE%" -q -report hotspots -result-dir "%PROFILE_OUT%\vtune_results" -group-by source-line -format csv -csv-delimiter comma -report-output "%PROFILE_OUT%\source_lines.csv"
 if errorlevel 1 exit /b 1
-call :report thread threads.csv
+"%VTUNE_EXE%" -q -report hotspots -result-dir "%PROFILE_OUT%\vtune_results" -group-by thread -format csv -csv-delimiter comma -report-output "%PROFILE_OUT%\threads.csv"
 if errorlevel 1 exit /b 1
 "%VTUNE_EXE%" -q -report callstacks -result-dir "%PROFILE_OUT%\vtune_results" -format csv -csv-delimiter comma -report-output "%PROFILE_OUT%\callstacks.csv"
 if errorlevel 1 exit /b 1
 python profiling\analyze.py "%PROFILE_OUT%"
-exit /b %errorlevel%
-
-:report
-"%VTUNE_EXE%" -q -report hotspots -result-dir "%PROFILE_OUT%\vtune_results" -group-by %~1 -format csv -csv-delimiter comma -report-output "%PROFILE_OUT%\%~2"
 exit /b %errorlevel%

@@ -99,7 +99,7 @@ private:
     strftime(ts, sizeof(ts), "%Y-%m-%d_%I-%M-%S_%p", &local_tm);
     m_report_path = to_text("benchmarks/benchmark_%s.txt", ts);
     filesystem::create_directories("benchmarks");
-    ofstream f(m_report_path, ios::trunc);
+    ofstream f(m_report_path, ios::trunc | ios::binary);
   }
 
   void record(const puzzle_result &r) {
@@ -107,7 +107,7 @@ private:
     if (r.test_solved) m_app.benchmark_test_solved.fetch_add(1);
     m_app.benchmark_puzzles_run.fetch_add(1);
 
-    ofstream f(m_report_path, ios::app);
+    ofstream f(m_report_path, ios::app | ios::binary);
     if (f.is_open()) f << r.text << "\n";
   }
 
@@ -136,7 +136,7 @@ private:
       if (in.is_open())
         existing.assign(istreambuf_iterator<char>(in), istreambuf_iterator<char>());
     }
-    ofstream f(m_report_path, ios::trunc);
+    ofstream f(m_report_path, ios::trunc | ios::binary);
     if (f.is_open()) f << summary << existing;
   }
 

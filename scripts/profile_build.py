@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import uuid
+from build import build_lock, toolchain_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = Path(__file__).resolve()
@@ -28,7 +29,7 @@ def time_command():
     record = {"name": label, "seconds": time.perf_counter() - start,
               "exit_code": code, "command": command}
     (Path(directory) / f"{label}-{uuid.uuid4().hex}.json").write_text(
-        json.dumps(record, indent=2), encoding="utf-8")
+        json.dumps(record, indent=2), encoding="utf-8", newline="\n")
     return code
 
 
@@ -46,7 +47,7 @@ def ninja_edges(path):
     return sorted(edges.values(), key=lambda row: row["start_seconds"])
 
 
-def main():
+def profile():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("preset", nargs="?", default="x64-Release",
                         choices=["x64-Release", "x64-RelWithDebInfo", "x64-Debug"])
@@ -60,13 +61,14 @@ def main():
     total_start = time.perf_counter()
     print(f"Report directory: {run}", flush=True)
 
-    def phase(name, command, required=True):
+    def phase(name, command, required=True, environment=None):
+        active_environment = env if environment is None else environment
         print(f"\n>>> {name}", flush=True)
         start = time.perf_counter()
-        search_path = next((v for k, v in env.items() if k.upper() == "PATH"), "")
+        search_path = next((v for k, v in active_environment.items() if k.upper() == "PATH"), "")
         command = [shutil.which(command[0], path=search_path) or command[0], *command[1:]]
-        with (run / f"{name}.log").open("w", encoding="utf-8") as log:
-            process = subprocess.Popen(command, cwd=ROOT, env=env,
+        with (run / f"{name}.log").open("w", encoding="utf-8", newline="\n") as log:
+            process = subprocess.Popen(command, cwd=ROOT, env=active_environment,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, errors="replace")
             for line in process.stdout:
@@ -86,23 +88,8 @@ def main():
         phase("puzzle-data", [sys.executable, "scripts/fetch_data.py"] +
               (["--check"] if data.exists() else []), required=False)
         phase("session-check", [sys.executable, "scripts/session_check.py"], required=False)
-        # Capture VsDevCmd's environment through a generated batch file. Paths
-        # are quoted as batch paths, never interpolated as PowerShell code.
-        setup = run / "environment.cmd"
-        environment_file = run / "environment.json"
-        exporter = run / "export_environment.py"
-        exporter.write_text("import json, os, pathlib, sys\n"
-            "pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(os.environ)), encoding='utf-8')\n",
-            encoding="utf-8")
-        setup.write_text('@echo off\n'
-            'if not defined DevEnvDir call "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat" -arch=x64\n'
-            'if errorlevel 1 exit /b 1\n'
-            f'"{sys.executable}" "{exporter}" "{environment_file}"\n', encoding="utf-8")
-        installer = str(Path(os.environ["ProgramFiles(x86)"]) / "Microsoft Visual Studio/Installer")
-        env["PATH"] = installer + os.pathsep + env.get("PATH", "")
-        phase("toolchain-setup", ["cmd.exe", "/d", "/c", str(setup)])
-        env = json.loads(environment_file.read_text(encoding="utf-8"))
-        environment_file.unlink()  # The environment is not a report artifact.
+        env = toolchain_environment(lambda command, environment:
+            phase("toolchain-setup", command, environment=environment))
         env["NINJA_STATUS"] = "[%f/%t, %es] "
         command = ["cmake", "--preset", args.preset, "-B", str(run / "build"),
                    f"-DARC_BUILD_TIMING_DIR={timing.as_posix()}"]
@@ -121,7 +108,7 @@ def main():
         edges = ninja_edges(run / "build/.ninja_log")
         report = {"preset": args.preset, "total_seconds": total, "exit_code": code,
                   "phases": phases, "commands": commands, "ninja_edges": edges}
-        (run / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (run / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8", newline="\n")
         lines = [f"Fresh {args.preset} build: {total:.3f}s; exit {code}", "", "Wall-clock phases:"]
         lines += [f"  {p['seconds']:9.3f}s  {p['name']} (exit {p['exit_code']})" for p in phases]
         lines += ["", "Individual commands (overlap; included in build phase):"]
@@ -132,9 +119,18 @@ def main():
         lines += ["", "Fresh outputs, including shaders; installed tools, puzzle data and OS caches reused.",
                   "Compiler and linker timings include subprocess overhead; analysis/LTCG remain enabled in Release."]
         summary = "\n".join(lines) + "\n"
-        (run / "report.txt").write_text(summary, encoding="utf-8")
+        (run / "report.txt").write_text(summary, encoding="utf-8", newline="\n")
         print("\n" + summary + f"Reports: {run}", flush=True)
     return code
+
+
+def main():
+    try:
+        with build_lock():
+            return profile()
+    except (OSError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

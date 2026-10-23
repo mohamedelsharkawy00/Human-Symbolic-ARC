@@ -48,6 +48,7 @@
    1. Do not assume older standards.
    2. Follow standard C++ library style, use namespaces.
    3. Avoid non-standard headers if a standard alternative exists.
+   4. Write text files with LF: binary output mode in C++, newline="\n" in Python.
 18. Treat cleanliness as production-class on this year-long project.
    1. Prefer the debt-free path.
    2. Clean up after adding anything, no obsolete files, no root clutter, tools in dedicated directories.

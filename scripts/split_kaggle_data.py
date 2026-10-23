@@ -44,7 +44,7 @@ def main():
                 if sols is not None and i < len(sols):
                     entry["output"] = sols[i]
                 rec["test"].append(entry)
-            with open(os.path.join(out_dir, f"{tid}.json"), "w") as f:
+            with open(os.path.join(out_dir, f"{tid}.json"), "w", newline="\n") as f:
                 json.dump(rec, f)
             n += 1
         print(f"{split}: wrote {n} task files -> puzzles_kaggle/{split}/")

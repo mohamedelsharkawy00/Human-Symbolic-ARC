@@ -209,7 +209,7 @@ int main() {
 			string s = serialize_settings(app_state, sound_manager::get().is_muted(), state.puzzle_idx.load());
 			if (s != last_settings) {
 				last_settings = s;
-				ofstream f(get_settings_path());
+				ofstream f(get_settings_path(), ios::binary);
 				f << s;
 			}
 		}
@@ -254,7 +254,7 @@ int main() {
 	cmd_server.shutdown();
 	// Final settings flush so the last second of changes is not lost.
 	{
-		ofstream f(get_settings_path());
+		ofstream f(get_settings_path(), ios::binary);
 		f << serialize_settings(app_state, sound_manager::get().is_muted(), solver.get_solver_state().puzzle_idx.load());
 	}
 	// Ends the child, and its process with it.

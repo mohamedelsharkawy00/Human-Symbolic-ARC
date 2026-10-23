@@ -71,7 +71,7 @@ inline void claim_folder_or_exit() {
   // would hang forever, so leave the reason in the log and go.
   if (!wcsstr(GetCommandLineW(), L"--minimized"))
     MessageBoxW(nullptr, why, L"ARC is already running here", MB_OK | MB_ICONWARNING);
-  if (std::ofstream note("logs/refused_to_start.txt", std::ios::trunc); note)
+  if (std::ofstream note("logs/refused_to_start.txt", std::ios::trunc | std::ios::binary); note)
     note << time_text(std::chrono::system_clock::now())
          << " | another app is already running in this folder, only one runs per "
             "folder because they share solutions, settings and logs\n"

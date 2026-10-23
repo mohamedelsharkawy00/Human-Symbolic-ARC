@@ -340,7 +340,7 @@ def write_report(hotspots: list[tuple[str, float, float, int]], out_path: str,
 
     arc_all = cats["ARC"] + cats["MEM"] + cats["HEAP"]
 
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         def w(s: str = "") -> None:
             f.write(s + "\n")
 

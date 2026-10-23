@@ -152,13 +152,13 @@ int main(int argc, char** argv) {
     filesystem::current_path(out);
     const bool audit_preparations = getenv("ARC_PREP_AUDIT") != nullptr;
     if (audit_preparations) filesystem::create_directories("preparations");
-    FILE* timings = fopen("timings.csv", "w");
+    FILE* timings = fopen("timings.csv", "wb");
     if (!timings) { fprintf(stderr, "cannot write timings.csv\n"); return 1; }
     fputs("id,loaded,total_ms,infer_ms,report_ms,run_ms,preparations,readings,later_readings,lines,paint_replays,slide_replays,drop_replays,walks,lays,matching_calls,matching_rematches,matching_gathers,fixed_scans,whole_grid_scans,placement_cache_hits,fitting_edges", timings);
     for (const char* name : inference_times::names) fprintf(timings, ",%s_ms", name);
     fputs("\n", timings);
     fflush(timings);
-    FILE* said_file = fopen("said.txt", "w");
+    FILE* said_file = fopen("said.txt", "wb");
     if (!said_file) { fprintf(stderr, "cannot write %s\n", (out / "said.txt").string().c_str()); return 1; }
 
     int spoke = 0, fitted = 0, right = 0, wrong = 0;
@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
         preparation_audit = {};
         if (audit_preparations) {
             const string path = "preparations/" + entry.id + ".csv";
-            if (FILE* audit = fopen(path.c_str(), "w")) {
+            if (FILE* audit = fopen(path.c_str(), "wb")) {
                 fputs("preparation,first_identical,elapsed_ms,matching_calls,fitting_edges\n", audit);
                 for (size_t i = 0; i < preparations.size(); ++i) {
                     const auto& row = preparations[i];
@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
              "  of those, the ones with panes: %d | fits train: %d | test right: %d | test wrong: %d\n",
              spoke, fitted, right, wrong, pane_spoke, pane_fitted, pane_right, pane_wrong);
     fputs(tally, stderr);
-    if (FILE* tally_file = fopen("tally.txt", "w")) {
+    if (FILE* tally_file = fopen("tally.txt", "wb")) {
         fputs(tally, tally_file);
         fclose(tally_file);
     }

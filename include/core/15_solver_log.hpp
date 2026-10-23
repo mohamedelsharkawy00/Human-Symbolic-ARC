@@ -78,7 +78,7 @@ struct logger {
     }
     if (pid.empty()) return;
     filesystem::create_directory("logs");
-    ofstream("logs/" + pid + ".txt", ios::trunc);
+    ofstream("logs/" + pid + ".txt", ios::trunc | ios::binary);
   }
 
   void clear() {
@@ -127,7 +127,7 @@ private:
     static once_flag dir_flag;
     call_once(dir_flag, [] { filesystem::create_directory("logs"); });
 
-    ofstream f("logs/" + pid + ".txt", ios::app);
+    ofstream f("logs/" + pid + ".txt", ios::app | ios::binary);
     if (f.is_open()) f << local;
   }
 };

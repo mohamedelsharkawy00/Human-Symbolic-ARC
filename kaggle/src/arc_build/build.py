@@ -59,7 +59,7 @@ def _probe():
     # Everything from / -> durable file (survives log eviction; grab from Output tab).
     full = "/kaggle/working/fs_tree.txt"
     os.makedirs("/kaggle/working", exist_ok=True)
-    with open(full, "w") as fh:
+    with open(full, "w", newline="\n") as fh:
         _tree("/", fh, prune={"/proc", "/sys", "/dev"})
     print(f"\n--- full '/' tree written to {full} "
           f"({os.path.getsize(full)} B) -- download from the Output tab ---")
@@ -90,7 +90,7 @@ def compile_to(binary, *sources):
     r = subprocess.run(cmd, capture_output=True, text=True)
     print(f"compile took {time.time()-t0:.1f}s, exit={r.returncode}")
     if r.returncode != 0:
-        open("/kaggle/working/compile.log", "w").write(r.stdout + r.stderr)
+        open("/kaggle/working/compile.log", "w", newline="\n").write(r.stdout + r.stderr)
         print("=== STDERR ===")
         print(r.stderr[:8000])
         sys.exit(1)
@@ -155,7 +155,7 @@ def submission():
         env["ARC_PUZZLE_LIMIT"] = PUZZLE_LIMIT  # overall task cap (shard takes its slice)
         env["ARC_DATASET"] = "test"   # which set to solve; the solver finds the file itself,
                                       # walking up from /kaggle/working to the /kaggle/input mount
-        lf = open(f"/kaggle/working/shard_{s}.log", "w")
+        lf = open(f"/kaggle/working/shard_{s}.log", "w", newline="\n")
         procs.append((s, subprocess.Popen([BIN], stdout=lf, stderr=subprocess.STDOUT, env=env), lf))
 
     for s, p, lf in procs:
@@ -189,7 +189,7 @@ def submission():
                 merged.update(part)
             else:
                 raise RuntimeError(f"missing shard output: {f}")
-        json.dump(merged, open("/kaggle/working/submission.json", "w"))
+        json.dump(merged, open("/kaggle/working/submission.json", "w", newline="\n"))
         print(f"merged -> submission.json: {len(merged)} tasks from {SHARDS} shards")
     else:
         # Single shard wrote submission.json directly -- nothing to merge.

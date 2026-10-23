@@ -67,7 +67,7 @@ def main():
         lines += [f"{s}  {t}" for s, t in ids]
         lines.append("")
     print(f"{'total':12} {total:4}")
-    out.write_text("\n".join(lines))
+    out.write_text("\n".join(lines), newline="\n")
     print(f"\nwrote {out.relative_to(ROOT)}")
 
 

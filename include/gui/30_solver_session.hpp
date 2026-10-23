@@ -250,7 +250,7 @@ public:
     }
     filesystem::create_directories("solutions");
     string sol_path = "solutions/" + id + ".txt";
-    ofstream sf(sol_path);
+    ofstream sf(sol_path, ios::binary);
     if (sf.is_open()) {
       sf << result;
       m_log.debug("Manual solution exported to " + sol_path);

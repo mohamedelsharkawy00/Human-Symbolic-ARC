@@ -181,7 +181,7 @@ public:
 
   // Write the accumulated submission.json. Returns false on file error.
   bool write(const std::string &path) const {
-    std::ofstream f(path, std::ios::trunc);
+    std::ofstream f(path, std::ios::trunc | std::ios::binary);
     if (!f) return false;
     f << "{\n";
     for (size_t i = 0; i < m_entries.size(); ++i) {

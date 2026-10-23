@@ -5,7 +5,7 @@ main folder, sees an ordinary repo, and starts working in it. The signals that
 know are already there -- they just have to be asked, and asking has to happen
 without anyone remembering to.
 
-So this is called from scripts\\build.bat, at the moment a collision would
+So this is called from scripts\\build.py, at the moment a collision would
 matter, rather than being a ritual run every message.
 
 Three signals, none of which can go stale, because none of them is a marker
