@@ -462,12 +462,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     constexpr int ways = (int)partner_by::count;
     // Claims for a move: the cells the pieces left, on the input, and landed on,
     // on both grids -- an input cell a landing covers is one the move drew over
-    // (18286ef8's 9 stepping onto the 5 beside it).
+    // (18286ef8's 9 stepping onto the 5 beside it) -- however the matching read
+    // them, since the replay saw each one right (ae3edfdc's pieces, some read as
+    // copies, so their removal said more than either move).
     auto move_claims = [](const replayed& seen) -> claim {
         return [left = cell_marks(seen.left), landed = cell_marks(seen.drawn)](size_t which, const left_over_cell& cell) {
-            return cell.answers_to(missing::where_it_went) &&
-                   (on_cells(landed, which, cell.row, cell.col) ||
-                    (cell.from_input && on_cells(left, which, cell.row, cell.col)));
+            return on_cells(landed, which, cell.row, cell.col) ||
+                   (cell.from_input && on_cells(left, which, cell.row, cell.col));
         };
     };
     // Claims for a recolor: the cells it repainted that wait on one.
