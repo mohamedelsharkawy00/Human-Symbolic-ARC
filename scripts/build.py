@@ -41,7 +41,7 @@ def toolchain_environment(run):
             "pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(os.environ)), "
             "encoding='utf-8', newline='\\n')\n", encoding="utf-8", newline="\n")
         setup.write_text('@echo off\n'
-            'if not defined DevEnvDir call "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat" -arch=x64\n'
+            'if not defined DevEnvDir call "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -no_logo\n'
             'if errorlevel 1 exit /b 1\n'
             f'"{sys.executable}" "{exporter}" "{result}"\n', encoding="utf-8", newline="\n")
         environment = os.environ.copy()
