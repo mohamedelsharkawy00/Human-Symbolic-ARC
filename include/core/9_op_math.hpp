@@ -581,34 +581,19 @@ inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
     return fence_parts(width, height, [&](int row, int col) { return wall[row][col]; }, part);
 }
 
-// WHAT Partition HANDS BACK past the walls, part by part in reading order
-// (parts_the_pick_fences): every piece not picked, clipped to the part,
-// `clip(i, box, in_part)`, then the part's cells no piece holds as one room,
-// `room(part, box, empty)`. `box` is the part's; in_part(row, col) and
-// empty(row, col) say which of its cells. The pieces are asked as each_partner
-// asks them.
-template <class Pieces, class Clip, class Room>
-inline void each_partition_piece(const Pieces& pieces, int width, int height, Clip clip, Room room) {
+// Each part fenced by the picked pieces, in reading order. Both Partition
+// and its replay clip the source's colored cells to these same parts.
+template <class Pieces, class Part>
+inline void each_fenced_part(const Pieces& pieces, int width, int height, Part see) {
     int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
     const int parts = parts_the_pick_fences(pieces, width, height, part);
-    bool held[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    for (int i = 0; i < pieces.count(); ++i) {
-        const cell_box box = pieces.box(i);
-        if (box.empty()) continue;
-        for (int row = box.row0 < 0 ? 0 : box.row0; row <= box.row1 && row < MAX_GRID_DIM; ++row)
-            for (int col = box.col0 < 0 ? 0 : box.col0; col <= box.col1 && col < MAX_GRID_DIM; ++col)
-                held[row][col] = held[row][col] || pieces.painted(i, row, col);
-    }
     for (int which = 0; which < parts; ++which) {
         cell_box box;
-        for (int row = 0; row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < MAX_GRID_DIM; ++col)
+        for (int row = 0; row < height && row < MAX_GRID_DIM; ++row)
+            for (int col = 0; col < width && col < MAX_GRID_DIM; ++col)
                 if (part[row][col] == which) box.include_cell(row, col);
-        if (box.empty()) continue;
-        auto in_part = [&](int row, int col) { return part[row][col] == which; };
-        for (int i = 0; i < pieces.count(); ++i)
-            if (!pieces.is_picked(i)) clip(i, box, in_part);
-        room(which, box, [&](int row, int col) { return in_part(row, col) && !held[row][col]; });
+        if (!box.empty())
+            see(which, box, [&](int row, int col) { return part[row][col] == which; });
     }
 }
 
@@ -951,11 +936,11 @@ inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
 }
 
 // WHAT A CELL OF A PICKED PIECE'S FRAME COMES OUT AS where BidiColorMap trades
-// `color` with empty (EMPTY_PAIRS): that color's cells empty, the empty ones --
-// empty, or a room's -- that color, the rest as they were (d511f180's 8s and
-// the ground the plan deleted, 5s, trading places).
+// `color` with empty (EMPTY_PAIRS): that color's cells empty, the empty ones
+// that color, the rest as they were (d511f180's 8s and the ground the plan
+// deleted, 5s, trading places).
 constexpr int8_t traded_with_empty(int8_t cell, int color) {
-    return cell == color ? (int8_t)TRANSPARENT : !is_color(cell) ? (int8_t)color : cell;
+    return cell == color ? (int8_t)TRANSPARENT : cell == TRANSPARENT ? (int8_t)color : cell;
 }
 
 // WHAT BidiColorMap[value] TRADES, as `to[color]`, -1 for a color it leaves as

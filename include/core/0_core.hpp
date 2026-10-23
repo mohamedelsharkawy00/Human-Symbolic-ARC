@@ -20,11 +20,6 @@ constexpr int COLOR_COUNT = (int)arc_color::count;
 // A special value for an empty cell that is used internally in the solver
 constexpr int TRANSPARENT = -1;
 
-// A cell a piece holds with no color: empty, but the piece's. Partition hands a
-// part's empty cells back as one piece of these, a room, for a recolor to
-// paint; no grid ever shows one.
-constexpr int BLANK = COLOR_COUNT;
-
 // Check if a value is a valid color, not anything else.
 constexpr bool is_color(int value) {
     return value >= 0 && value < COLOR_COUNT;

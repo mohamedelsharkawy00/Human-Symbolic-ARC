@@ -27,8 +27,8 @@
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
-//   (fence_parts, the parts SelectPartition picks by), each part's empty cells
-//   handed back as a room for a recolor to paint; overlaps the pane rules.
+//   (fence_parts, the parts SelectPartition picks by); cut before the ground
+//   is deleted, the ground's part in each is its room. Overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1],
 //   painted output bounds [2], or one pane's box [3] (fit_to, 9_op_math.hpp).
@@ -394,13 +394,13 @@ enum class inferred_amount { none, some, all };
   X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
   X(ScaleUp                     , 2                 , 10                       , translate, none, false)        \
   X(ScaleDown                   , 2                 , 10                       , translate, none, false)        \
-  /* Past the ten colors, BLANK: the rooms, Partition's empty pieces.        */ \
-  X(SelectColor                 , 0                 , arc::BLANK               , select   , none, false)        \
+  X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false)        \
   /* The one picked-from piece with no twin (unique_piece, 9_op_math.hpp):   */ \
   /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
   /* or past those the same count of what count_kind names [4-16].            */ \
   X(SelectUnique                , 0                 , 16                       , select   , none, false)        \
-  X(SelectElectedBackground     , 0                 , 0                        , select   , none, false)        \
+  /* Elect from the current pieces [0], or the original input [1]. */          \
+  X(SelectElectedBackground     , 0                 , 1                        , select   , none, false)        \
   /* The n-th piece by its cells [0-9]; past those, every piece with the most */ \
   /* (fewest, SelectSmallestObject) of what count_kind names (count_of).     */ \
   X(SelectLargestObject         , 0                 , 22                       , select   , none, false)        \

@@ -57,20 +57,12 @@ constexpr int8_t COLOR_ANY = COLOR_COUNT;
 
 // --- Shared building blocks ---
 
-// Every cell an object holds, in its own frame: see(row, col, color), a room's
-// empty cells (BLANK) too.
+// Every painted cell of an object, in its own frame: see(row, col, color).
 template <class See>
 void each_painted(const held_object& one, See see) {
     for (int row = 0; row < one.height; ++row)
         for (int col = 0; col < one.width; ++col)
             if (const int8_t color = one.mask[row][col]; color != TRANSPARENT) see(row, col, color);
-}
-
-// Every cell of an object a grid shows, in its own frame: its colored ones, a
-// room's empty cells showing nothing.
-template <class See>
-void each_shown(const held_object& one, See see) {
-    each_painted(one, [&](int row, int col, int8_t color) { if (is_color(color)) see(row, col, color); });
 }
 
 int painted_count(const held_object& one) {
@@ -123,7 +115,7 @@ void paint_objects(const object_list& from, int width, int height, grid& out) {
     out.clear_cells();
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
-        each_shown(one, [&](int row, int col, int8_t color) {
+        each_painted(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < MAX_GRID_DIM && at_col >= 0 && at_col < MAX_GRID_DIM)
                 out.data[at_row][at_col] = color;
@@ -154,7 +146,7 @@ void segment_objects(const grid& g, object_list& out, grouping how, int x0, int 
     });
 }
 
-// Calls cell(row, col, color) for each shown, on-canvas cell of the picked
+// Calls cell(row, col, color) for each painted, on-canvas cell of the picked
 // objects among from's first `count`, one object at a time so later objects win
 // shared cells.
 template <class Cell>
@@ -162,7 +154,7 @@ void each_picked_cell(const program_run& run, const object_list& from, int count
     for (int i = 0; i < count; ++i) {
         const held_object& one = from.objects[i];
         if (!one.selected) continue;
-        each_shown(one, [&](int row, int col, int8_t color) {
+        each_painted(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < run.canvas.height && at_col >= 0 && at_col < run.canvas.width)
                 cell(at_row, at_col, color);
@@ -601,14 +593,14 @@ object_list& op_underlay(program_run& run, const object_list& from) {
     return res;
 }
 
-// Difference: erase from the canvas every cell a picked object shows. Only
+// Difference: erase from the canvas every cell a picked object paints. Only
 // what was picked lands: a paint that ignored the mark would undo the pick the
 // sentence just made.
 object_list& op_difference(program_run& run, const object_list& from) {
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (!one.selected) continue;
-        each_shown(one, [&](int row, int col, int8_t) {
+        each_painted(one, [&](int row, int col, int8_t) {
             const int at_row = one.y0 + row, at_col = one.x0 + col;
             if (at_row >= 0 && at_row < run.canvas.height && at_col >= 0 && at_col < run.canvas.width)
                 run.canvas.data[at_row][at_col] = TRANSPARENT;
@@ -882,13 +874,13 @@ object_list& op_select_partition(program_run& run, const object_list& from, int 
 // NEVER falls back to "all painted are walls". The walls come back first,
 // unmarked, so SelectPartition can still read them; then the parts they fence
 // off, whatever their shape, part after part in reading order
-// (each_partition_piece, 9_op_math.hpp, the parts SelectPartition picks by):
+// (each_fenced_part, 9_op_math.hpp, the parts SelectPartition picks by):
 // every other object clipped to the part, in the part's box -- severed where it
-// crosses into another, which is what partitioning means -- and the part's
-// empty cells as one more object, a room, BLANK until a recolor paints it.
-// Walls across the whole grid fence the tiles of a lattice, row by row. No
-// merge: distinct source layers stay distinct; want parts as single masks?
-// place a UnionList yourself.
+// crosses into another, which is what partitioning means. Cut before the ground
+// is deleted, the ground comes back a part at a time: each part's room. A
+// part's cells no object holds stay empty. Walls across the whole grid fence
+// the tiles of a lattice, row by row. No merge: distinct source layers stay
+// distinct; want parts as single masks? place a UnionList yourself.
 object_list& op_partition(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     const int grid_width = run.input.width, grid_height = run.input.height;
@@ -898,29 +890,14 @@ object_list& op_partition(program_run& run, const object_list& from) {
             res.objects[res.count] = from.objects[i];
             res.objects[res.count++].selected = false;
         }
-    each_partition_piece(partner_view{ from }, grid_width, grid_height,
-        [&](int i, const cell_box& box, auto in_part) {
-            held_object one;
-            if (res.count < MAX_OBJECTS_IN_A_LIST &&
-                clip_to(from.objects[i], box.row0, box.col0, box.row1 + 1, box.col1 + 1, in_part, one))
-                res.objects[res.count++] = one;
-        },
-        [&](int, const cell_box& box, auto empty) {
-            if (res.count >= MAX_OBJECTS_IN_A_LIST) return;
-            held_object& room = res.objects[res.count];
-            room.x0 = (int16_t)box.col0; room.y0 = (int16_t)box.row0;
-            room.x1 = (int16_t)box.col1; room.y1 = (int16_t)box.row1;
-            room.width = (int16_t)box.width(); room.height = (int16_t)box.height();
-            room.selected = false;
-            room.mask.clear();
-            bool any = false;
-            for (int row = box.row0; row <= box.row1; ++row)
-                for (int col = box.col0; col <= box.col1; ++col)
-                    if (empty(row, col)) {
-                        room.mask[row - box.row0][col - box.col0] = (int8_t)BLANK;
-                        any = true;
-                    }
-            if (any) ++res.count;
+    each_fenced_part(partner_view{ from }, grid_width, grid_height,
+        [&](int, const cell_box& box, auto in_part) {
+            for (int index = 0; index < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++index) {
+                if (from.objects[index].selected) continue;
+                held_object one;
+                if (clip_to(from.objects[index], box.row0, box.col0, box.row1 + 1, box.col1 + 1, in_part, one))
+                    res.objects[res.count++] = one;
+            }
         });
     return res;
 }
@@ -1069,6 +1046,7 @@ object_list& op_select_at_least_cells(program_run& run, const object_list& from,
 object_list& op_select_color(program_run& run, const object_list& from, int8_t color) {
     object_list& res = run.fresh();
     copy_list(res, from);
+    if (!is_color(color)) return res;
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         for (int row = 0; row < one.height && !one.selected; ++row)
@@ -1078,9 +1056,11 @@ object_list& op_select_color(program_run& run, const object_list& from, int8_t c
     return res;
 }
 
-// Elect from the current layout, keeping the objects' frames (not their paint
-// bounds). Like SelectColor, selection is additive and marks whole objects.
-object_list& op_select_elected_background(program_run& run, const object_list& from) {
+// Elect from the current layout [0], keeping its frames, or the original
+// input [1]. Like SelectColor, mark whole objects without clearing earlier marks.
+object_list& op_select_elected_background(program_run& run, const object_list& from, int source) {
+    if (source == 1)
+        return op_select_color(run, from, confident_background(elect_grid_background(run.input)));
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     bool has_frame = false;
     for (int i = 0; i < from.count; ++i) {
@@ -1098,7 +1078,7 @@ object_list& op_select_elected_background(program_run& run, const object_list& f
     laid.height = max(0, min(MAX_GRID_DIM, y1 - y0));
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
-        each_shown(one, [&](int row, int col, int8_t color) {
+        each_painted(one, [&](int row, int col, int8_t color) {
             const int at_row = one.y0 + row - y0, at_col = one.x0 + col - x0;
             if (at_row >= 0 && at_row < laid.height && at_col >= 0 && at_col < laid.width)
                 laid.data[at_row][at_col] = color;
@@ -2446,7 +2426,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::SelectObjectsWithHoles:  return op_select_objects_with_holes(run, in, value);
     case node_type::SelectAtLeastCells:      return op_select_at_least_cells(run, in, value);
     case node_type::SelectColor:             return op_select_color(run, in, value);
-    case node_type::SelectElectedBackground: return op_select_elected_background(run, in);
+    case node_type::SelectElectedBackground: return op_select_elected_background(run, in, value);
     case node_type::SelectAll:               return op_select_all(run, in);
     case node_type::InvertSelection:         return op_invert_selection(run, in);
     case node_type::Shift:                   return op_shift(run, in, value);

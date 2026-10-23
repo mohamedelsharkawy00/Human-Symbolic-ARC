@@ -53,14 +53,19 @@ inline string spell(const tile_value& tile) {
 // plan's sentences open on, as figures_only leaves it: without the ground it
 // deletes and what its fill takes off the inputs as well, the rest one piece in
 // the input's own frame.
-inline string foreground_input(const ground_plan& plan) {
+inline string background_marks(const ground_plan& plan) {
     auto mark = [](background_source side) {
-        return side.per_grid ? string(" SelectElectedBackground")
+        return side.per_grid ? string(" SelectElectedBackground [1]")
              : is_color(side.color) ? " " + spell("SelectColor", side.color) : string();
     };
     const background_source filled = plan.filled_on_input();
-    const string marks = mark(plan.deleted) + (filled == plan.deleted ? string() : mark(filled));
-    return marks.empty() ? "Input" : "Input Colors" + marks + " DeleteSelection UnionList";
+    return mark(plan.deleted) + (filled == plan.deleted ? string() : mark(filled));
+}
+
+inline string foreground_input(const ground_plan& plan, bool on_picture) {
+    const string marks = background_marks(plan);
+    return marks.empty() ? "Input" : "Input Colors" + marks +
+        (on_picture ? " Difference CurrentObjects" : "") + " DeleteSelection UnionList";
 }
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
@@ -106,6 +111,8 @@ inline string pick_words(const piece_pick& pick) {
 
 struct said_reading {
     vector<string> sentences;
+    // Sentences that cut colored ground before it is removed.
+    vector<size_t> before_ground;
     vector<string> no_word_for;
     // OPENINGS THE READING COULD NOT RULE OUT. Only the first sentence can be
     // said more than one way -- everything after it hangs off the chosen
@@ -115,6 +122,7 @@ struct said_reading {
     // holds over every cell, so only the cut's own line leaves any.
     int left_unexplained = 0;
     bool background_filled = false;
+    bool plan_said = false;
     // Whether the answer is one pane laid at the corner, so the plan's fill
     // covers one pane's box (restore_background).
     bool one_pane = false;
@@ -1036,7 +1044,8 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 // trails, filled boxes, copies, repeats, turned copies -- and whether what it draws
 // goes over what is already down or under it. False for a rule that draws nothing
 // after the line.
-inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint) {
+inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint,
+                        const ground_plan& plan) {
     using said_as = correspondence_election::fired_rule::said_as;
     if (group_of(rule.as) != word_group::paints) return false;
     const string pick = pick_words(rule.pick);
@@ -1071,19 +1080,14 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
         case said_as::filled_room: {
-            // Partition hands the walls back unmarked, then each part's pieces
-            // and its room (SelectColor of BLANK picks the rooms): every room,
-            // picked; by size, every piece but the rooms goes first, so the
-            // rooms alone are ranked; by part, the walls picked again -- every
-            // piece but the rooms, where every piece was a wall -- fence the
-            // part the room lies in.
-            const string rooms = spell("SelectColor", BLANK);
+            const string rooms = background_marks(plan);
+            const string walls = rule.pick.every() ? rooms + " InvertSelection" : pick;
             string act = "Partition ";
             if (rule.value == ROOM_EVERY)
                 act += rooms + " " + spell("Recolor", rule.paint);
             else if (rule.value >= ROOM_TABLE)
                 // Every room, each in the color the puzzle's table names for its key.
-                act += rooms + " InvertSelection DeleteSelection SelectAll " +
+                act += rooms + " InvertSelection DeleteSelection SelectAll Trim " +
                        spell("ShapeColorMap", rule.value - ROOM_TABLE);
             else if (room_by_size(rule.value))
                 act += rooms + " InvertSelection DeleteSelection " +
@@ -1092,7 +1096,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             else
                 act += (rule.pick.every() ? rooms + " InvertSelection" : pick) + " " +
                        spell("SelectPartition", room_part(rule.value)) + " " + spell("Recolor", rule.paint);
-            drawn = { pick, act };
+            drawn = { walls, act };
             paint = laid_paint(rule);
             return true;
         }
@@ -1379,7 +1383,11 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
             }
         else if (rule.on_the_picture)
             for (const beat& one : beats_of(rule, inf)) afterwards.push_back({ one, "Union", "Output" });
-        else if (drawn_after(rule, drawn, paint)) afterwards.push_back({ drawn, paint, "Input" });
+        else if (drawn_after(rule, drawn, paint, inf.plan)) {
+            if (rule.as == said_as::filled_room) {
+                afterwards.push_back({ drawn, paint, "Input", false });
+            } else afterwards.push_back({ drawn, paint, "Input" });
+        }
         else for (const beat& one : beats_of(rule, inf)) beats.push_back(one);
     }
 
@@ -1390,17 +1398,27 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         if (cut)
             for (size_t i = 0; i < opening.size(); ++i)
                 say_sentence(said, source, opening[i].pick, opening[i].act, "Withhold", i == 0);
+        string from = cut ? "CurrentObjects" : source;
+        if (!cut && from == "Input") {
+            said.before_ground.push_back(said.sentences.size());
+            from += " Colors";
+            if (inf.pass > 1)
+                from += background_marks(inf.plan) + " Difference CurrentObjects SelectAll InvertSelection";
+        }
         said.sentences.push_back(closed_on_the_pick(
-            string(cut ? "CurrentObjects" : source) + " " + drawn.pick + " " + drawn.act, paint));
+            from + " " + drawn.pick + " " + drawn.act, paint));
     }
     return true;
 }
+
+inline void say_the_plan(said_reading& said, const ground_plan& plan,
+                         const output_dimension_rule& size, bool on_picture = false);
 
 // THE REST OF THE CHANGE, PASS BY PASS (read_the_rest): each pass after the
 // first said one change, read on the picture the passes before it drew, so its
 // sentence opens on that picture where the program has it, Output. Words on its
 // hand lay the hand again, so the picture is taken in hand (Withhold), cleared
-// off the canvas (Difference, which ends a sentence and hands nothing on), and
+// off the canvas (Difference keeps the hand while erasing its cells), and
 // cut from the hand (CurrentObjects): a piece moved must not stay where it was
 // as well. A paint lays only what it draws onto the picture, which holds the
 // hand it read already, so the hand is not laid again. Said after the line,
@@ -1410,6 +1428,7 @@ inline void say_the_rest(const inference& inf, said_reading& said) {
         const inference* rest = at->rest.get();
         said_reading pass;
         if (!say_the_cut(*rest, pass)) return;
+        say_the_plan(pass, rest->plan, rest->size, true);
         const auto hand_end = pass.sentences.begin() + (ptrdiff_t)pass.hand_sentences;
         const auto first = pass.hand_words ? pass.sentences.begin() : hand_end;
         const auto last = pass.hand_words ? hand_end : pass.sentences.end();
@@ -1419,10 +1438,13 @@ inline void say_the_rest(const inference& inf, said_reading& said) {
         }
         for (auto sentence = first; sentence != last; ++sentence) {
             string one = *sentence;
-            if (one.rfind("Input ", 0) == 0)
+            const bool fill = pass.background_filled && sentence + 1 == pass.sentences.end();
+            if (!fill && one.rfind("Input ", 0) == 0)
                 one = string(pass.hand_words && sentence == first ? "CurrentObjects" : "Output") + one.substr(5);
             said.sentences.push_back(std::move(one));
         }
+        if (pass.hand_words && pass.background_filled)
+            said.sentences.push_back(pass.sentences.back());
         said.left_unexplained = pass.left_unexplained;
         said.no_word_for = pass.no_word_for;
     }
@@ -1448,7 +1470,7 @@ inline void restore_background(said_reading& said, background_source ground,
         return;
     }
     if (ground.per_grid)
-        said.sentences.push_back("Input Colors SelectElectedBackground AddColor [11] " +
+        said.sentences.push_back("Input Colors SelectElectedBackground [1] AddColor [11] " +
                                  spell("Fit", (int)fit) + " Underlay");
     else if (fit == fit_to::painted && !said.output_frame.empty())
         said.sentences.push_back(said.output_frame + " SelectAll UnionList Trim " +
@@ -1466,15 +1488,23 @@ inline void restore_background(said_reading& said, background_source ground,
 // THE PLAN, SAID ONCE (background_reading::central). The reading read figures
 // with no ground, so every sentence that opens on the input opens instead on
 // its figures -- the ground deleted, the rest one piece in the input's own
-// frame, as figures_only left it -- and the fill is the last sentence, after
-// any crop. Nothing between the two says a ground.
-inline void say_the_plan(said_reading& said, const ground_plan& plan, const output_dimension_rule& size) {
+// frame, as figures_only left it. Room cuts keep it until Partition runs.
+// Fill ends each pass, after any crop, before the next pass reads the picture.
+inline void say_the_plan(said_reading& said, const ground_plan& plan, const output_dimension_rule& size,
+                         bool on_picture) {
+    if (said.plan_said) return;
+    said.plan_said = true;
     if (!plan.keeps()) {
-        const string figures = foreground_input(plan);
+        const string figures = foreground_input(plan, on_picture);
         auto open_on_figures = [&](string& sentence) {
-            if (sentence == "Input" || sentence.rfind("Input ", 0) == 0) sentence = figures + sentence.substr(5);
+            if (sentence == "Input" || sentence.rfind("Input ", 0) == 0)
+                sentence = figures + sentence.substr(5);
+            else if (on_picture && sentence.rfind("Output ", 0) == 0)
+                sentence = "Output" + figures.substr(5) + sentence.substr(6);
         };
-        for (string& sentence : said.sentences) open_on_figures(sentence);
+        for (size_t which = 0; which < said.sentences.size(); ++which)
+            if (ranges::find(said.before_ground, which) == said.before_ground.end())
+                open_on_figures(said.sentences[which]);
         for (string& opening : said.other_openings) open_on_figures(opening);
         open_on_figures(said.output_frame);
     }
@@ -1492,10 +1522,12 @@ inline void say_the_plan(said_reading& said, const ground_plan& plan, const outp
 inline said_reading say_the_reading(const inference& inf) {
     vector<said_reading> spoke;
     vector<string> missing;
-    // Every explanation shares the plan, so its opening and fill are said once,
-    // after the choice, and price none of them apart.
+    // Each explanation says the same plan; later passes say it for their picture.
     auto heard = [&](bool it_spoke, said_reading& one) {
-        if (it_spoke) spoke.push_back(std::move(one));
+        if (it_spoke) {
+            if (!one.plan_said) say_the_plan(one, inf.plan, inf.size);
+            spoke.push_back(std::move(one));
+        }
         else missing.insert(missing.end(), one.no_word_for.begin(), one.no_word_for.end());
     };
     const auto& election = inf.correspondence;
@@ -1508,7 +1540,10 @@ inline said_reading say_the_reading(const inference& inf) {
     // The cut's own line, and the passes after it.
     said_reading line;
     const bool spoke_line = say_the_cut(inf, line);
-    if (spoke_line) say_the_rest(inf, line);
+    if (spoke_line) {
+        say_the_plan(line, inf.plan, inf.size);
+        say_the_rest(inf, line);
+    }
     heard(spoke_line, line);
     // A SIZE CHANGE, READ THROUGH ITS FRAME: the framed reading's line, every
     // sentence of it that opens on the input opening on the framed input -- the
@@ -1531,7 +1566,6 @@ inline said_reading say_the_reading(const inference& inf) {
         if (!cheapest || price(one) < price(*cheapest)) cheapest = &one;
     said_reading said = cheapest ? *cheapest : said_reading{};
     said.no_word_for.insert(said.no_word_for.begin(), missing.begin(), missing.end());
-    say_the_plan(said, inf.plan, inf.size);
     const int ground = inf.plan.deleted.color;
     for (string& sentence : said.sentences) sentence = without_redundant_steps(sentence, ground);
     for (string& opening : said.other_openings) opening = without_redundant_steps(opening, ground);

@@ -662,9 +662,8 @@ inline background_election elect_background(const vector<example>& train) {
 }
 
 // WHAT A PROGRAM DOES WITH THE GROUND, decided once for the whole reading:
-// keep it, a color like any other, or delete it before anything else and fill
-// it after everything else -- one color for every grid, or each input's own.
-// Nothing between those two ends knows there is a ground.
+// keep it as a color, or remove it after cuts that need it and fill it after
+// the figure words. Each pass repeats this order with the same chosen colors.
 struct ground_plan {
     background_source deleted;  // what every sentence's input loses first
     background_source filled;   // what the last sentence lays under the rest
@@ -722,7 +721,8 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
 // output without what its fill lays under. Those cells are empty, and an empty
 // cell is nothing to every reader. Both colors come from the input as given,
 // since that is all a program has.
-inline vector<example> figures_only(const vector<example>& train, const ground_plan& plan) {
+inline vector<example> figures_only(const vector<example>& train, const ground_plan& plan,
+                                    const vector<int8_t>& elected = {}) {
     vector<example> figures = train;
     auto empty = [](grid& one, int8_t color) {
         if (!is_color(color)) return;
@@ -730,12 +730,16 @@ inline vector<example> figures_only(const vector<example>& train, const ground_p
             for (int col = 0; col < one.width; ++col)
                 if (one.data[row][col] == color) one.data[row][col] = TRANSPARENT;
     };
-    for (example& pair : figures) {
+    for (size_t which = 0; which < figures.size(); ++which) {
+        example& pair = figures[which];
+        auto color_of = [&](background_source source) {
+            return source.per_grid && which < elected.size() ? elected[which] : source.on(pair.input);
+        };
         // Each elected on the input as given, before any is taken off it: elected
         // again on what is left, the ground lost, a figure's color won (4364c1c4's
         // third input lost its 8s, which its program keeps).
-        const int8_t deleted = plan.deleted.on(pair.input), filled = plan.filled.on(pair.input),
-                     filled_here = plan.filled_on_input().on(pair.input);
+        const int8_t deleted = color_of(plan.deleted), filled = color_of(plan.filled),
+                     filled_here = color_of(plan.filled_on_input());
         empty(pair.input, deleted);
         empty(pair.input, filled_here);
         empty(pair.output, filled);

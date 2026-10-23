@@ -1,5 +1,21 @@
 # Background Per-Side Split (STARTED 2026-07-19 — steps 1 and 2 done)
 
+## Current order, 2026-10-23
+
+Background handling belongs to the general loop. Each pass reads its full
+picture, cuts any rooms while their cells still have colors, removes the
+chosen ground for the figure words, and fills it before the next pass.
+Partition only cuts existing cells; it no longer invents an empty color.
+
+The background choice stays the puzzle's choice through those passes. A
+paint covering most of an intermediate picture does not become its ground.
+`SelectElectedBackground [0]` reads the current pieces; `[1]` reads the
+original input. The latter keeps per-example choices stable in the program,
+as the reading keeps their elected colors. Neither form stores state.
+
+The sections below record the earlier search-based design.
+
+
 > UPDATE 2026-07-26: the missing consumers now exist, one per side. The INPUT
 > verdict is consumed by segmentation (`gpu_exec_colors` skips it,
 > `gpu_exec_split` erases it), and the OUTPUT verdict is consumed by the closing

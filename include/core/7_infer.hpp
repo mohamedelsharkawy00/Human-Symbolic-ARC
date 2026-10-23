@@ -3290,11 +3290,11 @@ struct inference {
     // Whether the cut's pieces, painted where they lie on the canvas the size
     // rule gives, draw every output: what a line with no words claims.
     bool pieces_redraw = true;
-    // THE GROUND, OWNED ONCE (infer): what the program
-    // deletes before anything else and fills after everything else. Everything
-    // above was read from the figures that plan leaves, with no ground at all;
-    // `ground_election` is the election the plan came from, for the readout.
+    // The plan for this pass, and its input before background removal.
+    // Room cuts read the colored cells that removal would discard.
     ground_plan plan;
+    vector<grid> before_ground;
+    vector<int8_t> elected_backgrounds;
     background_election ground_election;
     // EACH PLAN READ, in the order infer reads them (says_the_most): which plan,
     // with words that may lay cells wrong or not, the cells it left unsaid, the
@@ -5929,31 +5929,37 @@ struct fenced_room {
     bool shared = false;
 };
 
-// THE ROOMS THE PICKED PIECES FENCE OFF on each pair, in the order Partition
-// hands them back (each_partition_piece, the op's own walk), on the canvas the
-// pieces lie on, as Partition reads it.
-inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const vector<partner_pieces>& handed) {
+// THE ROOMS THE PICKED PIECES FENCE OFF on each pair: each part's cells the
+// pieces leave, the ground the plan deleted, which Partition cuts into rooms
+// before it is deleted. In the order Partition hands them back
+// (each_fenced_part, the op's own walk), on the canvas the pieces lie on,
+// as Partition reads it.
+inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                               const vector<grid>& before_ground) {
     vector<vector<fenced_room>> rooms(handed.size());
     for (size_t which = 0; which < handed.size() && which < facts.train.size(); ++which) {
         const tile_size canvas = facts.canvas(which);
         const partner_pieces& pieces = handed[which];
-        // Whether the part walked now holds a piece clipped to it, which
-        // SelectPartition picks with its room.
-        bool clipped = false;
-        each_partition_piece(pieces, canvas.width, canvas.height,
-            [&](int i, const cell_box& box, auto in_part) {
-                const cell_box own = pieces.box(i);
-                for (int row = max(box.row0, own.row0); row <= min(box.row1, own.row1) && !clipped; ++row)
-                    for (int col = max(box.col0, own.col0); col <= min(box.col1, own.col1) && !clipped; ++col)
-                        clipped = in_part(row, col) && pieces.painted(i, row, col);
-            },
-            [&](int part, const cell_box& box, auto empty) {
-                fenced_room room{ part, {}, clipped };
-                clipped = false;
-                for (int row = box.row0; row <= box.row1; ++row)
-                    for (int col = box.col0; col <= box.col1; ++col)
-                        if (empty(row, col)) room.cells.push_back((int16_t)cell_index(row, col));
-                if (!room.cells.empty()) rooms[which].push_back(std::move(room));
+        each_fenced_part(pieces, canvas.width, canvas.height,
+            [&](int part, const cell_box& box, auto in_part) {
+                bool clipped = false;
+                for (int index = 0; index < pieces.count() && !clipped; ++index) {
+                    if (pieces.is_picked(index)) continue;
+                    const cell_box own = pieces.box(index);
+                    for (int row = max(box.row0, own.row0); row <= min(box.row1, own.row1) && !clipped; ++row)
+                        for (int col = max(box.col0, own.col0); col <= min(box.col1, own.col1) && !clipped; ++col)
+                            clipped = in_part(row, col) && pieces.painted(index, row, col);
+                }
+                for (int color = 0; color < COLOR_COUNT; ++color) {
+                    fenced_room room{ part, {}, clipped };
+                    for (int row = box.row0; row <= box.row1; ++row)
+                        for (int col = box.col0; col <= box.col1; ++col)
+                            if (which < before_ground.size() && before_ground[which].contains(row, col) &&
+                                before_ground[which].data[row][col] == color &&
+                                facts.train[which].input.data[row][col] == TRANSPARENT && in_part(row, col))
+                                room.cells.push_back((int16_t)cell_index(row, col));
+                    if (!room.cells.empty()) rooms[which].push_back(std::move(room));
+                }
             });
     }
     return rooms;
@@ -5982,8 +5988,8 @@ inline const fenced_room* room_chosen(const vector<fenced_room>& rooms, int chos
     return tied ? nullptr : ranked[rank];
 }
 
-// A ROOM FILLED, replayed. Partition hands back each part the picked pieces
-// fence off, its empty cells as a room (rooms_fenced), and Recolor paints the
+// A ROOM FILLED, replayed. Partition hands back the ground of each part the
+// picked pieces fence off as its room (rooms_fenced), and Recolor paints the
 // room `chosen` names -- or every room -- in one color, laid the way `lay`
 // says on what is down (paint_holds): over it, or under it, filling only what
 // nothing has painted.
@@ -6002,14 +6008,18 @@ inline optional<replayed> room_holds(const replay_facts& facts, const vector<par
         }
         const fenced_room* room = room_chosen(rooms[which], chosen);
         if (!room) return false;
-        fill(*room);
+        if (room_by_size(chosen)) fill(*room);
+        else
+            for (const fenced_room& part : rooms[which])
+                if (part.part == room->part) fill(part);
         return true;
     });
 }
 
 // A ROOM'S KEY of the kind `kind` names (shape_key_of), read as ShapeColorMap
-// reads a room Partition hands back: its cells, empty but its own (BLANK), in
-// the box they fill.
+// reads a room Partition hands back: its cells, in the box they fill, all one
+// color, the ground's. The reading never knows the ground (the plan owns it),
+// and a drawing in one color keys alike in any, so 0 draws it.
 inline uint32_t room_key(const fenced_room& room, int kind) {
     cell_box box;
     bool in_room[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -6018,7 +6028,7 @@ inline uint32_t room_key(const fenced_room& room, int kind) {
         in_room[cell_row(cell)][cell_col(cell)] = true;
     }
     return shape_key_of(kind, box.width(), box.height(), [&](int row, int col) {
-        return in_room[box.row0 + row][box.col0 + col] ? (int8_t)BLANK : (int8_t)TRANSPARENT;
+        return in_room[box.row0 + row][box.col0 + col] ? (int8_t)0 : (int8_t)TRANSPARENT;
     });
 }
 
@@ -7929,7 +7939,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         // picks a paint is replayed for.
         auto ask = [&](size_t at, const piece_pick& pick, const vector<partner_pieces>& handed,
                        optional<vector<vector<fenced_room>>>& rooms) {
-            if (!rooms) rooms = rooms_fenced(opened, handed);
+            if (!rooms) rooms = rooms_fenced(opened, handed, inf.before_ground);
             for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
                 if (lay == rule::laid_under && !down_known()) continue;
                 for (int chosen = 0; chosen < (tables ? ROOM_VALUES : ROOM_CHOICES); ++chosen) {
@@ -8407,10 +8417,18 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     return best;
 }
 
-inline shared_ptr<const inference> read_figures_once(const vector<example>& train, const tiled_pieces& tiles,
+inline shared_ptr<const inference> read_with_ground(const vector<example>& train, const tiled_pieces& tiles,
         int8_t pass, bool tolerant, bool partners, figure_readings& readings,
-        optional<inference>* prepared = nullptr) {
+        optional<inference>* prepared = nullptr, const ground_plan& plan = {},
+        const vector<int8_t>& elected = {}) {
     string key = figures_key(train, tiles);
+    for (const background_source side : {plan.deleted, plan.filled}) {
+        key.push_back((char)side.color);
+        key.push_back((char)side.per_grid);
+    }
+    key.push_back((char)plan.fill_is_ground_too);
+    key.push_back((char)elected.size());
+    for (const int8_t color : elected) key.push_back((char)color);
     key.push_back((char)pass);
     key.push_back((char)tolerant);
     key.push_back((char)partners);
@@ -8418,8 +8436,19 @@ inline shared_ptr<const inference> read_figures_once(const vector<example>& trai
         return found->second;
     optional<inference> local;
     auto& facts = prepared ? *prepared : local;
-    if (!facts) facts = prepare_figures(train, tiles);
-    auto read = make_shared<const inference>(read_figures(train, tiles, pass, tolerant, partners,
+    vector<int8_t> grounds = elected;
+    if (grounds.empty() && (plan.deleted.per_grid || plan.filled.per_grid))
+        for (const example& pair : train)
+            grounds.push_back(confident_background(elect_grid_background(pair.input)));
+    const vector<example> figures = figures_only(train, plan, grounds);
+    const tiled_pieces figure_tiles{figures.data(), tiles.originals};
+    if (!facts) {
+        facts = prepare_figures(figures, figure_tiles);
+        facts->plan = plan;
+        facts->elected_backgrounds = grounds;
+        for (const example& pair : train) facts->before_ground.push_back(pair.input);
+    }
+    auto read = make_shared<const inference>(read_figures(figures, figure_tiles, pass, tolerant, partners,
         prepared ? *facts : std::move(*facts), readings));
     readings.keep(std::move(key), read);
     return read;
@@ -8443,9 +8472,18 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
     for (size_t which = 0; which < train.size(); ++which) {
         rest[which].input = inf.picture[which];
         drew = drew || !(inf.picture[which] == train[which].input);
+        const int color = inf.plan.filled.per_grid ? inf.elected_backgrounds[which] : inf.plan.filled.color;
+        if (is_color(color))
+            for (grid* picture : {&rest[which].input, &rest[which].output})
+                for (int row = 0; row < picture->height; ++row)
+                    for (int col = 0; col < picture->width; ++col)
+                        if (picture->data[row][col] == TRANSPARENT) picture->data[row][col] = (int8_t)color;
     }
     if (!drew) return;
-    inf.rest = read_figures_once(rest, {}, (int8_t)(inf.pass + 1), inf.tolerant, inf.partners, readings);
+    // A paint is still a figure on the next pass, even if it now fills most
+    // of the picture. Keep the chosen ground rather than electing it again.
+    inf.rest = read_with_ground(rest, {}, (int8_t)(inf.pass + 1), inf.tolerant, inf.partners, readings,
+        nullptr, ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds);
     inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
 
@@ -8590,16 +8628,16 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
             // Split before Tile: each copy keeps the original input's boundaries.
             const tiled_pieces copies = inf.frame.kind == kind::tiled
                 ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
-            inf.framed = read_figures_once(framed, copies, 1, inf.tolerant, inf.partners, readings);
+            inf.framed = read_with_ground(framed, copies, 1, inf.tolerant, inf.partners, readings);
         }
     }
 }
 
 // Asks every question about the training pairs, in order, and returns the answers.
-// THE GROUND IS OWNED ONCE: the election names the plans a puzzle allows
+// THE GROUND IS CHOSEN ONCE: the election names the plans a puzzle allows
 // (ground_plans), each plan's figures are read (read_figures), and the plan
 // whose words say the most is said (says_the_most), in the order the plans are
-// named. Nothing after this knows a ground but the plan.
+// named. Each pass applies that plan before reading its figures.
 inline inference infer(const vector<example>& train) {
     figure_readings readings;
     const background_election election = elect_background(train);
@@ -8613,8 +8651,7 @@ inline inference infer(const vector<example>& train) {
     const int count = 1;
     vector<optional<inference>> prepared((size_t)count);
     auto read_plan = [&](int at, bool tolerant, bool partners) {
-        const vector<example> figures = figures_only(train, plans[(size_t)at]);
-        return *read_figures_once(figures, {}, 1, tolerant, partners, readings, &prepared[(size_t)at]);
+        return *read_with_ground(train, {}, 1, tolerant, partners, readings, &prepared[(size_t)at], plans[(size_t)at]);
     };
     vector<inference::plan_read> plans_read;
     // Each plan read, as the readout shows it: the words its line said.
