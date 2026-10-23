@@ -63,6 +63,14 @@ inline int passes_said(const inference& read) {
     return read.rest_says_more && read.rest ? passes_said(*read.rest) : read.pass;
 }
 
+// HOW MANY WORDS A READING SAYS: its line's, then each pass's after it that says
+// more (read_the_rest).
+inline int words_said(const inference& read) {
+    const auto& facts = read.correspondence;
+    const int own = facts.readings.empty() ? 0 : (int)facts.readings[facts.chosen].line.size();
+    return own + (read.rest_says_more && read.rest ? words_said(*read.rest) : 0);
+}
+
 // THE CANDIDATE WHOSE WORDS SAY THE MOST: each one read in the order given, and
 // the one whose reading leaves the fewest cells unsaid kept -- of those, the
 // one said in the fewest passes, the plainer saying: bdad9b1f's two lines and
@@ -518,7 +526,10 @@ inline inference infer(const vector<example>& train) {
     // 62b74c02, 9344f635, a61f2674, f823c43c); asked only once a line had
     // nothing else to say, they came after picks that left the line no way on
     // (4364c1c4's bands, its first stack only).
-    if (const int left = cells_left_unsaid(best); left > 0) {
+    // Asked too where the reading kept needs passes after its first, and kept
+    // where it says as much in fewer words, the plainer program (d90796e8's two
+    // words in one pass, where three passes said its pairs by luck).
+    if (const int left = cells_left_unsaid(best); left > 0 || passes_said(best) > 1) {
         const int at = (int)(ranges::find(plans, best.plan) - plans.begin());
         inference with;
         {
@@ -527,7 +538,8 @@ inline inference infer(const vector<example>& train) {
         }
         with.plan = best.plan;
         note_read(at, with);
-        if (cells_left_unsaid(with) < left) best = std::move(with);
+        const int with_left = cells_left_unsaid(with);
+        if (with_left < left || (with_left == left && words_said(with) < words_said(best))) best = std::move(with);
     }
     best.ground_election = election;
     best.plans_read = std::move(plans_read);

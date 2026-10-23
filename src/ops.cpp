@@ -1041,6 +1041,20 @@ object_list& op_select_at_least_cells(program_run& run, const object_list& from,
     return res;
 }
 
+// SelectRunningAlong[way]: mark the objects that run that way (way_it_runs,
+// which the reading replays); the rest ride through unmarked.
+object_list& op_select_running_along(program_run& run, const object_list& from, int8_t way) {
+    object_list& res = run.fresh();
+    copy_list(res, from);
+    for (int i = 0; i < res.count; ++i) {
+        held_object& one = res.objects[i];
+        if (way_it_runs(min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
+                        [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; }) == (runs_along)way)
+            one.selected = true;
+    }
+    return res;
+}
+
 // SelectColor[c]: mark every object that contains color c; the rest ride
 // through unmarked.
 object_list& op_select_color(program_run& run, const object_list& from, int8_t color) {
@@ -2425,6 +2439,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::MirrorAround:            return op_mirror_around(run, in, value);
     case node_type::SelectObjectsWithHoles:  return op_select_objects_with_holes(run, in, value);
     case node_type::SelectAtLeastCells:      return op_select_at_least_cells(run, in, value);
+    case node_type::SelectRunningAlong:      return op_select_running_along(run, in, value);
     case node_type::SelectColor:             return op_select_color(run, in, value);
     case node_type::SelectElectedBackground: return op_select_elected_background(run, in, value);
     case node_type::SelectAll:               return op_select_all(run, in);

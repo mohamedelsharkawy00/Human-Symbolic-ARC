@@ -453,7 +453,11 @@ enum class inferred_amount { none, some, all };
   /* The pick moves onto every partner each picked piece has, the way       */ \
   /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
   /* the eight directions, from up clockwise (each_partner_picked, 15_op_math). */ \
-  X(SelectPartner               , 0                 , 116                      , select   , none, false)
+  X(SelectPartner               , 0                 , 116                      , select   , none, false)        \
+  /* The pieces that run one way, as their longest straight line of cells    */ \
+  /* lies (way_it_runs, 15_op_math.hpp): along their rows, their columns,    */ \
+  /* their diagonals down or up to the right, or no way, two ways tying.     */ \
+  X(SelectRunningAlong          , 0                 , 4                        , select   , none, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, clears) id,

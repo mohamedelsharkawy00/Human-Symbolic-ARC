@@ -286,7 +286,8 @@ inline int fit_source_cell(int target_cell, int source_size, int target_size) {
 }
 
 // SELECT · SelectUnique, SelectAtLeastCells, SelectObjectsWithHoles,
-// SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey, SelectPartner
+// SelectRunningAlong, SelectRowFromMiddle, WouldFit, SelectPartition,
+// SelectLikeKey, SelectPartner
 
 // WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
 // many cells of its `height` by `width` box. Counted here for the op and for
@@ -325,6 +326,43 @@ inline int object_hole_count(int height, int width, Occupied occupied) {
             walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
         }
     return holes;
+}
+
+// THE WAY A PIECE RUNS, SelectRunningAlong's value: the way its longest
+// straight line of cells lies -- along its rows, its columns, its diagonals
+// down to the right or up to the right, as ExtendTo names its tracks
+// (grown_along) -- or no way, where two ways tie for the longest (a dot, a
+// square, a plus).
+enum class runs_along : int8_t { rows, columns, diagonals_down_right, diagonals_up_right, no_way, count };
+
+// The way a `height` by `width` piece runs, occupied(row, col) saying which
+// cells of its box it holds. Read here for the op, for the reading that
+// replays it, and for a grid lying on its side (lies_on_its_side).
+template <class Occupied>
+inline runs_along way_it_runs(int height, int width, Occupied occupied) {
+    auto held = [&](int row, int col) {
+        return row >= 0 && row < height && col >= 0 && col < width && occupied(row, col);
+    };
+    // Each way by the direction its lines run toward from their first cell.
+    constexpr int8_t toward[] = { direction::right, direction::down, direction::down_right, direction::up_right };
+    runs_along way = runs_along::no_way;
+    int longest = 0;
+    for (int along = 0; along < (int)runs_along::no_way; ++along) {
+        const direction_step step = step_of(toward[along]);
+        int line = 0;
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col) {
+                if (held(row - step.down, col - step.across)) continue;
+                int cells = 0;
+                while (held(row + cells * step.down, col + cells * step.across)) ++cells;
+                line = max(line, cells);
+            }
+        if (line > longest) {
+            longest = line;
+            way = (runs_along)along;
+        } else if (line == longest) way = runs_along::no_way;
+    }
+    return way;
 }
 
 // WHAT A PIECE COUNTS, the measure a pick of the most, the fewest or the odd
@@ -658,11 +696,14 @@ inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
 // TRANSLATE · NormalizeOrientation, ScaleDown, Shift, MoveToEdge, MoveToward,
 // SlamRow and SlamColumn, AlignToCanvas
 
-// A GRID LYING ON ITS SIDE is wider than it is tall. NormalizeOrientation[0]
+// A GRID LYING ON ITS SIDE runs along its rows, as a piece holding every cell
+// of it would (way_it_runs): it is wider than it is tall. NormalizeOrientation[0]
 // reads one transposed, so its long way runs down, and a square one as it
 // stands. Asked here by the op and by any reading that replays it, so the two
 // cannot turn different grids.
-constexpr bool lies_on_its_side(int width, int height) { return width > height; }
+inline bool lies_on_its_side(int width, int height) {
+    return way_it_runs(height, width, [](int, int) { return true; }) == runs_along::rows;
+}
 
 // The color most of a `factor` by `factor` block wears, as ScaleDown votes.
 inline int8_t majority_vote(const cells& mask, int row, int col,

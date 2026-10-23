@@ -70,7 +70,8 @@ inline string foreground_input(const ground_plan& plan, bool on_picture) {
 
 // A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, at least so many cells, the first so many by size,
-// the ones on a row or a column from the middle -- when `how` names one, else by
+// the ones on a row or a column from the middle, the one with no twin, the way
+// a piece runs -- when `how` names one, else by
 // its colors, SelectAll where it takes every color; then, when `part` names
 // one, SelectPartition takes those as walls and the pieces in that part
 // instead; when `partner` names one, SelectPartner their partners; turned round
@@ -85,7 +86,8 @@ inline string pick_words(const piece_pick& pick) {
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
                                                  "SelectMostCommonColor", "SelectAtLeastCells",
                                                  "SelectLargestObject", "SelectSmallestObject",
-                                                 "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique" };
+                                                 "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique",
+                                                 "SelectRunningAlong" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     string chosen = "SelectAll InvertSelection";
     if (how < 0 && colors == piece_pick::all().colors) chosen = "SelectAll";

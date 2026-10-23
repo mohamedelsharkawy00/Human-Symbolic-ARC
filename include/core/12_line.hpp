@@ -324,8 +324,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         { "Cells At Least", "Cells Fewer Than" }, { "The Largest", "All But The Largest" },
         { "The Smallest", "All But The Smallest" }, { "Row From The Middle", "Off The Row From The Middle" },
         { "Column From The Middle", "Off The Column From The Middle" },
-        { "The One With No Twin By", "All But The One With No Twin By" } };
+        { "The One With No Twin By", "All But The One With No Twin By" }, { "Running", "Not Running" } };
     static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
+    static constexpr const char* running_ways[] = { "Along Its Rows", "Along Its Columns",
+        "Along Its Diagonals Down To The Right", "Along Its Diagonals Up To The Right", "No Way" };
+    static_assert(size(running_ways) == (size_t)runs_along::count);
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
     // The best a word heard: its value and pick, how many cells nothing else
@@ -419,7 +422,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                         (kind == (int)count_kind::cells ? "Cells" : kind == (int)count_kind::colors ? "Colors"
                          : kind == (int)count_kind::holes ? "Holes"
                          : "Cells Of Color " + to_string(kind - (int)count_kind::of_color));
-            } else if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
+            } else if (best.pick.how == piece_pick::running_along) name += string(" ") + running_ways[best.pick.value];
+            else if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
         }
         else if (best.pick.partner >= 0) {
             // SelectPartner: the partners its base's pieces have, on a side or any.

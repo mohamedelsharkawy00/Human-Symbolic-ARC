@@ -50,7 +50,7 @@ struct tiled_pieces {
 struct piece_pick {
     enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
                              at_least_cells, largest_ranks, smallest_ranks, middle_row, middle_column,
-                             only_one, pick_kinds };
+                             only_one, running_along, pick_kinds };
     uint16_t colors = 0;
     int8_t how = -1, value = 0, fits = -1;
     bool but_those = false;

@@ -20,7 +20,8 @@ namespace arc {
 // SelectSmallestObject run -- or the first `value` of that order, one selector
 // a rank, or every one painting at least `value` cells, or every one with a
 // cell on the row or the column `value` lines past the middle of all the
-// pieces paint (line_from_middle). A pick's but_those turns any of them round.
+// pieces paint (line_from_middle), or every one running the way `value` names
+// (way_it_runs). A pick's but_those turns any of them round.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
     vector<bool> picked(pieces.size(), false);
     if (how == piece_pick::middle_row || how == piece_pick::middle_column) {
@@ -110,6 +111,14 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         }
         return picked;
     }
+    if (how == piece_pick::running_along) {
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            const object& piece = pieces[i];
+            picked[i] = way_it_runs(piece.summary.height, piece.summary.width, [&](int row, int col) {
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }) == (runs_along)value;
+        }
+        return picked;
+    }
     vector<int> order(pieces.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
     const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks;
@@ -131,6 +140,8 @@ static_assert(row_of(node_type::SelectLikeKey).high + 1 == KEY_LIKENESSES,
               "SelectLikeKey takes one value for each likeness to the key");
 static_assert(row_of(node_type::SelectPartner).high + 1 == SELECT_PARTNER_VALUES,
               "SelectPartner takes each partner way on any side, then on each of the eight directions");
+static_assert(row_of(node_type::SelectRunningAlong).high + 1 == (int)runs_along::count,
+              "SelectRunningAlong takes one value for each way a piece runs");
 
 // THE PIECES A PICK TAKES, as its words take them on a canvas the size of
 // `canvas`, in the order pick_words says them: its colors or its kind; the
@@ -457,7 +468,8 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
 // asked after those, so a pick by holes or size that accounts for as much wins
 // the tie (aabf363d's shape, a new color in its test); then each of the colors
 // alone; then the parts one color's walls fence off, and the keys a pick turned
-// round leaves to be like.
+// round leaves to be like; last the newest: the one piece with no twin, the most
+// and the fewest of each count, and the way each piece runs.
 inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t colors, uint16_t fit_colors = 0,
                                        bool partners = false) {
     vector<piece_pick> picks;
@@ -683,6 +695,19 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                 picks.push_back({ 0, how, (int8_t)value, -1, but_those });
         }
     }
+    // The way each piece runs (way_it_runs), each way asked only where it parts
+    // some pair's pieces: one at least taken there and one left. Every way
+    // first, then every piece but those, so where a way takes the pieces another
+    // turned round takes, the way is said.
+    vector<int8_t> ways;
+    for (int way = 0; way < (int)runs_along::count; ++way)
+        if (ranges::any_of(facts.cuts(), [&](const vector<object>& cut) {
+                const vector<bool> taken = picked_pieces(cut, piece_pick::running_along, way);
+                return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
+            }))
+            ways.push_back((int8_t)way);
+    for (const bool but_those : { false, true })
+        for (const int8_t way : ways) picks.push_back({ 0, piece_pick::running_along, way, -1, but_those });
     if (partners)
         for (const piece_pick& pick : partner_picks(facts)) picks.push_back(pick);
     return picks;
