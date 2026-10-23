@@ -304,7 +304,7 @@ struct correspondence_election {
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
         // program of its own, the one numbered `value`. 7_infer groups the kinds by
-        // what they change (group_of); 9_sentences spells them.
+        // what they change (group_of); 10_sentences spells them.
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,

@@ -1,15 +1,15 @@
 #pragma once
 // Everything the GUI remembers between frames: what the person has switched
 // on, where the panes are, and the pictures it keeps of the solver's work.
-#include "13_environment.hpp"
-#include "15_solver_log.hpp"    // search_progress, format_elapsed
-#include "22_search_stream.hpp" // preview_payload
-#include "23_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
+#include "14_environment.hpp"
+#include "16_solver_log.hpp"    // search_progress, format_elapsed
+#include "20_search_stream.hpp" // preview_payload
+#include "21_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include "11_text_format.hpp"
+#include "12_text_format.hpp"
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -211,7 +211,7 @@ struct global_app_state {
 	// mirrored from the solver so the GUI checkmarks can render their state.
 	atomic<int> dataset_flags{0};
 
-	// Benchmark mode: the switch, and what a run is asked for (31_benchmark.hpp).
+	// Benchmark mode: the switch, and what a run is asked for (29_benchmark.hpp).
 	atomic<bool> is_benchmarking{false};
 	int benchmark_puzzle_limit{10};
 

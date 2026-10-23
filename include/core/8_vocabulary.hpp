@@ -1,6 +1,6 @@
 // The words a program is written in, as 0_core.hpp holds the words a grid is.
 // Numbered after 7_infer.hpp, whose elected facts some ops name. The vocabulary
-// itself compiles against 0_core.hpp alone. Read by 9_sentences.hpp, which spells
+// itself compiles against 0_core.hpp alone. Read by 10_sentences.hpp, which spells
 // programs, and src/ops.cpp, which runs them, from the same definitions.
 //
 // WORDS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says a word only
@@ -8,14 +8,14 @@
 // and seeing it at work in every pair. The ops below have no such
 // replay in the general reading: no inferred program uses them, except where one
 // special-case rule spells them for its own pattern. To unlock one:
-//   1. Move the op's arithmetic into a shared helper in 8b_op_math.hpp and
+//   1. Move the op's arithmetic into a shared helper in 9_op_math.hpp and
 //      have the op in src/ops.cpp call it, so the replay and the op cannot
 //      differ.
 //   2. Replay it in 7_infer.hpp: a *_holds check on one of the replay templates
 //      (paint_holds, slides_hold, drops_hold) asked in finish_the_line for a
 //      same-size word, a frame kind in choose_piece_frame for a size change, or a
 //      whole_line rule for a word that redraws every output by itself.
-//   3. Spell it in 9_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
+//   3. Spell it in 10_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
 //   4. Check with scripts\said.bat on the training set (no solved puzzle lost,
 //      the wrong count not up) and the readouts' fully-explained-but-unsolved
 //      list.
@@ -31,7 +31,7 @@
 //   handed back as a room for a recolor to paint; overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1],
-//   painted output bounds [2], or one pane's box [3] (fit_to, 8b_op_math.hpp).
+//   painted output bounds [2], or one pane's box [3] (fit_to, 9_op_math.hpp).
 //   Pane-pick uses [0]; explicit background fill uses [1], [2], or [3] where
 //   the answer is one pane; the filled frame uses [1] on
 //   pieces of one color, filled to their boxes. General piece-stretch readings
@@ -77,7 +77,7 @@ struct color_pair {
 };
 
 // PAST ITS FIXED PAIRS, BidiColorMap trades the pairs a key drawn in the grid
-// names (key_swaps, 8b_op_math.hpp), read along the key's rows, or its columns;
+// names (key_swaps, 9_op_math.hpp), read along the key's rows, or its columns;
 // past those, one color with empty, EMPTY_PAIRS + the color (traded_with_empty).
 constexpr int KEY_PAIRS_ALONG_ROWS = COLOR_PAIR_COUNT, KEY_PAIRS_ALONG_COLUMNS = COLOR_PAIR_COUNT + 1;
 constexpr int EMPTY_PAIRS = KEY_PAIRS_ALONG_COLUMNS + 1;
@@ -381,10 +381,10 @@ enum class inferred_amount { none, some, all };
   /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
   /* past those [13], the color a key drawn in the grid shows at its place;  */ \
   /* past that [14-19], its colors cell by cell from the one piece of its    */ \
-  /* shape each likeness finds (colors_from_its_shape, 8b_op_math.hpp).      */ \
+  /* shape each likeness finds (colors_from_its_shape, 9_op_math.hpp).       */ \
   X(ColorFrom                   , 0                 , 19                       , map      , none, false)        \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
-  /* partner stay picked (would_fit, 8b_op_math.hpp). A pick, so it selects. */ \
+  /* partner stay picked (would_fit, 9_op_math.hpp). A pick, so it selects.  */ \
   X(WouldFit                    , 0                 , 12                       , select   , none, false)        \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, false)        \
@@ -396,7 +396,7 @@ enum class inferred_amount { none, some, all };
   X(ScaleDown                   , 2                 , 10                       , translate, none, false)        \
   /* Past the ten colors, BLANK: the rooms, Partition's empty pieces.        */ \
   X(SelectColor                 , 0                 , arc::BLANK               , select   , none, false)        \
-  /* The one picked-from piece with no twin (unique_piece, 8b_op_math.hpp):  */ \
+  /* The one picked-from piece with no twin (unique_piece, 9_op_math.hpp):   */ \
   /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
   /* or past those the same count of what count_kind names [4-16].            */ \
   X(SelectUnique                , 0                 , 16                       , select   , none, false)        \
@@ -446,11 +446,11 @@ enum class inferred_amount { none, some, all };
   /* Of the picked pieces, only those like a piece of the key -- every    */ \
   /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
   /* any way, at its size [0-1], any size [2-3] or stretched [4-5]          */ \
-  /* (like_the_key, 8b_op_math.hpp).                                       */ \
+  /* (like_the_key, 9_op_math.hpp).                                        */ \
   X(SelectLikeKey               , 0                 , 5                        , select   , none, false)        \
   /* The pick moves onto every partner each picked piece has, the way       */ \
   /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
-  /* the eight directions, from up clockwise (each_partner_picked, 8b).       */ \
+  /* the eight directions, from up clockwise (each_partner_picked, 9_op_math). */ \
   X(SelectPartner               , 0                 , 116                      , select   , none, false)
 
 enum class node_type : uint8_t {

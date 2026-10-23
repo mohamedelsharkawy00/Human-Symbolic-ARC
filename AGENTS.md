@@ -14,7 +14,7 @@
 3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the word it lacks, built in the op that owns it (read the whole op list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
 5. A word is said only after it is replayed on every training pair on the host, and seen to change something in every pair.
-   1. The replay runs the arithmetic the op runs: a shared helper in `8b_op_math.hpp` the op (`src/ops.cpp`) calls.
+   1. The replay runs the arithmetic the op runs: a shared helper in `9_op_math.hpp` the op (`src/ops.cpp`) calls.
    2. Anything less would let the language say a word the pairs don't back.
 6. New words are compositions of existing ops where possible. Add an op only when none exists.
 7. No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
@@ -97,7 +97,7 @@
    2. Which port an app got is the `listening on` line in its own receipt log.
    3. ONE APP PER FOLDER. The port is the only thing an app keeps to itself, everything it writes is per folder, so a second app in the same folder overwrites the first: `solutions/<id>.txt`, `logs/<id>.txt`, `logs/inference/<id>.txt`, `settings/settings.txt`, `kaggle/working/submission.json`. Solutions are the ground truth record, so this loses the most valuable thing here.
    4. The port walk is therefore for apps in DIFFERENT worktrees, not for two in one.
-2. Vocabulary: every `ui_action` name (spellings in `include/gui/24_global_app_state.hpp`), plus `state` (read-only status), `puzzle <id>` (jump by id) and `screenshot <path>` (write the frame as a PNG).
+2. Vocabulary: every `ui_action` name (spellings in `include/gui/22_global_app_state.hpp`), plus `state` (read-only status), `puzzle <id>` (jump by id) and `screenshot <path>` (write the frame as a PNG).
    1. The frame is drawn into memory, never off the screen, so it answers the same whether the window is minimized, hidden or covered.
    2. It is the only way the agent can SEE the app, everything else on this port is the agent acting blind.
 3. Look before acting: `state` returns `id idx paused benchmarking solved elapsed`.

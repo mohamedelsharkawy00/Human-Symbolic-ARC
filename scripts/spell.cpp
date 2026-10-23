@@ -5,8 +5,8 @@
 //   spell <task-id> "<program>"          one program
 //   spell <task-id> "<program>" --test   and what it draws on each test, fitting or not
 //   spell <task-id> --file <path>        one program per line, first that solves wins
-#include "16_solver.hpp"
-#include "14_puzzle_loader.hpp"
+#include "17_solver.hpp"
+#include "15_puzzle_loader.hpp"
 #include <cstdio>
 #include <fstream>
 #include <string>

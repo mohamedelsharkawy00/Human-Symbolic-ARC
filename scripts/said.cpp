@@ -27,8 +27,8 @@
 // THE PUZZLES ARE READ AT ONCE, one per CPU thread (in_parallel.hpp). Each
 // writes its own readout and runs its own programs. The lines come out in the
 // dataset's order, as they did one puzzle at a time.
-#include "16_solver.hpp"
-#include "14_puzzle_loader.hpp"
+#include "17_solver.hpp"
+#include "15_puzzle_loader.hpp"
 #include "in_parallel.hpp"
 #include <algorithm>
 #include <chrono>

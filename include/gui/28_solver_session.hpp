@@ -7,23 +7,23 @@
 //
 // What a person at a window expects is kept here: the puzzle list, pause,
 // settings, sounds, and pictures of what the reading drew. The child streams
-// what it says (22_search_stream.hpp); this replays it into its own copy of
+// what it says (20_search_stream.hpp); this replays it into its own copy of
 // the puzzle, and the frame draws that as if the solver were local. Hovering a
 // program asks the child what it paints, since only the child can run one.
 //
 // A child is started once the window has stayed on a puzzle for a moment, so
 // stepping through puzzles costs nothing, and it waits until SPACE or the pane
-// asks it to read. A benchmark (31_benchmark.hpp) runs its puzzles through the
+// asks it to read. A benchmark (29_benchmark.hpp) runs its puzzles through the
 // same child, one process each.
-#include "14_puzzle_loader.hpp"
-#include "15_solver_log.hpp"
-#include "21_submission.hpp"   // describe_result, puzzle_result
-#include "22_search_stream.hpp"
-#include "23_grid_buffer.hpp"
-#include "24_global_app_state.hpp"
-#include "27_sound_manager.hpp"
-#include "28_gui.hpp"   // load_font_atlas
-#include "29_os_utilities.hpp"   // search_process
+#include "15_puzzle_loader.hpp"
+#include "16_solver_log.hpp"
+#include "19_submission.hpp"   // describe_result, puzzle_result
+#include "20_search_stream.hpp"
+#include "21_grid_buffer.hpp"
+#include "22_global_app_state.hpp"
+#include "25_sound_manager.hpp"
+#include "26_gui.hpp"   // load_font_atlas
+#include "27_os_utilities.hpp"   // search_process
 
 #include <atomic>
 #include <chrono>
@@ -284,7 +284,7 @@ public:
 
   void log_debug(const string &msg) { m_log.debug(msg); }
 
-  // --- A benchmark (31_benchmark.hpp). ---
+  // --- A benchmark (29_benchmark.hpp). ---
   // Takes over the child: the one running now is killed, and the window's own
   // controls do nothing until end_benchmark.
   inline void begin_benchmark() {

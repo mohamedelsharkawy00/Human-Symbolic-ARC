@@ -1,8 +1,8 @@
 #pragma once
-#include "24_global_app_state.hpp"
-#include "29_os_utilities.hpp"
-#include "30_solver_session.hpp"
-#include "27_sound_manager.hpp"
+#include "22_global_app_state.hpp"
+#include "27_os_utilities.hpp"
+#include "28_solver_session.hpp"
+#include "25_sound_manager.hpp"
 #include <windows.h>
 #include <cctype>
 #include <cstdlib>   // std::getenv (ARC_W / ARC_H debug overrides)
@@ -235,7 +235,7 @@ private:
       }
       case ui_action::import_sol:     m_solver_threading.import_solution(); break;
       case ui_action::export_sol:     m_solver_threading.export_solution(); break;
-      // The run itself follows this switch (31_benchmark.hpp).
+      // The run itself follows this switch (29_benchmark.hpp).
       case ui_action::toggle_benchmark:
         m_app_state.is_benchmarking = !m_app_state.is_benchmarking;
         break;

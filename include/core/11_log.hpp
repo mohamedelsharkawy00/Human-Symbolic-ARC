@@ -4,7 +4,7 @@
 // Last in the family: it reads every fact and writes none.
 
 #pragma once
-#include "9_sentences.hpp"
+#include "10_sentences.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>

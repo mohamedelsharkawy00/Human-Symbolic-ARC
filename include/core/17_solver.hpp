@@ -5,11 +5,11 @@
 // process (kaggle_main.cpp) drives it and watches it through solver_observer.
 // Nothing in this folder may include anything from gui/.
 
-#include "13_environment.hpp"
-#include "14_puzzle_loader.hpp"
-#include "15_solver_log.hpp"
+#include "14_environment.hpp"
+#include "15_puzzle_loader.hpp"
+#include "16_solver_log.hpp"
 
-#include "11_text_format.hpp"
+#include "12_text_format.hpp"
 #include <string>
 #include <vector>
 
@@ -110,4 +110,4 @@ private:
 
 }
 
-#include "19_solver_executor.hpp"
+#include "18_solver_executor.hpp"

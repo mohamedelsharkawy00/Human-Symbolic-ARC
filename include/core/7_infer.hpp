@@ -14,7 +14,7 @@
 #include "3_background.hpp"
 #include "6_correspondence.hpp"
 #include "8_vocabulary.hpp"
-#include "8b_op_math.hpp"
+#include "9_op_math.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -423,7 +423,7 @@ struct hand_answers {
 // THE PIECES A WORD IS HANDED, as the cut's word hands them over, cut once per
 // pair and read by every replay below: where each lies, and whether the word's
 // pick takes it -- the questions the partner helpers ask (each_partner and kin,
-// 8b_op_math.hpp), asked here as the ops ask them of their objects, so a replay
+// 9_op_math.hpp), asked here as the ops ask them of their objects, so a replay
 // and the op it replays cannot find different partners or fits.
 struct partner_pieces {
     const vector<object>& pieces;
@@ -583,7 +583,7 @@ struct shape_color_map_rule : shape_table {
     vector<read_in_pair> read;
 
     // A SMALL KEY'S SHAPE NAMES THE COLOR THE LARGEST PIECE IS REPAINTED, AND
-    // THE KEY IS USED UP (009d5c81), said in three words (9_sentences.hpp): the
+    // THE KEY IS USED UP (009d5c81), said in three words (10_sentences.hpp): the
     // smallest piece takes the color its own shape names (ShapeColorMap), the
     // largest takes the color of its nearest piece, the key (ColorFrom), and the
     // smallest goes (DeleteSelection). The elected reading already says which
@@ -4585,7 +4585,7 @@ inline vector<cells> pieces_down(const replay_facts& facts) {
 // everywhere; under it only where nothing is, as Underlay paints; onto it only
 // where something is, as MaskBy[10] keeps; onto one color only where that color
 // is, as MaskBy of it keeps; and off one color everywhere else, as MaskOut of
-// it keeps (mask_keeps, 8b_op_math.hpp, what the ops keep).
+// it keeps (mask_keeps, 9_op_math.hpp, what the ops keep).
 inline bool lands(int8_t lay, int8_t down) {
     using rule = correspondence_election::fired_rule;
     if (lay == rule::laid_under) return down == (int8_t)TRANSPARENT;
@@ -5275,7 +5275,7 @@ static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
 // piece toward its one partner of the kind `value` % PARTNER_KINDS names -- each
 // way partner_by finds one, then each color -- by what `value` / PARTNER_KINDS
 // names: one step, its own size, or until it touches it (goes_toward,
-// move_toward in 8b_op_math.hpp, the move the op makes).
+// move_toward in 9_op_math.hpp, the move the op makes).
 inline optional<replayed> toward_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int value) {
     return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
         const grid& output = facts.train[which].output;
@@ -5296,7 +5296,7 @@ inline optional<replayed> move_holds(const replay_facts& facts, const vector<par
 }
 
 // A PICKED PIECE SLID TO THE EDGE OF THE GRID, replayed: that way, until its box
-// meets the edge (steps_to_edge, 8b_op_math.hpp, the walk MoveToEdge takes).
+// meets the edge (steps_to_edge, 9_op_math.hpp, the walk MoveToEdge takes).
 inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int move_direction) {
     const direction_step step = step_of(move_direction);
     return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
@@ -5308,7 +5308,7 @@ inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<
 }
 
 // A PICKED PIECE MOVED ITS OWN SIZE, replayed: the direction `move_direction` names
-// (shift_by, 8b_op_math.hpp, the step the op takes).
+// (shift_by, 9_op_math.hpp, the step the op takes).
 inline optional<replayed> shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int move_direction) {
     return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, direction_step& by) {
         by = shift_by(move_direction, cut.boxes[i].width(), cut.boxes[i].height());
@@ -5580,7 +5580,7 @@ inline optional<paint_walk> trail_walk(const replay_facts& facts, const vector<p
 // THE PICKED PIECES COPIED ONTO THE OTHERS, walked. CopyTo draws each picked
 // piece again onto every piece not picked, lined up the way `anchor` numbers
 // CopyTo's nine -- top, middle or bottom by left, middle or right,
-// aligned_copy_start (8b_op_math.hpp), the step the op takes -- each copied
+// aligned_copy_start (9_op_math.hpp), the step the op takes -- each copied
 // cell that lands on the grid (walk_paint), laid every way the line asks
 // (lay_paint). Picking none, or every piece, or more copies than a list holds,
 // it draws nothing.
@@ -5610,7 +5610,7 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
 }
 
 // A PIECE REPEATED, walked: each picked piece laid again where its Tile lays it
-// (each_tile_offset, 8b_op_math.hpp, the arithmetic the op runs), each step read
+// (each_tile_offset, 9_op_math.hpp, the arithmetic the op runs), each step read
 // off the pieces the pair's cut hands over, a copy one step of the piece where
 // a step is shorter (copy_size) -- walked (walk_paint) and laid every way the
 // line asks (lay_paint). A piece no step moves is drawn where it lies, as the
@@ -5650,7 +5650,7 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
 // EACH CELL THE RAYS OF A PAIR'S PICKED PIECES REACH on its output, `radius`
 // cells long, from the cell of each piece nearest its middle -- up, down and to
 // the sides, or along the diagonals (nearest_ray_seed and each_extended_ray,
-// 8b_op_math.hpp, the walk the op takes) -- handed to `visit(row, col, along)`,
+// 9_op_math.hpp, the walk the op takes) -- handed to `visit(row, col, along)`,
 // `along` cells out along its ray, in the order the op draws them.
 template <class Visit>
 inline void each_ray_cell(const replay_facts& facts, size_t which, const partner_pieces& cut, bool diagonal,

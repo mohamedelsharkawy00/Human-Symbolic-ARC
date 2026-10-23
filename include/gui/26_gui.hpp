@@ -1,10 +1,10 @@
 #pragma once
-#include "13_environment.hpp"
-#include "9_sentences.hpp"  // sentences_of: the pane says a program the way the log does
-#include "23_grid_buffer.hpp"
-#include "24_global_app_state.hpp"
-#include "26_vulkan_context.hpp"
-#include "27_sound_manager.hpp"
+#include "14_environment.hpp"
+#include "10_sentences.hpp"  // sentences_of: the pane says a program the way the log does
+#include "21_grid_buffer.hpp"
+#include "22_global_app_state.hpp"
+#include "24_vulkan_context.hpp"
+#include "25_sound_manager.hpp"
 
 #include <charconv>
 #include <cmath>
