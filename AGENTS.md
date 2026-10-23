@@ -89,6 +89,7 @@
 37. When a mechanism fights the problem, ask what a human does, then implement that order.
 38. Check the code first, always.
 39. Be very careful and precise in what the agent says, the user does NOT miss a word.
+   1. Read the user's words as exactly: a word means what it says ("all" is all). Where a default disagrees with the words, the words win; if unsure, ask.
 40. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing words block the unsolved puzzles).
 41. A change is good when no solved puzzle is lost and no new "explained but unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
 42. The rules above are a result of the user being lazy-smart.
