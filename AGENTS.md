@@ -52,6 +52,7 @@
 18. Treat cleanliness as production-class on this year-long project.
    1. Prefer the debt-free path.
    2. Clean up after adding anything, no obsolete files, no root clutter, tools in dedicated directories.
+   3. Clean as you go.
 19. Less code is better than more code.
    1. Prefer removal to addition, the best diff is a deletion.
    2. Every line must earn its keep, code that exists must justify itself.
