@@ -7,10 +7,10 @@
 #include <vector>
 
 // What a program's ops hand each other, and through it the op list.
-#include "13_dsl.hpp"
+#include "19_dsl.hpp"
 // The one door to everything below the engine: infer(), and through it the
 // core types (arc_color, grid, example, output_dimension_rule) and the limits.
-#include "7_infer.hpp"
+#include "13_infer.hpp"
 
 namespace arc {
 	using namespace std;
@@ -30,7 +30,7 @@ namespace arc {
 		x ^= x >> 31; return x;
 	}
 
-	// node_type and the NODE_PRIMITIVES op list live in 8_vocabulary.hpp (single home).
+	// node_type and the NODE_PRIMITIVES op list live in 14_vocabulary.hpp (single home).
 
 	inline constexpr const char* type_name[] = {
 	#define X(id, low, high, role, inferred, clears) #id,

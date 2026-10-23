@@ -1,8 +1,8 @@
 // THE OPS: what each op does to the list a program holds and to the canvas it
 // paints, run one after another on one example (environment::draw). What an op
-// shares with the reading's replay is 9_op_math.hpp's arithmetic, so the two
+// shares with the reading's replay is 15_op_math.hpp's arithmetic, so the two
 // cannot draw differently.
-#include "14_environment.hpp"
+#include "20_environment.hpp"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -189,7 +189,7 @@ void remap_picked(const object_list& from, object_list& res, Size size, Pixel pi
 // THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
 // paint fills on the canvas, whether it paints a cell there, whether it is
 // picked, its color and the colors it holds -- the questions the partner
-// helpers ask (each_partner and kin, 9_op_math.hpp), asked as inference's
+// helpers ask (each_partner and kin, 15_op_math.hpp), asked as inference's
 // partner_pieces asks them of the pieces it replays.
 struct partner_view {
     const object_list& list;
@@ -676,7 +676,7 @@ object_list& op_recolor(program_run& run, const object_list& from, int8_t color)
 // Bridge[way]: the pieces handed back as they came, unmarked, then every bar as
 // one drawing, marked, so what follows works on the bars. Which pieces pair up
 // (the picked ones alone), the way they reach, and where each bar lies is
-// 9_op_math.hpp's bridge_bars, which the reading replays too; this only lays
+// 15_op_math.hpp's bridge_bars, which the reading replays too; this only lays
 // the bars down, each cell to the first bar that crosses it. One drawing, so a
 // list that holds the pieces holds every bar too, however many gaps there are --
 // one per gap ran out of room (dbc1a6ce's test, 19 dots and 17 bars). It sits
@@ -716,7 +716,7 @@ object_list& op_bridge(program_run& run, const object_list& from, int8_t way) {
 // those, the pairs a key drawn in the grid names, the objects not picked read
 // along their rows [45] or their columns [46] -- 0becf7df's corner, a pair a
 // row, other colors in every grid. What it trades is swaps_of's to say
-// (9_op_math.hpp), the table inference replays, so the two cannot disagree.
+// (15_op_math.hpp), the table inference replays, so the two cannot disagree.
 // Self-inverse (a swap), so it expresses involutive recolor tasks where
 // Recolor/MapTo cannot: one node does a->b and b->a with identical program
 // behavior, surviving examples that need the swap in either direction (e.g.
@@ -753,7 +753,7 @@ object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t
 
 // ColorFrom[9], past the partner ways: each picked object takes the color a key
 // drawn in the grid -- the objects not picked -- shows at its place, the n-th
-// picked in reading order the key's n-th entry (key_place_colors, 9_op_math.hpp,
+// picked in reading order the key's n-th entry (key_place_colors, 15_op_math.hpp,
 // the walk inference replays).
 void paint_key_places(const object_list& from, object_list& res) {
     int8_t color[MAX_OBJECTS_IN_A_LIST], band[MAX_OBJECTS_IN_A_LIST];
@@ -773,7 +773,7 @@ void paint_key_places(const object_list& from, object_list& res) {
 // objects not picked -- the nearest, one in its rows or columns, the one around
 // it or inside it, one it touches, one of its shape as it lies or turned -- and
 // paints every cell it paints in it. The partner is found by partner_color
-// (9_op_math.hpp), the walk inference replays, so the two cannot disagree. An
+// (15_op_math.hpp), the walk inference replays, so the two cannot disagree. An
 // object with no partner, or partners that disagree, keeps its colors. Nothing
 // moves and nothing is dropped.
 object_list& op_color_from(program_run& run, const object_list& from, int8_t how) {
@@ -812,7 +812,7 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
 
 // WouldFit[how]: of the picked objects, only those that would fit into a gap of
 // their one partner among the objects not picked stay picked -- the partner by
-// `how`, as partner_of (9_op_math.hpp) finds it, and the fit as would_fit asks
+// `how`, as partner_of (15_op_math.hpp) finds it, and the fit as would_fit asks
 // it, turned or mirrored any way: the walk inference replays, so the two cannot
 // disagree. Every partner is read off the marks as they came in. Nothing moves
 // and nothing is painted; an object with no partner, or several, is not picked.
@@ -830,7 +830,7 @@ object_list& op_would_fit(program_run& run, const object_list& from, int8_t how)
 }
 
 // SelectLikeKey[how]: of the picked objects, only those like a piece of the key
-// -- every object not picked -- stay picked (like_the_key, 9_op_math.hpp), the
+// -- every object not picked -- stay picked (like_the_key, 15_op_math.hpp), the
 // question inference replays. Every likeness is read off the marks as they came in.
 object_list& op_select_like_key(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
@@ -843,7 +843,7 @@ object_list& op_select_like_key(program_run& run, const object_list& from, int8_
 
 // SelectPartner[value]: the pick moves onto every partner each picked object
 // has, among every object, by the way and on the side `value` names
-// (each_partner_picked, 9_op_math.hpp, which inference replays). Every
+// (each_partner_picked, 15_op_math.hpp, which inference replays). Every
 // partner is read off the marks as they came in; an object no picked one has
 // for a partner comes out unpicked.
 object_list& op_select_partner(program_run& run, const object_list& from, int8_t value) {
@@ -856,7 +856,7 @@ object_list& op_select_partner(program_run& run, const object_list& from, int8_t
 
 // SelectPartition[which]: the picked objects are walls, as Partition reads them,
 // and the pick becomes every object lying in the part `which` they fence off
-// (parts_the_pick_fences and lies_in_part, 9_op_math.hpp, which inference
+// (parts_the_pick_fences and lies_in_part, 15_op_math.hpp, which inference
 // replays), the parts numbered in reading order. The walls lie in no part, so
 // they come out unpicked. The canvas is the input's, as Partition's is.
 object_list& op_select_partition(program_run& run, const object_list& from, int which) {
@@ -874,7 +874,7 @@ object_list& op_select_partition(program_run& run, const object_list& from, int 
 // NEVER falls back to "all painted are walls". The walls come back first,
 // unmarked, so SelectPartition can still read them; then the parts they fence
 // off, whatever their shape, part after part in reading order
-// (each_fenced_part, 9_op_math.hpp, the parts SelectPartition picks by):
+// (each_fenced_part, 15_op_math.hpp, the parts SelectPartition picks by):
 // every other object clipped to the part, in the part's box -- severed where it
 // crosses into another, which is what partitioning means. Cut before the ground
 // is deleted, the ground comes back a part at a time: each part's room. A
@@ -907,7 +907,7 @@ object_list& op_partition(program_run& run, const object_list& from) {
 // AlignTo[value]: each picked object slides, down or across alone, until its
 // painted box starts on the row its one partner's does -- or, for values past
 // the first partner_by::count, the column. The partner is found among the
-// objects not picked by partner_of (9_op_math.hpp), the walk inference
+// objects not picked by partner_of (15_op_math.hpp), the walk inference
 // replays: value % count says how. Partners are never picked, so none of them
 // moves while the others read them. An object with no partner, or several,
 // stays where it is.
@@ -940,7 +940,7 @@ object_list& op_align_to(program_run& run, const object_list& from, int8_t value
 // objects not picked -- of the kind value % PARTNER_KINDS names, each way
 // partner_by finds one and then each color (partner_of_kind) -- by what value /
 // PARTNER_KINDS names: one step, its own size, or until it touches the partner
-// (move_toward, 9_op_math.hpp), the move inference replays. Partners are never
+// (move_toward, 15_op_math.hpp), the move inference replays. Partners are never
 // picked, so none of them moves while the others read them. An object with no
 // partner, or several, stays where it is.
 object_list& op_move_toward(program_run& run, const object_list& from, int8_t value) {
@@ -967,7 +967,7 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
 // MirrorAround[value]: each picked object is drawn again mirrored around the
 // middle of its one partner among the objects not picked -- left to right, top
 // to bottom, or all four ways at once, value / MIRROR_PARTNERS -- or, for the
-// last partner, around the middle of the grid itself. partner_of (9_op_math.hpp)
+// last partner, around the middle of the grid itself. partner_of (15_op_math.hpp)
 // finds the partner, the walk inference replays. The picked object stays; its
 // copies join the list after every object there was, picked as it is, as
 // CopyTo's are -- a sentence that picked every piece paints what it holds
@@ -1481,7 +1481,7 @@ object_list& op_delete_selection(program_run& run, const object_list& from) {
 // --- Translate, by itself ---
 
 // Shift[move_direction]: each picked object moves its own size away, the direction `move_direction`
-// names (shift_by, 9_op_math.hpp). No selection means Shift moves nothing.
+// names (shift_by, 15_op_math.hpp). No selection means Shift moves nothing.
 object_list& op_shift(program_run& run, const object_list& from, int8_t move_direction) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
@@ -1526,7 +1526,7 @@ object_list& op_move(program_run& run, const object_list& from, int16_t delta, b
 }
 
 // SlamRow / SlamColumn: each picked object's cells slide a step along its rows
-// or columns and pile at the wall (slam_cells, 9_op_math.hpp).
+// or columns and pile at the wall (slam_cells, 15_op_math.hpp).
 object_list& op_slam(program_run& run, const object_list& from, bool rows, int16_t step) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
@@ -1735,7 +1735,7 @@ object_list& op_pattern(program_run& run, const object_list& from) {
 }
 
 // VoteDenoise: noise-tolerant majority vote across repeating structure. The
-// arithmetic is vote_denoise_cells (9_op_math.hpp), shared with inference.
+// arithmetic is vote_denoise_cells (15_op_math.hpp), shared with inference.
 // No period on either axis -> object passes unchanged.
 object_list& op_vote_denoise(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
@@ -1787,7 +1787,7 @@ object_list& op_trim(program_run& run, const object_list& from) {
 }
 
 // Tile [steps, start, end, spread]: each picked piece laid again where its
-// Tile says (each_tile_offset, 9_op_math.hpp, the arithmetic the readings
+// Tile says (each_tile_offset, 15_op_math.hpp, the arithmetic the readings
 // replay), each step measured on this hand: the piece's own size and gaps,
 // and how many colors the picked pieces hold together (measures_of). A COPY
 // IS A PIECE, keeping the piece's mark, so a row of copies can be picked and
@@ -1939,7 +1939,7 @@ object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t m
 
 // ExtendTo PAST ITS EIGHT WAYS: every picked object grows in step with the
 // others along its track, lines or the open cells, until they meet --
-// grow_in_step, 9_op_math.hpp, the growth the reading replays -- and hands
+// grow_in_step, 15_op_math.hpp, the growth the reading replays -- and hands
 // back its body and every cell it took, in its first color, as a trail hands
 // back its body and its trail.
 object_list& op_grow_in_step(program_run& run, const object_list& from, grown_along track) {

@@ -63,7 +63,7 @@ Still unmeasured: inference's share of total solving time and the benefit of mov
 
 ## Later: one name for "takes an argument"
 
-`is_parameterized(type)` in `14_environment.hpp` only returns `is_annotated(type)`: two names for one question, whether an op's argument range holds more than one value. `18_solver_executor.hpp` asks it as `is_parameterized` (2 calls); `14_environment.hpp` and `26_gui.hpp` ask it as `is_annotated`. Keep one name, move the callers over, and delete the other. The range itself now comes from `row_of` in `8_vocabulary.hpp`, so the survivor could live there beside `takes_value`.
+`is_parameterized(type)` in `20_environment.hpp` only returns `is_annotated(type)`: two names for one question, whether an op's argument range holds more than one value. `24_solver_executor.hpp` asks it as `is_parameterized` (2 calls); `20_environment.hpp` and `32_gui.hpp` ask it as `is_annotated`. Keep one name, move the callers over, and delete the other. The range itself now comes from `row_of` in `14_vocabulary.hpp`, so the survivor could live there beside `takes_value`.
 
 ## Later: other issues seen while cleaning files 0-12
 
@@ -74,7 +74,7 @@ Duplication:
 - The puzzle-level fields (shape table, output colors by size, both backgrounds, size rule) are declared in three structs, `gpu_exec_context`, `cuda_dsl_example_data` and `gpu_example_template` in `cuda_solver.cu`, and copied field by field between them.
 - `gpu_object_summary` repeats `object_summary`. It stays separate only because the kernel keeps it in `__shared__` arrays, which cannot run `object_summary`'s default values.
 - `gpu_painted_box` repeats `cell_box`.
-- `14_environment.hpp` still builds its own `type_name` and `primitive_types` tables from `NODE_PRIMITIVES`.
+- `20_environment.hpp` still builds its own `type_name` and `primitive_types` tables from `NODE_PRIMITIVES`.
 - `paint_piece` and the stamping loop in `project_on_seeds_rule` are the same "paint an object at an offset" loop; one fails at the edge, the other clips.
 - `5_matching.hpp` walks a posed footprint onto the target grid in three separate loops: `landing_shows`, `landed_on_non_background`, and the chance-odds loop in `gather_matches`.
 

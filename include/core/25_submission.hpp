@@ -14,9 +14,9 @@
 //   - one list entry per test input, IN ORDER
 // A grid is a list-of-lists of ints 0-9.
 
-#include "14_environment.hpp"
-#include "15_puzzle_loader.hpp"   // a task's test inputs, for the line of a task that left nothing
-#include "16_solver_log.hpp"      // format_elapsed
+#include "20_environment.hpp"
+#include "21_puzzle_loader.hpp"   // a task's test inputs, for the line of a task that left nothing
+#include "22_solver_log.hpp"      // format_elapsed
 #include <fstream>
 #include <iterator>
 #include <optional>

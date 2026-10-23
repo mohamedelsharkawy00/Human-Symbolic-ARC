@@ -1,15 +1,15 @@
 #pragma once
 // Everything the GUI remembers between frames: what the person has switched
 // on, where the panes are, and the pictures it keeps of the solver's work.
-#include "14_environment.hpp"
-#include "16_solver_log.hpp"    // search_progress, format_elapsed
-#include "20_search_stream.hpp" // preview_payload
-#include "21_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
+#include "20_environment.hpp"
+#include "22_solver_log.hpp"    // search_progress, format_elapsed
+#include "26_search_stream.hpp" // preview_payload
+#include "27_grid_buffer.hpp"   // display-side grid layout: placement, display_grid, puzzle_views
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include "12_text_format.hpp"
+#include "18_text_format.hpp"
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -43,7 +43,7 @@ inline int settings_int(const unordered_map<string, string>& kv, const string& k
 }
 
 enum class logging_mode { none, stream };
-// op_role lives beside the op list in 8_vocabulary.hpp — it is what an op DOES. The
+// op_role lives beside the op list in 14_vocabulary.hpp — it is what an op DOES. The
 // op_tab_* actions below are clicks on the drawer tab that draws each role.
 enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
 // The same actions as words, in the same order: the command port's vocabulary.
@@ -211,7 +211,7 @@ struct global_app_state {
 	// mirrored from the solver so the GUI checkmarks can render their state.
 	atomic<int> dataset_flags{0};
 
-	// Benchmark mode: the switch, and what a run is asked for (29_benchmark.hpp).
+	// Benchmark mode: the switch, and what a run is asked for (35_benchmark.hpp).
 	atomic<bool> is_benchmarking{false};
 	int benchmark_puzzle_limit{10};
 

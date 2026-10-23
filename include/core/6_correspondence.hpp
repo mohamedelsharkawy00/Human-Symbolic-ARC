@@ -12,7 +12,7 @@
 // and choose the grouping and allowed changes that best explain them.
 #pragma once
 #include "5_matching.hpp"
-#include "8_vocabulary.hpp"
+#include "14_vocabulary.hpp"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -303,8 +303,8 @@ struct correspondence_election {
         // swap of the pair numbered `value`, or the word a learned table or the size
         // ranking picks; or one of the rules read off the cut's own pieces that is
         // the whole rest of its line; or a rule that stands alone and says a whole
-        // program of its own, the one numbered `value`. 7_infer groups the kinds by
-        // what they change (group_of); 10_sentences spells them.
+        // program of its own, the one numbered `value`. 12_line groups the kinds by
+        // what they change (group_of); 16_sentences spells them.
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
@@ -408,7 +408,7 @@ struct correspondence_election {
         }
         // THE CELLS THE LINE DRAWS WRONG that no cell left over stands for: a
         // word said where it brings every pair nearer its output, though it
-        // lays some cells wrong (brings_nearer, 7_infer), and none said after it
+        // lays some cells wrong (brings_nearer, 11_replays), and none said after it
         // set them right. Left unsaid, for the next pass to read on the picture.
         int drawn_wrong = 0;
         // What every rule together still leaves unexplained, on every pair: the

@@ -17,7 +17,7 @@
 //
 // What it is told, on stdin:
 //   infer | verbose 0|1 | import <program> | preview <hash> <program> | quit
-#include "17_solver.hpp"
+#include "23_solver.hpp"
 #include <chrono>
 #include <cstdio>
 #include <sstream>

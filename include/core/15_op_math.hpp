@@ -1,12 +1,13 @@
 // What each op does to the cells, said once. The op calls it (src/ops.cpp),
-// and the reading replays the op by calling the same (7_infer.hpp), so the two
-// cannot draw differently. A word's arithmetic goes here before the word is said.
-// Grouped as 8_vocabulary.hpp groups the ops: reduce, select, translate, map,
+// and the reading replays the op by calling the same (7_facts.hpp to
+// 13_infer.hpp), so the two cannot draw differently. A word's arithmetic goes
+// here before the word is said.
+// Grouped as 14_vocabulary.hpp groups the ops: reduce, select, translate, map,
 // generate, after what several of them share.
 #pragma once
 #include "1_readings.hpp"
 #include "3_background.hpp"  // mark_outside
-#include "8_vocabulary.hpp"  // color_pair, BidiColorMap's key values
+#include "14_vocabulary.hpp"  // color_pair, BidiColorMap's key values
 #include <algorithm>
 #include <bit>
 #include <cstdint>

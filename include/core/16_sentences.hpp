@@ -26,8 +26,8 @@
 // it holds. With that mended, any lattice of panes is one sentence.
 
 #pragma once
-#include "7_infer.hpp"
-#include "8_vocabulary.hpp"
+#include "13_infer.hpp"
+#include "14_vocabulary.hpp"
 #include <bit>
 #include <optional>
 #include <tuple>

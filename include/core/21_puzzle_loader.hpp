@@ -2,8 +2,8 @@
 // Puzzles in: the ARC JSON files, parsed into a puzzle and read by inference.
 // Core, so it knows nothing about how a puzzle is shown -- the GUI builds its
 // own pictures from the puzzle this hands back.
-#include "14_environment.hpp"   // pulls in 7_infer.hpp: arc::infer(train) -> inference
-#include "11_log.hpp" // the per-puzzle readout, written after infer()
+#include "20_environment.hpp"   // pulls in 13_infer.hpp: arc::infer(train) -> inference
+#include "17_log.hpp" // the per-puzzle readout, written after infer()
 
 #include <algorithm>
 #include <cctype>

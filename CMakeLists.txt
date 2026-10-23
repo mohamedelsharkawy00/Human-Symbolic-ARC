@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # WIN32_LEAN_AND_MEAN keeps windows.h from pulling in the old winsock.h, so
-# winsock2.h (30_command_server.hpp) no longer has to come before every windows.h.
+# winsock2.h (36_command_server.hpp) no longer has to come before every windows.h.
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32 WIN32_LEAN_AND_MEAN)
 
 # MSVC flags. /analyze is Release-only (slow in dev).

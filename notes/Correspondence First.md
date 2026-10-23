@@ -102,8 +102,9 @@ prioritize demonstrated gaps.
 
 - `include/core/5_matching.hpp`: matching permissions and correspondence edges.
 - `include/core/6_correspondence.hpp`: readings, evidence accounting, and election.
-- `include/core/7_infer.hpp`: standalone detectors and inference ordering.
-- `include/core/10_sentences.hpp`: expression of readings and early-return branches.
+- `include/core/9_rules.hpp`: standalone detectors.
+- `include/core/13_infer.hpp`: inference ordering.
+- `include/core/16_sentences.hpp`: expression of readings and early-return branches.
 
 Baseline after adding CopyTo: across the 1,000 training tasks, inference-generated
 programs fit 104 tasks' training examples and solve 103 held-out tests, with one

@@ -25,10 +25,11 @@ TOP_N = 80
 # --- Source files of interest for line-level breakdown ---
 HOT_SOURCE_FILES = {
     "1_readings.hpp", "3_background.hpp", "4_objects.hpp",
-    "5_matching.hpp", "6_correspondence.hpp", "7_infer.hpp", "9_op_math.hpp",
-    "10_sentences.hpp", "said.cpp",
+    "5_matching.hpp", "6_correspondence.hpp", "7_facts.hpp", "8_panes.hpp", "9_rules.hpp",
+    "10_picks_and_frames.hpp", "11_replays.hpp", "12_line.hpp", "13_infer.hpp", "15_op_math.hpp",
+    "16_sentences.hpp", "said.cpp",
     "ops.cpp",
-    "14_environment.hpp",
+    "20_environment.hpp",
 }
 
 # --- Category definitions ---

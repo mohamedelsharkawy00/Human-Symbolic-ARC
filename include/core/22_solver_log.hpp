@@ -3,11 +3,11 @@
 // read by, and the per-puzzle log file a person may read afterwards. Core, so
 // neither knows whether anybody is watching. Whoever builds the solver says
 // whether the log is written at all.
-#include "14_environment.hpp"
+#include "20_environment.hpp"
 #include <atomic>
 #include <chrono>
 #include <filesystem>
-#include "12_text_format.hpp"
+#include "18_text_format.hpp"
 #include <fstream>
 #include <mutex>
 #include <string>

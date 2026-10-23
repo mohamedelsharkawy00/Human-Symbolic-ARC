@@ -7,12 +7,12 @@
 // Its operators can find objects, move them, change their colors,
 // and draw the result.
 //
-// 8_vocabulary.hpp defines the operators; src/ops.cpp runs them
+// 14_vocabulary.hpp defines the operators; src/ops.cpp runs them
 // (environment::draw), on the objects defined here.
 #pragma once
 // MAX_OBJECTS_IN_A_LIST, and the vocabulary.
-#include "7_infer.hpp"
-#include "8_vocabulary.hpp"
+#include "7_facts.hpp"
+#include "14_vocabulary.hpp"
 #include <cstdint>
 
 namespace arc {

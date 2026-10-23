@@ -1,7 +1,7 @@
 #pragma once
 // THE BENCHMARK: every puzzle of the checked datasets, from the first, each
 // read in an arc_headless process of its own, like every puzzle the GUI shows
-// (28_solver_session.hpp). A solver that has worked through one puzzle carries
+// (34_solver_session.hpp). A solver that has worked through one puzzle carries
 // its memory into the next, and runs after the first went measurably worse
 // than the same puzzle run first in a clean process -- so no two puzzles of a
 // benchmark share one.
@@ -10,9 +10,9 @@
 // nothing until the run ends. Results go to benchmarks/benchmark_<time>.txt,
 // summary on top, and the predictions to kaggle/working/submission.json,
 // rewritten after every puzzle so a stopped run still leaves what it finished.
-#include "19_submission.hpp"
-#include "22_global_app_state.hpp"
-#include "28_solver_session.hpp"
+#include "25_submission.hpp"
+#include "28_global_app_state.hpp"
+#include "34_solver_session.hpp"
 
 #include <atomic>
 #include <chrono>

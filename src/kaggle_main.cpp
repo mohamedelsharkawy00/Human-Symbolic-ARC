@@ -34,7 +34,7 @@
 //
 //   arc_headless --task ID --datasets MASK --serve [--out FILE]
 //       One puzzle, watched: the reading streams on stdout and it takes
-//       commands on stdin (20_search_stream.hpp). Every puzzle the GUI shows is
+//       commands on stdin (26_search_stream.hpp). Every puzzle the GUI shows is
 //       one of these. Without --out it waits for "infer" and goes until told
 //       to quit or stdin closes; with it (a benchmark) it reads at once,
 //       writes FILE and stops. It also takes --logs (write logs/<id>.txt and
@@ -52,13 +52,13 @@
 #include <thread>
 #include <vector>
 // In number order, so the files are read in the order they are numbered.
-// 11_log is here for that alone: main calls nothing in it, but without it
-// 10_sentences and 11_log would be read late, when 15_puzzle_loader includes them.
-#include "11_log.hpp"
-#include "12_text_format.hpp"
-#include "17_solver.hpp"
-#include "19_submission.hpp"
-#include "20_search_stream.hpp"
+// 17_log is here for that alone: main calls nothing in it, but without it
+// 16_sentences and 17_log would be read late, when 21_puzzle_loader includes them.
+#include "17_log.hpp"
+#include "18_text_format.hpp"
+#include "23_solver.hpp"
+#include "25_submission.hpp"
+#include "26_search_stream.hpp"
 
 using namespace std;
 using namespace arc;
