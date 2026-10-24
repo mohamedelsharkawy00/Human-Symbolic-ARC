@@ -264,6 +264,32 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
     };
 
+    // Validate the derived sequence on a separate hand before saying any of it.
+    // The existing replays check each word; they do not choose its pick or value.
+    if (const auto words = size_changes_from_matches(facts, read); !words.empty()) {
+        replay_facts checked = facts;
+        vector<replayed> seen;
+        for (const rule& word : words) {
+            const auto handed = handed_pieces(checked, word.pick);
+            auto replay = word.as == rule::removed ? removal_holds(checked, handed)
+                : picked_recolor_holds(checked, handed, word.value);
+            if (!replay || !carry_the_hand(word, inf, checked)) break;
+            seen.push_back(std::move(*replay));
+        }
+        if (seen.size() == words.size())
+            for (size_t index = 0; index < words.size(); ++index) {
+                rule word = words[index];
+                word.pieces = seen[index].pieces;
+                const bool removes = word.as == rule::removed;
+                const cell_marks claimed(removes ? seen[index].left : seen[index].drawn);
+                carry(read.say_fired(std::move(word), removes ? -1 : colors,
+                    [removes, claimed](size_t which, const auto& cell) {
+                        return (removes ? cell.from_input : cell.answers_to(missing::a_recolor)) &&
+                            on_cells(claimed, which, cell.row, cell.col);
+                    }));
+            }
+    }
+
     // THE HOLLOWS FILLED BY SHAPE, a step of its own: it paints space the pieces
     // enclose, not the pieces, so it is no word for a recolor. Said where a replay
     // on the hand shows every fill it paints, and it accounts for those cells.
@@ -477,22 +503,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return [recolored = cell_marks(seen.drawn)](size_t which, const left_over_cell& cell) {
             return cell.answers_to(missing::a_recolor) && on_cells(recolored, which, cell.row, cell.col);
         };
-    };
-
-    // What changes a pick by color: a word on the line that moves, turns or
-    // recolors the pieces of that color, or turns another color into it.
-    auto changes = [](const rule& step, int color) {
-        switch (step.as) {
-            case rule::turn:
-            case rule::move_down:
-            case rule::move_across: return step.pick.may_take_color(color);
-            case rule::recolor:     return step.pick.may_take_color(color) || step.value == color;
-            case rule::swap_colors: {
-                const auto [first, second] = color_pair::from_index(step.value);
-                return first == color || second == color;
-            }
-            default:                return group_of(step.as) != word_group::paints;
-        }
     };
 
     // THE WORDS READ OFF THE PIECES, THE ONE THAT SAYS THE MOST FIRST. Each kind --
@@ -853,47 +863,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                               " pair them", colors)); } };
     };
 
-    // A PIECE REMOVED: every piece the pick takes is gone from every pair's output
-    // -- the pick, then DeleteSelection. A tie goes to every other kind first, so
-    // the line uses a piece as a partner before it goes. Where the hand could not
-    // be carried, a pick by color is asked only of colors nothing on the line
-    // changes; a pick by holes, size or band only where nothing on the line adds,
-    // removes or reshapes a piece, since either moves the pick; the pick of the
-    // color most cells wear only of a bare line, since any of them or a recolor
-    // can change which color that is. It accounts for the cells the removed pieces
-    // sat on.
+    // Paints are emitted after the hand, in this order, even when read first.
+    colors_by_pair painted(opened.cuts().size());
+    // Derive the whole removal group, describe it once, and verify that word.
     auto removal_word = [&]() -> offer {
-        uint16_t from = 0;
-        for (const auto& pair : read.pairs)
-            for (const auto& cell : pair.left_over)
-                if (cell.claimed_by < 0 && cell.from_input) from = (uint16_t)(from | 1u << cell.color);
-        if (!from) return {};
+        const auto pick = pick_for_removal(facts, pieces_to_remove(facts, painted));
+        if (!pick || already_said(rule::removed, *pick, 0)) return {};
+        const auto seen = removal_holds(facts, handed_pieces(facts, *pick), painted);
+        if (!seen) return {};
         heard best;
-        asked_piece_sets asked;
-        for (const piece_pick& pick : hand_picks.get(facts, from)) {
-            bool may = true;
-            if (facts.hand_known)
-                may = true;
-            else if (pick.how == piece_pick::most_common)
-                may = read.line.empty();
-            else if (!pick.by_color())
-                may = ranges::none_of(read.line, [&](int8_t which) {
-                    const auto group = group_of(read.fired[which].as);
-                    return group == word_group::changes_pieces || group == word_group::removes; });
-            else
-                for (int color = 0; color < COLOR_COUNT && may; ++color)
-                    may = !(pick.colors >> color & 1) ||
-                          ranges::none_of(read.line, [&](int8_t which) { return changes(read.fired[which], color); });
-            if (!may) continue;
-            if (already_said(rule::removed, pick, 0)) continue;
-            const auto handed = handed_pieces(facts, pick);
-            if (asked.before(handed)) continue;
-            const auto seen = removal_holds(facts, handed);
-            if (!seen || seen->every_piece) continue;
-            weigh(best, 0, pick, *seen, [gone = cell_marks(seen->left)](size_t which, const left_over_cell& cell) {
-                return cell.from_input && on_cells(gone, which, cell.row, cell.col);
-            });
-        }
+        weigh(best, 0, *pick, *seen, [gone = cell_marks(seen->left)](size_t which, const left_over_cell& cell) {
+            return cell.from_input && on_cells(gone, which, cell.row, cell.col);
+        });
         if (best.value < 0) return {};
         return { best.said, [&, best] { carry(say(best, rule::removed, "is removed", -1)); } };
     };
@@ -953,9 +934,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // asked only where it is known; laid over it, a paint needs nothing of it.
     // Laid again before every word is asked, and counted each time it changes.
     vector<cells> canvas(opened.cuts().size());
-    // WHAT THE PAINTS SAID LAY, in the order said: each cell in what it laid
-    // there, right or wrong.
-    colors_by_pair painted(opened.cuts().size());
     // How often it changed, and how often where something is; and its number
     // among every canvas a line on the cut laid (cut_paints).
     int canvases = 0, occupancies = 0, canvas_number = 0;

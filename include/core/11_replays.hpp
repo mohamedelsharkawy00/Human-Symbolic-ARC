@@ -746,6 +746,7 @@ inline optional<replayed> align_holds(const replay_facts& facts, const vector<pa
 static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
               "AlignTo takes rows then columns, each by every way partner_by finds a partner");
 
+
 // A PIECE THAT MOVES TOWARD ANOTHER, replayed. MoveToward moves every picked
 // piece toward its one partner of the kind `value` % PARTNER_KINDS names -- each
 // way partner_by finds one, then each color -- by what `value` / PARTNER_KINDS
@@ -816,6 +817,57 @@ inline vector<std::pair<int, int>> offsets_to_ask(const replay_facts& facts, con
     return offsets;
 }
 
+inline optional<int8_t> paint_at(const colors_by_pair& painted, size_t which, int row, int col) {
+    if (which < painted.size())
+        for (auto cell = painted[which].rbegin(); cell != painted[which].rend(); ++cell)
+            if (cell->row == row && cell->col == col) return cell->color;
+    return nullopt;
+}
+
+template <class Keeps>
+inline grid hand_after_drops(const replay_facts& facts, size_t which, Keeps keeps) {
+    const auto size = facts.canvas(which);
+    grid drawn(size.width, size.height);
+    const auto& pieces = facts.cuts()[which];
+    for (size_t index = 0; index < pieces.size(); ++index) {
+        object piece = pieces[index];
+        for (int row = 0; row < piece.summary.height; ++row)
+            for (int col = 0; col < piece.summary.width; ++col)
+                if (!keeps(index, row + piece.summary.row, col + piece.summary.col))
+                    piece.data[row][col] = (int8_t)TRANSPARENT;
+        paint_piece(drawn, piece, piece.summary.row, piece.summary.col, !facts.laid_under, true);
+    }
+    return drawn;
+}
+
+// Keep pieces contributing an answer cell. The rest can go only where those
+// contributors, followed by the separate paint, leave the required picture.
+inline vector<vector<bool>> pieces_to_remove(const replay_facts& facts, const colors_by_pair& painted) {
+    if (!facts.hand_known || !facts.overlays) return {};
+    vector<vector<bool>> removed;
+    for (size_t which = 0; which < facts.cuts().size(); ++which) {
+        const auto& pieces = facts.cuts()[which];
+        const auto& output = facts.train[which].output;
+        auto& one = removed.emplace_back(pieces.size(), true);
+        for (size_t index = 0; index < pieces.size(); ++index)
+            pieces[index].each_cell([&](int row, int col, int8_t color) {
+                if (!output.contains(row, col) ||
+                    (!paint_at(painted, which, row, col) && output.data[row][col] == color)) one[index] = false;
+            });
+        const grid kept = hand_after_drops(facts, which, [&](size_t index, int, int) { return !one[index]; });
+        for (size_t index = 0; index < pieces.size(); ++index) {
+            if (!one[index]) continue;
+            pieces[index].each_cell([&](int row, int col, int8_t) {
+                const auto above = paint_at(painted, which, row, col);
+                if (!output.contains(row, col) || (above ? *above : kept.data[row][col]) != output.data[row][col])
+                    one[index] = false;
+            });
+        }
+    }
+    return removed;
+}
+
+
 // PICKED PIECES THAT LOSE CELLS WHERE THEY LIE, replayed: what the removal's
 // and the outline's replays ask, once. Each picked piece keeps the cells
 // `keeps(cut, i, row, col)` names and loses the rest. A kept cell is right
@@ -828,7 +880,8 @@ inline vector<std::pair<int, int>> offsets_to_ask(const replay_facts& facts, con
 // keep (drawn) and lose (left), right, the ones wrong, and how many pieces lost
 // a cell that shows it.
 template <class Keeps>
-inline optional<replayed> drops_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Keeps keeps) {
+inline optional<replayed> drops_hold(const replay_facts& facts, const vector<partner_pieces>& handed, Keeps keeps,
+                                      const colors_by_pair& painted = {}) {
     ++inference_work.drop_replays;
     if (!facts.overlays || facts.train.empty()) return nullopt;
     replayed seen;
@@ -839,18 +892,23 @@ inline optional<replayed> drops_hold(const replay_facts& facts, const vector<par
         const example& pair = facts.train[which];
         const partner_pieces& cut = handed[which];
         seen.every_piece = seen.every_piece && cut.every_piece_picked();
-        auto still_there = [&](int i, int row, int col) {
-            for (int j = 0; j < cut.count(); ++j)
-                if (j != i && cut.painted(j, row, col) && (!cut.picked[j] || keeps(cut, j, row, col))) return true;
-            return false;
-        };
+        const grid before_picture = hand_after_drops(facts, which, [](size_t, int, int) { return true; });
+        const grid after_picture = hand_after_drops(facts, which, [&](size_t index, int row, int col) {
+            return !cut.picked[index] || keeps(cut, (int)index, row, col);
+        });
         const int before = seen.pieces;
         pair_tally tally;
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             bool changed = false;
             cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
+                if (!pair.output.contains(row, col)) { ++tally.wrong; return; }
                 const int8_t there = (int8_t)pair.output.data[row][col];
+                if (const auto above = paint_at(painted, which, row, col)) {
+                    if (!keeps(cut, i, row, col) && *above == there)
+                        seen.left[which].push_back({ row, col });
+                    return;
+                }
                 if (keeps(cut, i, row, col)) {
                     if (there == color) seen.drawn[which].push_back({ row, col });
                     else {
@@ -859,10 +917,10 @@ inline optional<replayed> drops_hold(const replay_facts& facts, const vector<par
                     }
                     return;
                 }
-                if (there == TRANSPARENT || still_there(i, row, col)) {
+                if (there == after_picture.data[row][col]) {
                     seen.left[which].push_back({ row, col });
-                    tally.gained += there != color;
-                    changed = changed || there != color;
+                    tally.gained += there != before_picture.data[row][col];
+                    changed = changed || there != before_picture.data[row][col];
                 } else {
                     ++tally.wrong;
                     seen.wrong[which].push_back({ (int8_t)row, (int8_t)col, (int8_t)TRANSPARENT });
@@ -880,8 +938,9 @@ inline optional<replayed> drops_hold(const replay_facts& facts, const vector<par
 // PICKED PIECES REMOVED, replayed. DeleteSelection takes the pieces a pick takes
 // out of the hand, so nothing paints them: they keep no cell (drops_hold), and
 // the cells they sat on are left.
-inline optional<replayed> removal_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
-    return drops_hold(facts, handed, [](const partner_pieces&, int, int, int) { return false; });
+inline optional<replayed> removal_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                       const colors_by_pair& painted = {}) {
+    return drops_hold(facts, handed, [](const partner_pieces&, int, int, int) { return false; }, painted);
 }
 
 // A PIECE HOLLOWED TO ITS EDGE, as Outline leaves it: the cells that have, among

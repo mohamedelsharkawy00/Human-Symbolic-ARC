@@ -492,38 +492,12 @@ inline inference infer(const vector<example>& train) {
         inference read;
         {
             const time_into clock{ inference_time.ms[inference_times::plain] };
-            read = read_plan(which, false);
+            read = read_plan(which, true);
         }
         read.plan = plan;
         note_read(which, read);
         return read;
     }).reading;
-    // THE PARTNER PICKS, A LAST RESORT (partner_picks): where the reading kept
-    // leaves cells unsaid, its plan read again, the same way, with every word,
-    // paint and frame asked with the partner picks too, and kept only where it
-    // leaves fewer. Not where it takes fewer passes: with more picks a line
-    // packs more into a pass by coincidence (62b74c02, f823c43c: every cell in
-    // fewer passes than the plain reading that solved them, and wrong on their
-    // tests). Asked with the rest in every reading, they said more at once in
-    // lines the other picks finish, and steered six solved puzzles wrong
-    // (22168020, 272f95fa, 62b74c02, 9344f635, a61f2674, f823c43c); asked only
-    // once a line had nothing else to say, they came after picks that left the
-    // line no way on (4364c1c4's bands, its first stack only).
-    // Asked too where the reading kept needs passes after its first, and kept
-    // where it says as much in fewer words, the plainer program (d90796e8's two
-    // words in one pass, where three passes said its pairs by luck).
-    if (const int left = cells_left_unsaid(best); left > 0 || passes_said(best) > 1) {
-        const int at = (int)(ranges::find(plans, best.plan) - plans.begin());
-        inference with;
-        {
-            const time_into clock{ inference_time.ms[inference_times::partners] };
-            with = read_plan(at, true);
-        }
-        with.plan = best.plan;
-        note_read(at, with);
-        const int with_left = cells_left_unsaid(with);
-        if (with_left < left || (with_left == left && words_said(with) < words_said(best))) best = std::move(with);
-    }
     best.ground_election = election;
     best.plans_read = std::move(plans_read);
     return best;

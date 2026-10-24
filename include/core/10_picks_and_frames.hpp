@@ -6,6 +6,7 @@
 #include <bit>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -371,6 +372,350 @@ inline bool same_colors_every_pair(const replay_facts& facts, uint16_t colors) {
         first = false;
     }
     return true;
+}
+
+// Index the hand's observed groups by their names. No action or output is
+// replayed here; the requested group is looked up after the facts are read.
+inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which,
+                                        const vector<bool>& wanted) {
+    const auto& pieces = facts.cuts()[which];
+    const size_t count = pieces.size();
+    using group = vector<bool>;
+    map<group, vector<piece_pick>> names;
+    vector<pair<piece_pick, group>> bases;
+    auto record = [&](piece_pick name, const group& members, bool base = true) {
+        if (ranges::find(members, true) == members.end()) return;
+        names[members].push_back(name);
+        if (base) bases.emplace_back(name, members);
+    };
+    auto both = [&](piece_pick name, group members) {
+        record(name, members);
+        members.flip();
+        name.but_those = true;
+        record(name, members);
+    };
+    auto classes = [&](int8_t how, const vector<int>& values, int low, int high) {
+        map<int, group> groups;
+        for (size_t index = 0; index < count; ++index) {
+            const int value = values[index];
+            if (value < low || value > high) continue;
+            groups.try_emplace(value, count, false).first->second[index] = true;
+        }
+        for (const auto& [value, members] : groups) both({0, how, (int8_t)value}, members);
+    };
+    vector<int> sizes, holes, runs;
+    map<int, group> colors;
+    color_tally worn;
+    for (size_t index = 0; index < count; ++index) {
+        const auto& piece = pieces[index];
+        sizes.push_back(piece.summary.count);
+        holes.push_back(count_of((int)count_kind::holes, piece.summary.height, piece.summary.width,
+            [&](int row, int col) { return (int)piece.data[row][col]; }));
+        runs.push_back((int)way_it_runs(piece.summary.height, piece.summary.width,
+            [&](int row, int col) { return piece.data[row][col] != TRANSPARENT; }));
+        piece.each_cell([&](int, int, int8_t color) {
+            worn.add(color);
+            colors.try_emplace(color, count, false).first->second[index] = true;
+        });
+    }
+    record(piece_pick::all(), group(count, true));
+    for (const auto& [color, members] : colors) both(piece_pick::of_color(color), members);
+    const auto hole_range = row_of(node_type::SelectObjectsWithHoles);
+    classes(piece_pick::by_holes, holes, hole_range.low, hole_range.high);
+    for (const bool largest : {true, false}) {
+        vector<size_t> order;
+        for (size_t index = 0; index < count; ++index) order.push_back(index);
+        ranges::stable_sort(order, [&](size_t one, size_t other) {
+            return largest ? sizes[one] > sizes[other] : sizes[one] < sizes[other];
+        });
+        group prefix(count, false);
+        bool untied = true;
+        for (size_t rank = 0; rank < count; ++rank) {
+            prefix[order[rank]] = true;
+            const bool boundary = rank + 1 == count || sizes[order[rank]] != sizes[order[rank + 1]];
+            untied = untied && boundary;
+            if (untied && rank < SIZE_RANKS) {
+                group single(count, false);
+                single[order[rank]] = true;
+                both({0, largest ? piece_pick::largest : piece_pick::smallest, (int8_t)rank}, single);
+            }
+            if (boundary && rank + 1 < count && rank < SIZE_RANKS)
+                both({0, largest ? piece_pick::largest_ranks : piece_pick::smallest_ranks,
+                      (int8_t)(rank + 1)}, prefix);
+        }
+    }
+    for (const bool rows : {true, false}) {
+        vector<int8_t> bands(count);
+        bands_of((int)count, rows, [&](int index) { return pieces[(size_t)index].summary.box(); }, bands.data());
+        classes(rows ? piece_pick::row_band : piece_pick::column_band,
+                vector<int>(bands.begin(), bands.end()), 0, MAX_GRID_DIM - 1);
+        map<int, group> lines;
+        for (size_t index = 0; index < count; ++index)
+            pieces[index].each_cell([&](int row, int col, int8_t) {
+                lines.try_emplace(rows ? row : col, count, false).first->second[index] = true;
+            });
+        if (!lines.empty()) {
+            const int middle = line_from_middle(lines.begin()->first, lines.rbegin()->first, 0);
+            if (middle >= 0)
+                for (const auto& [line, members] : lines) {
+                    const int offset = line - middle;
+                    const auto limits = row_of(node_type::SelectRowFromMiddle);
+                    if (offset >= limits.low && offset <= limits.high)
+                        both({0, rows ? piece_pick::middle_row : piece_pick::middle_column, (int8_t)offset}, members);
+                }
+        }
+    }
+    if (const auto most = colors.find(worn.most()); most != colors.end())
+        both({0, piece_pick::most_common}, most->second);
+    const auto cell_range = row_of(node_type::SelectAtLeastCells);
+    for (int boundary = cell_range.low; boundary <= cell_range.high; ++boundary) {
+        group larger(count, false);
+        for (size_t index = 0; index < count; ++index) larger[index] = sizes[index] >= boundary;
+        if (ranges::find(larger, false) != larger.end())
+            both({0, piece_pick::at_least_cells, (int8_t)boundary}, larger);
+    }
+    // Room numbers come from the walls, not from a sweep over possible numbers.
+    for (const auto& [color, members] : colors) {
+        const partner_pieces walls(pieces, members, facts.answers_of(which));
+        int16_t rooms[MAX_GRID_DIM][MAX_GRID_DIM];
+        const auto canvas = facts.canvas(which);
+        if (parts_the_pick_fences(walls, canvas.width, canvas.height, rooms) < 2) continue;
+        vector<int> room_of(count, -1);
+        for (size_t index = 0; index < count; ++index) {
+            int room = -1;
+            pieces[index].each_cell([&](int row, int col, int8_t) {
+                if (room < 0 && row >= 0 && col >= 0 && row < canvas.height && col < canvas.width)
+                    room = rooms[row][col];
+            });
+            if (room >= 0 && lies_in_part(walls, (int)index, room, rooms)) room_of[index] = room;
+        }
+        map<int, group> groups;
+        for (size_t index = 0; index < count; ++index)
+            if (room_of[index] >= 0 && room_of[index] <= row_of(node_type::SelectPartition).high)
+                groups.try_emplace(room_of[index], count, false).first->second[index] = true;
+        for (const auto& [room, group_in_room] : groups) {
+            auto name = piece_pick::of_color(color);
+            name.part = (int8_t)room;
+            both(name, group_in_room);
+        }
+    }
+    for (int kind = 0; kind < (int)twin_by::count; ++kind)
+        both({0, piece_pick::only_one, (int8_t)kind}, picked_pieces(pieces, piece_pick::only_one, kind));
+    for (int kind = 0; kind < (int)count_kind::count; ++kind) {
+        vector<int> counts;
+        for (const auto& piece : pieces)
+            counts.push_back(count_of(kind, piece.summary.height, piece.summary.width,
+                [&](int row, int col) { return (int)piece.data[row][col]; }));
+        for (const bool most : {true, false}) {
+            group members(count, false);
+            each_extreme((int)count, most, [&](int index) { return counts[(size_t)index]; },
+                [&](int index) { members[(size_t)index] = true; });
+            both({0, most ? piece_pick::largest : piece_pick::smallest, (int8_t)(SIZE_RANKS + kind)}, members);
+        }
+    }
+    classes(piece_pick::running_along, runs, 0, (int)runs_along::count - 1);
+    // A named group can leave a key; shape likeness reads its relation to it.
+    for (const auto& [base, members] : bases) {
+        if (!base.but_those) continue;
+        const partner_pieces key(pieces, members, facts.answers_of(which));
+        for (int like = 0; like < KEY_LIKENESSES; ++like) {
+            group alike(count, false);
+            for (size_t index = 0; index < count; ++index)
+                alike[index] = members[index] && like_the_key(like, (int)index, key);
+            auto name = base;
+            name.like = (int8_t)like;
+            record(name, alike, false);
+        }
+    }
+    for (const auto& [color, members] : colors) {
+        const partner_pieces places(pieces, members, facts.answers_of(which));
+        for (int way = 0; way < (int)partner_by::count; ++way) {
+            group fits(count, false);
+            for (size_t index = 0; index < count; ++index)
+                fits[index] = members[index] && places.fits((partner_by)way, (int)index);
+            auto name = piece_pick::of_color(color);
+            name.fits = (int8_t)way;
+            record(name, fits, false);
+        }
+    }
+    // Each relation is read once, then filed under its source colors and sides.
+    const partner_pieces every(pieces, group(count, true), facts.answers_of(which));
+    for (int way = 0; way < (int)partner_by::count; ++way) {
+        map<pair<int, int>, group> related;
+        for (int source = 0; source < (int)count; ++source)
+            each_partner((partner_by)way, source, every, [&](int other) {
+                for (int color = -1; color < COLOR_COUNT; ++color) {
+                    if (color >= 0 && !(palette(pieces[(size_t)source]) >> color & 1)) continue;
+                    related.try_emplace(pair{color, -1}, count, false).first->second[(size_t)other] = true;
+                    for (int side = 0; side < direction::count; ++side)
+                        if (lies_toward(every.box(source), every.box(other), side))
+                            related.try_emplace(pair{color, side}, count, false).first->second[(size_t)other] = true;
+                }
+            }, true);
+        for (const auto& [relation, members] : related) {
+            const auto [color, side] = relation;
+            auto name = color < 0 ? piece_pick::all() : piece_pick::of_color(color);
+            name.partner = (int8_t)((side + 1) * (int)partner_by::count + way);
+            record(name, members, false);
+            name.but_those = true;
+            group rest = members;
+            rest.flip();
+            record(name, rest, false);
+        }
+    }
+    const auto found = names.find(wanted);
+    return found == names.end() ? vector<piece_pick>{} : found->second;
+}
+
+// Name the complete observed group, then require the same name in every pair.
+inline optional<piece_pick> pick_for_removal(const replay_facts& facts,
+                                          const vector<vector<bool>>& removed) {
+    if (removed.size() != facts.cuts().size() || removed.empty()) return nullopt;
+    uint16_t shared_colors = 0;
+    bool stable_colors = true, all_removed = true;
+    int smallest_removed = MAX_GRID_CELLS + 1, largest_removed = 0;
+    int smallest_kept = MAX_GRID_CELLS + 1, largest_kept = 0;
+    for (size_t which = 0; which < removed.size(); ++which) {
+        const auto& pieces = facts.cuts()[which];
+        if (removed[which].size() != pieces.size()) return nullopt;
+        uint16_t gone_colors = 0, kept_colors = 0;
+        bool some_removed = false, some_kept = false;
+        for (size_t index = 0; index < pieces.size(); ++index) {
+            const int count = pieces[index].summary.count;
+            if (removed[which][index]) {
+                some_removed = true;
+                gone_colors = (uint16_t)(gone_colors | palette(pieces[index]));
+                smallest_removed = min(smallest_removed, count);
+                largest_removed = max(largest_removed, count);
+            } else {
+                some_kept = true;
+                kept_colors = (uint16_t)(kept_colors | palette(pieces[index]));
+                smallest_kept = min(smallest_kept, count);
+                largest_kept = max(largest_kept, count);
+            }
+        }
+        if (!some_removed) return nullopt;
+        all_removed = all_removed && !some_kept;
+        if (which == 0) shared_colors = gone_colors;
+        stable_colors = stable_colors && gone_colors == shared_colors && !(gone_colors & kept_colors);
+    }
+    if (all_removed) return piece_pick::all();
+    if (stable_colors) return piece_pick{shared_colors};
+    const auto cells = row_of(node_type::SelectAtLeastCells);
+    const int above_kept = max((int)cells.low, largest_kept + 1);
+    const int above_removed = max((int)cells.low, largest_removed + 1);
+    if (above_kept <= smallest_removed && above_kept <= cells.high)
+        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_kept};
+    if (above_removed <= smallest_kept && above_removed <= cells.high)
+        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_removed, -1, true};
+    auto names = names_of_group(facts, 0, removed[0]);
+    for (size_t which = 1; which < removed.size() && !names.empty(); ++which) {
+        const auto here = names_of_group(facts, which, removed[which]);
+        std::erase_if(names, [&](const piece_pick& name) { return ranges::find(here, name) == here.end(); });
+    }
+    return names.empty() ? nullopt : optional<piece_pick>{names.front()};
+}
+
+// Stationary matches name the recolored pieces before any selector is run.
+// A unique size rank names each group; colors left only on removed pieces
+// name the removal after the recolors. No alternative program is tried.
+inline vector<correspondence_election::fired_rule> size_changes_from_matches(
+        const replay_facts& facts, const correspondence_election::reading& read) {
+    using rule = correspondence_election::fired_rule;
+    if (!facts.overlays || facts.cuts().empty() || !read.line.empty() ||
+        facts.cuts().size() != read.pairs.size()) return {};
+    struct ranks { int larger = -1, smaller = -1; };
+    map<int, ranks> shared;
+    uint16_t removed_colors = 0;
+    for (size_t which = 0; which < facts.cuts().size(); ++which) {
+        const auto& pieces = facts.cuts()[which];
+        const auto& pair = read.pairs[which];
+        const auto& output = facts.train[which].output;
+        if (pieces.size() != pair.input_info.size()) return {};
+        map<int, ranks> here;
+        uint16_t gone_colors = 0, kept_colors = 0;
+        grid drawn(output.width, output.height);
+        for (size_t piece_index = 0; piece_index < pieces.size(); ++piece_index) {
+            const auto& piece = pieces[piece_index];
+            const auto& box = piece.summary;
+            const auto& matched = pair.input_info[piece_index].summary;
+            if (box.row != matched.row || box.col != matched.col || box.count != matched.count ||
+                box.width != matched.width || box.height != matched.height) return {};
+            int target = COLOR_COUNT;
+            bool uniform = true, changed = false;
+            piece.each_cell([&](int row, int col, int8_t color) {
+                const int after = output.data[row][col];
+                if (target == COLOR_COUNT) target = after;
+                uniform = uniform && target == after;
+                changed = changed || color != after;
+            });
+            if (!uniform || target == COLOR_COUNT) return {};
+            bool carried = false;
+            for (const auto& link : pair.edges) {
+                if (pair.input_piece_of(link) != (int)piece_index) continue;
+                if (!is_color(target)) return {};
+                if (!link.from_input) continue;
+                if (!link.same_shape || link.scale != 1 || link.pose != 0 ||
+                    link.row != box.row || link.col != box.col) return {};
+                carried = true;
+            }
+            if (!is_color(target)) {
+                gone_colors = (uint16_t)(gone_colors | palette(piece));
+                continue;
+            }
+            if (!carried) return {};
+            kept_colors = (uint16_t)(kept_colors | (1u << target));
+            piece.each_cell([&](int row, int col, int8_t) { drawn.data[row][col] = (int8_t)target; });
+            if (!changed) continue;
+            if (here.contains(target)) return {};
+            ranks position{0, 0};
+            for (size_t other = 0; other < pieces.size(); ++other) {
+                if (other == piece_index) continue;
+                const int count = pieces[other].summary.count;
+                if (count == box.count) return {};
+                position.larger += count > box.count;
+                position.smaller += count < box.count;
+            }
+            here.emplace(target, position);
+        }
+        if (drawn != output || (gone_colors & kept_colors) != 0) return {};
+        if (which == 0) { shared = here; removed_colors = gone_colors; }
+        else {
+            if (gone_colors != removed_colors || here.size() != shared.size()) return {};
+            for (auto& [color, position] : shared) {
+                const auto found = here.find(color);
+                if (found == here.end()) return {};
+                if (position.larger != found->second.larger) position.larger = -1;
+                if (position.smaller != found->second.smaller) position.smaller = -1;
+            }
+        }
+    }
+    vector<rule> words;
+    for (const auto& [color, position] : shared) {
+        const bool largest = position.larger >= 0 &&
+            (position.smaller < 0 || position.larger <= position.smaller);
+        const int rank = largest ? position.larger : position.smaller;
+        if (rank < 0 || rank >= SIZE_RANKS) return {};
+        rule word;
+        word.name = string(largest ? "Largest " : "Smallest ") + to_string(rank);
+        word.says = "becomes " + to_string(color);
+        word.as = rule::recolor_picked;
+        word.pick = {0, largest ? piece_pick::largest : piece_pick::smallest, (int8_t)rank};
+        word.value = (int8_t)color;
+        words.push_back(std::move(word));
+    }
+    if (words.empty()) return {};
+    if (removed_colors) {
+        rule word;
+        word.name = "Colors";
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            if (removed_colors >> color & 1) word.name += " " + to_string(color);
+        word.says = "is removed";
+        word.as = rule::removed;
+        word.pick = {removed_colors};
+        words.push_back(std::move(word));
+    }
+    return words;
 }
 
 // THE PARTNERS OF A PICK (SelectPartner): of every piece, and of each color
