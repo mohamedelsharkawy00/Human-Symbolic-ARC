@@ -1730,37 +1730,47 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
     }
 }
 
-// Extend's seed and rays are shared by inference and execution. Ties go to
-// the first cell in row-major order; the seed itself is not part of the rays.
-// Each ray cell is handed over as its offset from the seed, down and across,
-// so whoever paints it clips it to what it paints on: a long ray runs on to the
-// edge of the grid, not to the end of some frame of its own.
-struct ray_seed { int row = -1, col = -1; };
+// WHERE A PIECE GROWS ITS RAYS, shared by inference and execution: the middle
+// of its box, whether a cell of the piece lies there or not -- a hollow
+// square's lines cross at its middle (41e4d17e) -- in the color of its cell
+// nearest that middle, ties going to the first in row-major order. None for a
+// piece with no cell. Each ray cell is handed over as its offset from the
+// middle, down and across, so whoever paints it clips it to what it paints on:
+// a long ray runs on to the edge of the grid, not to the end of some frame of
+// its own.
+struct ray_seed { int row = -1, col = -1; int8_t color = TRANSPARENT; bool middle_empty = false; };
 
 template <class Cell>
-inline ray_seed nearest_ray_seed(int height, int width,
-                                 int center_row, int center_col, Cell cell) {
+inline ray_seed ray_seed_of(int height, int width, Cell cell) {
     ray_seed seed;
+    const int middle_row = (height - 1) / 2, middle_col = (width - 1) / 2;
     int best = MAX_GRID_CELLS;
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
             if (cell(row, col) == TRANSPARENT) continue;
-            const int dr = row - center_row, dc = col - center_col;
+            const int dr = row - middle_row, dc = col - middle_col;
             const int distance = (dr < 0 ? -dr : dr) + (dc < 0 ? -dc : dc);
-            if (distance < best) { best = distance; seed = { row, col }; }
+            if (distance < best) { best = distance; seed.color = (int8_t)cell(row, col); }
         }
+    if (!is_color(seed.color)) return seed;
+    seed.row = middle_row;
+    seed.col = middle_col;
+    seed.middle_empty = cell(middle_row, middle_col) == TRANSPARENT;
     return seed;
 }
 
 // The rays run the four sides of the compass, its even directions, or the four
-// diagonals, its odd ones (direction, 1_readings.hpp).
+// diagonals, its odd ones (direction, 1_readings.hpp), each cell handed to
+// `paint(down, across, along)`, `along` steps out. The middle is drawn with the
+// first step where the piece leaves it empty; where the piece lies there, it is
+// not part of the rays.
 template <class Paint>
-inline void each_extended_ray(ray_seed seed, int radius, bool diagonal,
-                                               Paint paint) {
-    if (seed.row < 0) return;
+inline void each_extended_ray(ray_seed seed, int radius, bool diagonal, Paint paint) {
+    if (seed.row < 0 || radius < 1) return;
+    if (seed.middle_empty) paint(0, 0, 1);
     for (int ray_direction = diagonal ? 1 : 0; ray_direction < direction::count; ray_direction += 2) {
         const direction_step step = step_of(ray_direction);
-        for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along);
+        for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along, along);
     }
 }
 

@@ -72,17 +72,14 @@ inline int words_said(const inference& read) {
 }
 
 // THE CANDIDATE WHOSE WORDS SAY THE MOST: each one read in the order given, and
-// the one whose reading leaves the fewest cells unsaid kept -- of those, the
-// one said in the fewest passes, the plainer saying: bdad9b1f's two lines and
-// their crossing, said in one, where five passes of mirrored copies drew its
-// pairs by coincidence -- a tie going to the one read first. So once one
-// leaves none with no pass after its own, no later one is read. Every choice
+// the one whose reading leaves the fewest cells unsaid kept, a tie going to the
+// one read first. So once one leaves none, no later one is read. Every choice
 // the reading makes is made here and judged this one way, by its words: the
-// ground plan and whether a word may lay cells wrong (infer), the cut
-// (read_figures), each asked just above the first word that reads it; the
-// passes are read once a cut is chosen, so a cut is judged by its line alone.
-// Whatever orders the candidates only breaks a tie. Hands back the one kept,
-// where it stood, and the cells each one left unsaid, -1 for one never read.
+// ground plan (infer), the cut (read_figures), each asked just above the first
+// word that reads it; the passes are read once a cut is chosen, so a cut is
+// judged by its line alone. Whatever orders the candidates only breaks a tie.
+// Hands back the one kept, where it stood, and the cells each one left unsaid,
+// -1 for one never read.
 struct said_most {
     inference reading;
     int kept = -1;
@@ -92,18 +89,14 @@ template <class Read>
 inline said_most says_the_most(int count, Read read) {
     said_most most;
     most.left.assign((size_t)count, -1);
-    int kept_passes = 0;
     for (int i = 0; i < count; ++i) {
         inference one = read(i);
         most.left[i] = cells_left_unsaid(one);
-        const int passes = passes_said(one);
-        if (most.kept < 0 || most.left[i] < most.left[most.kept] ||
-            (most.left[i] == most.left[most.kept] && passes < kept_passes)) {
+        if (most.kept < 0 || most.left[i] < most.left[most.kept]) {
             most.reading = std::move(one);
             most.kept = i;
-            kept_passes = passes;
         }
-        if (most.left[most.kept] == 0 && kept_passes <= most.reading.pass) break;
+        if (most.left[most.kept] == 0) break;
     }
     return most;
 }
@@ -153,8 +146,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // is nothing (where a plan deleted the ground, what it fills last). What reads
 // no cut is asked once; what reads one is asked of each cut the words weigh.
 // `pass` is which pass this reading is, and once its cut is chosen the rest of
-// the change is read on the picture its line draws (read_the_rest); `tolerant`
-// whether its words may lay cells wrong (inference::tolerant).
+// the change is read on the picture its line draws (read_the_rest).
 inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles) {
     const time_into clock{ inference_time.ms[inference_times::preparing] };
     const auto started = preparation_audit ? std::chrono::steady_clock::now()
@@ -221,11 +213,10 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
 // The facts and matching belong to the figures, before any word changes them.
 // Each reading takes its own copy; its claims, frames and later pictures stay its own.
 inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles, int8_t pass,
-                              bool tolerant, bool partners, inference inf, figure_readings& readings) {
+                              bool partners, inference inf, figure_readings& readings) {
     ++inference_work.readings;
     inference_work.later_readings += pass > 1;
     inf.pass = pass;
-    inf.tolerant = tolerant;
     inf.partners = partners;
     // THE CUT IS CHOSEN HERE, just above the first word that reads it: each cut
     // in the matching's order is read to the end of its line, and the one whose
@@ -256,7 +247,7 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
 }
 
 inline shared_ptr<const inference> read_with_ground(const vector<example>& train, const tiled_pieces& tiles,
-        int8_t pass, bool tolerant, bool partners, figure_readings& readings,
+        int8_t pass, bool partners, figure_readings& readings,
         optional<inference>* prepared = nullptr, const ground_plan& plan = {},
         const vector<int8_t>& elected = {}) {
     string key = figures_key(train, tiles);
@@ -268,7 +259,6 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     key.push_back((char)elected.size());
     for (const int8_t color : elected) key.push_back((char)color);
     key.push_back((char)pass);
-    key.push_back((char)tolerant);
     key.push_back((char)partners);
     if (const auto found = readings.completed.find(key); found != readings.completed.end())
         return found->second;
@@ -286,7 +276,7 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
         facts->elected_backgrounds = grounds;
         for (const example& pair : train) facts->before_ground.push_back(pair.input);
     }
-    auto read = make_shared<const inference>(read_figures(figures, figure_tiles, pass, tolerant, partners,
+    auto read = make_shared<const inference>(read_figures(figures, figure_tiles, pass, partners,
         prepared ? *facts : std::move(*facts), readings));
     readings.keep(std::move(key), read);
     return read;
@@ -320,7 +310,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
     if (!drew) return;
     // A paint is still a figure on the next pass, even if it now fills most
     // of the picture. Keep the chosen ground rather than electing it again.
-    inf.rest = read_with_ground(rest, {}, (int8_t)(inf.pass + 1), inf.tolerant, inf.partners, readings,
+    inf.rest = read_with_ground(rest, {}, (int8_t)(inf.pass + 1), inf.partners, readings,
         nullptr, ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds);
     inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
@@ -466,7 +456,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
             // Split before Tile: each copy keeps the original input's boundaries.
             const tiled_pieces copies = inf.frame.kind == kind::tiled
                 ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
-            inf.framed = read_with_ground(framed, copies, 1, inf.tolerant, inf.partners, readings);
+            inf.framed = read_with_ground(framed, copies, 1, inf.partners, readings);
         }
     }
 }
@@ -480,16 +470,10 @@ inline inference infer(const vector<example>& train) {
     figure_readings readings;
     const background_election election = elect_background(train);
     const vector<ground_plan> plans = ground_plans(election);
-    // EVERY PLAN READ WITH WORDS THAT LAY NO CELL WRONG FIRST, then with words
-    // that may (inference::tolerant), so a reading that lays one wrong is kept
-    // only where it leaves fewer cells unsaid, its passes and all: a word that
-    // lays cells wrong can say so much that it is said first and crowds out
-    // the words that would have said every cell (332efdb3's grid, every cell 1
-    // at once and its holes wrong, where rays laid it right).
     const int count = 1;
     vector<optional<inference>> prepared((size_t)count);
-    auto read_plan = [&](int at, bool tolerant, bool partners) {
-        return *read_with_ground(train, {}, 1, tolerant, partners, readings, &prepared[(size_t)at], plans[(size_t)at]);
+    auto read_plan = [&](int at, bool partners) {
+        return *read_with_ground(train, {}, 1, partners, readings, &prepared[(size_t)at], plans[(size_t)at]);
     };
     vector<inference::plan_read> plans_read;
     // Each plan read, as the readout shows it: the words its line said.
@@ -501,31 +485,30 @@ inline inference infer(const vector<example>& train) {
                 words += (words.empty() ? "" : " | ") + string(line.fired[said].name) +
                          (line.fired[said].says.empty() ? "" : " " + line.fired[said].says);
         }
-        plans_read.push_back({ plan, read.tolerant, cells_left_unsaid(read), passes_said(read), words, read.partners });
+        plans_read.push_back({ plan, cells_left_unsaid(read), passes_said(read), words, read.partners });
     };
-    inference best = says_the_most(2 * count, [&](int which) {
-        const ground_plan& plan = plans[(size_t)(which % count)];
+    inference best = says_the_most(count, [&](int which) {
+        const ground_plan& plan = plans[(size_t)which];
         inference read;
         {
-            const time_into clock{ inference_time.ms[which >= count ? inference_times::tolerant : inference_times::strict] };
-            read = read_plan(which % count, which >= count, false);
+            const time_into clock{ inference_time.ms[inference_times::plain] };
+            read = read_plan(which, false);
         }
         read.plan = plan;
-        note_read(which % count, read);
+        note_read(which, read);
         return read;
     }).reading;
     // THE PARTNER PICKS, A LAST RESORT (partner_picks): where the reading kept
     // leaves cells unsaid, its plan read again, the same way, with every word,
     // paint and frame asked with the partner picks too, and kept only where it
-    // leaves fewer. Not says_the_most's tie on passes: that weighs readings of
-    // the same picks, and with more picks a line packs more into a pass by
-    // coincidence (62b74c02, f823c43c: every cell in fewer passes than the
-    // plain reading that solved them, and wrong on their tests). Asked with the
-    // rest in every reading, they said more at once in lines the other picks
-    // finish, and steered six solved puzzles wrong (22168020, 272f95fa,
-    // 62b74c02, 9344f635, a61f2674, f823c43c); asked only once a line had
-    // nothing else to say, they came after picks that left the line no way on
-    // (4364c1c4's bands, its first stack only).
+    // leaves fewer. Not where it takes fewer passes: with more picks a line
+    // packs more into a pass by coincidence (62b74c02, f823c43c: every cell in
+    // fewer passes than the plain reading that solved them, and wrong on their
+    // tests). Asked with the rest in every reading, they said more at once in
+    // lines the other picks finish, and steered six solved puzzles wrong
+    // (22168020, 272f95fa, 62b74c02, 9344f635, a61f2674, f823c43c); asked only
+    // once a line had nothing else to say, they came after picks that left the
+    // line no way on (4364c1c4's bands, its first stack only).
     // Asked too where the reading kept needs passes after its first, and kept
     // where it says as much in fewer words, the plainer program (d90796e8's two
     // words in one pass, where three passes said its pairs by luck).
@@ -534,7 +517,7 @@ inline inference infer(const vector<example>& train) {
         inference with;
         {
             const time_into clock{ inference_time.ms[inference_times::partners] };
-            with = read_plan(at, best.tolerant, true);
+            with = read_plan(at, true);
         }
         with.plan = best.plan;
         note_read(at, with);

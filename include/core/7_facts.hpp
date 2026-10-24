@@ -43,11 +43,11 @@ inline thread_local inference_work_counts inference_work;
 // milliseconds by reading, by stage, and by each kind of word and paint a line
 // asks, in finish_the_line's order. Nested: a reading holds its stages.
 struct inference_times {
-    static constexpr const char* names[] = { "strict", "tolerant", "partners", "preparing",
+    static constexpr const char* names[] = { "plain", "partners", "preparing",
         "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
         "recolor", "shape", "key", "removal", "ray", "trail", "copy", "repeat", "turned", "bar",
         "fill", "box", "room", "symmetry", "picture" };
-    enum at { strict, tolerant, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
+    enum at { plain, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
     double ms[size(names)] = {};
 };
 inline thread_local inference_times inference_time;
@@ -506,17 +506,16 @@ struct partner_pieces {
         if (count) key_place_colors(*this, color.data(), lows.data(), highs.data(), band.data(), order.data());
         return color;
     }
-    // THE CELL EACH PIECE GROWS ITS RAYS FROM, in its own box (nearest_ray_seed,
-    // the cell the op takes): found the first time a replay asks and kept, for
-    // every length and lay the rays are asked with.
+    // WHERE EACH PIECE GROWS ITS RAYS, in its own box (ray_seed_of, where the
+    // op grows them): found the first time a replay asks and kept, for every
+    // length and lay the rays are asked with.
     const vector<ray_seed>& ray_seeds() const {
         if (!seeds_once) {
             auto made = std::make_shared<vector<ray_seed>>(pieces.size());
             for (size_t i = 0; i < pieces.size(); ++i) {
                 const object& piece = pieces[i];
-                (*made)[i] = nearest_ray_seed(piece.summary.height, piece.summary.width, (piece.summary.height - 1) / 2,
-                                              (piece.summary.width - 1) / 2,
-                                              [&](int row, int col) { return piece.data[row][col]; });
+                (*made)[i] = ray_seed_of(piece.summary.height, piece.summary.width,
+                                         [&](int row, int col) { return piece.data[row][col]; });
             }
             seeds_once = std::move(made);
         }

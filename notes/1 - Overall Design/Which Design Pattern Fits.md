@@ -67,7 +67,7 @@ Status: suggested, not agreed as work, not started.
 | Null object | a harmless empty stand-in instead of nothing | `no_table` in `environment::draw`; the empty puzzle `solver::get_puzzle` hands back |
 | Singleton | one instance, reached from anywhere | `sound_manager::get()` |
 | Memoization | keep an answer, never work it out twice | `figure_readings`, `replayed_once`, `laid_once`, the GUI's `preview_cache` |
-| Generate and test | try every candidate, keep the best | `says_the_most`: strict or tolerant, each cut, each opening, each tried on its own copy of the reading. The search the searchless work aims to remove |
+| Generate and test | try every candidate, keep the best | `says_the_most`: each cut, each opening, each tried on its own copy of the reading. The search the searchless work aims to remove |
 | Process per task (bulkhead) | each job walled off, so a failure stays put | one `arc_headless` process per puzzle (README section 5) |
 | Immediate-mode GUI | redraw everything from the state every frame | `draw_frame` draws each frame from `global_app_state`; the click zones are rebuilt every frame |
 

@@ -232,7 +232,8 @@ struct replay_facts {
     bool laid_under = false;
     // Whether a word may lay cells wrong where it brings every pair nearer
     // (brings_nearer): only on a line that draws its picture, so the next pass
-    // can read the cells it left wrong. Off everywhere else.
+    // can read the cells it left wrong, and only once no word that lays none
+    // says anything (finish_the_line). Off everywhere else.
     bool tolerant = false;
     // The pieces a named cut hands over, rather than the elected one.
     replay_facts(const vector<example>& pairs, segmentation_methods cut,

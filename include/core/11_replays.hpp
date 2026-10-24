@@ -8,7 +8,6 @@
 #include <bitset>
 #include <cstdint>
 #include <cstring>
-#include <numeric>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -608,46 +607,43 @@ inline optional<replayed> picked_recolor_holds(const replay_facts& facts, const 
     });
 }
 
+// ONE PAIR'S HAND AS SizeRankColorMap'S SENTENCE RANKS IT (beats_of): where the
+// cut takes every cell of one color as one piece, each split into its connected
+// pieces first (Split [0]), then biggest first, ties keeping that order
+// (SortBySize [0]). The n-th piece takes the palette's n-th color.
+inline vector<object> ranked_by_size(const vector<object>& hand, const grid& input, segmentation_methods cut) {
+    vector<object> ranked;
+    if (cut != segmentation_methods::all_cells_of_one_color) ranked = hand;
+    else
+        for (const object& piece : hand) {
+            grid layer(input.width, input.height);
+            paint_piece(layer, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
+            object_walk_scratch scratch;
+            each_object(layer, -1, grouping::touching_any_color, scratch,
+                        [&](const object_summary& box, const int16_t* cells, int count) {
+                ranked.push_back(object::from_cells(layer, box, cells, count));
+            });
+        }
+    stable_sort(ranked.begin(), ranked.end(), [](const object& one, const object& other) {
+        return one.summary.count > other.summary.count; });
+    return ranked;
+}
+
 // SIZE RANK, replayed. SizeRankColorMap takes the pieces as the line hands them
-// over -- a layer of one color split into its connected pieces first -- sorts
-// them biggest first, ties keeping that order, and paints the first the
-// output's most common color, the next the next, and the rest the ground: a
-// recolor of every piece (recolors_hold).
+// over, ranked (ranked_by_size), and paints the first the output's most common
+// color, the next the next, and the rest the ground: a recolor of every piece
+// (recolors_hold).
 inline optional<replayed> size_rank_holds(const replay_facts& facts, const color_facts& palette,
                                           segmentation_methods cut) {
     if (palette.output_colors_by_size_count <= 0) return nullopt;
     replay_facts ranked = facts;
-    if (cut == segmentation_methods::all_cells_of_one_color)
-        for (size_t which = 0; which < ranked.cuts().size(); ++which) {
-            const grid& input = ranked.train[which].input;
-            vector<object> split;
-            for (const object& piece : ranked.cuts()[which]) {
-                grid layer(input.width, input.height);
-                paint_piece(layer, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
-                object_walk_scratch scratch;
-                each_object(layer, -1, grouping::touching_any_color, scratch,
-                            [&](const object_summary& box, const int16_t* cells, int count) {
-                    split.push_back(object::from_cells(layer, box, cells, count));
-                });
-            }
-            ranked.change(which).hand = std::move(split);
-        }
-    // Each piece's place in the order, pair by pair.
-    vector<vector<int>> places;
-    for (const vector<object>& hand : ranked.cuts()) {
-        vector<int> order(hand.size());
-        iota(order.begin(), order.end(), 0);
-        stable_sort(order.begin(), order.end(), [&](int one, int other) {
-            return hand[one].summary.count > hand[other].summary.count; });
-        vector<int> place(hand.size());
-        for (size_t rank = 0; rank < order.size(); ++rank) place[order[rank]] = (int)rank;
-        places.push_back(std::move(place));
+    for (size_t which = 0; which < ranked.cuts().size(); ++which) {
+        vector<object> pieces = ranked_by_size(ranked.cuts()[which], ranked.train[which].input, cut);
+        ranked.change(which).hand = std::move(pieces);
     }
     return recolors_hold(ranked, handed_pieces(ranked, piece_pick::all()),
-                         [&](size_t which, const partner_pieces&, int i, int8_t& color) {
-        const int rank = places[which][i];
-        color = rank < palette.output_colors_by_size_count ? palette.output_colors_by_size[rank]
-                                                           : (int8_t)TRANSPARENT;
+                         [&](size_t, const partner_pieces&, int i, int8_t& color) {
+        color = i < palette.output_colors_by_size_count ? palette.output_colors_by_size[i] : (int8_t)TRANSPARENT;
         return true;
     });
 }
@@ -1127,10 +1123,10 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
 }
 
 // EACH CELL THE RAYS OF A PAIR'S PICKED PIECES REACH on its output, `radius`
-// cells long, from the cell of each piece nearest its middle -- up, down and to
-// the sides, or along the diagonals (nearest_ray_seed and each_extended_ray,
+// cells long, from the middle of each piece's box -- up, down and to the
+// sides, or along the diagonals (ray_seed_of and each_extended_ray,
 // 15_op_math.hpp, the walk the op takes) -- handed to `visit(row, col, along)`,
-// `along` cells out along its ray, in the order the op draws them.
+// `along` steps out along its ray, in the order the op draws them.
 template <class Visit>
 inline void each_ray_cell(const replay_facts& facts, size_t which, const partner_pieces& cut, bool diagonal,
                           int radius, Visit visit) {
@@ -1140,16 +1136,16 @@ inline void each_ray_cell(const replay_facts& facts, size_t which, const partner
         if (!cut.picked[i]) continue;
         const auto& box = cut.pieces[i].summary;
         const ray_seed seed = seeds[(size_t)i];
-        each_extended_ray(seed, radius, diagonal, [&](int down, int across) {
+        each_extended_ray(seed, radius, diagonal, [&](int down, int across, int along) {
             const int row = box.row + seed.row + down, col = box.col + seed.col + across;
-            if (output.contains(row, col)) visit(row, col, max(abs(down), abs(across)));
+            if (output.contains(row, col)) visit(row, col, along);
         });
     }
 }
 
-// RAYS GROWN OFF A PIECE, walked. Extend grows rays from the cell of each
-// picked piece nearest its middle, `radius` cells long, in that cell's color
-// (each_ray_cell; walk_paint), and the line may paint them over in one color of
+// RAYS GROWN OFF A PIECE, walked. Extend grows rays from the middle of each
+// picked piece's box, `radius` cells long, in the color of its cell nearest
+// that middle (each_ray_cell; walk_paint), and the line may paint them over in one color of
 // its own: laid every way the line asks, in one color (lay_paint), which it
 // sees too.
 inline optional<paint_walk> rays_walk(const replay_facts& facts, const vector<partner_pieces>& handed, bool diagonal,
@@ -1701,11 +1697,27 @@ inline optional<replayed> interior_fills_hold(const replay_facts& facts, const s
 // stand and what they wear. Carried here pair by pair, one word at a time, with
 // the arithmetic its op runs -- the pick read off the hand as it is, each
 // partner found before any piece is touched, copies joining the end of the list.
-// False for a word the hand cannot be carried through yet -- a table learned off
-// the pairs, the size rank -- after which the words below are asked the way
-// they were before the hand was carried.
-inline bool carry_the_hand(const correspondence_election::fired_rule& rule, replay_facts& facts) {
+// A word that reads a table off the pairs is one stage more: the puzzle's shape
+// table and its palette by size are the reading's (inference). False for
+// anything else, after which the words below are asked the way they were
+// before the hand was carried.
+inline bool carry_the_hand(const correspondence_election::fired_rule& rule, const inference& inf,
+                           replay_facts& facts) {
     using said = correspondence_election::fired_rule;
+    const shape_color_map_rule& table = inf.shape_color_map;
+    // A KEY'S SHAPE NAMING THE FIGURE'S COLOR, carried as beats_of says it, in
+    // three words: the key, the smallest, takes the color its own shape names;
+    // the figure, the largest, its nearest piece's, the key's; and the key goes.
+    if (rule.as == said::learned_table && table.claimed_by == shape_color_map_rule::body_recolor) {
+        said key = listed("", "", said::shape_recolor, (int8_t)shape_key::shape);
+        key.pick = { 0, piece_pick::smallest, 0 };
+        said figure = listed("", "", said::color_from, (int8_t)partner_by::nearest);
+        figure.pick = { 0, piece_pick::largest, 0 };
+        said gone = listed("", "", said::removed);
+        gone.pick = key.pick;
+        return carry_the_hand(key, inf, facts) && carry_the_hand(figure, inf, facts) &&
+               carry_the_hand(gone, inf, facts);
+    }
     const piece_pick& pick = rule.pick;
     auto recolored = [](object& piece, int color) { piece.repaint([&](int8_t) { return color; }); };
     auto moved = [](object& piece, int down, int across) {
@@ -1824,6 +1836,39 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, repl
             for (size_t i = 0; i < hand.size(); ++i)
                 if (picked[i]) hand[i] = outlined(hand[i]);
             break;
+        case said::shape_recolor:
+            // Each picked piece wholly in the color its key names, a key the
+            // table names no color for leaving it as it was (ShapeColorMap).
+            for (size_t i = 0; i < hand.size(); ++i)
+                if (picked[i])
+                    if (const int color = table.color_of((shape_key)rule.value, hand[i]); color >= 0)
+                        recolored(hand[i], color);
+            break;
+        case said::learned_table:
+            // THE HOLLOWS FILLED BY SHAPE (ShapeToInteriorColorMap, every piece
+            // picked): each piece's hollows (each_hollow) in the color its shape
+            // names, a shape the table names no color for left as it was.
+            if (table.claimed_by != shape_color_map_rule::interior_fill) return false;
+            for (object& piece : hand) {
+                const int fill = table.color_of(shape_key::shape, piece);
+                if (fill < 0) continue;
+                vector<std::pair<int, int>> hollows;
+                each_hollow(piece, [&](int row, int col) { hollows.push_back({ row, col }); });
+                for (const auto& [row, col] : hollows)
+                    piece.data[row - piece.summary.row][col - piece.summary.col] = (int8_t)fill;
+                piece.summary.count = (int16_t)(piece.summary.count + (int)hollows.size());
+            }
+            break;
+        case said::size_rank: {
+            // Ranked (ranked_by_size), the n-th in the palette's n-th color, and
+            // every piece past the palette gone (SizeRankColorMap).
+            const color_facts& palette = inf.colors;
+            vector<object> ranked = ranked_by_size(hand, pair.input, inf.correspondence.segmentation);
+            ranked.resize(min(ranked.size(), (size_t)max(palette.output_colors_by_size_count, 0)));
+            for (size_t i = 0; i < ranked.size(); ++i) recolored(ranked[i], palette.output_colors_by_size[i]);
+            hand = std::move(ranked);
+            break;
+        }
         case said::mirror_around: {
             const partner_pieces cut = facts.handed(which, pick);
             const auto mirror = (mirror_by)(rule.value / MIRROR_PARTNERS);

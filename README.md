@@ -25,7 +25,7 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 2. Score and readouts, one run: `scripts\said.bat [--as <label>] [--solved [label]] [id...]` builds arc_said and reads every training puzzle, or the ids named, into `out\x64-Release\`, or `out\<label>\` when a run is named to compare.
 3. What it writes: `said.txt`, a line per puzzle whose program fits the training pairs (id, SOLVED or WRONG, program); `tally.txt`, the counts, also on screen; and `logs\inference\<id>.txt`, each puzzle's readout (background, readings, fired rules, sentences).
 4. A label is a new name, never a build folder (x64-Release), which readouts.py takes for the unnamed run; a full run writes about 225 MB, so delete old labels.
-5. It reads a puzzle on every CPU thread and takes 6 to 10 minutes on the 20-thread laptop, by how warm it is (344 s cold, 581 s warm, 2026-10-20), most of it the readings whose words may lay cells wrong (it was 255 s before them, and 30 s before the passes after the first).
+5. It reads a puzzle on every CPU thread and takes 3 to 10 minutes on the 20-thread laptop, by how warm it is and what the reading asks (383 s on 2026-10-24, 344 s cold and 581 s warm on 2026-10-20).
 6. `ARC_THREADS=1` reads one at a time (the profiler does, under the label `profile`).
 7. `ARC_DATASET=eval` reads the evaluation set instead (training by default).
 8. Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"` shows what it drew beside what was wanted, pair by pair; `--test` after the program also shows each test, whether it fits the pairs or not.

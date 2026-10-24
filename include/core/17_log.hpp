@@ -596,16 +596,13 @@ inline void log_inference(const string& id, const inference& inf,
     };
     const vector<ground_plan> plans = ground_plans(inf.ground_election);
     for (const ground_plan& plan : plans) report << "  |" << (plan == inf.plan ? "*" : " ") << plan_said(plan);
-    // Kept with words that may lay cells wrong (inference::tolerant), and with
-    // the partner picks (inference::partners).
-    if (inf.tolerant) report << "  | words lay cells wrong";
+    // Kept with the partner picks (inference::partners).
     if (inf.partners) report << "  | with the partner picks";
     report << "\n";
     // Each plan read, in order, until one said every cell with no pass after it.
     report << "[plans read] in order, the first to say the most kept\n";
     for (const auto& read : inf.plans_read)
         report << "  " << ((size_t)read.plan < plans.size() ? plan_said(plans[(size_t)read.plan]) : string("?"))
-               << (read.tolerant ? ", words may lay cells wrong" : "")
                << (read.partners ? ", with the partner picks" : "") << ": " << read.left << " unsaid, "
                << read.passes << (read.passes == 1 ? " pass" : " passes")
                << (read.words.empty() ? string() : ": " + read.words) << "\n";

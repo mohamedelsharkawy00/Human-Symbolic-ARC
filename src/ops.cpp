@@ -1877,20 +1877,18 @@ object_list& op_fractal(program_run& run, const object_list& from) {
     return res;
 }
 
-// For each picked object: find the cell nearest its middle (nearest_ray_seed),
-// draw rays for `radius` steps in the four directions from `diagonal`'s set
-// (each_extended_ray) in that cell's color. The rays only, one object per input.
+// For each picked object: rays for `radius` steps in the four directions from
+// `diagonal`'s set, grown from the middle of its box (ray_seed_of,
+// each_extended_ray), in the color of its cell nearest that middle. The rays
+// only, one object per input.
 object_list& op_extend_rays(program_run& run, const object_list& from, int8_t radius, bool diagonal) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
         if (!one.selected) { res.objects[res.count++] = one; continue; }
-        const auto seed = nearest_ray_seed(one.height, one.width,
-            (one.y0 + one.y1) / 2 - one.y0, (one.x0 + one.x1) / 2 - one.x0,
-            [&](int row, int col) { return one.mask[row][col]; });
+        const auto seed = ray_seed_of(one.height, one.width, [&](int row, int col) { return one.mask[row][col]; });
         if (seed.row < 0) continue;
-        const int8_t seed_color = one.mask[seed.row][seed.col];
         // The object's box grown by radius on every side, clipped to the canvas:
         // a ray that runs past the edge would never be painted there anyway, and
         // a frame no wider than the canvas holds every ray that shows -- one
@@ -1906,13 +1904,13 @@ object_list& op_extend_rays(program_run& run, const object_list& from, int8_t ra
         rays.x1 = (int16_t)x1; rays.y1 = (int16_t)y1;
         rays.width = (int16_t)(x1 - x0 + 1); rays.height = (int16_t)(y1 - y0 + 1);
         rays.mask.clear();
-        // RAYS ONLY: the seed's own cells are not copied, so a caller that
-        // wants them re-stamps them (a Union). A one-cell seed gives only its
+        // RAYS ONLY: the piece's own cells are not copied, so a caller that
+        // wants them re-stamps them (a Union). A one-cell piece gives only its
         // arms, and radius 0 gives nothing.
         const int seed_row = one.y0 + seed.row - y0, seed_col = one.x0 + seed.col - x0;
-        each_extended_ray(seed, radius, diagonal, [&](int down, int across) {
+        each_extended_ray(seed, radius, diagonal, [&](int down, int across, int) {
             const int row = seed_row + down, col = seed_col + across;
-            if (row >= 0 && row < rays.height && col >= 0 && col < rays.width) rays.mask[row][col] = seed_color;
+            if (row >= 0 && row < rays.height && col >= 0 && col < rays.width) rays.mask[row][col] = seed.color;
         });
     }
     return res;

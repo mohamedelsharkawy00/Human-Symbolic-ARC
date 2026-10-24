@@ -312,10 +312,9 @@ struct ray_extension_rule {
                 object.data[row - box.row][col - box.col] = color;
                 if (how.stamp_body) { ink.data[row][col] = color; drew = true; }
             }
-            const auto seed = nearest_ray_seed(box.height, box.width, (box.height - 1) / 2, (box.width - 1) / 2,
-                [&](int row, int col) { return object.data[row][col]; });
+            const auto seed = ray_seed_of(box.height, box.width, [&](int row, int col) { return object.data[row][col]; });
             each_extended_ray(seed, how.radius, how.ray_kind == Diagonal,
-                [&](int down, int across) {
+                [&](int down, int across, int) {
                     const int row = box.row + seed.row + down, col = box.col + seed.col + across;
                     if (ink.contains(row, col)) { ink.data[row][col] = color; drew = true; }
                 });
@@ -1694,11 +1693,6 @@ struct inference {
     // WHICH PASS THIS READING IS (read_the_rest): the first reads the input,
     // and each pass after it the picture the passes before it drew.
     int8_t pass = 1;
-    // WHETHER ITS WORDS MAY LAY CELLS WRONG, each where it brings every pair
-    // nearer its output, for the passes after it to set right (brings_nearer):
-    // a choice infer makes, every reading that lays none read first. Its
-    // passes and its framed reading read the same way.
-    bool tolerant = false;
     // WHETHER ITS WORDS AND PAINTS ARE ASKED WITH THE PARTNER PICKS too
     // (partner_picks): a last resort infer takes only where no reading
     // without them says every cell. Its passes and its framed reading read
@@ -1725,11 +1719,11 @@ struct inference {
     vector<int8_t> elected_backgrounds;
     background_election ground_election;
     // EACH PLAN READ, in the order infer reads them (says_the_most): which plan,
-    // with words that may lay cells wrong or not, the cells it left unsaid, the
-    // passes it took, and the words its line said -- the readout's [plans
-    // read], which shows why one plan was kept over another (a61f2674's lost
-    // line was found this way).
-    struct plan_read { int plan = 0; bool tolerant = false; int left = 0, passes = 0; string words; bool partners = false; };
+    // the cells it left unsaid, the passes it took, the words its line said,
+    // and whether with the partner picks -- the readout's [plans read], which
+    // shows why one plan was kept over another (a61f2674's lost line was found
+    // this way).
+    struct plan_read { int plan = 0; int left = 0, passes = 0; string words; bool partners = false; };
     vector<plan_read> plans_read;
 };
 

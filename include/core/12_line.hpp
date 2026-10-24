@@ -50,8 +50,9 @@ inline constexpr word_group group_of(correspondence_election::fired_rule::said_a
         case rule::recolor: case rule::swap_colors: case rule::size_rank:
         case rule::color_from: case rule::recolor_picked: case rule::shape_recolor: case rule::key_swap:
             return word_group::recolors;
-        // Acts: pieces move, turn, change shape, or gain copies. Learned-table
-        // compositions keep the old gate: their hand cannot yet be carried.
+        // Acts: pieces move, turn, change shape, or gain copies -- the learned
+        // tables too: the fill by shape adds each piece's hollows, and the key
+        // whose shape names the figure's color goes.
         case rule::turn: case rule::move_down: case rule::move_across:
         case rule::learned_table: case rule::align_to: case rule::mirror_around:
         case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
@@ -254,13 +255,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     picks_on_hand hand_picks;
     facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
     for (const int8_t which : read.line)
-        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], facts);
+        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
     // Carries the hand through a word just said on the line. Once it cannot,
-    // the line no longer draws its picture, and no word after lays a cell wrong.
+    // the line no longer draws its picture, and no word after lays a cell wrong
+    // (the sure words first, below).
     auto carry = [&](int8_t which) {
         hand_picks.clear();
-        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], facts);
-        facts.tolerant = facts.tolerant && facts.hand_known;
+        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
     };
 
     // THE HOLLOWS FILLED BY SHAPE, a step of its own: it paints space the pieces
@@ -1726,9 +1727,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         frozen = frozen || reads_what_is_down(read.fired[read.line.back()]);
         picture_read = picture_read || read.fired[read.line.back()].on_the_picture;
     };
-    // A word may lay cells wrong, where the reading lets it, while the line
-    // draws its picture (brings_nearer).
-    facts.tolerant = inf.tolerant && facts.hand_known && facts.overlays;
     // THE PARTNER PICKS, where the reading asks them (inference::partners):
     // every word and every paint is asked with them too.
     if (inf.partners) {
@@ -1736,7 +1734,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         asked_now.insert(asked_now.end(), paints.asked_partner_picks.begin(), paints.asked_partner_picks.end());
     }
     while (true) {
-        opened.tolerant = facts.tolerant;
         lay_the_canvas();
         ranges::fill(paint_colors, (uint16_t)0);
         for (size_t which = 0; which < read.pairs.size(); ++which) {
@@ -1757,28 +1754,43 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         offer best;
         int best_worth = 0, best_unlocks = 0;
         size_t chosen = 0;
-        for (size_t kind = 0; kind < size(kinds); ++kind) {
-            if ((!kinds[kind].paint && (words[kind] >= rounds || picture_read)) ||
-                (frozen && kinds[kind].changes_pieces) || (one_change && kinds[kind].paint && hand_said()))
-                continue;
-            offer one;
-            {
-                const time_into offer_clock{ inference_time.ms[inference_times::first_kind + kind] };
-                one = kinds[kind].offers();
+        // THE SURE WORDS FIRST: every kind is asked with words that lay no cell
+        // wrong, and only where none says anything, again with words that may,
+        // where the line draws its picture (brings_nearer). Asked together, a
+        // word that lays cells wrong said so much that it went first and
+        // crowded out the exact words (f0df5ff0's 1s grown every way until they
+        // meet, over its rays one cell long); never asked, a change painted
+        // whole and its exception set right after could not be said
+        // (516b51b7's blocks, filled inside in 2, the rings within set right
+        // by the passes after).
+        for (const bool lays_wrong : { false, true }) {
+            facts.tolerant = lays_wrong && facts.hand_known && facts.overlays;
+            if (lays_wrong && !facts.tolerant) break;
+            opened.tolerant = facts.tolerant;
+            for (size_t kind = 0; kind < size(kinds); ++kind) {
+                if ((!kinds[kind].paint && (words[kind] >= rounds || picture_read)) ||
+                    (frozen && kinds[kind].changes_pieces) || (one_change && kinds[kind].paint && hand_said()))
+                    continue;
+                offer one;
+                {
+                    const time_into offer_clock{ inference_time.ms[inference_times::first_kind + kind] };
+                    one = kinds[kind].offers();
+                }
+                const bool may_unlock = read_ahead && one.said > 0 && !one.drawn.empty() &&
+                                        one.said + recolors_left > best_worth;
+                int unlocks = 0;
+                if (may_unlock) {
+                    const time_into ahead_clock{ inference_time.ms[inference_times::reading_ahead] };
+                    unlocks = read_off_the_picture(one.drawn).said;
+                }
+                if (one.said + unlocks > best_worth) {
+                    best = std::move(one);
+                    best_worth = best.said + unlocks;
+                    best_unlocks = unlocks;
+                    chosen = kind;
+                }
             }
-            const bool may_unlock = read_ahead && one.said > 0 && !one.drawn.empty() &&
-                                    one.said + recolors_left > best_worth;
-            int unlocks = 0;
-            if (may_unlock) {
-                const time_into ahead_clock{ inference_time.ms[inference_times::reading_ahead] };
-                unlocks = read_off_the_picture(one.drawn).said;
-            }
-            if (one.said + unlocks > best_worth) {
-                best = std::move(one);
-                best_worth = best.said + unlocks;
-                best_unlocks = unlocks;
-                chosen = kind;
-            }
+            if (best.said > 0) break;
         }
         if (best.said == 0) break;
         best.say();
