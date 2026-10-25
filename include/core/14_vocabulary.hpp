@@ -139,7 +139,7 @@ struct tile_number {
         bool operator==(const term&) const = default;
     };
     int8_t count = 0;
-    term terms[MOST_MEASURES] = {};
+    term terms[MOST_MEASURES];
     bool operator==(const tile_number&) const = default;
 };
 
