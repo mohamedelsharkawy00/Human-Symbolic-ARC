@@ -245,7 +245,8 @@ private:
         break;
       case ui_action::reset_solver:   m_solver_threading.reset_solver(); break;
       // Dataset checkmarks: toggle one set's bit and apply. Refuse to clear the
-      // last remaining set (set_datasets ignores 0) so the list is never empty.
+      // last remaining set (set_datasets ignores a mask with no set) so the list
+      // is never empty.
       case ui_action::toggle_ds_train:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_TRAIN);
         break;
@@ -277,6 +278,13 @@ private:
       case ui_action::toggle_ds_custom:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_CUSTOM);
         break;
+      // Both generations, then only ARC-AGI-1's puzzles, then only ARC-AGI-2's own.
+      case ui_action::cycle_generation: {
+        const int flags = m_solver_threading.get_dataset_flags();
+        const int next = flags & DS_AGI_1 ? DS_AGI_2 : flags & DS_AGI_2 ? 0 : DS_AGI_1;
+        m_solver_threading.set_datasets((flags & ~DS_GENERATIONS) | next);
+        break;
+      }
       case ui_action::exit_app:       PostQuitMessage(0); break;
       case ui_action::minimize_app:   ShowWindow(m_hwnd, SW_MINIMIZE); break;
       default: break;

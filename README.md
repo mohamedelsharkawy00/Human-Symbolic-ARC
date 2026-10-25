@@ -47,8 +47,9 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 
 # 6. Benchmark
 1. The BENCHMARK button in the GUI reads the checked datasets from their first puzzle, stopping after LIMIT puzzles: arc_said in the window.
-2. The puzzle's process on screen is killed, and each puzzle is read in its own `arc_headless.exe`, one at a time, shown the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh process starts, paused, on the last puzzle it read.
-3. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
+2. The AGI button beside the dataset boxes narrows them: AGI 1+2 every puzzle, AGI 1 only those ARC-AGI-1 already had (its 800 ids, `assets\arc_agi_1_ids.txt`), AGI 2 only ARC-AGI-2's own. The puzzle list, the benchmark and the saved settings follow it.
+3. The puzzle's process on screen is killed, and each puzzle is read in its own `arc_headless.exe`, one at a time, shown the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh process starts, paused, on the last puzzle it read.
+4. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
 
 # 7. Kaggle
 1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp`, `src\ops.cpp` and `scripts\said.cpp` with `in_parallel.hpp` as a Kaggle dataset, the commit they came from as its version message, and `commit.txt` (that commit and a digest of the files), which the push waits to see Kaggle serve before it runs anything; nothing from `include\gui` goes.

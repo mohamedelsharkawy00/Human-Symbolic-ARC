@@ -405,9 +405,12 @@ inline bool load_task_from_content(const string &content, const string &id,
 //   - training:   1000 tasks (has answer keys) — dev / mining.
 //   - evaluation:  120 tasks (unseen, has answer keys) — honest local score.
 //   - test:        240 tasks (the competition set, no solutions) — submission.
-// A bitmask, because the GUI can check several at once.
-enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4, DS_CUSTOM = 8 };
+// A bitmask, because the GUI can check several at once. The last two narrow
+// whatever sets are checked to one generation of ARC: the puzzles ARC-AGI-1
+// already had, or ARC-AGI-2's own. Neither means both.
+enum dataset_flag { DS_TRAIN = 1, DS_EVAL = 2, DS_TEST = 4, DS_CUSTOM = 8, DS_AGI_1 = 16, DS_AGI_2 = 32 };
 constexpr int DS_ALL = DS_TRAIN | DS_EVAL | DS_TEST | DS_CUSTOM;
+constexpr int DS_GENERATIONS = DS_AGI_1 | DS_AGI_2;
 
 // A dataset by the name a person types, or 0 for a name that is none of them.
 inline int dataset_from_name(const string &name) {
@@ -454,6 +457,18 @@ inline task_set load_task_set(int flags) {
       {DS_TEST,  "arc-agi_test_challenges.json"},
   };
 
+  // ARC-AGI-1's 800 ids, its training and evaluation sets (github.com/fchollet/ARC-AGI,
+  // frozen), read only when a generation is asked for. Custom fixtures are
+  // neither generation, so asking for one never hides them.
+  set<string> agi_1;
+  if (flags & DS_GENERATIONS) {
+    ifstream listed("assets/arc_agi_1_ids.txt");
+    for (string id; listed >> id;) agi_1.insert(id);
+  }
+  auto in_generation = [&](const string &id) {
+    return !(flags & DS_GENERATIONS) || (flags & (agi_1.count(id) ? DS_AGI_1 : DS_AGI_2));
+  };
+
   task_set out;
   set<string> seen;
   if (flags & DS_CUSTOM) {
@@ -464,7 +479,7 @@ inline task_set load_task_set(int flags) {
     if (!(flags & s.flag)) continue;
     string challenges_json = kaggle_dir + s.stem;
     for (auto &t : load_challenges_json(challenges_json))
-      if (seen.insert(t.id).second)
+      if (in_generation(t.id) && seen.insert(t.id).second)
         out.tasks.push_back(std::move(t));
 
     // Ground-truth answers: sibling file with "_challenges" -> "_solutions".

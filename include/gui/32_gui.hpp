@@ -1,6 +1,7 @@
 #pragma once
 #include "20_environment.hpp"
 #include "16_sentences.hpp"  // sentences_of: the pane says a program the way the log does
+#include "21_puzzle_loader.hpp"  // the dataset flags the header's checkmarks show
 #include "27_grid_buffer.hpp"
 #include "28_global_app_state.hpp"
 #include "30_vulkan_context.hpp"
@@ -418,19 +419,23 @@ inline int draw_header_rows(
   // Dataset checkmarks: TRN / EVL / TST / CUS. Each toggles whether that set's tasks
   // are concatenated into the loaded list; clicking reloads the merged list live
   // (handled by the worker). On = lit box with a '+' prefix, off = dim with '-'.
+  // Then which generation of ARC they show, lit while it narrows them, as wide
+  // as its widest label so it never shifts.
   {
     int ds = app_state.dataset_flags.load();
-    int w = box_w("+TRN");
-    int x = spot(w * 4 + pad * 3), y = fy;
+    int w = box_w("+TRN"), gw = box_w("AGI 1+2");
+    int x = spot(w * 4 + pad * 4 + gw), y = fy;
     auto draw_ds = [&](const char *name, int flag, ui_action act) {
       bool on = (ds & flag) != 0;
       box_at(string(on ? "+" : "-") + name, x, y, w, on ? 4 : 1, act);
       x += w + pad;
     };
-    draw_ds("TRN", 1 /*DS_TRAIN*/, ui_action::toggle_ds_train);
-    draw_ds("EVL", 2 /*DS_EVAL*/,  ui_action::toggle_ds_eval);
-    draw_ds("TST", 4 /*DS_TEST*/,  ui_action::toggle_ds_test);
-    draw_ds("CUS", 8 /*DS_CUSTOM*/, ui_action::toggle_ds_custom);
+    draw_ds("TRN", DS_TRAIN, ui_action::toggle_ds_train);
+    draw_ds("EVL", DS_EVAL, ui_action::toggle_ds_eval);
+    draw_ds("TST", DS_TEST, ui_action::toggle_ds_test);
+    draw_ds("CUS", DS_CUSTOM, ui_action::toggle_ds_custom);
+    box_at(ds & DS_AGI_1 ? "AGI 1" : ds & DS_AGI_2 ? "AGI 2" : "AGI 1+2", x, y, gw,
+           ds & DS_GENERATIONS ? 4 : 1, ui_action::cycle_generation);
   }
 
   // Clickable ID field: click to edit (type/paste an ID + Enter to jump), and it

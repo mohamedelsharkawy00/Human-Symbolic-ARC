@@ -94,10 +94,10 @@ public:
     m_base_gpu_buffer_size = gpu_buffer.size();
 
     // The saved selection, restored before the saved puzzle index is read below
-    // so the index lands in the same list it came from. TRAIN when nothing is
+    // so the index lands in the same list it came from. TRAIN when no set is
     // saved: a person is looking at the screen and can check another box.
-    int initial = settings_int(read_settings_file(), "datasets", 0) & DS_ALL;
-    if (initial <= 0) initial = DS_TRAIN;
+    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_ALL | DS_GENERATIONS);
+    if (!(initial & DS_ALL)) initial |= DS_TRAIN;
     load_dataset(initial);
 
     if (!m_tasks.tasks.empty()) {
@@ -192,11 +192,11 @@ public:
     if (!m_benchmarking) m_reset_requested = true;
   }
 
-  // Dataset selection bitmask. Applied by the control thread; ignored if empty
-  // so the list is never blanked out.
+  // Dataset selection bitmask. Applied by the control thread; ignored when it
+  // checks no set, so the list is never blanked out.
   inline int get_dataset_flags() const { return m_dataset_flags.load(); }
   inline void set_datasets(int flags) {
-    if (m_benchmarking || flags == 0) return;
+    if (m_benchmarking || !(flags & DS_ALL)) return;
     m_queued_dataset_flags.store(flags);
   }
 
