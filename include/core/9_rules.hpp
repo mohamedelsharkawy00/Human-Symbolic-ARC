@@ -1297,7 +1297,7 @@ struct mark_lattice_rule {
         if (last_row < first_row || laid_lines > MAX_OBJECTS_IN_A_LIST) return false;
         const int height = last_row - first_row + 1;
         const tile_moves down = moves_of(lattice, measures_of(lattice, height, across, [&](int row, int col) {
-            return picture[first_row + row][col] != TRANSPARENT; }, 0));
+            return picture[first_row + row][col] != TRANSPARENT; }, 0, {}));
         const auto [copy_rows, copy_columns] = copy_size(down, height, across);
         drawn = grid(input.width, input.height);
         auto at = [&](int row, int col) -> int8_t& {

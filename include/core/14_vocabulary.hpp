@@ -97,10 +97,11 @@ inline constexpr std::string_view tile_slot_names[] = {
 
 // WHAT A STEP MAY MEASURE on each picture, so it grows with what it is read
 // off: the piece's own width and own height, and the fewest empty rows or
-// columns lying between two of its parts; and how many colors the picked
-// pieces hold together.
+// columns lying between two of its parts; how many colors the picked pieces
+// hold together; and the width and height of the key, the pieces not picked.
 #define TILE_MEASURES X(own_width, "own width") X(own_height, "own height") X(row_gap, "row gap") \
-                      X(column_gap, "column gap") X(color_count, "color count")
+                      X(column_gap, "column gap") X(color_count, "color count") \
+                      X(key_width, "key width") X(key_height, "key height")
 enum class tile_measure : int8_t {
     none,
 #define X(id, name) id,
@@ -276,6 +277,78 @@ inline std::optional<tile_value> tile_read(std::string_view text) {
     return tile;
 }
 
+// HOW ONE PIECE FINDS ANOTHER: the partner ways every op that looks for another
+// piece shares (each_partner, 15_op_math.hpp), each by the name a program
+// spells it with and the reading says it in. NUMBERED IN THE ORDER THEY ARE
+// ASKED IN, so a tie between two that say as much goes to the surer: the piece
+// around it or inside it -- one box holds another -- then the piece lined up
+// with it, in its rows or its columns, which a second piece in the same band
+// leaves without one (18419cfa's test shape, under two frames), then the
+// nearest, which ties as soon as two stand as far (ddf7fa4f's test block,
+// between two dots), then the piece it touches at a side before the one it
+// touches at a side or a corner (b7256dcd's pair meets the 3 at a side and the
+// 4 only at a corner); then one of its shape (same_shape, 1_readings.hpp), as
+// it lies or turned, at its size, any size or stretched; and last, newest, the
+// piece that counts as many holes, cells or colors as it (count_of).
+#define PARTNER_WAYS X(around_it, "the piece around it") X(inside_it, "the piece inside it") \
+    X(same_row, "a piece in its rows") X(same_column, "a piece in its columns") \
+    X(nearest, "the nearest piece") X(touching_sides, "the piece it shares a side with") \
+    X(touching, "the piece it touches") X(same_shape, "the piece of its shape") \
+    X(same_shape_turned, "the piece of its shape, turned") \
+    X(same_shape_scaled, "the piece of its shape at any size") \
+    X(same_shape_scaled_turned, "the piece of its shape at any size, turned") \
+    X(same_shape_stretched, "the piece of its shape stretched") \
+    X(same_shape_stretched_turned, "the piece of its shape stretched, turned") \
+    X(as_many_holes, "the piece with as many holes") X(as_many_cells, "the piece with as many cells") \
+    X(as_many_colors, "the piece with as many colors")
+enum class partner_by : int8_t {
+#define X(id, name) id,
+    PARTNER_WAYS
+#undef X
+    count
+};
+inline constexpr std::string_view partner_way_names[] = {
+#define X(id, name) name,
+    PARTNER_WAYS
+#undef X
+};
+
+// THE LIKENESSES OF SHAPE, the partner ways from same_shape on, six of them: as
+// it lies, then turned, at its own size, at any size, stretched.
+constexpr int SHAPE_LIKENESSES = (int)partner_by::same_shape_stretched_turned - (int)partner_by::same_shape + 1;
+
+// THE VALUES THE PARTNER OPS TAKE, a few choices packed in one number a program
+// never shows (value_written spells them by name): ColorFrom's partner ways,
+// then the key's color at its place, the key's one color, then each likeness
+// cell by cell; SelectPartner's way on any side or wholly on each of the eight
+// directions from up clockwise; MirrorAround's three mirrors around each way's
+// partner or the grid; MoveToward's three ways of going toward each kind of
+// partner, each way and then the one piece holding each color; Bridge's nine
+// reaches, then an L to each kind.
+constexpr int KEY_BY_PLACE = (int)partner_by::count, KEY_COLOR = KEY_BY_PLACE + 1,
+              COLORS_FROM_ITS_SHAPE = KEY_COLOR + 1;
+constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
+constexpr int PARTNER_SIDES = 9, SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)partner_by::count;
+constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
+// The direction a SelectPartner value names: -1 for any direction.
+constexpr int partner_direction_of(int value) { return value / (int)partner_by::count - 1; }
+constexpr int MIRRORS = 3, MIRROR_PARTNERS = (int)partner_by::count + 1;
+constexpr int TOWARD_FARS = 3;
+constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
+
+// The names those choices are written in, each list in its choices' order.
+inline constexpr const char* const direction_names[] = { "up", "up-right", "right", "down-right",
+                                                         "down", "down-left", "left", "up-left" };
+inline constexpr const char* const mirror_names[] = { "left to right", "top to bottom", "all four ways" };
+inline constexpr const char* const toward_names[] = { "one step", "its own size", "until it touches" };
+inline constexpr const char* const bridge_reach_names[BRIDGE_WAYS] = {
+    "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
+    "both ways to every one", "along rows to every one", "along columns to every one",
+    "both ways to the one facing it across the grid", "along rows to the one facing it across the grid",
+    "along columns to the one facing it across the grid" };
+static_assert(std::size(direction_names) + 1 == PARTNER_SIDES && std::size(mirror_names) == MIRRORS &&
+              std::size(toward_names) == TOWARD_FARS);
+
 }  // namespace arc
 
 // What an op does to the layer, in pipeline-authoring order (a single solution
@@ -371,7 +444,7 @@ enum class inferred_amount { none, some, all };
   /* facing it across the grid. Only the picked pieces are bridged, and only */ \
   /* the bars come back picked. Past those [9], an L from each picked piece  */ \
   /* to its one partner of each kind partner_of_kind names.                  */ \
-  X(Bridge                      , 0                 , 31                       , generate , none, false)        \
+  X(Bridge                      , 0                 , arc::BRIDGE_VALUES - 1   , generate , none, false)        \
   X(Shift                       , 0                 , 7                        , translate, none, false)        \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, false)        \
   /* A trail one of the eight ways [0-7], or past them every picked piece    */ \
@@ -380,14 +453,14 @@ enum class inferred_amount { none, some, all };
   /* diagonals one way or the other, both, its rows and columns, every way,  */ \
   /* to every side and corner [12-17] (grown_along).                        */ \
   X(ExtendTo                    , 0                 , 17                       , generate , none, false)        \
-  /* Each picked piece wears its partner's color, as partner_by numbers them; */ \
-  /* past those [13], the color a key drawn in the grid shows at its place;  */ \
-  /* past that [14-19], its colors cell by cell from the one piece of its    */ \
-  /* shape each likeness finds (colors_from_its_shape, 15_op_math.hpp).       */ \
-  X(ColorFrom                   , 0                 , 19                       , map      , none, false)        \
+  /* Each picked piece wears its partner's color, each way partner_by finds */ \
+  /* one; past those, the color a key drawn in the grid shows at its place, */ \
+  /* then the key's one color; past that, its colors cell by cell from the  */ \
+  /* one piece of its shape each likeness finds (colors_from_its_shape).    */ \
+  X(ColorFrom                   , 0                 , arc::COLORS_FROM_ITS_SHAPE + arc::SHAPE_LIKENESSES - 1, map, none, false) \
   /* Of the picked pieces, only those that would fit into a gap of their      */ \
   /* partner stay picked (would_fit, 15_op_math.hpp). A pick, so it selects.  */ \
-  X(WouldFit                    , 0                 , 12                       , select   , none, false)        \
+  X(WouldFit                    , 0                 , (int)arc::partner_by::count - 1, select, none, false)   \
   /* Selected patterns copied to unselected frames; 3x3 anchors, row-major. */ \
   X(CopyTo                      , 0                 , 8                        , generate , none, false)        \
   /* Rays as short as one cell -- a dot's four neighbours are rays too -- and */ \
@@ -416,10 +489,10 @@ enum class inferred_amount { none, some, all };
   X(Recolor                     , 0                 , 11                       , map      , none, false)        \
   /* Each picked piece moves level with its partner: rows first, then columns, */ \
   /* each by every way partner_by finds one.                                   */ \
-  X(AlignTo                     , 0                 , 25                       , translate, none, false)        \
+  X(AlignTo                     , 0                 , 2 * (int)arc::partner_by::count - 1, translate, none, false) \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
   /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
-  X(MirrorAround                , 0                 , 41                       , generate , none, false)        \
+  X(MirrorAround                , 0                 , arc::MIRRORS * arc::MIRROR_PARTNERS - 1, generate, none, false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
   X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   X(SelectColumn                , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
@@ -433,7 +506,7 @@ enum class inferred_amount { none, some, all };
   X(MoveColumn                  , -arc::MAX_GRID_DIM, arc::MAX_GRID_DIM        , translate, none, false)        \
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
-  X(MoveToward                  , 0                 , 68                       , translate, none, false)        \
+  X(MoveToward                  , 0                 , arc::TOWARD_FARS * arc::PARTNER_KINDS - 1, translate, none, false) \
   /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
   /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
   X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false)        \
@@ -447,13 +520,12 @@ enum class inferred_amount { none, some, all };
   X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* Of the picked pieces, only those like a piece of the key -- every    */ \
   /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
-  /* any way, at its size [0-1], any size [2-3] or stretched [4-5]          */ \
-  /* (like_the_key, 15_op_math.hpp).                                        */ \
-  X(SelectLikeKey               , 0                 , 5                        , select   , none, false)        \
+  /* any way, at its size, any size or stretched (like_the_key).           */ \
+  X(SelectLikeKey               , 0                 , arc::SHAPE_LIKENESSES - 1, select   , none, false)        \
   /* The pick moves onto every partner each picked piece has, the way       */ \
-  /* partner_by finds it, lying on any side [0-12] or past those on each of */ \
-  /* the eight directions, from up clockwise (each_partner_picked, 15_op_math). */ \
-  X(SelectPartner               , 0                 , 116                      , select   , none, false)        \
+  /* partner_by finds it, lying on any side or on each of the eight         */ \
+  /* directions, from up clockwise (each_partner_picked, 15_op_math).       */ \
+  X(SelectPartner               , 0                 , arc::SELECT_PARTNER_VALUES - 1, select, none, false)    \
   /* The pieces that run one way, as their longest straight line of cells    */ \
   /* lies (way_it_runs, 15_op_math.hpp): along their rows, their columns,    */ \
   /* their diagonals down or up to the right, or no way, two ways tying.     */ \
@@ -524,6 +596,57 @@ inline constexpr inferred_amount how_much_is_inferred(node_type t) { return row_
 
 // Whether an op says its choices in named slots (tile_value) rather than in a number.
 inline constexpr bool said_in_slots(node_type t) { return t == node_type::Tile; }
+
+// WHETHER AN OP SAYS ITS CHOICE BY NAME: the partner ops, whose one number
+// packs the way a partner is found with what is done with it. value_written
+// spells it and value_read reads it back, so a way added to PARTNER_WAYS moves
+// no program's spelling.
+inline constexpr bool said_by_name(node_type t) {
+    switch (t) {
+    case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
+    case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
+        return true;
+    default: return false;
+    }
+}
+
+// AN OP'S VALUE AS A PROGRAM WRITES IT: a partner op's choices by name, the way
+// first (SelectPartner [the nearest piece, left]); any other op's, and a value
+// out of an op's range, as the number it is.
+inline std::string value_written(node_type t, int value) {
+    using namespace arc;
+    if (!said_by_name(t) || !takes_value(t, value)) return std::to_string(value);
+    constexpr int ways = (int)partner_by::count;
+    auto way = [](int at) { return std::string(partner_way_names[at]); };
+    auto kind = [&](int at) { return at < ways ? way(at) : "the piece of color " + std::to_string(at - ways); };
+    switch (t) {
+    case node_type::ColorFrom:
+        if (value < ways) return way(value);
+        if (value == KEY_BY_PLACE) return "the key at its place";
+        if (value == KEY_COLOR) return "the key";
+        return "cell by cell from " + way((int)partner_by::same_shape + value - COLORS_FROM_ITS_SHAPE);
+    case node_type::SelectLikeKey: return way((int)partner_by::same_shape + value);
+    case node_type::AlignTo: return (value < ways ? "the rows of " : "the columns of ") + way(value % ways);
+    case node_type::MirrorAround:
+        return std::string(mirror_names[value / MIRROR_PARTNERS]) + " around " +
+               (value % MIRROR_PARTNERS < ways ? way(value % MIRROR_PARTNERS) : std::string("the grid"));
+    case node_type::SelectPartner: {
+        const int side = partner_direction_of(value);
+        return way(value % ways) + ", " + (side < 0 ? "any side" : direction_names[side]);
+    }
+    case node_type::MoveToward: return std::string(toward_names[value / PARTNER_KINDS]) + ", " + kind(value % PARTNER_KINDS);
+    case node_type::Bridge:
+        return value < BRIDGE_TO_PARTNER ? std::string(bridge_reach_names[value]) : "an L to " + kind(value - BRIDGE_TO_PARTNER);
+    default: return way(value);
+    }
+}
+
+// A partner op's value read back as value_written writes it, or none.
+inline std::optional<int> value_read(node_type t, std::string_view written) {
+    for (int value = row_of(t).low; value <= row_of(t).high; ++value)
+        if (value_written(t, value) == written) return value;
+    return std::nullopt;
+}
 
 // Read a word's operation name; arguments remain the caller's concern.
 // Unknown words (including the inference placeholder "?") have no operation.

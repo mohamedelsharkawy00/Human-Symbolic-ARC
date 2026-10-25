@@ -228,9 +228,14 @@ struct partner_view {
                 if (one.mask[row][col] != TRANSPARENT && one.mask[row][col] == color) return true;
         return false;
     }
-    // What each_partner asks (touches, shapes_alike).
+    // What each_partner asks (touches, shapes_alike, count_of).
     bool touching(int mine, int other, bool sides_only) const { return touches(*this, mine, other, { 0, 0 }, sides_only); }
     bool alike(int mine, int other, int like) const { return shapes_alike(*this, mine, other, like); }
+    int counted(int i, int kind) const {
+        const cell_box own = box(i);
+        return count_of(kind, own.height(), own.width(),
+                        [&](int row, int col) { return color_at(i, own.row0 + row, own.col0 + col); });
+    }
     // The object that shows a cell of the key's drawing (key_piece_at).
     int key_piece(int row, int col) const { return key_piece_at(*this, row, col); }
     // Object i's one partner by `how` among the objects not picked, or -1.
@@ -751,10 +756,10 @@ object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t
     return res;
 }
 
-// ColorFrom[9], past the partner ways: each picked object takes the color a key
-// drawn in the grid -- the objects not picked -- shows at its place, the n-th
-// picked in reading order the key's n-th entry (key_place_colors, 15_op_math.hpp,
-// the walk inference replays).
+// ColorFrom [the key at its place], past the partner ways: each picked object
+// takes the color a key drawn in the grid -- the objects not picked -- shows at
+// its place, the n-th picked in reading order the key's n-th entry
+// (key_place_colors, 15_op_math.hpp, the walk inference replays).
 void paint_key_places(const object_list& from, object_list& res) {
     int8_t color[MAX_OBJECTS_IN_A_LIST], band[MAX_OBJECTS_IN_A_LIST];
     int16_t lows[MAX_OBJECTS_IN_A_LIST], highs[MAX_OBJECTS_IN_A_LIST];
@@ -770,12 +775,12 @@ void paint_key_places(const object_list& from, object_list& res) {
 }
 
 // ColorFrom[how]: each picked object takes the color of its partner among the
-// objects not picked -- the nearest, one in its rows or columns, the one around
-// it or inside it, one it touches, one of its shape as it lies or turned -- and
-// paints every cell it paints in it. The partner is found by partner_color
-// (15_op_math.hpp), the walk inference replays, so the two cannot disagree. An
-// object with no partner, or partners that disagree, keeps its colors. Nothing
-// moves and nothing is dropped.
+// objects not picked, each way partner_by finds one -- or the key's one color,
+// the objects not picked as one drawing (key_color) -- and paints every cell it
+// paints in it. The partner is found by partner_color (15_op_math.hpp), the
+// walk inference replays, so the two cannot disagree. An object with no
+// partner, or partners that disagree, keeps its colors, as every one does
+// where the key wears several. Nothing moves and nothing is dropped.
 object_list& op_color_from(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
     copy_list(res, from);
@@ -784,6 +789,17 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
         return res;
     }
     const partner_view view{ from };
+    if (how == KEY_COLOR) {
+        const int color = key_color(view);
+        for (int i = 0; i < res.count && color >= 0; ++i) {
+            held_object& one = res.objects[i];
+            if (!one.selected) continue;
+            for (int row = 0; row < one.height; ++row)
+                for (int col = 0; col < one.width; ++col)
+                    if (one.mask[row][col] != TRANSPARENT) one.mask[row][col] = (int8_t)color;
+        }
+        return res;
+    }
     // Cell by cell, from the one piece of its shape (colors_from_its_shape).
     if (how >= COLORS_FROM_ITS_SHAPE) {
         for (int i = 0; i < from.count; ++i) {
@@ -846,7 +862,7 @@ object_list& op_select_like_key(program_run& run, const object_list& from, int8_
 // (each_partner_picked, 15_op_math.hpp, which inference replays). Every
 // partner is read off the marks as they came in; an object no picked one has
 // for a partner comes out unpicked.
-object_list& op_select_partner(program_run& run, const object_list& from, int8_t value) {
+object_list& op_select_partner(program_run& run, const object_list& from, int value) {
     object_list& res = run.fresh();
     copy_list(res, from);
     for (int i = 0; i < res.count; ++i) res.objects[i].selected = false;
@@ -1803,7 +1819,8 @@ object_list& op_trim(program_run& run, const object_list& from) {
 // Tile [steps, start, end, spread]: each picked piece laid again where its
 // Tile says (each_tile_offset, 15_op_math.hpp, the arithmetic the readings
 // replay), each step measured on this hand: the piece's own size and gaps,
-// and how many colors the picked pieces hold together (measures_of). A COPY
+// how many colors the picked pieces hold together, and the size of the key,
+// the pieces not picked (measures_of, key_box). A COPY
 // IS A PIECE, keeping the piece's mark, so a row of copies can be picked and
 // turned; want one sheet? Say UnionList after. A copy is one step of the
 // piece where a step is shorter (copy_size). A piece no step moves, and every
@@ -1817,11 +1834,13 @@ object_list& op_tile(program_run& run, const object_list& from, const tile_value
         each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) held |= 1u << color; });
         return held;
     });
+    const cell_box key = key_box(partner_view{ from });
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
         const tile_moves moves = !source.selected ? tile_moves{}
             : moves_of(tile, measures_of(tile, source.height, source.width,
-                                         [&](int row, int col) { return source.mask[row][col] != TRANSPARENT; }, colors));
+                                         [&](int row, int col) { return source.mask[row][col] != TRANSPARENT; }, colors,
+                                         key));
         if (moves.count == 0 || source.width <= 0 || source.height <= 0) {
             res.objects[res.count++] = source;
             continue;
@@ -2477,7 +2496,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::SelectColumnFromMiddle:  return op_select_from_middle(run, in, value, false);
     case node_type::SelectPartition:         return op_select_partition(run, in, value);
     case node_type::SelectLikeKey:           return op_select_like_key(run, in, value);
-    case node_type::SelectPartner:           return op_select_partner(run, in, value);
+    case node_type::SelectPartner:           return op_select_partner(run, in, op.value);
     default:                                 return run.fresh();
     }
 }

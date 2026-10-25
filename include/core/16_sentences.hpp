@@ -37,9 +37,10 @@
 namespace arc {
 using namespace std;
 
-// An op's word with its argument, as a program spells it: Recolor [3].
+// An op's word with its argument, as a program spells it (value_written):
+// Recolor [3], ColorFrom [the nearest piece].
 inline string spell(const string& op, int value) {
-    return op + " [" + to_string(value) + "]";
+    return op + " [" + value_written(operation_named(op), value) + "]";
 }
 
 // A Tile, its slots by name: Tile [steps: (0,3) (0,0), start: grid edge, end: grid edge, spread: lines].
@@ -1108,6 +1109,13 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             return true;
         case said_as::tiled_along:
             drawn = { pick, spell(rule.tile) + onto_words(rule) };
+            paint = laid_paint(rule);
+            return true;
+        case said_as::repeated_past:
+            // The picked pieces folded into one figure, its box fitted, moved
+            // its own size, then repeated from there; only the copies are
+            // marked, so only they land.
+            drawn = { pick, "UnionList Trim " + spell("Shift", rule.value) + " " + spell(rule.tile) + onto_words(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::turned_copy: {

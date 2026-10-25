@@ -46,13 +46,14 @@ namespace arc {
 		return row_of(type).low != row_of(type).high || said_in_slots(type);
 	}
 
-	// The printed annotation IS the value -- a number, or Tile's slots by name
-	// (tile_written) -- so reading one back is reading what was written: no op
-	// translates its own argument, so nothing has to be undone.
+	// The printed annotation IS the value -- a number, a partner op's choice by
+	// name (value_written), or Tile's slots by name (tile_written) -- so reading
+	// one back is reading what was written: no op translates its own argument,
+	// so nothing has to be undone.
 	inline void append_annotation(node_type type, int16_t value, const tile_value& tile, string& out) {
 		if (is_annotated(type)) {
 			out += " [";
-			out += said_in_slots(type) ? tile_written(tile) : to_string((int)value);
+			out += said_in_slots(type) ? tile_written(tile) : value_written(type, value);
 			out += ']';
 		}
 	}
@@ -223,6 +224,10 @@ namespace arc {
 						const optional<tile_value> tile = tile_read(written);
 						if (!tile) return nullptr;
 						token.tile = *tile;
+					} else if (said_by_name(token.type)) {
+						const optional<int> named = value_read(token.type, written);
+						if (!named) return nullptr;
+						token.value = (int16_t)*named;
 					} else {
 						int parsed = 0;
 						try { parsed = stoi(written); } catch (...) { parsed = 0; }

@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge[0] SelectAll Underlay Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge [both ways to the nearest] SelectAll Underlay Output SelectAll AddColor[0] Underlay
 
 Puzzle:       070dd51e
 Train:        Solved

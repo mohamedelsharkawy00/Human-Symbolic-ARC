@@ -1,4 +1,4 @@
-Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectUnique [13] InvertSelection MirrorAround [28] SelectAll Union Output Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [4] Tile [steps: (0,2) (0,0), start: grid edge, end: grid edge, spread: lines] Union
+Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectUnique [13] InvertSelection MirrorAround [all four ways around the piece around it] SelectAll Union Output Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [4] Tile [steps: (0,2) (0,0), start: grid edge, end: grid edge, spread: lines] Union
 Puzzle:       f823c43c
 Train:        Solved
 Test:         Solved

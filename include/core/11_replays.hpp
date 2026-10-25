@@ -597,6 +597,18 @@ inline optional<replayed> key_place_holds(const replay_facts& facts, const vecto
     });
 }
 
+// A PIECE THAT TAKES THE KEY'S COLOR, replayed: ColorFrom [the key] paints
+// every picked piece in the one color the key wears -- every piece not picked
+// (key_color) -- and, where the key wears several, leaves every one as it is,
+// so that pair shows the word at no work (recolors_hold).
+inline optional<replayed> key_color_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
+    return recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int, int8_t& color) {
+        const int worn = key_color(cut);
+        color = worn >= 0 ? (int8_t)worn : LEFT_AS_IT_IS;
+        return true;
+    });
+}
+
 // A RECOLOR A PICK DECIDES, replayed: every piece picked comes out wholly in
 // `color` (recolors_hold).
 inline optional<replayed> picked_recolor_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
@@ -867,6 +879,64 @@ inline vector<vector<bool>> pieces_to_remove(const replay_facts& facts, const co
     return removed;
 }
 
+
+// THE PIECES THE OUTPUT SHOWS IN OTHER COLORS WHERE THEY LIE, pair by pair: every
+// cell of the piece on its output and painted there, one at least in another
+// color than the piece's. None where the pairs do not lie over their outputs.
+inline vector<vector<bool>> pieces_recolored(const replay_facts& facts) {
+    vector<vector<bool>> recolored;
+    if (!facts.overlays) return recolored;
+    for (size_t which = 0; which < facts.cuts().size(); ++which) {
+        const auto& pieces = facts.cuts()[which];
+        const grid& output = facts.train[which].output;
+        auto& one = recolored.emplace_back(pieces.size(), false);
+        for (size_t index = 0; index < pieces.size(); ++index) {
+            bool shown = true, other = false;
+            pieces[index].each_cell([&](int row, int col, int8_t color) {
+                const bool painted = output.contains(row, col) && is_color(output.data[row][col]);
+                shown = shown && painted;
+                other = other || (painted && output.data[row][col] != color);
+            });
+            one[index] = shown && other;
+        }
+    }
+    return recolored;
+}
+
+// THE RECOLORED PIECES A FIND COLORS AS THE OUTPUT SHOWS THEM, pair by pair:
+// ColorFrom's `how` with the recolored pieces picked -- its partner's color
+// among the pieces the output does not recolor, the key's color at its place,
+// the key's one color, or its colors cell by cell from the one piece of its
+// shape -- every cell of the piece as the output shows it. What the op does,
+// read off the pairs rather than replayed for every pick.
+inline vector<vector<bool>> colored_right(const replay_facts& facts, const vector<vector<bool>>& recolored, int how) {
+    vector<vector<bool>> right;
+    for (size_t which = 0; which < recolored.size(); ++which) {
+        const grid& output = facts.train[which].output;
+        const partner_pieces cut(facts.cuts()[which], recolored[which], facts.answers_of(which));
+        const vector<int8_t> places = how == KEY_BY_PLACE ? cut.key_places() : vector<int8_t>{};
+        const int keyed = how == KEY_COLOR ? key_color(cut) : -1;
+        auto shows = [&](int row, int col, int color) { return output.contains(row, col) && output.data[row][col] == color; };
+        auto& one = right.emplace_back(cut.pieces.size(), false);
+        for (int i = 0; i < cut.count(); ++i) {
+            if (!cut.picked[i]) continue;
+            bool all = true;
+            if (how >= COLORS_FROM_ITS_SHAPE) {
+                const bool laid = colors_from_its_shape(how - COLORS_FROM_ITS_SHAPE, i, cut, [&](int row, int col, int color) {
+                    all = all && shows(row, col, is_color(color) ? color : cut.color_at(i, row, col));
+                });
+                one[(size_t)i] = laid && all;
+                continue;
+            }
+            const int color = how == KEY_BY_PLACE ? places[(size_t)i] : how == KEY_COLOR ? keyed
+                            : cut.color_from((partner_by)how, i);
+            if (color < 0) continue;
+            cut.pieces[i].each_cell([&](int row, int col, int8_t) { all = all && shows(row, col, color); });
+            one[(size_t)i] = all;
+        }
+    }
+    return right;
+}
 
 // PICKED PIECES THAT LOSE CELLS WHERE THEY LIE, replayed: what the removal's
 // and the outline's replays ask, once. Each picked piece keeps the cells
@@ -1148,22 +1218,29 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
 // off the pieces the pair's cut hands over, a copy one step of the piece where
 // a step is shorter (copy_size) -- walked (walk_paint) and laid every way the
 // line asks (lay_paint). A piece no step moves is drawn where it lies, as the
-// op hands it on.
+// op hands it on. THE OP LAYS EVERY COPY INTO ITS ONE LIST and drops those past
+// its room, so a pair whose pieces and copies would not fit in it cannot be
+// drawn (8a371977's 3s, each repeated along its row: the later rows' copies
+// were dropped).
 inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
                                       const tile_value& tile) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         const int colors = color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
                                        [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
+        const cell_box key = key_box(cut);
+        // The list's slots taken: every piece not picked rides through in one.
+        int slots = (int)std::count(cut.picked.begin(), cut.picked.end(), false);
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
             const auto& box = piece.summary;
             const tile_moves moves = moves_of(tile, measures_of(tile, box.height, box.width, [&](int row, int col) {
-                return piece.data[row][col] != (int8_t)TRANSPARENT; }, colors));
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }, colors, key));
             const auto [rows, columns] = copy_size(moves, box.height, box.width);
             bool laid = true;
             auto lay_copy = [&](int down, int across) {
+                if (++slots > MAX_OBJECTS_IN_A_LIST) return laid = false;
                 for (int row = 0; row < rows && laid; ++row)
                     for (int col = 0; col < columns && laid; ++col) {
                         const int8_t color = piece.data[row][col];
@@ -1178,6 +1255,48 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
             if (!laid) return false;
         }
         return true;
+    });
+}
+
+// THE PICKED PIECES, AS ONE FIGURE, REPEATED FROM PAST THEMSELVES, walked:
+// UnionList folds them into one figure and Trim fits its box to them, Shift
+// moves it its own size the way `shift` names (shift_by, the step the op
+// takes), and the Tile lays it again from there, as tile_walk lays a piece,
+// each step read off the figure and the key, the pieces not picked (12422b43's
+// rows beside the 5s, stacked under the figure every key height). Picking
+// nothing, it draws nothing.
+inline optional<paint_walk> past_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int shift,
+                                      const tile_value& tile) {
+    return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
+        const grid& output = facts.train[which].output;
+        cell_box figure;
+        cells drawn;
+        for (int i = 0; i < cut.count(); ++i)
+            if (cut.picked[i]) {
+                figure.include(cut.boxes[i]);
+                cut.pieces[i].each_cell([&](int row, int col, int8_t color) { drawn[row][col] = color; });
+            }
+        if (figure.empty()) return false;
+        const int colors = color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
+                                       [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
+        const tile_moves moves = moves_of(tile, measures_of(tile, figure.height(), figure.width(), [&](int row, int col) {
+            return drawn[figure.row0 + row][figure.col0 + col] != (int8_t)TRANSPARENT; }, colors, key_box(cut)));
+        const auto [rows, columns] = copy_size(moves, figure.height(), figure.width());
+        const direction_step by = shift_by(shift, figure.width(), figure.height());
+        const int top = figure.row0 + by.down, left = figure.col0 + by.across;
+        bool laid = true;
+        auto lay_copy = [&](int down, int across) {
+            for (int row = 0; row < rows && laid; ++row)
+                for (int col = 0; col < columns && laid; ++col) {
+                    const int8_t color = drawn[figure.row0 + row][figure.col0 + col];
+                    const int at_row = top + down + row, at_col = left + across + col;
+                    if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col)) laid = put(at_row, at_col, color);
+                }
+            return laid;
+        };
+        if (moves.count == 0) lay_copy(0, 0);
+        else each_tile_offset(tile, moves, top, left, rows, columns, output.width, output.height, lay_copy);
+        return laid;
     });
 }
 
@@ -1854,9 +1973,11 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
             vector<direction_step> by(hand.size(), direction_step{ 0, 0 });
             const bool by_place = rule.as == said::color_from && rule.value == KEY_BY_PLACE;
             const vector<int8_t> places = by_place ? cut.key_places() : vector<int8_t>{};
+            const int keyed = rule.as == said::color_from && rule.value == KEY_COLOR ? key_color(cut) : -1;
             for (int i = 0; i < cut.count(); ++i) {
                 if (!cut.picked[i]) continue;
                 if (by_place) found[i] = places[(size_t)i];
+                else if (rule.as == said::color_from && rule.value == KEY_COLOR) found[i] = keyed;
                 else if (rule.as == said::color_from) found[i] = cut.color_from((partner_by)rule.value, i);
                 else if (rule.as == said::align_to)
                     cut.goes_level(i, rule.value >= ways, (partner_by)(rule.value % ways), by[i]);

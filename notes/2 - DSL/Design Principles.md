@@ -137,8 +137,9 @@ again, shifted, at every count of each step from `start` to `end`. A step is
 always written as two pairs, rows down and columns right, `(0,0)` where there
 is no second one. A step part is a count plus or minus up to two measures read
 on each picture: `own width`, `own height`, `row gap` and `column gap` (the
-fewest empty rows or columns between the piece's parts), and `color count`
-(how many colors the picked pieces hold). The mark lattice (0a938d79) is its
+fewest empty rows or columns between the piece's parts), `color count`
+(how many colors the picked pieces hold), and `key width` and `key height`
+(the box of the key, the pieces not picked). The mark lattice (0a938d79) is its
 lines made one drawing (UnionList), then tiled by `own height+row gap`: the
 whole thing again, its gap after it. `lines` takes each step from the piece alone; `grid` has
 every copy take every step again, which is a lattice (and, once `end` can stop
@@ -150,6 +151,26 @@ first, but only on a cut into shapes: a whole color layer's own size is the
 span of scattered cells, and repeated by it the layer
 fit 62b74c02's pairs by coincidence and missed its test. Training: 267 right
 (266), 40 wrong (39), gained 9b30e358, lost none.
+
+The key's size (2026-10-25, 12422b43): a step can be measured off the key.
+The line then also asks every piece but one color's, folded into one figure
+(`UnionList Trim`), moved its own size (`Shift`) and repeated from there, a copy
+every key width or key height, the key being the pieces of that color. A copy
+shorter than the figure is its first rows (12422b43's rows beside the 5s, stacked
+under the figure).
+
+### Applied: the partner ops (2026-10-25)
+
+The ways one piece finds another (`partner_by`) are one named list,
+`PARTNER_WAYS` in `14_vocabulary.hpp`, shared by every op that looks for
+another piece: ColorFrom, WouldFit, SelectLikeKey, AlignTo, MirrorAround,
+SelectPartner, MoveToward, Bridge. Programs spell the choice by name
+(`ColorFrom [the nearest piece]`, `SelectPartner [the nearest piece, left]`);
+the packed number stays inside, so a way added to the list moves no program's
+spelling and every op gets it. Added with it: the piece with as many holes,
+cells or colors, and ColorFrom's `the key`, the key's one color. The line reads
+ColorFrom off the pairs: the recolored pieces, the find that colors them as
+the output does, their name (`pick_for_group`), one replay.
 
 Still to fold, each blocked by one missing thing: rays (a word upstream that
 cuts each piece to its middle cell), moves (`start: last`, and whether each cell

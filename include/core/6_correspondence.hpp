@@ -54,7 +54,8 @@ struct piece_pick {
     uint16_t colors = 0;
     int8_t how = -1, value = 0, fits = -1;
     bool but_those = false;
-    int8_t part = -1, like = -1, partner = -1;
+    int8_t part = -1, like = -1;
+    int16_t partner = -1;
 
     static constexpr piece_pick all() { return { (uint16_t)((1u << COLOR_COUNT) - 1) }; }
     static constexpr piece_pick of_color(int color) { return { (uint16_t)(1u << color) }; }
@@ -292,7 +293,9 @@ struct correspondence_election {
         // one `value` names by size or by part, filled in `paint`, or every
         // room in the color its key names (filled_room, ROOM_PARTS),
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
-        // repeated as the Tile in `tile` says (tiled_along), or folded into one figure and
+        // repeated as the Tile in `tile` says (tiled_along), or folded into one
+        // figure, moved its own size the direction `value` names and repeated
+        // from there as the Tile in `tile` says (repeated_past), or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
         // partner as MoveToward's `value` says (move_toward), or recolored to
         // the color its own shape names (shape_recolor), or the picture so far
@@ -308,13 +311,14 @@ struct correspondence_election {
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
-                                shifted, trailed, boxed, filled_room, copied_onto, tiled_along, diagonal_tile,
+                                shifted, trailed, boxed, filled_room, copied_onto, tiled_along, repeated_past,
+                                diagonal_tile,
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
                                 empty_swap, own_sentences, kind_count } as = unsaid;
         int8_t value = 0;
-        // The Tile it says, where it says one (tiled_along).
+        // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;
         piece_pick pick = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.

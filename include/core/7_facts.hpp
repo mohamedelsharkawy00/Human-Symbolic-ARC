@@ -366,11 +366,14 @@ inline vector<object> pieces_as_said(const grid& input, segmentation_methods seg
 }
 
 // What two pieces of a hand answer, worked out once: touching [0], touching at a
-// side [1], then each likeness of shape.
+// side [1], then each likeness of shape; and what one piece counts, for the
+// partner ways by count (counted_by).
 struct hand_answers {
     static constexpr int QUESTIONS = 2 + SHAPE_LIKENESSES;
     // Per question, piece by piece: -1 not asked yet.
     array<vector<int8_t>, QUESTIONS> kept;
+    // Per count (count_kind, up to holes), piece by piece: -1 not counted yet.
+    array<vector<int16_t>, (size_t)count_kind::holes + 1> counts;
     int pieces = 0;
     template <class Work> bool answer(int question, int mine, int other, int count, Work work) {
         if (count != pieces) forget(count);
@@ -380,8 +383,17 @@ struct hand_answers {
         if (known < 0) known = work() ? 1 : 0;
         return known != 0;
     }
+    template <class Work> int counted(int kind, int mine, int count, Work work) {
+        if (count != pieces) forget(count);
+        vector<int16_t>& asked = counts[(size_t)kind];
+        if (asked.empty()) asked.assign((size_t)count, -1);
+        int16_t& known = asked[(size_t)mine];
+        if (known < 0) known = (int16_t)work();
+        return known;
+    }
     void forget(int count = 0) {
         for (vector<int8_t>& asked : kept) asked.clear();
+        for (vector<int16_t>& asked : counts) asked.clear();
         pieces = count;
     }
 };
@@ -452,6 +464,13 @@ struct partner_pieces {
     }
     bool alike(int mine, int other, int like) const {
         return answers.answer(2 + like, mine, other, count(), [&] { return shapes_alike(*this, mine, other, like); });
+    }
+    int counted(int i, int kind) const {
+        return answers.counted(kind, i, count(), [&] {
+            const cell_box own = boxes[(size_t)i];
+            return count_of(kind, own.height(), own.width(),
+                            [&](int row, int col) { return pieces[(size_t)i].color_at(own.row0 + row, own.col0 + col); });
+        });
     }
     // key_piece_at, worked out once a cell.
     int key_piece(int row, int col) const {

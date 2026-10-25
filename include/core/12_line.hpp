@@ -62,7 +62,7 @@ inline constexpr word_group group_of(correspondence_election::fired_rule::said_a
         // Paints: the hand on the line is left alone.
         case rule::extend_rays: case rule::bridged: case rule::filled: case rule::trailed:
         case rule::boxed: case rule::filled_room: case rule::copied_onto: case rule::tiled_along:
-        case rule::turned_copy: case rule::symmetric:
+        case rule::repeated_past: case rule::turned_copy: case rule::symmetric:
             return word_group::paints;
         // These rules redraw the whole output and spell their own programs.
         case rule::diagonal_tile: case rule::piece_slam: case rule::corner_chain:
@@ -87,10 +87,6 @@ struct paint_value {
     static constexpr bool second(int stored) { return stored >= second_bit; }
     static constexpr int number(int stored) { return stored % second_bit; }
 };
-
-// The directions' names, as the reading says them in words.
-inline constexpr const char* const direction_names[direction::count] = {
-    "up", "up-right", "right", "down-right", "down", "down-left", "left", "up-left" };
 
 // The one pose that does `first` and then `then`. Read off where the corners of
 // a square land, since the eight ways round are exactly the ways to move them.
@@ -327,24 +323,17 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // tie going to the plainer: the colors before holes and size, the smaller
     // value before the larger. Where every piece of every pair is picked, it picks
     // every piece, since a test can hold a color no pair did (496994bd).
-    static constexpr const char* partners[] = { "the piece around it", "the piece inside it",
-        "a piece in its rows", "a piece in its columns", "the nearest piece", "the piece it shares a side with",
-        "the piece it touches", "the piece of its shape", "the piece of its shape, turned",
-        "the piece of its shape at any size", "the piece of its shape at any size, turned",
-        "the piece of its shape stretched", "the piece of its shape stretched, turned" };
-    static_assert(size(partners) == (size_t)partner_by::count);
     // How a piece is like the key (SelectLikeKey), each likeness of shape in turn.
     static constexpr const char* likenesses[] = { "", " Any Way Round", " At Any Size", " At Any Size, Any Way Round",
                                                   " Stretched", " Stretched, Any Way Round" };
     static_assert(size(likenesses) == (size_t)KEY_LIKENESSES);
-    // A partner of any kind (partner_of_kind) by name: each way partner_by finds
-    // one, then the piece of each color.
-    auto partner_named = [](int kind) {
-        return kind < (int)partner_by::count ? string(partners[kind])
+    // A partner by name (partner_way_names): each way partner_by finds one, and,
+    // of any kind (partner_of_kind), then the piece of each color.
+    auto partners = [](int way) { return string(partner_way_names[way]); };
+    auto partner_named = [&](int kind) {
+        return kind < (int)partner_by::count ? partners(kind)
                                              : "the piece of color " + to_string(kind - (int)partner_by::count);
     };
-    static constexpr const char* mirrors[] = { "left to right", "top to bottom", "all four ways" };
-    static_assert(size(mirrors) == (size_t)mirror_by::count);
     // Each kind of pick by name, then turned round, every piece but those.
     static constexpr const char* pick_names[][2] = { { "Holes", "" }, { "Largest", "" }, { "Smallest", "" },
         { "Row Band", "" }, { "Column Band", "" }, { "Most Common Color", "Not Most Common Color" },
@@ -464,16 +453,16 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 name += "'";
             }
             name += string(" Partners ") + (partner_direction < 0 ? "Any Side" : direction_names[partner_direction]) + " (" +
-                    partners[(int)partner_way_of(best.pick.partner)] + ")";
+                    partners((int)partner_way_of(best.pick.partner)) + ")";
         }
         else {
-            name = best.pick.part < 0 ? "Colors"
+            name = best.pick.part < 0 ? string(best.pick.but_those ? "All But " : "") + "Colors"
                  : string(best.pick.but_those ? "Off Part " : "Part ") + to_string(best.pick.part) + " Fenced By";
             for (int color = 0; color < COLOR_COUNT; ++color)
                 if (best.pick.colors >> color & 1) name += " " + to_string(color);
         }
         if (!every_piece && best.pick.fits >= 0)
-            name += string(" That Would Fit ") + partners[best.pick.fits];
+            name += string(" That Would Fit ") + partners(best.pick.fits);
         if (!every_piece && best.pick.like >= 0)
             name += string(" Shaped Like The Key") + likenesses[best.pick.like];
         rule one = listed(name.c_str(), says.c_str(), as, (int8_t)best.value);
@@ -523,36 +512,67 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // paint, the cells it would lay, in what it lays there.
     struct offer { int said = 0; std::function<void()> say; colors_by_pair drawn; };
 
-    // A RECOLOR ANOTHER PIECE DECIDES: every picked piece takes its partner's color
-    // -- or, past the partner ways, the color a key drawn in the grid shows at its
-    // place (key_place_holds). It accounts for the cells it recolored.
+    // A RECOLOR ANOTHER PIECE DECIDES, READ OFF THE PAIRS: the pieces the output
+    // shows in other colors where they lie (pieces_recolored); the first find
+    // that colors every one of them as the output does -- or, where none does,
+    // the one that colors the most of their cells -- its partner's color, the
+    // key's at its place, the key's one color, or its colors cell by cell from
+    // a piece of its shape (colored_right); the pieces it colors right named as
+    // every pair names them (pick_for_group); and that word replayed once. It
+    // accounts for the cells it recolored.
     auto color_from_word = [&]() -> offer {
-        const uint16_t from = starts_from(missing::a_recolor);
-        if (!facts.hand_known || !from) return {};
-        heard best;
-        asked_piece_sets asked;
-        for (const piece_pick& pick : hand_picks.get(facts, from)) {
-            const vector<partner_pieces> handed = handed_pieces(facts, pick);
-            if (asked.before(handed)) continue;
-            for (int how = 0; how <= row_of(node_type::ColorFrom).high; ++how)
-                if (how >= COLORS_FROM_ITS_SHAPE ? !facts.asks_likeness(how - COLORS_FROM_ITS_SHAPE)
-                                                 : how < KEY_BY_PLACE && !facts.asks_way((partner_by)how))
-                    continue;
-                else if (const auto seen = how >= COLORS_FROM_ITS_SHAPE
-                                          ? colors_from_its_shape_holds(facts, handed, how - COLORS_FROM_ITS_SHAPE)
-                                      : how == KEY_BY_PLACE ? key_place_holds(facts, handed)
-                                                            : color_from_holds(facts, handed, (partner_by)how))
-                    weigh(best, how, pick, *seen, recolor_claims(*seen));
+        if (!facts.hand_known || !starts_from(missing::a_recolor)) return {};
+        const vector<vector<bool>> recolored = pieces_recolored(facts);
+        auto cells_of = [&](const vector<vector<bool>>& group) {
+            int cells = 0;
+            for (size_t which = 0; which < group.size(); ++which)
+                for (size_t index = 0; index < group[which].size(); ++index)
+                    cells += group[which][index] ? (int)facts.cuts()[which][index].summary.count : 0;
+            return cells;
+        };
+        int found = -1, most = 0;
+        vector<vector<bool>> group;
+        for (int how = 0; how <= row_of(node_type::ColorFrom).high && group != recolored; ++how) {
+            if (how >= COLORS_FROM_ITS_SHAPE ? !facts.asks_likeness(how - COLORS_FROM_ITS_SHAPE)
+                                             : how < KEY_BY_PLACE && !facts.asks_way((partner_by)how))
+                continue;
+            vector<vector<bool>> right = colored_right(facts, recolored, how);
+            if (const int cells = cells_of(right); cells > most || right == recolored) {
+                most = cells;
+                found = how;
+                group = std::move(right);
+            }
         }
-        if (best.value < 0) return {};
-        return { best.said, [&, best] {
-            carry(say(best, rule::color_from,
-                      best.value >= COLORS_FROM_ITS_SHAPE
-                          ? string("takes its colors cell by cell from ") +
-                                partners[(int)partner_by::same_shape + best.value - COLORS_FROM_ITS_SHAPE]
-                          : string("takes the color of ") +
-                                (best.value == KEY_BY_PLACE ? "the key at its place" : partners[best.value]),
-                      colors)); } };
+        if (found < 0) return {};
+        // The group by its name, else by the colors it wears, which may take a
+        // piece the word leaves as it is (b7256dcd's shape with no dot beside it).
+        vector<piece_pick> picks;
+        if (const auto named = pick_for_group(facts, group)) picks.push_back(*named);
+        uint16_t worn = 0;
+        for (size_t which = 0; which < group.size(); ++which)
+            for (size_t index = 0; index < group[which].size(); ++index)
+                if (group[which][index]) worn = (uint16_t)(worn | palette(facts.cuts()[which][index]));
+        if (worn && same_colors_every_pair(facts, worn) && ranges::find(picks, piece_pick{ worn }) == picks.end())
+            picks.push_back(piece_pick{ worn });
+        for (const piece_pick& pick : picks) {
+            const vector<partner_pieces> handed = handed_pieces(facts, pick);
+            const auto seen = found >= COLORS_FROM_ITS_SHAPE ? colors_from_its_shape_holds(facts, handed, found - COLORS_FROM_ITS_SHAPE)
+                            : found == KEY_BY_PLACE ? key_place_holds(facts, handed)
+                            : found == KEY_COLOR ? key_color_holds(facts, handed)
+                                                 : color_from_holds(facts, handed, (partner_by)found);
+            if (!seen) continue;
+            heard best;
+            weigh(best, found, pick, *seen, recolor_claims(*seen));
+            if (best.value < 0) continue;
+            return { best.said, [&, best] {
+                carry(say(best, rule::color_from,
+                          best.value >= COLORS_FROM_ITS_SHAPE
+                              ? string("takes its colors cell by cell from ") +
+                                    partners((int)partner_by::same_shape + best.value - COLORS_FROM_ITS_SHAPE)
+                              : "takes the color of " + value_written(node_type::ColorFrom, best.value),
+                          colors)); } };
+        }
+        return {};
     };
 
     // A MOVE THE PIECES DECIDE: every picked piece slides level with its partner,
@@ -566,8 +586,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // on.
     static_assert(direction::count == row_of(node_type::MoveToEdge).high + 1 &&
                   direction::count == row_of(node_type::Shift).high + 1);
-    static constexpr const char* how_far[] = { "one step", "its own size", "until it touches" };
-    static_assert(size(how_far) == (size_t)toward_by::count);
     auto move_word = [&]() -> offer {
         const uint16_t from = starts_from(missing::where_it_went);
         if (!facts.hand_known || !from) return {};
@@ -613,7 +631,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             if (aligned.said == most)
                 carry(say(aligned, rule::align_to,
                           string("moves level with the ") + (aligned.value >= ways ? "columns" : "rows") + " of " +
-                              partners[aligned.value % ways], moves));
+                              partners(aligned.value % ways), moves));
             else if (edged.said == most)
                 carry(say(edged, rule::to_edge, string("slides ") + direction_names[edged.value] + " to the edge", moves));
             else if (sized.said == most)
@@ -621,7 +639,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             else if (stepped.said < most) {
                 const int kind = toward.value % PARTNER_KINDS;
                 carry(say(toward, rule::move_toward,
-                          string("moves ") + how_far[toward.value / PARTNER_KINDS] + " toward " + partner_named(kind),
+                          string("moves ") + toward_names[toward.value / PARTNER_KINDS] + " toward " + partner_named(kind),
                           moves));
             } else {
                 // Said as the acts a pick by color says: down, then across, each only
@@ -690,8 +708,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             const int how = best.value % MIRROR_PARTNERS;
             carry(say(best, rule::mirror_around,
-                      string("drawn again mirrored ") + mirrors[best.value / MIRROR_PARTNERS] + " around the middle of " +
-                          (how < ways ? string(partners[how]) : string("the grid")), moves)); } };
+                      string("drawn again mirrored ") + mirror_names[best.value / MIRROR_PARTNERS] + " around the middle of " +
+                          (how < ways ? partners(how) : string("the grid")), moves)); } };
     };
 
     // A PIECE HOLLOWED TO ITS EDGE: every picked piece keeps only its outline. It
@@ -867,7 +885,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     colors_by_pair painted(opened.cuts().size());
     // Derive the whole removal group, describe it once, and verify that word.
     auto removal_word = [&]() -> offer {
-        const auto pick = pick_for_removal(facts, pieces_to_remove(facts, painted));
+        const auto pick = pick_for_group(facts, pieces_to_remove(facts, painted));
         if (!pick || already_said(rule::removed, *pick, 0)) return {};
         const auto seen = removal_holds(facts, handed_pieces(facts, *pick), painted);
         if (!seen) return {};
@@ -1301,6 +1319,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (cut_into_shapes) apart(measured(down ? tile_measure::own_height : tile_measure::own_width));
         for (int cells = 1; cells < narrowest[down]; ++cells) apart({ (int8_t)cells });
     }
+    // THE FIGURE REPEATED FROM PAST ITSELF, along its rows every key width or
+    // down its columns every key height, either way: every piece but one color's,
+    // folded into one figure, moved its own size the way the copies go and
+    // repeated from there to the grid's edge (past_walk), the key the pieces of
+    // that color, held in every pair (12422b43's 5s, the rows beside them
+    // stacked under the figure).
+    vector<std::pair<int, tile_value>> past_repeats;
+    for (const int shift : { direction::right, direction::left, direction::down, direction::up }) {
+        const direction_step step = step_of(shift);
+        const tile_number apart{ .terms = { { step.down + step.across < 0,
+                                              step.down ? tile_measure::key_height : tile_measure::key_width } } };
+        tile_value repeat{ .end = { .edge = true }, .spread = tile_spread::lines };
+        repeat.steps[0] = step.down ? tile_value::step{ apart, { 0 } } : tile_value::step{ { 0 }, apart };
+        past_repeats.push_back({ shift, repeat });
+    }
+    vector<std::pair<piece_pick, vector<partner_pieces>>> figures;
+    for (int color = 0; color < COLOR_COUNT; ++color)
+        if (every_pair_holds(opened, color)) {
+            piece_pick figure = piece_pick::of_color(color);
+            figure.but_those = true;
+            figures.push_back({ figure, handed_pieces(opened, figure) });
+        }
     auto repeat_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
@@ -1314,8 +1354,34 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     weigh_paint(best, asked, draw_picks[at], *seen, covered_claims(seen->drawn));
                     if (best.said > before) best_lay = lay;
                 }
+        for (size_t at = 0; at < figures.size(); ++at) {
+            const piece_pick& figure = figures[at].first;
+            const vector<partner_pieces>& handed = figures[at].second;
+            if (!paint_has_color(colors_of_pick(handed))) continue;
+            for (const int8_t lay : lays())
+                for (int asked = 0; asked < (int)past_repeats.size(); ++asked) {
+                    const auto& seen = laid_once(9, at, lay, asked, laying::as_drawn, [&] {
+                        return past_walk(opened, handed, past_repeats[(size_t)asked].first,
+                                         past_repeats[(size_t)asked].second); });
+                    if (!seen) continue;
+                    const int before = best.said;
+                    weigh_paint(best, (int)repeats.size() + asked, figure, *seen, covered_claims(seen->drawn));
+                    if (best.said > before) best_lay = lay;
+                }
+        }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
+            if (best.value >= (int)repeats.size()) {
+                const auto& [shift, repeat] = past_repeats[(size_t)best.value - repeats.size()];
+                heard past = best;
+                past.value = shift;
+                const int8_t said = say_paint(past, rule::repeated_past,
+                    string("as one figure, is repeated ") + direction_names[shift] + " from past itself, the key's " +
+                        (repeat.steps[0].down != tile_number{} ? "height" : "width") + " apart" + laid_words(best_lay));
+                read.fired[said].lay = best_lay;
+                read.fired[said].tile = repeat;
+                return;
+            }
             const tile_value& repeat = repeats[(size_t)best.value];
             const bool down = repeat.steps[0].down != tile_number{};
             const tile_number& cells = down ? repeat.steps[0].down : repeat.steps[0].across;
@@ -1370,11 +1436,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // L is said only where it accounts for more. It leaves along the picked
     // piece's row, so the pick says which way it turns (0e671a1a: the 2 runs to
     // the piece of color 4, and the 4 to the piece of color 3).
-    static constexpr const char* reaches[BRIDGE_WAYS] = {
-        "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
-        "both ways to every one", "along rows to every one", "along columns to every one",
-        "both ways to the one facing it across the grid", "along rows to the one facing it across the grid",
-        "along columns to the one facing it across the grid" };
     const vector<partner_pieces> every_piece_handed = handed_pieces(opened, piece_pick::all());
     auto bar_paint = [&]() -> offer {
         if (!down_known()) return {};
@@ -1397,7 +1458,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             say_paint(best, rule::bridged,
                 (best.value < BRIDGE_TO_PARTNER
-                     ? string("bars filled between pieces of one color, reaching ") + reaches[best.value]
+                     ? string("bars filled between pieces of one color, reaching ") + bridge_reach_names[best.value]
                      : "an L run along its row to the column of " + partner_named(best.value - BRIDGE_TO_PARTNER) +
                            ", then along that column to it") +
                     ", in " + (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
@@ -1477,7 +1538,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (best.value < 0) return {};
         return { best.said, [&, best] {
             const int8_t said = say_paint(best, rule::color_from,
-                string("takes the color of ") + partners[best.value] + ", read off the picture so far", colors);
+                string("takes the color of ") + partners(best.value) + ", read off the picture so far", colors);
             read.fired[said].on_the_picture = true;
         } };
     };

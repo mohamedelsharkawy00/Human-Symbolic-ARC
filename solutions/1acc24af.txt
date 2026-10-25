@@ -1,4 +1,4 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] WouldFit[4] Recolor[2] SelectAll Union Output SelectAll AddColor[0] Underlay
+Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] WouldFit [the nearest piece] Recolor[2] SelectAll Union Output SelectAll AddColor[0] Underlay
 
 Puzzle:       1acc24af
 Train:        Solved

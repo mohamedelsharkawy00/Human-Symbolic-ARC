@@ -21,43 +21,28 @@ using namespace std;
 // MirrorAround, WouldFit, SelectLikeKey) and bands (Layout, SelectRow,
 // SelectColumn)
 
-// WHO A PIECE TAKES ITS COLOR FROM: another piece of the same grid, found by how
-// the two sit. The rule that reads it off the pairs and the op that does it
-// both ask here, so the two cannot disagree about which piece is the partner.
-// NUMBERED IN THE ORDER THE WAYS ARE ASKED IN, so the order a tie between two
-// that say as much is broken in: the surer a way names one partner, the
-// sooner. The piece around it or inside it first -- one box holds another --
-// then the piece lined up with it, in its rows or its columns, which a second
-// piece in the same band leaves without one (18419cfa's test shape, under two
-// frames), then the nearest, which ties as soon as two stand as far (ddf7fa4f's
-// test block, between two dots), then the piece it touches at a side, the
-// four-connected touch, before the one it touches at a side or a corner,
-// four-connected before eight until eight is needed (b7256dcd's pair meets the
-// 3 at a side and the 4 only at a corner; 4938f0c2's shape meets its block only
-// at a corner), then one of its shape (same_shape, 1_readings.hpp): as it
-// lies or turned any of the eight ways round, then the same at any size, then
-// stretched, each as it lies before turned.
-enum class partner_by : int8_t { around_it, inside_it, same_row, same_column, nearest, touching_sides,
-                                 touching, same_shape, same_shape_turned, same_shape_scaled,
-                                 same_shape_scaled_turned, same_shape_stretched, same_shape_stretched_turned,
-                                 count };
+// WHO A PIECE TAKES ITS COLOR FROM, LINES UP WITH, MOVES TOWARD: another piece
+// of the same grid, found by one of the partner ways (partner_by,
+// 14_vocabulary.hpp, which names them). The rule that reads it off the pairs
+// and the op that does it both ask here, so the two cannot disagree about
+// which piece is the partner.
 
-// THE LIKENESSES OF SHAPE, the partner ways from same_shape on, in their
-// order: as it lies, then turned, at its own size, at any size, stretched --
-// what each lets a shape change (shape_freedom), read off how far past
-// same_shape it is.
-constexpr int SHAPE_LIKENESSES = (int)partner_by::count - (int)partner_by::same_shape;
+// What each likeness of shape lets a shape change (shape_freedom), read off
+// how far past same_shape it is: as it lies, then turned, at its own size, at
+// any size, stretched.
 constexpr shape_freedom likeness_freedom(int like) {
     return { (like & 1) != 0, like / 2 == 1, like / 2 == 2 };
 }
 // The likeness a partner way is, -1 for a way that is none.
 constexpr int likeness_of(partner_by how) {
-    return how >= partner_by::same_shape && how < partner_by::count ? (int)how - (int)partner_by::same_shape : -1;
+    const int like = (int)how - (int)partner_by::same_shape;
+    return like >= 0 && like < SHAPE_LIKENESSES ? like : -1;
 }
 // Whether a likeness lets size change: at any size, or stretched.
 constexpr bool sized_likeness(int like) { return like >= 2; }
-static_assert(SHAPE_LIKENESSES == 6 && (int)partner_by::same_shape_stretched_turned == (int)partner_by::count - 1,
-              "the likenesses are the last partner ways: as it lies or turned, at its size, any size, stretched");
+static_assert(SHAPE_LIKENESSES == 6, "the likenesses: as it lies or turned, at its size, any size, stretched");
+static_assert(PARTNER_SIDES == 1 + direction::count && std::size(direction_names) == direction::count,
+              "SelectPartner's sides: any, then each direction");
 
 // The gap between two boxes, the empty rows plus the empty columns between
 // them; 0 when they touch or overlap.
@@ -110,16 +95,77 @@ inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
         sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
 }
 
+// Count four-connected enclosed spaces in an occupancy mask: the runs of empty
+// cells no four-way walk in from the edge of the box reaches (mark_outside).
+// Shared by inference and SelectObjectsWithHoles so learned keys mean the same
+// at runtime.
+template <class Occupied>
+inline int object_hole_count(int height, int width, Occupied occupied) {
+    if (width <= 0 || height <= 0) return 0;
+    // Walked: outside, or in a hole already counted.
+    bool walked[MAX_GRID_DIM][MAX_GRID_DIM];
+    mark_outside(height, width, occupied, walked);
+    auto claim = [&](int row, int col) {
+        if (walked[row][col] || occupied(row, col)) return false;
+        walked[row][col] = true;
+        return true;
+    };
+    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
+    int holes = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (!claim(row, col)) continue;
+            ++holes;
+            queue_row[0] = (int16_t)row;
+            queue_col[0] = (int16_t)col;
+            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
+        }
+    return holes;
+}
+
+// WHAT A PIECE COUNTS, the measure a pick of the most, the fewest or the odd
+// one out reads (the user, 2026-10-13: the reading could not count), and the
+// partner ways by count match: its cells, its colors, its holes
+// (object_hole_count), or its cells of one color, of_color + the color.
+// color_at(row, col) reads the piece in its box, TRANSPARENT where it paints
+// none. Said once for the ops and the reading.
+enum class count_kind : int8_t { cells, colors, holes, of_color, count = of_color + COLOR_COUNT };
+template <class ColorAt>
+inline int count_of(int kind, int height, int width, ColorAt color_at) {
+    if (kind == (int)count_kind::holes)
+        return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+    uint32_t colors = 0;
+    int cells = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const int color = color_at(row, col);
+            if (!is_color(color)) continue;
+            colors |= 1u << color;
+            cells += kind == (int)count_kind::cells || color == kind - (int)count_kind::of_color;
+        }
+    if (kind != (int)count_kind::colors) return cells;
+    int many = 0;
+    for (; colors; colors >>= 1) many += (int)(colors & 1);
+    return many;
+}
+// The count a partner way by count matches, -1 for a way that is none.
+constexpr int counted_by(partner_by how) {
+    return how == partner_by::as_many_holes ? (int)count_kind::holes
+         : how == partner_by::as_many_cells ? (int)count_kind::cells
+         : how == partner_by::as_many_colors ? (int)count_kind::colors : -1;
+}
+
 // Every partner the piece `mine` has by `how` among the pieces not picked --
 // or, `among_all`, among every piece but itself (SelectPartner, whose pick of
 // every piece leaves none unpicked) -- handed to `visit(other)`; for the
 // nearest, only the ones no other is nearer than. THE PIECES ARE ASKED, so one
 // walk serves a grid's pieces and the op's alike: `count()`; `box(i)`, the box
 // piece i's paint fills on the grid; `painted(i, row, col)`, whether it paints
-// that cell of the grid, false off it; `is_picked(i)`; `touching(i, j, sides_only)`
-// and `alike(i, j, like)` (touches, shapes_alike), which a reading may keep; and,
-// for the color questions below, `color(i)`, the color an op reads off its first
-// cell, and `holds(i, color)`, whether it holds a cell of that color.
+// that cell of the grid, false off it; `is_picked(i)`; `touching(i, j, sides_only)`,
+// `alike(i, j, like)` and `counted(i, kind)` (touches, shapes_alike, count_of),
+// which a reading may keep; and, for the color questions below, `color(i)`, the
+// color an op reads off its first cell, and `holds(i, color)`, whether it holds
+// a cell of that color.
 template <class Pieces, class Visit>
 inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
                          bool among_all = false) {
@@ -161,6 +207,11 @@ inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit v
             case partner_by::same_shape_stretched:
             case partner_by::same_shape_stretched_turned:
                 partner = pieces.alike(mine, other, (int)how - (int)partner_by::same_shape);
+                break;
+            case partner_by::as_many_holes:
+            case partner_by::as_many_cells:
+            case partner_by::as_many_colors:
+                partner = pieces.counted(mine, counted_by(how)) == pieces.counted(other, counted_by(how));
                 break;
             default: break;
         }
@@ -204,12 +255,11 @@ inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
     return any;
 }
 
-// A PARTNER OF ANY KIND: the ways partner_by finds one by how two pieces sit,
-// then, past those, by color -- the one piece holding a cell of color `kind -
+// A PARTNER OF ANY KIND (PARTNER_KINDS): the ways partner_by finds one, then,
+// past those, by color -- the one piece holding a cell of color `kind -
 // partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
 // Asked among the pieces not picked, as partner_of asks. -1 when there is
 // none, or several.
-constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
 template <class Pieces>
 inline int partner_of_kind(int kind, int mine, const Pieces& pieces) {
     if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, pieces);
@@ -300,34 +350,6 @@ inline bool paints_at_least(int height, int width, Occupied occupied, int at_lea
     return cells >= at_least;
 }
 
-// Count four-connected enclosed spaces in an occupancy mask: the runs of empty
-// cells no four-way walk in from the edge of the box reaches (mark_outside).
-// Shared by inference and SelectObjectsWithHoles so learned keys mean the same
-// at runtime.
-template <class Occupied>
-inline int object_hole_count(int height, int width, Occupied occupied) {
-    if (width <= 0 || height <= 0) return 0;
-    // Walked: outside, or in a hole already counted.
-    bool walked[MAX_GRID_DIM][MAX_GRID_DIM];
-    mark_outside(height, width, occupied, walked);
-    auto claim = [&](int row, int col) {
-        if (walked[row][col] || occupied(row, col)) return false;
-        walked[row][col] = true;
-        return true;
-    };
-    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-    int holes = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            if (!claim(row, col)) continue;
-            ++holes;
-            queue_row[0] = (int16_t)row;
-            queue_col[0] = (int16_t)col;
-            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
-        }
-    return holes;
-}
-
 // THE WAY A PIECE RUNS, SelectRunningAlong's value: the way its longest
 // straight line of cells lies -- along its rows, its columns, its diagonals
 // down to the right or up to the right, as ExtendTo names its tracks
@@ -363,31 +385,6 @@ inline runs_along way_it_runs(int height, int width, Occupied occupied) {
         } else if (line == longest) way = runs_along::no_way;
     }
     return way;
-}
-
-// WHAT A PIECE COUNTS, the measure a pick of the most, the fewest or the odd
-// one out reads (the user, 2026-10-13: the reading could not count): its
-// cells, its colors, its holes (object_hole_count), or its cells of one
-// color, of_color + the color. color_at(row, col) reads the piece in its box,
-// TRANSPARENT where it paints none. Said once for the ops and the reading.
-enum class count_kind : int8_t { cells, colors, holes, of_color, count = of_color + COLOR_COUNT };
-template <class ColorAt>
-inline int count_of(int kind, int height, int width, ColorAt color_at) {
-    if (kind == (int)count_kind::holes)
-        return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
-    uint32_t colors = 0;
-    int cells = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            const int color = color_at(row, col);
-            if (!is_color(color)) continue;
-            colors |= 1u << color;
-            cells += kind == (int)count_kind::cells || color == kind - (int)count_kind::of_color;
-        }
-    if (kind != (int)count_kind::colors) return cells;
-    int many = 0;
-    for (; colors; colors >>= 1) many += (int)(colors & 1);
-    return many;
 }
 
 // THE RANKS BY SIZE SelectLargestObject and SelectSmallestObject take, the
@@ -667,19 +664,14 @@ inline bool like_the_key(int how, int mine, const Pieces& pieces) {
 }
 
 // WHERE SelectPartner[value] MOVES THE PICK: onto every partner each picked
-// piece has by the way `value` % partner_by::count names, among every piece,
-// picked or not (each_partner), lying on the side of it `value` /
-// partner_by::count names -- any side [0], or past it wholly that way of it,
-// each of the eight directions from up clockwise (lies_toward). Each one handed
-// to `mark(other)`: the pick becomes those, and a piece no picked piece has for
-// a partner comes out unpicked (4364c1c4: of every piece, the partners above
+// piece has by the way partner_way_of(value) names, among every piece, picked
+// or not (each_partner), lying on the side of it partner_direction_of(value)
+// names -- any side, or past it wholly that way of it, each of the eight
+// directions from up clockwise (lies_toward). Each one handed to
+// `mark(other)`: the pick becomes those, and a piece no picked piece has for a
+// partner comes out unpicked (4364c1c4: of every piece, the partners above
 // each, the upper piece of each stack). The pieces are asked as each_partner
 // asks them.
-constexpr int PARTNER_DIRECTIONS = 1 + direction::count;
-constexpr int SELECT_PARTNER_VALUES = PARTNER_DIRECTIONS * (int)partner_by::count;
-constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
-// The direction a SelectPartner value names: -1 for any direction.
-constexpr int partner_direction_of(int value) { return value / (int)partner_by::count - 1; }
 template <class Pieces, class Mark>
 inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
     if (value < 0 || value >= SELECT_PARTNER_VALUES) return;
@@ -762,6 +754,7 @@ inline int direction_toward(const cell_box& from, const cell_box& to) {
 // HOW FAR MoveToward GOES toward its partner: one step, its own size, or until
 // it touches the partner.
 enum class toward_by : int8_t { a_step, its_size, touching, count };
+static_assert((int)toward_by::count == TOWARD_FARS, "MoveToward names each way of going (toward_names)");
 
 // WHERE MoveToward MOVES A PIECE: that way toward its partner (direction_toward,
 // between their boxes), by `far` -- one step; its own height or width each way
@@ -935,6 +928,15 @@ inline int key_color_at(const Pieces& pieces, int row, int col) {
     const int i = pieces.key_piece(row, col);
     return i < 0 ? (int)TRANSPARENT : (int)pieces.color_at(i, row, col);
 }
+// The box of the key's drawing: the rows and columns its pieces paint, empty
+// where every piece is picked.
+template <class Pieces>
+inline cell_box key_box(const Pieces& pieces) {
+    cell_box box;
+    for (int i = 0; i < pieces.count(); ++i)
+        if (!pieces.is_picked(i)) box.include(pieces.box(i));
+    return box;
+}
 
 // READ BY COLOR: two cells of two colors side by side, alone together along a
 // row -- or, `along_rows` false, a column -- are an entry, handed to
@@ -1008,14 +1010,7 @@ inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
 // (color_tally), as a grid's ground is: the panel the entries are drawn on.
 template <class Pieces, class Visit>
 inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
-    cell_box box;
-    for (int i = 0; i < pieces.count(); ++i) {
-        if (pieces.is_picked(i)) continue;
-        const cell_box own = pieces.box(i);
-        if (own.empty()) continue;
-        box.include_cell(own.row0, own.col0);
-        box.include_cell(own.row1, own.col1);
-    }
+    const cell_box box = key_box(pieces);
     if (box.empty()) return;
     int ground = TRANSPARENT;
     if (grounded) {
@@ -1032,10 +1027,28 @@ inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
 }
 
 // ColorFrom PAST ITS PARTNER WAYS: each picked piece takes its color off a key
-// by its place (key_place_colors); past that, its colors cell by cell from the
-// one piece of its shape each likeness finds (colors_from_its_shape).
-constexpr int KEY_BY_PLACE = (int)partner_by::count;
-constexpr int COLORS_FROM_ITS_SHAPE = KEY_BY_PLACE + 1;
+// by its place (key_place_colors, KEY_BY_PLACE); then the key's one color
+// (key_color, KEY_COLOR); past that, its colors cell by cell from the one
+// piece of its shape each likeness finds (colors_from_its_shape).
+
+// THE KEY'S ONE COLOR: the color every cell the key's pieces paint wears, -1
+// where they wear several or paint none.
+template <class Pieces>
+inline int key_color(const Pieces& pieces) {
+    int color = -1;
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (pieces.is_picked(i)) continue;
+        const cell_box own = pieces.box(i);
+        for (int row = own.row0; row <= own.row1; ++row)
+            for (int col = own.col0; col <= own.col1; ++col) {
+                const int worn = pieces.color_at(i, row, col);
+                if (!is_color(worn)) continue;
+                if (color >= 0 && worn != color) return -1;
+                color = worn;
+            }
+    }
+    return color;
+}
 
 // A PIECE COLORED CELL BY CELL BY ANOTHER OF ITS SHAPE, said once for ColorFrom
 // past the key by place and for the reading that replays it: the one partner
@@ -1446,8 +1459,6 @@ constexpr int aligned_copy_start(int source_size, int target_start,
 // drawing of every bar, and may say false to stop. The op calls it, so
 // a reading and the op cannot draw different bars. Answers whether an L it
 // drew turned: both its legs had cells to fill.
-constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS,
-              BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
 template <class Pieces, class Land>
 inline bool bridge_bars(int way, int width, int height, const Pieces& pieces, Land land) {
     if (way < 0 || way >= BRIDGE_VALUES) return false;
@@ -1779,10 +1790,10 @@ inline void each_extended_ray(ray_seed seed, int radius, bool diagonal, Paint pa
 
 // WHAT A Tile'S STEPS MEASURE, read for one piece: its own width and height,
 // the fewest empty rows and columns lying between two of its parts
-// (inner_gap), and how many colors the picked pieces hold together
-// (color_count).
+// (inner_gap), how many colors the picked pieces hold together
+// (color_count), and the width and height of the key (key_box).
 struct tile_measures {
-    int own_width = 0, own_height = 0, row_gap = 0, column_gap = 0, color_count = 0;
+    int own_width = 0, own_height = 0, row_gap = 0, column_gap = 0, color_count = 0, key_width = 0, key_height = 0;
 };
 
 // The fewest empty rows -- or, `rows` false, columns -- lying between two
@@ -1823,14 +1834,15 @@ inline bool names(const tile_value& tile, tile_measure measure) {
 }
 
 // What a Tile measures of one piece `height` by `width`, painted(row, col)
-// saying which cells it paints, in a hand holding `colors` colors; its gaps
-// are read only where the Tile names them.
+// saying which cells it paints, in a hand holding `colors` colors and the key
+// `key`; its gaps are read only where the Tile names them.
 template <class Painted>
-inline tile_measures measures_of(const tile_value& tile, int height, int width, Painted painted, int colors) {
+inline tile_measures measures_of(const tile_value& tile, int height, int width, Painted painted, int colors,
+                                 const cell_box& key) {
     return { width, height,
              names(tile, tile_measure::row_gap) ? inner_gap(height, width, true, painted) : 0,
              names(tile, tile_measure::column_gap) ? inner_gap(height, width, false, painted) : 0,
-             colors };
+             colors, key.width(), key.height() };
 }
 
 // A Tile's steps as moves in cells, for one piece as measured. A step that
@@ -1847,6 +1859,8 @@ inline tile_moves moves_of(const tile_value& tile, const tile_measures& measures
         case tile_measure::row_gap:     return measures.row_gap;
         case tile_measure::column_gap:  return measures.column_gap;
         case tile_measure::color_count: return measures.color_count;
+        case tile_measure::key_width:   return measures.key_width;
+        case tile_measure::key_height:  return measures.key_height;
         default:                        return 0;
         }
     };
@@ -1956,7 +1970,7 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
 // or all four ways at once. The middle is a partner's, one of the partner_by
 // ways, or past those the grid's own -- so MIRROR_PARTNERS counts one more.
 enum class mirror_by : int8_t { left_right, top_bottom, four_ways, count };
-constexpr int MIRROR_PARTNERS = (int)partner_by::count + 1;
+static_assert((int)mirror_by::count == MIRRORS, "MirrorAround names each mirror (mirror_names)");
 
 // WHERE MirrorAround DRAWS, said once for the op and for the reading that
 // replays it. The middle a picked piece is mirrored around, twice its row and

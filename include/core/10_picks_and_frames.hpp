@@ -358,6 +358,13 @@ struct asked_piece_sets {
     }
 };
 
+// Whether every pair's hand holds a piece wearing `color`.
+inline bool every_pair_holds(const replay_facts& facts, int color) {
+    return ranges::all_of(facts.cuts(), [&](const vector<object>& cut) {
+        return ranges::any_of(cut, [&](const object& piece) { return (palette(piece) >> color & 1) != 0; });
+    });
+}
+
 // Whether a pick by `colors` picks by the same colors in every pair: each pair's
 // pieces hold the same ones of them. A pick whose colors change from pair to pair
 // names each pair's own colors rather than a rule, and a test brings its own.
@@ -419,7 +426,7 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
         });
     }
     record(piece_pick::all(), group(count, true));
-    for (const auto& [color, members] : colors) both(piece_pick::of_color(color), members);
+    for (const auto& [color, members] : colors) record(piece_pick::of_color(color), members);
     const auto hole_range = row_of(node_type::SelectObjectsWithHoles);
     classes(piece_pick::by_holes, holes, hole_range.low, hole_range.high);
     for (const bool largest : {true, false}) {
@@ -514,6 +521,17 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
         }
     }
     classes(piece_pick::running_along, runs, 0, (int)runs_along::count - 1);
+    // EVERY PIECE BUT THOSE OF ONE COLOR, after every kind of pick: a color's
+    // part can change on a test, where a kind of piece keeps its own (1da012fc's
+    // 2, a dot of the key in its pairs, the shapes' color on its test, where the
+    // panel is still the most common color).
+    for (const auto& [color, members] : colors) {
+        auto name = piece_pick::of_color(color);
+        name.but_those = true;
+        group rest = members;
+        rest.flip();
+        record(name, rest);
+    }
     // A named group can leave a key; shape likeness reads its relation to it.
     for (const auto& [base, members] : bases) {
         if (!base.but_those) continue;
@@ -555,7 +573,7 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
         for (const auto& [relation, members] : related) {
             const auto [color, side] = relation;
             auto name = color < 0 ? piece_pick::all() : piece_pick::of_color(color);
-            name.partner = (int8_t)((side + 1) * (int)partner_by::count + way);
+            name.partner = (int16_t)((side + 1) * (int)partner_by::count + way);
             record(name, members, false);
             name.but_those = true;
             group rest = members;
@@ -567,26 +585,28 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     return found == names.end() ? vector<piece_pick>{} : found->second;
 }
 
-// Name the complete observed group, then require the same name in every pair.
-inline optional<piece_pick> pick_for_removal(const replay_facts& facts,
-                                          const vector<vector<bool>>& removed) {
-    if (removed.size() != facts.cuts().size() || removed.empty()) return nullopt;
+// THE PICK THAT NAMES A GROUP read off the pairs -- the pieces to remove, the
+// pieces recolored -- `group` marking them pair by pair: every piece, their
+// colors, a size boundary, or else the names every pair gives it. None where a
+// pair holds none of it or no name takes exactly it in every pair.
+inline optional<piece_pick> pick_for_group(const replay_facts& facts, const vector<vector<bool>>& group) {
+    if (group.size() != facts.cuts().size() || group.empty()) return nullopt;
     uint16_t shared_colors = 0;
-    bool stable_colors = true, all_removed = true;
-    int smallest_removed = MAX_GRID_CELLS + 1, largest_removed = 0;
+    bool stable_colors = true, all_in = true;
+    int smallest_in = MAX_GRID_CELLS + 1, largest_in = 0;
     int smallest_kept = MAX_GRID_CELLS + 1, largest_kept = 0;
-    for (size_t which = 0; which < removed.size(); ++which) {
+    for (size_t which = 0; which < group.size(); ++which) {
         const auto& pieces = facts.cuts()[which];
-        if (removed[which].size() != pieces.size()) return nullopt;
-        uint16_t gone_colors = 0, kept_colors = 0;
-        bool some_removed = false, some_kept = false;
+        if (group[which].size() != pieces.size()) return nullopt;
+        uint16_t group_colors = 0, kept_colors = 0;
+        bool some_in = false, some_kept = false;
         for (size_t index = 0; index < pieces.size(); ++index) {
             const int count = pieces[index].summary.count;
-            if (removed[which][index]) {
-                some_removed = true;
-                gone_colors = (uint16_t)(gone_colors | palette(pieces[index]));
-                smallest_removed = min(smallest_removed, count);
-                largest_removed = max(largest_removed, count);
+            if (group[which][index]) {
+                some_in = true;
+                group_colors = (uint16_t)(group_colors | palette(pieces[index]));
+                smallest_in = min(smallest_in, count);
+                largest_in = max(largest_in, count);
             } else {
                 some_kept = true;
                 kept_colors = (uint16_t)(kept_colors | palette(pieces[index]));
@@ -594,23 +614,23 @@ inline optional<piece_pick> pick_for_removal(const replay_facts& facts,
                 largest_kept = max(largest_kept, count);
             }
         }
-        if (!some_removed) return nullopt;
-        all_removed = all_removed && !some_kept;
-        if (which == 0) shared_colors = gone_colors;
-        stable_colors = stable_colors && gone_colors == shared_colors && !(gone_colors & kept_colors);
+        if (!some_in) return nullopt;
+        all_in = all_in && !some_kept;
+        if (which == 0) shared_colors = group_colors;
+        stable_colors = stable_colors && group_colors == shared_colors && !(group_colors & kept_colors);
     }
-    if (all_removed) return piece_pick::all();
+    if (all_in) return piece_pick::all();
     if (stable_colors) return piece_pick{shared_colors};
     const auto cells = row_of(node_type::SelectAtLeastCells);
     const int above_kept = max((int)cells.low, largest_kept + 1);
-    const int above_removed = max((int)cells.low, largest_removed + 1);
-    if (above_kept <= smallest_removed && above_kept <= cells.high)
+    const int above_in = max((int)cells.low, largest_in + 1);
+    if (above_kept <= smallest_in && above_kept <= cells.high)
         return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_kept};
-    if (above_removed <= smallest_kept && above_removed <= cells.high)
-        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_removed, -1, true};
-    auto names = names_of_group(facts, 0, removed[0]);
-    for (size_t which = 1; which < removed.size() && !names.empty(); ++which) {
-        const auto here = names_of_group(facts, which, removed[which]);
+    if (above_in <= smallest_kept && above_in <= cells.high)
+        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_in, -1, true};
+    auto names = names_of_group(facts, 0, group[0]);
+    for (size_t which = 1; which < group.size() && !names.empty(); ++which) {
+        const auto here = names_of_group(facts, which, group[which]);
         std::erase_if(names, [&](const piece_pick& name) { return ranges::find(here, name) == here.end(); });
     }
     return names.empty() ? nullopt : optional<piece_pick>{names.front()};
@@ -753,10 +773,7 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
     }
     vector<uint16_t> bases = { piece_pick::all().colors };
     for (int color = 0; color < COLOR_COUNT; ++color)
-        if (ranges::all_of(facts.cuts(), [&](const vector<object>& cut) {
-                return ranges::any_of(cut, [&](const object& piece) { return (palette(piece) >> color & 1) != 0; });
-            }))
-            bases.push_back(piece_pick::of_color(color).colors);
+        if (every_pair_holds(facts, color)) bases.push_back(piece_pick::of_color(color).colors);
     // The ways asked touch first, at a side and then at a corner, and then in
     // partner_by's order: a piece it touches is its partner whatever lies in
     // line with it, which a move can change (4364c1c4's test: once each upper
@@ -795,7 +812,7 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
                 partner_picks_taken.push_back(std::move(taken));
                 partner_picks_taken.push_back(std::move(turned));
                 piece_pick partnered{ base };
-                partnered.partner = (int8_t)((partner_direction + 1) * (int)partner_by::count + way);
+                partnered.partner = (int16_t)((partner_direction + 1) * (int)partner_by::count + way);
                 for (const bool but_those : { false, true }) {
                     partnered.but_those = but_those;
                     picks.push_back(partnered);
