@@ -185,3 +185,80 @@ line and one recoloring what it crosses.
 
 First, count which relations explain the most of the 89 same-size tasks whose
 only unexplained part is a recolor.
+
+## Cut experiments: results and lessons, 2026-10-25
+
+The user chose to revert these experiments after the work drifted from removing
+search into changing cut ranking and adding an early packing relation together.
+Solver source is restored to 12ad048, the pre-experiment baseline. None of the
+changes below remains in the solver, including the unchanged-picture stop.
+The earlier peak of 267 solved used multiple background plans; this rollback
+restores the later 265-solved baseline, not that older design.
+
+### Measurements
+
+All runs used the 1,000 training tasks. Gained and lost compare solved task IDs
+with the preceding row, using scripts/readouts.py. Wrong means a program fit
+the training pairs but failed its test. Tasks with no fit are not counted wrong.
+
+| Run in out/ | Change | Right | Wrong | Gained | Lost |
+|---|---|---:|---:|---:|---:|
+| removal_names_full | Baseline, 12ad048 | 265 | 31 | - | - |
+| first_cut_full | Read only matching's first-ranked cut | 216 | 7 | 0 | 49 |
+| ranked_cut_full | Remove the rule putting side-only cuts last | 214 | 8 | 2 | 4 |
+| unchanged_cut_full | Stop when the current picture already equals the answer | 215 | 8 | 1 | 0 |
+| packing_relations_full | Early derived packing plus new cut ranking | 214 | 12 | 15 | 16 |
+
+Explained-but-unsolved stayed zero in these comparisons. The final experiment
+lost 51 baseline solutions and gained none against removal_names_full. Restoring
+the baseline therefore recovers 51 and loses none relative to that saved run;
+this is a comparison of saved runs, not a fresh measurement after rollback.
+Builds passed without warnings. Reports are in logs/ with each run's prefix.
+
+### What the evidence established
+
+- Matching previously ordered cuts; words made the final choice by leaving the
+  fewest cells unexplained, stopping when none remained. Reading only the first
+  cut removed that correction without supplying equally strong earlier evidence.
+- The first 49 losses were not all bad initial cuts: six kept their initial cut,
+  so changes inside frames or later passes also mattered. Twelve had previously
+  used a side-only initial cut. Removing its forced-last position recovered only
+  two and lost four. An old preference can protect real distinctions even when
+  its implementation is crude.
+- Packing loss 025d127b showed a real gap: fragments matched better under the
+  available relations, while the whole pieces supported the later packing word.
+  Matching and later words do not yet understand the same changes.
+- 9172f3a0 exposed a separate issue: scaling already produced the answer, then
+  the inner reading added stamping and spoiled it. Stopping on the unchanged
+  picture recovered that puzzle with no losses in unchanged_cut_full. This
+  promising fix was reverted too, to restore one exact, known checkpoint.
+- Ranking by fewer unmatched cells is not enough. Among the 50 losses before
+  the final experiment, the old initial cut had fewer unmatched cells in 10,
+  more in 15, the same in 19; six had the same initial cut.
+- Derived packing recovered 025d127b in the final experiment, but packing and
+  ranking changed together. The 15 gains and 16 losses do not isolate either
+  change's effect. The targeted six-task run already lost two while gaining one;
+  its gate checked only the packing recovery and still allowed the full run.
+
+### Lessons for another attempt
+
+1. Removing program search does not require forbidding every revision of how
+   a picture is understood. First identify which evidence currently makes the
+   revision useful, then replace that mechanism deliberately.
+2. Make more of the language available to matching by deriving relations from
+   observed changes. Moving a detector that tries operator values upstream only
+   relocates search. Movement itself is not yet the reason for a movement.
+3. Extend existing matches, rules and cell claims; do not build a second reading
+   system. Some words relate groups, regions or layers, so not every relation
+   belongs in a one-piece-to-one-piece link.
+4. Add one relation and measure it under the existing ranking before changing
+   the ranking. Keep coverage, rule support and picture compactness distinct.
+   The proposed ranking is unproven; these runs do not validate it.
+5. A local recovery is not permission to ignore regressions elsewhere. Compare
+   right, wrong, gained, lost and explained-but-unsolved at every stage. Fewer
+   wrong answers can mean fewer fitted programs, not better understanding.
+6. Keep observations separate from hypotheses. Shared motion does not establish
+   one object; these experiments did not justify that proposed grouping rule.
+
+The full-language direction remains an open design question, not a completed
+mechanism. No new experiment or ranking change is authorized by this note.
