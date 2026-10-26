@@ -827,7 +827,34 @@ inline std::pair<int, int> shift_to_touch(const cell_box& moving,
 }
 
 // MAP · Recolor and AddColor, ShapeColorMap, BidiColorMap, VoteDenoise,
-// SnapToAnchors, ProjectOnSeeds
+// SnapToAnchors, ProjectOnSeeds, OverlapCorner
+
+// THE CORNER CHAIN OverlapCorner lays: the pieces in the order of their boxes'
+// left columns, top rows on a tie, the first with its top-left at the grid's
+// corner and each next with its top-left on the last one's bottom-right cell.
+// `box(i)` is piece i's box; `lay(i, row, col)` takes each in chain order with
+// its new top-left, and answers whether to go on.
+template <class Box, class Lay>
+inline void each_corner_link(int count, Box box, Lay lay) {
+    count = std::min(count, MAX_GRID_CELLS);
+    int order[MAX_GRID_CELLS];
+    for (int i = 0; i < count; ++i) order[i] = i;
+    for (int i = 0; i < count; ++i) {
+        int best = i;
+        for (int j = i + 1; j < count; ++j) {
+            const cell_box one = box(order[j]), other = box(order[best]);
+            if (one.col0 < other.col0 || (one.col0 == other.col0 && one.row0 < other.row0)) best = j;
+        }
+        std::swap(order[i], order[best]);
+    }
+    int row = 0, col = 0;
+    for (int k = 0; k < count; ++k) {
+        const cell_box at = box(order[k]);
+        if (!lay(order[k], row, col)) return;
+        row += at.height() - 1;
+        col += at.width() - 1;
+    }
+}
 
 // Recolor and AddColor's relative color sources, shared by reading and execution.
 // Ties choose the lowest color, and an empty object stays transparent.

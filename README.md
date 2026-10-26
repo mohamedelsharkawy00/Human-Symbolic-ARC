@@ -11,7 +11,7 @@
 3. It writes every change down cell by cell.
 4. Each rule crosses off the cells it explains.
 5. Whatever no rule claims is left over; where a match saw the change, it is listed by that change: the rule the reading lacks.
-6. Every rule is checked on all the training pairs before it is said, most by replaying it with the operators' own arithmetic. A replayed rule must bring each pair the line has not finished nearer its output: doing nothing is not evidence that it explains the puzzle.
+6. A rule is said only after it is replayed on every training pair, using the same arithmetic as the operators, and seen to change something in every pair; a pair already finished asks only that it lay nothing wrong. Doing nothing is not evidence that it explains the puzzle.
 
 # 2. Getting Started
 1. Clone it: `git clone https://github.com/mohamedelsharkawy00/human-symbolic-arc`

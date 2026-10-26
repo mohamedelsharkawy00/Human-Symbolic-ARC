@@ -1227,27 +1227,17 @@ object_list& op_overlap_corner(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
     if (count <= 0) { copy_list(res, from); return res; }
-    // Chain order = box (x0, y0) ascending. Selection sort.
-    int order[MAX_OBJECTS_IN_A_LIST];
-    for (int i = 0; i < count; ++i) order[i] = i;
-    for (int i = 0; i < count; ++i) {
-        int best = i;
-        for (int j = i + 1; j < count; ++j) {
-            const held_object& one = from.objects[order[j]];
-            const held_object& other = from.objects[order[best]];
-            if (one.x0 < other.x0 || (one.x0 == other.x0 && one.y0 < other.y0)) best = j;
-        }
-        swap(order[i], order[best]);
-    }
-    // The first top-left at (0,0); each next top-left = the previous bottom-right.
-    int at_x = 0, at_y = 0;
-    for (int k = 0; k < count; ++k) {
-        const held_object& source = from.objects[order[k]];
+    // The chain as each_corner_link lays it, the reading's replay the same.
+    each_corner_link(count, [&](int i) {
+        const held_object& one = from.objects[i];
+        return cell_box{ one.y0, one.x0, one.y0 + one.height - 1, one.x0 + one.width - 1 };
+    }, [&](int i, int row, int col) {
+        const held_object& source = from.objects[i];
         held_object& one = res.objects[res.count++] = source;
-        one.x0 = (int16_t)at_x;                       one.y0 = (int16_t)at_y;
-        one.x1 = (int16_t)(at_x + source.width - 1);  one.y1 = (int16_t)(at_y + source.height - 1);
-        at_x = one.x1; at_y = one.y1;
-    }
+        one.x0 = (int16_t)col;                       one.y0 = (int16_t)row;
+        one.x1 = (int16_t)(col + source.width - 1);  one.y1 = (int16_t)(row + source.height - 1);
+        return true;
+    });
     return res;
 }
 

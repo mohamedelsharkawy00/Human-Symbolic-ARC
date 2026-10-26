@@ -64,6 +64,14 @@ struct hole_color_rule {
     }
 };
 
+// THE INPUT TILED BY ITS OWN SIZE, from where it stands onward, every copy
+// taking both steps again: what a tiled frame, the input's blocks and a motif
+// carried over the grid say.
+inline constexpr tile_value tiled_by_its_own_size{
+    .steps = { { .down = measured(tile_measure::own_height), .across = { 0 } },
+               { .down = { 0 }, .across = measured(tile_measure::own_width) } },
+    .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
+
 // A repeating pattern carried across the whole output, with its colors remapped.
 struct motif_continuation_rule {
     bool held = false;
@@ -103,32 +111,36 @@ struct motif_continuation_rule {
             // Pattern is input-only. A block discovered only on the output cannot
             // justify spelling Pattern with a different unit on the input.
             if (width != from.width || height != from.height) return {};
-            for (int r = 0; r < input.height; ++r)
-                for (int c = 0; c < input.width; ++c)
-                    if (input.data[r][c] != input.data[r % height][c % width]) return {};
-            for (int r = 0; r < output.height; ++r)
-                for (int c = 0; c < output.width; ++c) {
-                    const int was = input.data[r % height][c % width];
-                    const int now = output.data[r][c];
-                    // An empty cell of the motif stays empty.
-                    if (is_color(was) != is_color(now)) return {};
-                    if (!is_color(was)) continue;
-                    if (rule.color_map[was] >= 0 && rule.color_map[was] != now) return {};
-                    rule.color_map[was] = (int8_t)now;
-                }
+            // THE BLOCK TILED OVER A GRID AS Tile LAYS IT (each_tile_offset), each
+            // of its cells handed to `see(was, now)` with the grid's cell there.
+            auto tiled = [&](const grid& over, auto see) {
+                const tile_moves moves = moves_of(tiled_by_its_own_size, { width, height });
+                bool all = true;
+                each_tile_offset(tiled_by_its_own_size, moves, 0, 0, height, width, over.width, over.height,
+                                 [&](int down, int across) {
+                    for (int r = 0; r < height && all; ++r)
+                        for (int c = 0; c < width && all; ++c)
+                            if (over.contains(down + r, across + c))
+                                all = see((int)input.data[r][c], (int)over.data[down + r][across + c]);
+                    return all;
+                });
+                return all;
+            };
+            if (!tiled(input, [](int was, int now) { return was == now; })) return {};
+            const bool mapped = tiled(output, [&](int was, int now) {
+                // An empty cell of the motif stays empty.
+                if (is_color(was) != is_color(now)) return false;
+                if (!is_color(was)) return true;
+                if (rule.color_map[was] >= 0 && rule.color_map[was] != now) return false;
+                rule.color_map[was] = (int8_t)now;
+                return true;
+            });
+            if (!mapped) return {};
         }
         rule.held = true;
         return rule;
     }
 };
-
-// THE INPUT TILED BY ITS OWN SIZE, from where it stands onward, every copy
-// taking both steps again: what a tiled frame, the input's blocks and a motif
-// carried over the grid say.
-inline constexpr tile_value tiled_by_its_own_size{
-    .steps = { { .down = measured(tile_measure::own_height), .across = { 0 } },
-               { .down = { 0 }, .across = measured(tile_measure::own_width) } },
-    .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
 
 // THE SAME CONTINUATION ALONG THE DIAGONALS. The colors cycle as the diagonals
 // are crossed, the input paints part of that cycle, and the output is the cycle
@@ -570,7 +582,32 @@ struct input_blocks_rule {
             }
             rule.negative = true;
         }
-        rule.held = true;
+        // REPLAYED: every output drawn again from its input, each copy posed as
+        // the op poses it (pose_source) and worn as the table or the negative
+        // says, the rest empty; held only where every drawing comes out exactly.
+        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            const layout& at = rule.pairs[(size_t)(&pair - train.data())];
+            const int width = pair.input.width, height = pair.input.height;
+            const int8_t figure = rule.negative ? the_figure_color(pair.input, ground) : (int8_t)TRANSPARENT;
+            drawn = grid(pair.output.width, pair.output.height);
+            for (int r = 0; r < at.rows; ++r)
+                for (int c = 0; c < at.cols; ++c) {
+                    int pose = 0;
+                    while (pose < POSE_COUNT && !(at.poses[r][c] >> pose & 1)) ++pose;
+                    if (pose == POSE_COUNT) continue;
+                    const auto [posed_width, posed_height] = posed_size(pose, width, height);
+                    if (posed_width != width || posed_height != height) return false;
+                    for (int row = 0; row < height; ++row)
+                        for (int col = 0; col < width; ++col) {
+                            const auto [from_row, from_col] = pose_source(pose, width, height, row, col);
+                            const int8_t was = pair.input.data[from_row][from_col];
+                            drawn.data[r * height + row][c * width + col] =
+                                rule.negative ? (was == ground ? figure : (int8_t)ground)
+                                : is_color(was) && rule.color_map[was] >= 0 ? rule.color_map[was] : was;
+                        }
+                }
+            return true;
+        });
         return rule;
     }
 };
@@ -701,32 +738,23 @@ struct overlap_corner_rule {
             const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
-            // The chain runs left to right, ties top to bottom -- the order the
-            // op itself walks the objects in, so the reading and the operator
-            // agree about which piece is first.
-            vector<const object*> chain;
-            for (const object& piece : pieces) chain.push_back(&piece);
-            stable_sort(chain.begin(), chain.end(), [](const object* one, const object* other) {
-                return one->summary.col != other->summary.col
-                     ? one->summary.col < other->summary.col
-                     : one->summary.row < other->summary.row;
-            });
             // Tied corners leave the order to the op's list, which we can't see.
-            for (size_t i = 1; i < chain.size(); ++i)
-                if (same_corner(chain[i]->summary, chain[i - 1]->summary)) return false;
+            for (size_t i = 0; i < pieces.size(); ++i)
+                for (size_t j = i + 1; j < pieces.size(); ++j)
+                    if (same_corner(pieces[i].summary, pieces[j].summary)) return false;
+            // The chain as the op lays it (each_corner_link), each piece painted
+            // over the last, which is the paint order the closing Union gives them.
             drawn = grid(pair.output.width, pair.output.height);
-            // The head of the chain sits in the corner; each piece after it puts
-            // its top-left on the last one's bottom-right and paints over it,
-            // which is the paint order the closing Union gives them for free.
-            int x = 0, y = 0;
-            for (const object* piece : chain) {
-                if (!paint_piece(drawn, *piece, y, x)) return false;
+            bool laid = true;
+            each_corner_link((int)pieces.size(), [&](int i) { return pieces[(size_t)i].summary.box(); },
+                             [&](int i, int row, int col) {
+                const object& piece = pieces[(size_t)i];
+                laid = paint_piece(drawn, piece, row, col);
                 laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
-                    x != piece->summary.col || y != piece->summary.row;
-                x += piece->summary.width - 1;
-                y += piece->summary.height - 1;
-            }
-            return true;
+                    col != piece.summary.col || row != piece.summary.row;
+                return laid;
+            });
+            return laid;
         });
         // Pieces already sitting in the chain were never laid into one.
         return { redraws && laid_any_piece_somewhere_new };
