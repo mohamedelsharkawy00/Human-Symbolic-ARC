@@ -553,8 +553,8 @@ struct input_blocks_rule {
                 one_table = one_table && (!table.named(was) || table[was] == wears[was]);
                 table[was] = wears[was];
             }
-        // A copy that trades its figure with empty is the negative, whatever
-        // one table says: no color word says a figure and empty trading places.
+        // A copy that trades its figure with empty is the negative, whatever one
+        // table says: no color operator says a figure and empty trading places.
         if (one_table && !table.changes(TRANSPARENT)) {
             for (int was = 0; was < COLOR_COUNT; ++was)
                 rule.color_map[was] = table.changes(was) ? table[was] : recoloring::UNSET;
@@ -702,8 +702,8 @@ struct overlap_corner_rule {
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
             // The chain runs left to right, ties top to bottom -- the order the
-            // op itself walks the objects in, so the reading and the word agree
-            // about which piece is first.
+            // op itself walks the objects in, so the reading and the operator
+            // agree about which piece is first.
             vector<const object*> chain;
             for (const object& piece : pieces) chain.push_back(&piece);
             stable_sort(chain.begin(), chain.end(), [](const object* one, const object* other) {
@@ -743,9 +743,9 @@ struct overlap_corner_rule {
 // than a guess at where the pieces were headed.
 //
 // TWO COLOURS, BECAUSE A PICK NAMES A PIECE BY ITS COLOUR. The sentence has to
-// say which pieces stay and which slide, and SelectColor is the only word that
-// names a piece by what it is -- so a grid where three colours share the work
-// is a movement with no sentence, and is not claimed here.
+// say which pieces stay and which slide, and SelectColor is the only operator
+// that names a piece by what it is -- so a grid where three colours share the
+// work is a movement with no sentence, and is not claimed here.
 //
 // shift_to_touch is shared with the op, so both choose the same landing.
 struct slide_to_touch_rule {
@@ -770,7 +770,7 @@ struct slide_to_touch_rule {
                                                             correspondence.segmentation, info, nullptr,
                                                                 0, 0, tiles.of(pair));
             // One list is all the op is ever handed, so a grid cut into more
-            // pieces than that is one the word could not draw anyway.
+            // pieces than that is one the operator could not draw anyway.
             if (info.empty() || info.size() > MAX_OBJECTS_IN_A_LIST) return {};
             for (const auto& piece : info) {
                 // A piece of several colours answers to both picks and to neither.
@@ -1059,16 +1059,16 @@ struct project_on_seeds_rule {
     int8_t worn = TRANSPARENT;
     bool holds() const { return held; }
 
-    // Calls land(row, col, marker colour) for each cell of each stamp the words
-    // lay on this pair's canvas, and says how many stamps they laid -- none when
-    // there is no template or no marker to lay one along.
+    // Calls land(row, col, marker colour) for each cell of each stamp the
+    // operators lay on this pair's canvas, and says how many stamps they laid --
+    // none when there is no template or no marker to lay one along.
     template <class Land>
     static int stamp(const example& pair, segmentation_methods cut, Land land, tile_size tiles) {
         const auto pieces = pieces_of(pair.input, cut, tiles);
         if (pieces.empty()) return 0;
         // The template is whichever piece SortBySize[0] puts first, and that
-        // word ranks by cells -- not the box that picked the markers. The op
-        // reads the two off different lists, so this has to as well.
+        // operator ranks by cells -- not the box that picked the markers. The
+        // op reads the two off different lists, so this has to as well.
         // Tied for most cells: the op's list order picks, which we can't see.
         const object& tpl = pieces[0];
         if (pieces.size() > 1 && pieces[1].summary.count == tpl.summary.count) return 0;
@@ -1098,13 +1098,13 @@ struct project_on_seeds_rule {
                                         const correspondence_election& correspondence,
                                         const tiled_pieces& tiles) {
         // The template is handed over in the frame its cells make, which is
-        // what the Trim in front of the word gives it. Stamping paints over a
-        // copy of the input, so a canvas of another size is a different drawing
-        // than the one replayed here.
+        // what the Trim in front of the operator gives it. Stamping paints over
+        // a copy of the input, so a canvas of another size is a different
+        // drawing than the one replayed here.
         const segmentation_methods cut = correspondence.segmentation;
         if (!boxed_by_its_cells(cut) || !pairs_overlay(train)) return {};
         // Nothing stamped is the input handed straight back, which every other
-        // reading already says without a word this long.
+        // reading already says without a rule this long.
         const bool in_the_markers_colors = redraws_every_output(train, [&](const example& pair, grid& drawn) {
             drawn = pair.input;
             return stamp(pair, cut, [&](int row, int col, int8_t color) {
@@ -1226,14 +1226,14 @@ struct bridge_rule {
 // which lays a mark's first column across the grid, then, the lines made one
 // drawing, `lattice`, which lays it down by its own height and its gap; with
 // NormalizeOrientation[0] in front, a pair lying on its side is read turned,
-// so its lines cross the short way. Only held when replaying those words
+// so its lines cross the short way. Only held when replaying those operators
 // redraws every output exactly, which is what makes the lattice a rule read
 // off each input rather than rows remembered from the pairs.
 //
 // THE CUT IS THE ELECTED ONE WHEN IT CAN SAY THIS, and otherwise the first
-// that can, as for the bridge: a mark is whatever the word hands over, and it
-// is replayed in the order the word hands it, since a later line paints over
-// an earlier one where two come round on the same row.
+// that can, as for the bridge: a mark is whatever the cut's operator hands
+// over, and it is replayed in the order the operator hands it, since a later
+// line paints over an earlier one where two come round on the same row.
 //
 // A TURN IS WORN ONLY WHEN IT DOES WORK. The grid as given is asked first, so
 // pairs that all stand upright never say it, and a pair lying on its side only
@@ -1258,8 +1258,8 @@ struct mark_lattice_rule {
         .steps = { { .down = measured(tile_measure::own_height, tile_measure::row_gap), .across = { 0 } } },
         .start = {}, .end = { .edge = true }, .spread = tile_spread::lines };
 
-    // What the words draw on one input: the cut's marks, trimmed and read the
-    // way the pair is turned, each laid as its line, the lines laid again
+    // What the operators draw on one input: the cut's marks, trimmed and read
+    // the way the pair is turned, each laid as its line, the lines laid again
     // wherever the lattice puts them, the rest left empty. False where the
     // lines would not fit the one list the op is handed.
     static bool draw(const grid& input, segmentation_methods cut, bool portrait, grid& drawn, tile_size tiles = {}) {
@@ -1693,24 +1693,24 @@ struct inference {
     // WHICH PASS THIS READING IS (read_the_rest): the first reads the input,
     // and each pass after it the picture the passes before it drew.
     int8_t pass = 1;
-    // WHETHER ITS WORDS AND PAINTS ARE ASKED WITH THE PARTNER PICKS too
+    // WHETHER ITS RULES ARE ASKED WITH THE PARTNER PICKS too
     // (partner_picks): a last resort infer takes only where no reading
     // without them says every cell. Its passes and its framed reading read
     // the same way.
     bool partners = false;
     // WHAT THE LINE DRAWS, pair by pair, before the plan fills the ground: the
-    // hand as its words leave it and every cell a paint drew, in the color the
+    // hand as its rules leave it and every cell a paint drew, in the color the
     // output shows there (finish_the_line). None where the line cannot know
     // it: a hand it could not carry, or pairs that do not lie over each other.
     vector<grid> picture;
     // THE REST OF THE CHANGE, READ ON THAT PICTURE: the next pass, a puzzle of
     // its own from each picture to its output (read_the_rest), and whether it
     // leaves fewer cells unsaid -- else it is only the readout's, which names
-    // the words the rest lacks.
+    // the rules the rest lacks.
     std::shared_ptr<const inference> rest;
     bool rest_says_more = false;
     // Whether the cut's pieces, painted where they lie on the canvas the size
-    // rule gives, draw every output: what a line with no words claims.
+    // rule gives, draw every output: what a line with no rules claims.
     bool pieces_redraw = true;
     // The plan for this pass, and its input before background removal.
     // Room cuts read the colored cells that removal would discard.
@@ -1719,11 +1719,11 @@ struct inference {
     vector<int8_t> elected_backgrounds;
     background_election ground_election;
     // EACH PLAN READ, in the order infer reads them (says_the_most): which plan,
-    // the cells it left unsaid, the passes it took, the words its line said,
+    // the cells it left unsaid, the passes it took, the rules its line said,
     // and whether with the partner picks -- the readout's [plans read], which
     // shows why one plan was kept over another (a61f2674's lost line was found
     // this way).
-    struct plan_read { int plan = 0; int left = 0, passes = 0; string words; bool partners = false; };
+    struct plan_read { int plan = 0; int left = 0, passes = 0; string rules; bool partners = false; };
     vector<plan_read> plans_read;
 };
 

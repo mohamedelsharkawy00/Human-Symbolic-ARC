@@ -10,7 +10,7 @@
 // infer() asks them all in order.
 //
 // This file holds what every later one stands on: the reading's work counters,
-// the color and cell facts, the pieces a word is handed, the shape table, and
+// the color and cell facts, the pieces a rule is handed, the shape table, and
 // the drawing helpers the rules replay with.
 #pragma once
 #include "1_readings.hpp"
@@ -40,8 +40,8 @@ struct inference_work_counts {
 };
 inline thread_local inference_work_counts inference_work;
 // TEMPORARY, to find where the slowest puzzles spend their reading: elapsed
-// milliseconds by reading, by stage, and by each kind of word and paint a line
-// asks, in finish_the_line's order. Nested: a reading holds its stages.
+// milliseconds by reading, by stage, and by each kind of rule a line asks, in
+// finish_the_line's order. Nested: a reading holds its stages.
 struct inference_times {
     static constexpr const char* names[] = { "plain", "partners", "preparing",
         "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
@@ -347,13 +347,14 @@ inline vector<object> pieces_of(const grid& input, segmentation_methods segmenta
     return pieces;
 }
 
-// THE PIECES AS A CUT'S WORD HANDS THEM OVER, each in the box its own cells
-// make, which is what they are once Trim has had them. pieces_of reads the
-// same cut in matching's order; an op that works down its list in turn needs
-// the word's own order, or a reading lays a later piece under an earlier one.
-// Split hands them over in the order the walk meets them, Split [4] the places
-// its shape fits first (each_shape_piece). Colors walks the palette rather
-// than the grid, so its layers come in colour order.
+// THE PIECES AS A CUT'S OPERATOR HANDS THEM OVER, each in the box its own
+// cells make, which is what they are once Trim has had them. pieces_of reads
+// the same cut in matching's order; an operator that works down its list in
+// turn needs the order the cut's operator hands them in, or a reading lays a
+// later piece under an earlier one. Split hands them over in the order the
+// walk meets them, Split [4] the places its shape fits first
+// (each_shape_piece). Colors walks the palette rather than the grid, so its
+// layers come in colour order.
 inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation, tile_size tiles = {},
                                      const turning_shape* shape = nullptr) {
     vector<object> pieces;
@@ -405,11 +406,12 @@ struct hand_answers {
     }
 };
 
-// THE PIECES A WORD IS HANDED, as the cut's word hands them over, cut once per
-// pair and read by every replay below: where each lies, and whether the word's
-// pick takes it -- the questions the partner helpers ask (each_partner and kin,
-// 15_op_math.hpp), asked here as the ops ask them of their objects, so a replay
-// and the op it replays cannot find different partners or fits.
+// THE PIECES A RULE IS HANDED, as the cut's operator hands them over, cut once
+// per pair and read by every replay below: where each lies, and whether the
+// rule's pick takes it -- the questions the partner helpers ask (each_partner
+// and kin, 15_op_math.hpp), asked here as the operators ask them of their
+// objects, so a replay and the operator it replays cannot find different
+// partners or fits.
 struct partner_pieces {
     const vector<object>& pieces;
     vector<cell_box> boxes;
@@ -427,7 +429,7 @@ struct partner_pieces {
     // WHAT THE PICKED PIECES SHOW where they lie on their grid, `width` by
     // `height`, cell by cell, TRANSPARENT where none does: a cell a paint lays
     // again as it was is no work (paint_holds). Drawn the first time a replay
-    // asks and kept, for every length and lay a word is asked with: neither the
+    // asks and kept, for every length and lay a rule is asked with: neither the
     // pieces, the pick nor their grid change under it.
     const cells& shown(int width, int height) const {
         if (!shown_once) {
@@ -574,12 +576,12 @@ struct shape_color_map_rule : shape_table {
     vector<read_in_pair> read;
 
     // A SMALL KEY'S SHAPE NAMES THE COLOR THE LARGEST PIECE IS REPAINTED, AND
-    // THE KEY IS USED UP (009d5c81), said in three words (16_sentences.hpp): the
+    // THE KEY IS USED UP (009d5c81), said in three rules (16_sentences.hpp): the
     // smallest piece takes the color its own shape names (ShapeColorMap), the
     // largest takes the color of its nearest piece, the key (ColorFrom), and the
     // smallest goes (DeleteSelection). The elected reading already says which
     // piece kept its shape and what color it came out in, so what is asked here
-    // is only whether those words would repaint that piece, and what the key's
+    // is only whether those rules would repaint that piece, and what the key's
     // shape says -- never, a second time, what was recolored. The picks take the
     // smallest and the largest by painted cells, so each must be the only one
     // its size, or the order the pieces arrive in would choose, and the key
@@ -643,7 +645,7 @@ struct shape_color_map_rule : shape_table {
     // Learns which color fills the hollow inside of each shape. Shares storage with
     // detect_body_recolor, so infer() runs this only when that one finds nothing.
     // A table that only ever fills with the ground paints nothing, and as the
-    // word for a recolor it stood in for changes it never makes -- so one shape
+    // rule for a recolor it stood in for changes it never makes -- so one shape
     // at least has to be filled with a color the ground is not. Nor is a table
     // whose every key is seen in one pair alone, all filled in one color: that
     // is the color for everything, and no shape decides it (272f95fa's lattice,

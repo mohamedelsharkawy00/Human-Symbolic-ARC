@@ -1,6 +1,6 @@
 // A SPELLING BENCH. Hands one program string to one puzzle and shows what it
 // paints beside what was wanted, pair by pair. Nothing is searched: this only
-// answers "can the words we have already say this?".
+// answers "can the operators we have already say this?".
 //
 //   spell <task-id> "<program>"          one program
 //   spell <task-id> "<program>" --test   and what it draws on each test, fitting or not

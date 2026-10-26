@@ -1,29 +1,30 @@
-// This file expresses the reading in the solver's own words.
+// This file spells the reading in the solver's own operators.
 // Design story in notes/1 - Overall Design/Inference Master.md
 //
 // THE LOOKING AND THE SEARCHING SHARE ONE VOCABULARY, and this is where that
 // is made true. A reading already knows what an object is, what the pieces were
-// allowed to do, and what became of the cells. Said in its own words that is a
-// table nobody can run; said in the solver's words it is a program.
+// allowed to do, and what became of the cells. Said in its own terms that is a
+// table nobody can run; said in the solver's operators it is a program.
 //
 // TWO LISTS COME BACK, and the second is the valuable one. What can be said
-// becomes sentences. What cannot names the word the language is missing, at the
-// moment the looking wanted it — instead of after a search has spent minutes
-// failing to find it.
+// becomes sentences. What cannot names what the language is missing, a rule
+// the reading lacks or an operator to spell one with, at the moment the
+// looking wanted it — instead of after a search has spent minutes failing to
+// find it.
 //
-// IT SPELLS, IT NEVER TRIES. Every word here is read off a fact the reading
+// IT SPELLS, IT NEVER TRIES. Every operator here is read off a fact the reading
 // already holds; nothing is searched, and nothing is scored. The moment this
 // starts trying sentences to see which fits, it has stopped being inference and
 // become a second solver.
 //
 // HAND-WRITE THE PROGRAM FIRST. Before teaching the reading to say a puzzle,
 // write its solution by hand in solutions/<id>.txt and check it with arc_spell.
-// If the words cannot say it, the gap is the vocabulary, and no reading can
-// spell what the DSL has no word for. But write it out before calling a word
-// missing: 0bb8deee looked like that gap, and one sentence a pane said it in
-// words there already were. Writing those out found the real gap, a smaller
-// one: Layout drew each piece from its frame's corner instead of drawing what
-// it holds. With that mended, any lattice of panes is one sentence.
+// If the operators cannot say it, the gap is the vocabulary, and no reading can
+// spell what the DSL has no operator for. But write it out before calling an
+// operator missing: 0bb8deee looked like that gap, and one sentence a pane said
+// it in operators there already were. Writing those out found the real gap, a
+// smaller one: Layout drew each piece from its frame's corner instead of
+// drawing what it holds. With that mended, any lattice of panes is one sentence.
 
 #pragma once
 #include "13_infer.hpp"
@@ -37,7 +38,7 @@
 namespace arc {
 using namespace std;
 
-// An op's word with its argument, as a program spells it (value_written):
+// An operator with its argument, as a program spells it (value_written):
 // Recolor [3], ColorFrom [the nearest piece].
 inline string spell(const string& op, int value) {
     return op + " [" + value_written(operation_named(op), value) + "]";
@@ -69,7 +70,7 @@ inline string foreground_input(const ground_plan& plan, bool on_picture) {
         (on_picture ? " Difference CurrentObjects" : "") + " DeleteSelection UnionList";
 }
 
-// A PICK AS WORDS, picked from none: by a kind of pick -- holes, size, band,
+// A PICK AS OPERATORS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, at least so many cells, the first so many by size,
 // the ones on a row or a column from the middle, the one with no twin, the way
 // a piece runs -- when `how` names one, else by
@@ -80,7 +81,7 @@ inline string foreground_input(const ground_plan& plan, bool on_picture) {
 // partner way, WouldFit keeps the ones that would fit into a gap of their
 // partner, and when `like` names a likeness, SelectLikeKey the ones like a
 // piece of the key.
-inline string pick_words(const piece_pick& pick) {
+inline string pick_operators(const piece_pick& pick) {
     if (pick.every()) return "SelectAll";
     const auto& [colors, how, value, fits, but_those, part, like, partner] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
@@ -116,7 +117,7 @@ struct said_reading {
     vector<string> sentences;
     // Sentences that cut colored ground before it is removed.
     vector<size_t> before_ground;
-    vector<string> no_word_for;
+    vector<string> no_rule_for, no_operator_for;
     // OPENINGS THE READING COULD NOT RULE OUT. Only the first sentence can be
     // said more than one way -- everything after it hangs off the chosen
     // reading's own pieces, so a rival segmentation has no follow-on to go with it.
@@ -129,12 +130,12 @@ struct said_reading {
     // Whether the answer is one pane laid at the corner, so the plan's fill
     // covers one pane's box (restore_background).
     bool one_pane = false;
-    // The chosen frame before words change its paint.
+    // The chosen frame before the rules change its paint.
     string output_frame;
     // THE SENTENCES THAT LAY THE HAND, the first so many of the cut's line: the
-    // cut and the words on it, before any paint; and whether it says a word.
+    // cut and the rules on it, before any paint; and whether it says one.
     size_t hand_sentences = 0;
-    bool hand_words = false;
+    bool hand_rules = false;
 };
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
@@ -142,7 +143,7 @@ struct said_reading {
 // keeps them separate and joins by sides alone; Split[4] takes the changed shape's
 // places first. A cut names no ground: the reading reads figures, and the plan's
 // opening deleted it.
-inline string word_for_segmentation(segmentation_methods segmentation) {
+inline string operator_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
         case segmentation_methods::connected_monochrome:      return spell("Split", 1);
         case segmentation_methods::connected_multicolor:      return spell("Split", 0);
@@ -155,11 +156,11 @@ inline string word_for_segmentation(segmentation_methods segmentation) {
 }
 
 // ONE OF THE EIGHT WAYS ROUND (1_readings.hpp), said in turns and mirrors.
-// Every one of the eight is sayable, four of them in one word.
+// Every one of the eight is sayable, four of them in one operator.
 static_assert(pose_of(node_type::TurnRight) == 3 && pose_of(node_type::TurnLeft) == 5 &&
               pose_of(node_type::FlipHorizontal) == 4 && pose_of(node_type::FlipVertical) == 2,
-              "each pose said in one word is the pose that op sets its piece in");
-inline vector<string> words_for_pose(int pose) {
+              "each pose said in one operator is the pose that op sets its piece in");
+inline vector<string> operators_for_pose(int pose) {
     switch (pose & 7) {
         case 1:  return { "TurnRight", "FlipHorizontal" };
         case 2:  return { "FlipVertical" };
@@ -172,11 +173,11 @@ inline vector<string> words_for_pose(int pose) {
     }
 }
 
-// A CELL-LEVEL COLOR MAP AS WORDS: nothing when no color changes, one
+// A CELL-LEVEL COLOR MAP AS OPERATORS: nothing when no color changes, one
 // BidiColorMap when two colors trade places, nullopt when it is anything else.
-inline optional<string> word_for_color_map(const recoloring& map) {
+inline optional<string> operator_for_color_map(const recoloring& map) {
     // A swap with empty is a figure and its ground trading places, which no
-    // color word says.
+    // color operator says.
     if (map.named(TRANSPARENT)) return nullopt;
     for (int c = 0; c < COLOR_COUNT; ++c)
         if (map[c] == TRANSPARENT) return nullopt;
@@ -193,13 +194,13 @@ inline optional<string> word_for_color_map(const recoloring& map) {
     return spell("BidiColorMap", variant);
 }
 
-// How much of the object list is selected after these words.
+// How much of the object list is selected after these operators.
 // Selectors add to the selection; carving and deletion can clear it.
 enum class the_mark { none, some, all };
 
-inline the_mark mark_after(const string& words) {
+inline the_mark mark_after(const string& operators) {
     the_mark mark = the_mark::none;
-    each_program_word(words, [&](std::string_view, node_type op) {
+    each_program_operator(operators, [&](std::string_view, node_type op) {
         if (op == node_type::SelectAll) mark = the_mark::all;
         else if (op == node_type::InvertSelection)
             mark = mark == the_mark::all ? the_mark::none
@@ -231,43 +232,43 @@ inline the_mark mark_after(const string& words) {
     return mark;
 }
 
-// Remove only steps whose redundancy follows from the written words. A cut
+// Remove only steps whose redundancy follows from the written operators. A cut
 // clears marks, so SelectAll immediately before it is unused. Once a color
 // was explicitly deleted, frame/selection operations cannot bring it back.
 // An unrecognised act forgets that fact rather than guessing about its paint.
-inline string without_redundant_steps(const string& words, int background) {
+inline string without_redundant_steps(const string& operators, int background) {
     vector<string> tokens;
-    each_program_word(words, [&](std::string_view word, node_type) { tokens.emplace_back(word); });
+    each_program_operator(operators, [&](std::string_view written, node_type) { tokens.emplace_back(written); });
     string result;
     bool ground_absent = false;
-    auto append = [&](const string& word) {
+    auto append = [&](const string& written) {
         if (!result.empty()) result += ' ';
-        result += word;
+        result += written;
     };
     for (size_t i = 0; i < tokens.size(); ++i) {
-        const string& word = tokens[i];
-        if (word == "SelectAll" && i + 1 < tokens.size() &&
+        const string& written = tokens[i];
+        if (written == "SelectAll" && i + 1 < tokens.size() &&
             (tokens[i + 1] == "Colors" || operation_named(tokens[i + 1]) == node_type::Split)) continue;
-        if (is_color(background) && word == "Colors" && i + 2 < tokens.size() &&
+        if (is_color(background) && written == "Colors" && i + 2 < tokens.size() &&
             tokens[i + 1] == spell("SelectColor", background) && tokens[i + 2] == "DeleteSelection") {
             // A following Split consumes the painted cells, not the color layers.
             if (!(ground_absent && i + 3 < tokens.size() && operation_named(tokens[i + 3]) == node_type::Split))
-                append(word);
+                append(written);
             if (!ground_absent) { append(tokens[i + 1]); append(tokens[i + 2]); }
             ground_absent = true;
             i += 2;
             continue;
         }
-        const node_type op = operation_named(word);
+        const node_type op = operation_named(written);
         const bool preserves_colors = is_select_op(op) ||
             op == node_type::DeleteSelection || op == node_type::Colors || op == node_type::Split ||
             op == node_type::Trim || op == node_type::Origin || op == node_type::Panes ||
             op == node_type::UnionList || op == node_type::IntersectionList ||
             op == node_type::Layout || op == node_type::CurrentObjects || is_combine_op(op);
         if (op == node_type::AddColor) {
-            if (word == spell("AddColor", background)) ground_absent = false;
+            if (written == spell("AddColor", background)) ground_absent = false;
         } else if (!preserves_colors) ground_absent = false;
-        append(word);
+        append(written);
     }
     return result;
 }
@@ -276,29 +277,29 @@ inline string without_redundant_steps(const string& words, int background) {
 // Union, Underlay, Intersection and Difference land only what is marked, and a
 // pick in these sentences is how the ACT before it was narrowed -- never what
 // the paint was for: every sentence this file spells means to paint the whole
-// hand. So where the words have not left all of it marked, the hand is said out
-// loud before the paint. Withhold lands nothing, so it asks for nothing.
+// hand. So where the operators have not left all of it marked, the hand is said
+// out loud before the paint. Withhold lands nothing, so it asks for nothing.
 // Said at the one point every sentence goes through, for the reason the ops
 // carry their marks at one point: a branch that never heard of the rule cannot
 // forget it, and the next branch written here will not either.
-inline string closed_with(const string& words, const string& combine) {
+inline string closed_with(const string& operators, const string& combine) {
     const bool paints = combine != "Withhold";
-    return words + (paints && mark_after(words) != the_mark::all ? " SelectAll " : " ") + combine;
+    return operators + (paints && mark_after(operators) != the_mark::all ? " SelectAll " : " ") + combine;
 }
 
 // A SENTENCE THAT MEANS TO PAINT ONLY WHAT IT PICKED. The closer above says the
 // hand out loud because every sentence it closes means the whole of it; this one
 // is for the sentences that narrow on purpose -- lay down this layer, keep the
 // rest in hand for the sentence after -- which is the whole of what a gated
-// paint is for. Two words for the two intents, so the call site says which it
+// paint is for. Two closers for the two intents, so the call site says which it
 // means rather than the closer guessing.
-inline string closed_on_the_pick(const string& words, const string& combine) {
-    return words + " " + combine;
+inline string closed_on_the_pick(const string& operators, const string& combine) {
+    return operators + " " + combine;
 }
 
 // ONE SENTENCE THAT OPENS WITH A SOURCE OF ITS OWN, as written, closed.
-inline void say_closed(said_reading& said, const string& words, const string& combine) {
-    said.sentences.push_back(closed_with(words, combine));
+inline void say_closed(said_reading& said, const string& operators, const string& combine) {
+    said.sentences.push_back(closed_with(operators, combine));
 }
 
 // ONE SENTENCE. Nothing is implicit: the first names its source, the rest carry
@@ -311,7 +312,7 @@ inline void say_sentence(said_reading& said, const string& source, const string&
         combine));
 }
 
-// ONE BEAT OF A LINE: the pieces picked, and the one word done to them.
+// ONE BEAT OF A LINE: the pieces picked, and the act done to them.
 struct beat { string pick, act; };
 
 // A LINE OF BEATS, SAID AS SENTENCES. Only the last paints: a cell drawn before
@@ -324,9 +325,10 @@ inline void say_beats(said_reading& said, const string& source,
                      i + 1 < beats.size() ? "Withhold" : combine, afresh && i == 0);
 }
 
-// WHICH WORD A FIRED DETECTOR IS. The table is shared storage, so it says which
-// detector filled it; feeding one op the other's table would be silent nonsense.
-inline const char* word_for_learned_recolor(const shape_color_map_rule& rule) {
+// WHICH OPERATOR A FIRED DETECTOR IS. The table is shared storage, so it says
+// which detector filled it; feeding one op the other's table would be silent
+// nonsense.
+inline const char* operator_for_learned_recolor(const shape_color_map_rule& rule) {
     if (!rule.holds()) return nullptr;
     switch (rule.claimed_by) {
         case shape_color_map_rule::body_recolor:  return "ShapeColorMap [0]";
@@ -357,9 +359,9 @@ inline vector<string> programs_from(const said_reading& said) {
 inline vector<string> sentences_of(const string& program) {
     vector<string> rows;
     string row;
-    each_program_word(program, [&](std::string_view word, node_type op) {
+    each_program_operator(program, [&](std::string_view written, node_type op) {
         if (!row.empty()) row += ' ';
-        row += word;
+        row += written;
         if (is_combine_op(op)) rows.push_back(exchange(row, string()));
     });
     return rows;
@@ -384,28 +386,28 @@ inline const char* sentence_with_no_source(const string& program) {
 // back a piece per copy, which is what lets a row of them be picked; Fractal
 // hands back one sheet, so its copies can only all sit one way.
 // False when there is nothing to say, so the rest of the reading still speaks;
-// a layout it has no words for is named on the way out.
+// a layout it has no operators for is named on the way out.
 inline bool say_input_blocks(const inference& inf, said_reading& said) {
     const auto& blocks = inf.input_blocks;
     if (!blocks.holds() || !inf.size.holds() ||
         inf.size.Chosen == output_dimension_rule::BoundingBox) return false;
-    const auto color_word = word_for_color_map(blocks.color_map);
-    if (!color_word) {
-        said.no_word_for.push_back("the copies' cell-color mapping");
+    const auto color_operator = operator_for_color_map(blocks.color_map);
+    if (!color_operator) {
+        said.no_operator_for.push_back("the copies' cell-color mapping");
         return false;
     }
     auto cheapest = [](auto holds) {
         int found = -1;
         for (int pose = 0; pose < POSE_COUNT; ++pose)
-            if (holds(pose) && (found < 0 || words_for_pose(pose).size() < words_for_pose(found).size()))
+            if (holds(pose) && (found < 0 || operators_for_pose(pose).size() < operators_for_pose(found).size()))
                 found = pose;
         return found;
     };
 
     vector<beat> opening;
-    if (!color_word->empty()) opening.push_back({"SelectAll", *color_word});
+    if (!color_operator->empty()) opening.push_back({"SelectAll", *color_operator});
     auto say_pose = [](vector<beat>& beats, const string& pick, int pose) {
-        for (const string& word : words_for_pose(pose)) beats.push_back({pick, word});
+        for (const string& written : operators_for_pose(pose)) beats.push_back({pick, written});
     };
     // What a spelling costs is how many ops it runs: source, pick, act, combine.
     auto ops_in = [](const vector<beat>& beats) {
@@ -421,7 +423,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         return false;
     });
 
-    // THE NEGATIVE HAS NO WORD OF ITS OWN, but where the copies sit on the
+    // THE NEGATIVE HAS NO OPERATOR OF ITS OWN, but where the copies sit on the
     // input's own figure it has a spelling: grow every cell into a block of its
     // own color, then carve the copies back out. A figure cell's block is left
     // wearing the figure's color exactly where the input was ground, and a
@@ -431,7 +433,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         const int pose = !some_are_ground ? -1
             : cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
         if (some_are_ground && pose < 0) {
-            said.no_word_for.push_back("which blocks hold a copy of the input");
+            said.no_operator_for.push_back("which blocks hold a copy of the input");
             return false;
         }
         // Grown, the input covers the output only when every pair grew by one
@@ -440,7 +442,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         if (pose < 0 || !takes_value(node_type::ScaleUp, grown) ||
             ranges::any_of(blocks.pairs, [&](const auto& at) {
                 return at.rows != grown || at.cols != grown; })) {
-            said.no_word_for.push_back("a copy with its figure and ground traded");
+            said.no_operator_for.push_back("a copy with its figure and ground traded");
             return false;
         }
         vector<beat> grow, carve;
@@ -460,7 +462,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
         // ground before stamping, and its fill lays it back last.
         const int pose = cheapest([&](int p) { return (blocks.figure_poses >> p & 1) != 0; });
         if (pose < 0) {
-            said.no_word_for.push_back("which blocks hold a copy of the input");
+            said.no_operator_for.push_back("which blocks hold a copy of the input");
             return false;
         }
         beats = opening;
@@ -517,7 +519,7 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
                 found = true;
             }
         if (!found) {
-            said.no_word_for.push_back("how each copy of the input sits");
+            said.no_operator_for.push_back("how each copy of the input sits");
             return false;
         }
     }
@@ -549,12 +551,12 @@ inline bool say_panes(const inference& inf, said_reading& said) {
     string turn;
     if (mask.posed != 0) {
         if (split.down != 1 && split.across != 1) {
-            said.no_word_for.push_back("a lattice of panes read through a pose");
+            said.no_operator_for.push_back("a lattice of panes read through a pose");
             return false;
         }
         // Every pane but the first: name the first's band and take the others.
         turn = (split.down == 1 ? " SelectColumn [0]" : " SelectRow [0]") + string(" InvertSelection");
-        for (const string& word : words_for_pose(mask.posed)) turn += " " + word;
+        for (const string& written : operators_for_pose(mask.posed)) turn += " " + written;
         turn += " SelectAll";
     }
     const int panes = mask.panes;
@@ -709,13 +711,13 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         }
     }
 
-    said.no_word_for.push_back("what the panes come to");
+    said.no_operator_for.push_back("what the panes come to");
     return false;
 }
 
-// THE CHOSEN PANE, directly or fitted behind the walls. Occupancy has words
-// after removing the background; a place has words in a row or column. Other
-// choices still report the selector they are missing.
+// THE CHOSEN PANE, directly or fitted behind the walls. Occupancy has operators
+// after removing the background; a place has operators in a row or column.
+// Other choices still report the selector they are missing.
 inline bool say_pane_pick(const inference& inf, said_reading& said) {
     const auto& split = inf.pane_split;
     const auto& pick = inf.pane_pick;
@@ -723,9 +725,9 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     if (pick.fitted && (pick.way == pane_pick_rule::Emptiest || pick.way == pane_pick_rule::Fullest)) {
         // The plan deleted the ground first and fills it last.
         // The walls are laid back by their color, so a wall whose color each
-        // grid says for itself has no word to lay it back with.
+        // grid says for itself has no operator to lay it back with.
         if (!is_color(split.color)) {
-            said.no_word_for.push_back("walls laid back in each grid's own color");
+            said.no_operator_for.push_back("walls laid back in each grid's own color");
             return false;
         }
         // Size counts opaque cells, so remove the ground before cutting panes.
@@ -739,7 +741,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         return true;
     }
     if (pick.fitted) {
-        said.no_word_for.push_back("the chosen pane enlarged behind the walls");
+        said.no_operator_for.push_back("the chosen pane enlarged behind the walls");
         return false;
     }
     if (pick.way == pane_pick_rule::OddOneOut) {
@@ -752,7 +754,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
         return true;
     }
     if (pick.way != pane_pick_rule::AtIndex) {
-        said.no_word_for.push_back(
+        said.no_operator_for.push_back(
             pick.way == pane_pick_rule::OddColor   ? "the pane whose palette is unlike the others" :
             pick.way == pane_pick_rule::OddOneOut  ? "the pane unlike the others" :
             pick.way == pane_pick_rule::NotSymmetric || pick.way == pane_pick_rule::OnlySymmetric
@@ -765,7 +767,7 @@ inline bool say_pane_pick(const inference& inf, said_reading& said) {
     // rather than narrows, so the two together name a cross and not a pane.
     const bool one_across = split.down == 1, one_down = split.across == 1;
     if (!one_across && !one_down) {
-        said.no_word_for.push_back("a place in a lattice of panes");
+        said.no_operator_for.push_back("a place in a lattice of panes");
         return false;
     }
     const char* band = one_across ? "SelectColumn" : "SelectRow";
@@ -788,10 +790,10 @@ inline bool say_corner_crop(const inference& inf, said_reading& said) {
     const auto& crop = inf.corner_crop;
     if (!crop.holds()) return false;
     if (inf.pane_pick.holds() && inf.pane_pick.way != pane_pick_rule::AtIndex) return false;
-    string words = "Input SelectAll";
-    if (crop.down) words += " " + spell("MoveToEdge", direction::down);
-    if (crop.right) words += " " + spell("MoveToEdge", direction::right);
-    say_closed(said, words, "Union");
+    string operators = "Input SelectAll";
+    if (crop.down) operators += " " + spell("MoveToEdge", direction::down);
+    if (crop.right) operators += " " + spell("MoveToEdge", direction::right);
+    say_closed(said, operators, "Union");
     return true;
 }
 
@@ -802,7 +804,7 @@ inline bool say_corner_crop(const inference& inf, said_reading& said) {
 inline bool say_edge_slide(const inference& inf, said_reading& said) {
     const auto& slide = inf.edge_slide;
     if (!slide.holds()) return false;
-    const string cut = word_for_segmentation(slide.segmentation);
+    const string cut = operator_for_segmentation(slide.segmentation);
     if (cut.empty()) return false;
     const string pieces = string("Input ") + cut;
     const string push = spell("MoveToEdge", slide.slide_direction);
@@ -856,13 +858,13 @@ inline bool say_ray_extension(const inference& inf, said_reading& said) {
 inline bool say_mark_lattice(const inference& inf, said_reading& said) {
     const auto& rule = inf.mark_lattice;
     if (!rule.holds()) return false;
-    const string cut = word_for_segmentation(rule.segmentation);
+    const string cut = operator_for_segmentation(rule.segmentation);
     if (cut.empty()) return false;
-    string words = string("Input ") + cut + " SelectAll Trim";
-    if (rule.portrait) words += " NormalizeOrientation [0]";
-    words += " " + spell(mark_lattice_rule::lines) + " UnionList " + spell(mark_lattice_rule::lattice);
-    if (rule.portrait) words += " RestoreOrientation";
-    say_closed(said, words, "Union");
+    string operators = string("Input ") + cut + " SelectAll Trim";
+    if (rule.portrait) operators += " NormalizeOrientation [0]";
+    operators += " " + spell(mark_lattice_rule::lines) + " UnionList " + spell(mark_lattice_rule::lattice);
+    if (rule.portrait) operators += " RestoreOrientation";
+    say_closed(said, operators, "Union");
     return true;
 }
 
@@ -870,13 +872,13 @@ inline bool say_ranked_layout(const inference& inf, said_reading& said) {
     const auto& rule = inf.ranked_layout;
     if (!rule.holds()) return false;
 
-    string words = ("Input " + string("Colors"));
+    string operators = ("Input " + string("Colors"));
     for (int rank = 0; rank < rule.discarded_colors; ++rank)
-        words += " SelectMostCommonColor DeleteSelection";
-    words += " " + spell("Split", rule.split_mode) + " SelectAll Trim " +
-             spell("Layout", rule.cell_size) + " SelectAll " +
-             spell("ScaleDown", rule.cell_size);
-    say_closed(said, words, "Union");
+        operators += " SelectMostCommonColor DeleteSelection";
+    operators += " " + spell("Split", rule.split_mode) + " SelectAll Trim " +
+                 spell("Layout", rule.cell_size) + " SelectAll " +
+                 spell("ScaleDown", rule.cell_size);
+    say_closed(said, operators, "Union");
     return true;
 }
 
@@ -889,13 +891,13 @@ inline bool say_motif_continuation(const inference& inf, said_reading& said) {
     const auto& motif = inf.motif_continuation;
     if (!motif.holds() || !inf.size.holds() ||
         inf.size.Chosen == output_dimension_rule::BoundingBox) return false;
-    const auto map_word = word_for_color_map(motif.color_map);
-    if (!map_word) {
-        said.no_word_for.push_back("the motif's cell-color mapping");
+    const auto map_operator = operator_for_color_map(motif.color_map);
+    if (!map_operator) {
+        said.no_operator_for.push_back("the motif's cell-color mapping");
         return false;
     }
-    vector<beat> beats = { {"SelectAll", word_for_segmentation(segmentation_methods::minimal_repeating_set)} };
-    if (!map_word->empty()) beats.push_back({"SelectAll", *map_word});
+    vector<beat> beats = { {"SelectAll", operator_for_segmentation(segmentation_methods::minimal_repeating_set)} };
+    if (!map_operator->empty()) beats.push_back({"SelectAll", *map_operator});
     beats.push_back({"SelectAll", spell(tiled_by_its_own_size)});
     say_beats(said, "Input", beats, "Union");
     return true;
@@ -915,7 +917,7 @@ inline bool say_periodic_denoise(const inference& inf, said_reading& said) {
 // whole hand said out loud, since only the bars come back marked (mark_after).
 inline bool say_bridge(const inference& inf, said_reading& said) {
     if (!inf.bridge.holds()) return false;
-    const string cut = word_for_segmentation(inf.bridge.segmentation);
+    const string cut = operator_for_segmentation(inf.bridge.segmentation);
     if (cut.empty()) return false;
     say_beats(said, "Input", { {"SelectAll", cut}, {"SelectAll", "Trim"},
                                {"SelectAll", spell("Bridge", inf.bridge.way)} }, "Underlay");
@@ -973,17 +975,17 @@ inline bool say_rarest_color(const inference& inf, said_reading& said) {
     return true;
 }
 
-// ONE RULE ON THE CUT'S LINE, AS WORDS: the beats it adds. The Trim picked every
-// piece, so a line about one color picks it from none picked.
+// ONE RULE ON THE CUT'S LINE, AS OPERATORS: the beats it adds. The Trim picked
+// every piece, so a line about one color picks it from none picked.
 inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, const inference& inf) {
     using said_as = correspondence_election::fired_rule::said_as;
     vector<beat> beats;
     const auto group = group_of(rule.as);
-    if (group == word_group::unsaid || group == word_group::paints || group == word_group::whole_program) return beats;
-    const string pick = pick_words(rule.pick);
+    if (group == rule_group::unsaid || group == rule_group::paints || group == rule_group::whole_program) return beats;
+    const string pick = pick_operators(rule.pick);
     switch (rule.as) {
         case said_as::turn:
-            for (const string& word : words_for_pose(rule.value)) beats.push_back({pick, word});
+            for (const string& written : operators_for_pose(rule.value)) beats.push_back({pick, written});
             break;
         case said_as::move_down:   beats.push_back({pick, spell("MoveColumn", rule.value)}); break;
         case said_as::move_across: beats.push_back({pick, spell("MoveRow", rule.value)}); break;
@@ -1002,16 +1004,16 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::empty_swap:  beats.push_back({pick, spell("BidiColorMap", rule.value)}); break;
         case said_as::learned_table:
             // A key's shape naming the figure's color (detect_body_recolor), in
-            // three words: the key -- the smallest -- takes the color its own shape
+            // three rules: the key -- the smallest -- takes the color its own shape
             // names, the figure -- the largest -- takes its nearest piece's, the
             // key's, and the key goes.
             if (inf.shape_color_map.claimed_by == shape_color_map_rule::body_recolor) {
-                const string key = pick_words({ 0, piece_pick::smallest, 0 });
+                const string key = pick_operators({ 0, piece_pick::smallest, 0 });
                 beats.push_back({key, spell("ShapeColorMap", (int)shape_key::shape)});
-                beats.push_back({pick_words({ 0, piece_pick::largest, 0 }), spell("ColorFrom", (int)partner_by::nearest)});
+                beats.push_back({pick_operators({ 0, piece_pick::largest, 0 }), spell("ColorFrom", (int)partner_by::nearest)});
                 beats.push_back({key, "DeleteSelection"});
-            } else if (const char* word = word_for_learned_recolor(inf.shape_color_map)) {
-                beats.push_back({"SelectAll", word});
+            } else if (const char* written = operator_for_learned_recolor(inf.shape_color_map)) {
+                beats.push_back({"SelectAll", written});
             }
             break;
         case said_as::shape_recolor: beats.push_back({pick, spell("ShapeColorMap", rule.value)}); break;
@@ -1029,11 +1031,11 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
     return beats;
 }
 
-// HOW A PAINT LIES ON WHAT IS DOWN, as words: over it, Union; under it,
+// HOW A PAINT LIES ON WHAT IS DOWN, as operators: over it, Union; under it,
 // Underlay, which lands only where nothing is; only onto it, MaskBy[10] -- any
 // color -- and then Union, so it lands only where something is; only onto one
 // color, MaskBy of it, or only off it, MaskOut of it, and then Union.
-inline string onto_words(const correspondence_election::fired_rule& rule) {
+inline string onto_operators(const correspondence_election::fired_rule& rule) {
     using fired = correspondence_election::fired_rule;
     if (rule.lay == fired::laid_onto) return " " + spell("MaskBy", 10);
     if (rule.lay >= fired::laid_off_color) return " " + spell("MaskOut", rule.lay - fired::laid_off_color);
@@ -1045,22 +1047,22 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 }
 
 // WHAT A RULE DRAWS OFF THE PIECES, as the one beat of a sentence said after the
-// line: the pieces picked and the word that draws -- rays, bars, filled hollows,
-// trails, filled boxes, copies, repeats, turned copies -- and whether what it draws
-// goes over what is already down or under it. False for a rule that draws nothing
-// after the line.
+// line: the pieces picked and the operator that draws -- rays, bars, filled
+// hollows, trails, filled boxes, copies, repeats, turned copies -- and whether
+// what it draws goes over what is already down or under it. False for a rule
+// that draws nothing after the line.
 inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint,
                         const ground_plan& plan) {
     using said_as = correspondence_election::fired_rule::said_as;
-    if (group_of(rule.as) != word_group::paints) return false;
-    const string pick = pick_words(rule.pick);
+    if (group_of(rule.as) != rule_group::paints) return false;
+    const string pick = pick_operators(rule.pick);
     switch (rule.as) {
         case said_as::extend_rays: {
             // Rays only, the pieces are already down; painted over in the rule's
             // own color unless it is the one color picked.
             string act = spell(paint_value::second(rule.value) ? "ExtendDiagonal" : "ExtendOrthogonal", paint_value::number(rule.value));
             if (rule.pick != piece_pick::of_color(rule.paint)) act += " " + spell("Recolor", rule.paint);
-            drawn = { pick, act + onto_words(rule) };
+            drawn = { pick, act + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         }
@@ -1080,7 +1082,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             else { drawn = { pick, spell("InteriorColor", rule.paint) }; paint = "Underlay"; }
             return true;
         case said_as::trailed:
-            drawn = { pick, spell("ExtendTo", rule.value) + onto_words(rule) };
+            drawn = { pick, spell("ExtendTo", rule.value) + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
@@ -1110,25 +1112,25 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             return true;
         }
         case said_as::copied_onto:
-            drawn = { pick, spell("CopyTo", rule.value) + onto_words(rule) };
+            drawn = { pick, spell("CopyTo", rule.value) + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::tiled_along:
-            drawn = { pick, spell(rule.tile) + onto_words(rule) };
+            drawn = { pick, spell(rule.tile) + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::repeated_past:
             // The picked pieces folded into one figure, its box fitted, moved
             // its own size, then repeated from there; only the copies are
             // marked, so only they land.
-            drawn = { pick, "UnionList Trim " + spell("Shift", rule.value) + " " + spell(rule.tile) + onto_words(rule) };
+            drawn = { pick, "UnionList Trim " + spell("Shift", rule.value) + " " + spell(rule.tile) + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         case said_as::turned_copy: {
             // The picked pieces folded into one figure, its box fitted, turned
             // in that box; only the turned figure is marked, so only it lands.
             string act = "UnionList Trim";
-            for (const string& word : words_for_pose(rule.value)) act += " " + word;
+            for (const string& written : operators_for_pose(rule.value)) act += " " + written;
             drawn = { pick, act };
             paint = "Union";
             return true;
@@ -1137,14 +1139,14 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
     }
 }
 
-// THE FRAME'S WORDS IN FRONT OF A LINE: each sentence that opens on the input
-// opens instead on the input framed -- the piece the frame's pick takes, cut out
-// and moved to the corner (the cut, the pick, every other piece deleted, then
-// Origin), laid out on graph paper, or filled to its box in its one color and
-// stretched over the canvas (ShapeColorMap where a table names the color, then
-// AddColor[11] Fit[1], as a plan lays its fill), or the whole input scaled up,
-// scaled down or tiled -- and the line's own cut carves that. False for a line
-// that opens any other way.
+// THE FRAME'S OPERATORS IN FRONT OF A LINE: each sentence that opens on the
+// input opens instead on the input framed -- the piece the frame's pick takes,
+// cut out and moved to the corner (the cut, the pick, every other piece
+// deleted, then Origin), laid out on graph paper, or filled to its box in its
+// one color and stretched over the canvas (ShapeColorMap where a table names
+// the color, then AddColor[11] Fit[1], as a plan lays its fill), or the whole
+// input scaled up, scaled down or tiled -- and the line's own cut carves that.
+// False for a line that opens any other way.
 inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& said) {
     // Where a plan deleted the ground, its opening makes the input the figures
     // alone, so every frame acts on them.
@@ -1158,16 +1160,16 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
     case piece_frame_rule::repeat_unit: framed = whole + " Pattern"; break;
     case piece_frame_rule::posed:
         framed = whole;
-        for (const string& word : words_for_pose(frame.factor)) framed += " " + word;
+        for (const string& written : operators_for_pose(frame.factor)) framed += " " + written;
         break;
     default: {
         const bool uncut = frame.kind == piece_frame_rule::filled && frame.cut == segmentation_methods::unset;
-        const string cut = word_for_segmentation(frame.cut);
+        const string cut = operator_for_segmentation(frame.cut);
         if (cut.empty() && !uncut) return false;
         // Every piece needs no pick, and nothing to delete.
         const bool every = frame.pick.every();
         framed = uncut ? whole + " " : string("Input SelectAll ") + cut + " SelectAll Trim " +
-                 (every ? string() : pick_words(frame.pick) +
+                 (every ? string() : pick_operators(frame.pick) +
                                      " InvertSelection DeleteSelection ") + "SelectAll ";
         switch (frame.kind) {
         case piece_frame_rule::laid_out: framed += spell("Layout", frame.factor); break;
@@ -1183,13 +1185,13 @@ inline bool frame_the_sentences(const piece_frame_rule& frame, said_reading& sai
     // THE TILED FRAME CUTS BEFORE IT TILES: its copies are the input's pieces,
     // each laid down again in every copy and never joined with a piece of the
     // next copy, as the reading through it reads them (framed_whole). So the
-    // line's cut -- the first word after the input -- comes before Tile, which
-    // lays each piece's copies the input's size apart (Split keeps each piece in
-    // the input's frame). A line that opens with no cut tiles first.
+    // line's cut -- the first operator after the input -- comes before Tile,
+    // which lays each piece's copies the input's size apart (Split keeps each
+    // piece in the input's frame). A line that opens with no cut tiles first.
     auto cut_then_tile = [&](string& sentence) {
         size_t start = 6;  // past "Input "
         if (sentence.compare(start, 10, "SelectAll ") == 0) start += 10;
-        const size_t end = start + program_word_end(string_view(sentence).substr(start));
+        const size_t end = start + program_operator_end(string_view(sentence).substr(start));
         const node_type cut = operation_named(string_view(sentence).substr(start, end - start));
         if (cut != node_type::Split && cut != node_type::Colors) return false;
         sentence.insert(end, " SelectAll " + spell(tiled_by_its_own_size));
@@ -1234,7 +1236,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     if (facts.chosen_pairs().empty()) return false;
     const auto& read = facts.readings[facts.chosen];
     said.left_unexplained = read.unclaimed();
-    if (pieces_go_unsaid(inf)) said.no_word_for.push_back("what happened to the pieces the reading matched");
+    if (pieces_go_unsaid(inf)) said.no_rule_for.push_back("what happened to the pieces the reading matched");
 
     // A piece that sits on what is already there is laid under it, not over.
     const bool some_sit_on = ranges::any_of(facts.chosen_pairs(), [](const auto& pair) {
@@ -1264,20 +1266,20 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         return true;
     };
 
-    if (const string segmentation = word_for_segmentation(facts.segmentation); !segmentation.empty()) {
+    if (const string segmentation = operator_for_segmentation(facts.segmentation); !segmentation.empty()) {
         say(segmentation);
         // Correspondence measured every piece in the box its cells make, and Split
         // and Colors hand pieces back in the frame they were given (only Trim
         // shrinks one), so the pieces are trimmed to those boxes first.
         if (boxed_by_its_cells(facts.segmentation)) say("Trim");
     }
-    else said.no_word_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
-    // The cut as its words open the line, said again by every paint after it.
+    else said.no_operator_for.push_back(string("the segmentation ") + segmentation_names[(int)facts.segmentation]);
+    // The cut as its operators open the line, said again ahead of every paint.
     const vector<beat> opening = beats;
 
     for (const int cell : facts.tied_with_chosen) {
         if (cell < 0 || cell >= (int)facts.readings.size()) continue;
-        if (const string segmentation = word_for_segmentation(facts.readings[cell].segmentation); !segmentation.empty())
+        if (const string segmentation = operator_for_segmentation(facts.readings[cell].segmentation); !segmentation.empty())
             tied.push_back(segmentation);
     }
 
@@ -1327,9 +1329,9 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         say_beats(said, "Input", beats, "Withhold");
         said.sentences.push_back(closed_on_the_pick(
             (said.sentences.empty() ? string("Input") : string("CurrentObjects")) +
-            " " + pick_words(piece_pick::of_color(inf.slide_to_touch.stays)), "Union"));
+            " " + pick_operators(piece_pick::of_color(inf.slide_to_touch.stays)), "Union"));
         said.sentences.push_back(closed_on_the_pick(
-            "CurrentObjects " + pick_words(piece_pick::of_color(inf.slide_to_touch.slides)) + " AlignToCanvas", "Union"));
+            "CurrentObjects " + pick_operators(piece_pick::of_color(inf.slide_to_touch.slides)) + " AlignToCanvas", "Union"));
         return true;
     }
 
@@ -1349,9 +1351,9 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         const int8_t worn = inf.project_on_seeds.worn;
         if (!is_color(worn)) return spoken();
         // THE STAMPS IN ONE COLOUR, THE INPUT LAID BACK OVER THEM. The copy of
-        // the input the word hands back holds every cell, ground and all, so it
-        // is the largest thing in hand, and it goes before the recolour, which
-        // would otherwise paint the whole canvas. The pick starts from none,
+        // the input the operator hands back holds every cell, ground and all, so
+        // it is the largest thing in hand, and it goes before the recolour,
+        // which would otherwise paint the whole canvas. The pick starts from none,
         // since the stamps come back marked. Then the input's own cells go on
         // top, so a stamp shows only where the input had ground.
         beats.push_back({"SelectAll InvertSelection SelectLargestObject [0]", "DeleteSelection"});
@@ -1371,15 +1373,15 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
     }
 
     // THE REST OF THE LINE IS WHAT THE READING FIRED, in the order it says it:
-    // its acts, then the words its recolor is said with. A rule that fired and
-    // has no word names the word the language lacks. What a rule draws off the
-    // pieces -- rays, bars, filled hollows, trails, filled boxes, copies -- is
-    // said after the line, each in a sentence of its own that opens with the cut
-    // again: it reads the pieces as the cut hands them over, which is what its
-    // replay read, and paints only what it draws, over what is down or under it,
-    // so it neither reads what the line or another paint changed nor undoes it.
-    // A word read off the picture the line has drawn so far (on_the_picture)
-    // is said among them, where it was said, and opens on that picture instead,
+    // its acts, then the rules its recolor is said with. A No Rule entry names
+    // the rule the reading lacks. What a rule draws off the pieces -- rays,
+    // bars, filled hollows, trails, filled boxes, copies -- is said after the
+    // line, each in a sentence of its own that opens with the cut again: it
+    // reads the pieces as the cut hands them over, which is what its replay
+    // read, and paints only what it draws, over what is down or under it, so it
+    // neither reads what the line or another paint changed nor undoes it. A
+    // rule read off the picture the line has drawn so far (on_the_picture) is
+    // said among them, where it was said, and opens on that picture instead,
     // Output, cut the same way; it lays only the pieces it picked, over what is
     // down. The picture made symmetric is the whole picture posed and laid over
     // itself, uncut, a sentence a pose.
@@ -1389,12 +1391,12 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         const auto& rule = read.fired[which];
         beat drawn;
         const char* paint = nullptr;
-        if (!rule.no_rule_for.empty()) said.no_word_for.push_back(rule.no_rule_for);
+        if (!rule.no_rule_for.empty()) said.no_rule_for.push_back(rule.no_rule_for);
         else if (rule.as == said_as::symmetric)
             for (const int8_t pose : symmetries[rule.value].poses) {
                 if (pose < 0) break;
                 string posed;
-                for (const string& word : words_for_pose(pose)) posed += (posed.empty() ? "" : " ") + word;
+                for (const string& written : operators_for_pose(pose)) posed += (posed.empty() ? "" : " ") + written;
                 afterwards.push_back({ { "SelectAll", posed }, "Union", "Output", false });
             }
         else if (rule.on_the_picture)
@@ -1407,7 +1409,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         else for (const beat& one : beats_of(rule, inf)) beats.push_back(one);
     }
 
-    said.hand_words = beats.size() > opening.size();
+    said.hand_rules = beats.size() > opening.size();
     spoken();
     said.hand_sentences = said.sentences.size();
     for (const auto& [drawn, paint, source, cut] : afterwards) {
@@ -1432,13 +1434,13 @@ inline void say_the_plan(said_reading& said, const ground_plan& plan,
 
 // THE REST OF THE CHANGE, PASS BY PASS (read_the_rest): each pass after the
 // first said one change, read on the picture the passes before it drew, so its
-// sentence opens on that picture where the program has it, Output. Words on its
+// sentence opens on that picture where the program has it, Output. Rules on its
 // hand lay the hand again, so the picture is taken in hand (Withhold), cleared
 // off the canvas (Difference keeps the hand while erasing its cells), and
 // cut from the hand (CurrentObjects): a piece moved must not stay where it was
 // as well. A paint lays only what it draws onto the picture, which holds the
 // hand it read already, so the hand is not laid again. Said after the line,
-// the passes leave unsaid what the last one leaves, and lack the words it lacks.
+// the passes leave unsaid what the last one leaves, and lack what it lacks.
 inline void say_the_rest(const inference& inf, said_reading& said) {
     for (const inference* at = &inf; at->rest_says_more; at = at->rest.get()) {
         const inference* rest = at->rest.get();
@@ -1446,9 +1448,9 @@ inline void say_the_rest(const inference& inf, said_reading& said) {
         if (!say_the_cut(*rest, pass)) return;
         say_the_plan(pass, rest->plan, rest->size, true);
         const auto hand_end = pass.sentences.begin() + (ptrdiff_t)pass.hand_sentences;
-        const auto first = pass.hand_words ? pass.sentences.begin() : hand_end;
-        const auto last = pass.hand_words ? hand_end : pass.sentences.end();
-        if (pass.hand_words) {
+        const auto first = pass.hand_rules ? pass.sentences.begin() : hand_end;
+        const auto last = pass.hand_rules ? hand_end : pass.sentences.end();
+        if (pass.hand_rules) {
             said.sentences.push_back("Output SelectAll Withhold");
             said.sentences.push_back("CurrentObjects SelectAll Difference");
         }
@@ -1456,13 +1458,14 @@ inline void say_the_rest(const inference& inf, said_reading& said) {
             string one = *sentence;
             const bool fill = pass.background_filled && sentence + 1 == pass.sentences.end();
             if (!fill && one.rfind("Input ", 0) == 0)
-                one = string(pass.hand_words && sentence == first ? "CurrentObjects" : "Output") + one.substr(5);
+                one = string(pass.hand_rules && sentence == first ? "CurrentObjects" : "Output") + one.substr(5);
             said.sentences.push_back(std::move(one));
         }
-        if (pass.hand_words && pass.background_filled)
+        if (pass.hand_rules && pass.background_filled)
             said.sentences.push_back(pass.sentences.back());
         said.left_unexplained = pass.left_unexplained;
-        said.no_word_for = pass.no_word_for;
+        said.no_rule_for = pass.no_rule_for;
+        said.no_operator_for = pass.no_operator_for;
     }
 }
 
@@ -1482,7 +1485,7 @@ inline void restore_background(said_reading& said, background_source ground,
     case output_dimension_rule::BoundingBox: fit = said.one_pane ? fit_to::pane : fit_to::painted; break;
     case output_dimension_rule::NotInferredYet:
     default:
-        said.no_word_for.push_back("the output frame has not been inferred");
+        said.no_rule_for.push_back("the output frame has not been inferred");
         return;
     }
     if (ground.per_grid)
@@ -1530,21 +1533,27 @@ inline void say_the_plan(said_reading& said, const ground_plan& plan, const outp
 // ONE CHOICE AMONG EVERY EXPLANATION ON THE LIST. Each rule that stands alone is
 // an explanation of the pairs, and so is the elected cut's own line. All of them
 // are asked and priced alike -- complete first, meaning no cell left unexplained
-// and no word missing, then the fewest ops -- and the cheapest is said; a tie
+// and nothing missing, then the fewest ops -- and the cheapest is said; a tie
 // goes to the one listed first. The list says what fired; nothing here keeps a
 // roster of its own, so a rule that is not on the list is not asked.
-// THE SECOND LIST KEEPS EVERY MISSING WORD. A rule that held and could not be
-// said names what the language lacks, whichever explanation is said.
+// WHAT IS MISSING IS KEPT WHOLE. A rule that held and could not be said names
+// what the language lacks, whichever explanation is said.
 inline said_reading say_the_reading(const inference& inf) {
     vector<said_reading> spoke;
-    vector<string> missing;
+    vector<string> no_rule_for, no_operator_for;
+    auto keep = [](vector<string>& into, const vector<string>& from) {
+        into.insert(into.end(), from.begin(), from.end());
+    };
     // Each explanation says the same plan; later passes say it for their picture.
     auto heard = [&](bool it_spoke, said_reading& one) {
         if (it_spoke) {
             if (!one.plan_said) say_the_plan(one, inf.plan, inf.size);
             spoke.push_back(std::move(one));
         }
-        else missing.insert(missing.end(), one.no_word_for.begin(), one.no_word_for.end());
+        else {
+            keep(no_rule_for, one.no_rule_for);
+            keep(no_operator_for, one.no_operator_for);
+        }
     };
     const auto& election = inf.correspondence;
     if (!election.readings.empty())
@@ -1573,15 +1582,16 @@ inline said_reading say_the_reading(const inference& inf) {
     auto price = [](const said_reading& one) {
         int ops = 0;
         for (const string& sentence : one.sentences)
-            each_program_word(sentence, [&](std::string_view, node_type) { ++ops; });
-        const bool complete = one.no_word_for.empty() && one.left_unexplained == 0;
+            each_program_operator(sentence, [&](std::string_view, node_type) { ++ops; });
+        const bool complete = one.no_rule_for.empty() && one.no_operator_for.empty() && one.left_unexplained == 0;
         return tuple{ !complete, one.left_unexplained, ops };
     };
     const said_reading* cheapest = nullptr;
     for (const auto& one : spoke)
         if (!cheapest || price(one) < price(*cheapest)) cheapest = &one;
     said_reading said = cheapest ? *cheapest : said_reading{};
-    said.no_word_for.insert(said.no_word_for.begin(), missing.begin(), missing.end());
+    said.no_rule_for.insert(said.no_rule_for.begin(), no_rule_for.begin(), no_rule_for.end());
+    said.no_operator_for.insert(said.no_operator_for.begin(), no_operator_for.begin(), no_operator_for.end());
     const int ground = inf.plan.deleted.color;
     for (string& sentence : said.sentences) sentence = without_redundant_steps(sentence, ground);
     for (string& opening : said.other_openings) opening = without_redundant_steps(opening, ground);

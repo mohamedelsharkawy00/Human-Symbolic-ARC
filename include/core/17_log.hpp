@@ -216,8 +216,8 @@ inline void report_correspondence_readings(ostream& report, const correspondence
         report << "   " << reading_title(reading);
         report << ((int)i == correspondence.chosen ? "   ELECTED\n" : "\n");
     }
-    // The cuts the words weighed, in the matching's order: the one said is
-    // starred, beside the cells each one's words left unsaid (- never read).
+    // The cuts the rules weighed, in the matching's order: the one said is
+    // starred, beside the cells each one's rules left unsaid (- never read).
     report << "  [cuts]";
     for (size_t rank = 0; rank < correspondence.ranked.size(); ++rank) {
         const int cut = correspondence.ranked[rank];
@@ -254,7 +254,7 @@ inline void report_fired(ostream& report, const correspondence_election& corresp
         }
         report << "    left over  " << reading.unclaimed() << " of " << correspondence.cells << " cells\n";
         if (reading.drawn_wrong)
-            report << "    drawn wrong  " << reading.drawn_wrong << " of those, laid wrong by a word and never set right\n";
+            report << "    drawn wrong  " << reading.drawn_wrong << " of those, laid wrong by a rule and never set right\n";
         // The order the cut's own line says them in, which is the program.
         if (!reading.line.empty()) {
             report << "    said as";
@@ -267,7 +267,7 @@ inline void report_fired(ostream& report, const correspondence_election& corresp
 
 // THE PASSES AFTER THE LINE (read_the_rest), each read on the picture the passes
 // before it drew: its own reading, rule by rule, the last one's what is left --
-// the last one read saying no more, where it names only the words the rest lacks.
+// the last one read saying no more, where it names only the rules the rest lacks.
 inline void report_the_rest(ostream& report, const inference& inf) {
     for (const inference* at = &inf; at->rest; at = at->rest.get()) {
         report_fired(report, at->rest->correspondence,
@@ -438,20 +438,21 @@ inline void report_ray_extension(ostream& report, const ray_extension_rule& rule
     report << "\n";
 }
 
-// WHAT THE READING COMES TO, in the solver's own words. The second list is the
-// one to read: it names the word the language is missing, at the moment the
-// looking wanted it.
+// WHAT THE READING COMES TO, in the solver's own operators. The lists after the
+// programs are the ones to read: they name what the language is missing, a rule
+// or an operator, at the moment the looking wanted it.
 inline void report_said_reading(ostream& report, const inference& inf) {
     const said_reading said = say_the_reading(inf);
     const vector<string> programs = programs_from(said);
     report << "[sentences] " << programs.size() << " program"
            << (programs.size() == 1 ? "" : "s") << ", "
-           << said.no_word_for.size() << " with no word\n";
+           << said.no_rule_for.size() << " with no rule, " << said.no_operator_for.size() << " with no operator\n";
     for (const string& program : programs) {
         for (const string& row : sentences_of(program)) report << "  " << row << "\n";
         report << "\n";
     }
-    for (const string& missing : said.no_word_for) report << "  NO WORD FOR " << missing << "\n";
+    for (const string& missing : said.no_rule_for) report << "  NO RULE FOR " << missing << "\n";
+    for (const string& missing : said.no_operator_for) report << "  NO OPERATOR FOR " << missing << "\n";
 }
 
 // WHAT SEVERAL PIECES SAID AT ONCE, reading by reading and pair by pair. Read
@@ -605,7 +606,7 @@ inline void log_inference(const string& id, const inference& inf,
         report << "  " << ((size_t)read.plan < plans.size() ? plan_said(plans[(size_t)read.plan]) : string("?"))
                << (read.partners ? ", with the partner picks" : "") << ": " << read.left << " unsaid, "
                << read.passes << (read.passes == 1 ? " pass" : " passes")
-               << (read.words.empty() ? string() : ": " + read.words) << "\n";
+               << (read.rules.empty() ? string() : ": " + read.rules) << "\n";
     report << "\n";
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);

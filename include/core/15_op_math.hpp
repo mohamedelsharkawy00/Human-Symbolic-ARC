@@ -1,7 +1,7 @@
 // What each op does to the cells, said once. The op calls it (src/ops.cpp),
 // and the reading replays the op by calling the same (7_facts.hpp to
-// 13_infer.hpp), so the two cannot draw differently. A word's arithmetic goes
-// here before the word is said.
+// 13_infer.hpp), so the two cannot draw differently. An operator's arithmetic
+// goes here before the operator is said.
 // Grouped as 14_vocabulary.hpp groups the ops: reduce, select, translate, map,
 // generate, after what several of them share.
 #pragma once
@@ -650,7 +650,7 @@ inline bool lies_in_part(const Pieces& pieces, int mine, int which,
 }
 
 // WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --
-// every piece not picked, as the key words read it (each_key_entry) -- is of
+// every piece not picked, as the key operators read it (each_key_entry) -- is of
 // its shape, by the likeness `how` names (SHAPE_LIKENESSES: as it lies or
 // turned any of the eight ways, at its size, any size or stretched), as
 // each_partner finds a piece of the same shape (63613498: the piece shaped as

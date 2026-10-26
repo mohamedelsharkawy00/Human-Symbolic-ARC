@@ -1,12 +1,12 @@
-// The words a program is written in, as 0_core.hpp holds the words a grid is.
-// Numbered after the reading (7_facts.hpp to 13_infer.hpp), whose elected facts
-// some ops name. The vocabulary itself compiles against 0_core.hpp alone. Read
-// by 16_sentences.hpp, which spells programs, and src/ops.cpp, which runs them,
-// from the same definitions.
+// The operators a program is written in, as 0_core.hpp holds what a grid is
+// made of. Numbered after the reading (7_facts.hpp to 13_infer.hpp), whose
+// elected facts some ops name. The vocabulary itself compiles against
+// 0_core.hpp alone. Read by 16_sentences.hpp, which spells programs, and
+// src/ops.cpp, which runs them, from the same definitions.
 //
-// WORDS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says a word only
-// after replaying it on every training pair, with the arithmetic the op runs,
-// and seeing it at work in every pair. The ops below have no such
+// OPERATORS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says an
+// operator only after replaying it on every training pair, with the arithmetic
+// the op runs, and seeing it at work in every pair. The ops below have no such
 // replay in the general reading: no inferred program uses them, except where one
 // special-case rule spells them for its own pattern. To unlock one:
 //   1. Move the op's arithmetic into a shared helper in 15_op_math.hpp and
@@ -14,9 +14,10 @@
 //      differ.
 //   2. Replay it: a *_holds check (11_replays.hpp) on one of the replay
 //      templates (paint_holds, slides_hold, drops_hold) asked in finish_the_line
-//      (12_line.hpp) for a same-size word, a frame kind in choose_piece_frame
-//      (10_picks_and_frames.hpp) for a size change, or a whole_line rule
-//      (9_rules.hpp) for a word that redraws every output by itself.
+//      (12_line.hpp) for a same-size operator, a frame kind in
+//      choose_piece_frame (10_picks_and_frames.hpp) for a size change, or a
+//      whole_line rule (9_rules.hpp) for an operator that redraws every output
+//      by itself.
 //   3. Spell it in 16_sentences.hpp (beats_of, drawn_after, frame_the_sentences).
 //   4. Check with scripts\said.bat on the training set (no solved puzzle lost,
 //      the wrong count not up) and the readouts' fully-explained-but-unsolved
@@ -40,8 +41,8 @@
 //   still need a replay.
 // NormalizeOrientation, RestoreOrientation: read every pair in one pose; only the
 //   mark-lattice rule says them.
-// SortBySize: said only as a helper where a word reads list order (size rank,
-//   project on seeds); it changes nothing visible by itself.
+// SortBySize: said only as a helper where an operator reads list order (size
+//   rank, project on seeds); it changes nothing visible by itself.
 // Skew: its range is -1..1, but the op keeps 47 slopes and -1 does nothing; fix
 //   the range before it can be said.
 #pragma once
@@ -651,20 +652,20 @@ inline std::optional<int> value_read(node_type t, std::string_view written) {
     return std::nullopt;
 }
 
-// Read a word's operation name; arguments remain the caller's concern.
-// Unknown words (including the inference placeholder "?") have no operation.
-inline constexpr node_type operation_named(std::string_view word) {
-    word = word.substr(0, word.find_first_of(" ["));
-#define X(id, low, high, role, inferred, clears) if (word == #id) return node_type::id;
+// Read an operator's name off its text; arguments remain the caller's concern.
+// Unknown names (including the inference placeholder "?") have no operation.
+inline constexpr node_type operation_named(std::string_view text) {
+    text = text.substr(0, text.find_first_of(" ["));
+#define X(id, low, high, role, inferred, clears) if (text == #id) return node_type::id;
     NODE_PRIMITIVES
 #undef X
     return node_type::type_count;
 }
 
-// Where the program word `text` opens with ends: at the first space outside
+// Where the operator `text` opens with ends: at the first space outside
 // its brackets, unless that space only parts its name from them, Recolor [3],
 // Tile [steps: ...].
-inline size_t program_word_end(std::string_view text) {
+inline size_t program_operator_end(std::string_view text) {
     size_t end = 0;
     for (int depth = 0; end < text.size(); ++end) {
         if (text[end] == ' ' && depth == 0 && text.substr(end + 1, 1) != "[") break;
@@ -673,17 +674,18 @@ inline size_t program_word_end(std::string_view text) {
     return end;
 }
 
-// Visit space-separated program words without allocating temporary strings.
-// Keep the original spelling so callers can reproduce arguments unchanged.
+// Visit a program's operators, each as written, without allocating temporary
+// strings. Keep the original spelling so callers can reproduce arguments
+// unchanged.
 template <class See>
-inline void each_program_word(std::string_view program, See see) {
+inline void each_program_operator(std::string_view program, See see) {
     while (!program.empty()) {
         const auto first = program.find_first_not_of(' ');
         if (first == std::string_view::npos) break;
         program.remove_prefix(first);
-        const size_t end = program_word_end(program);
-        const auto word = program.substr(0, end);
-        see(word, operation_named(word));
+        const size_t end = program_operator_end(program);
+        const auto written = program.substr(0, end);
+        see(written, operation_named(written));
         if (end == program.size()) break;
         program.remove_prefix(end + 1);
     }

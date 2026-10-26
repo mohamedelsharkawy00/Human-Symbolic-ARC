@@ -1,5 +1,5 @@
 // The reading in order: each ground plan, cut and pass read to the end of its
-// words, the one that says the most kept (says_the_most), and infer(), which
+// rules, the one that says the most kept (says_the_most), and infer(), which
 // asks them all.
 #pragma once
 #include "12_line.hpp"
@@ -17,7 +17,7 @@
 namespace arc {
 
 // THE ACTS LEFT UNSAID: the line the matching opened with its acts, cleared.
-// They stay listed, claiming nothing, and every cell they claimed is the words'
+// They stay listed, claiming nothing, and every cell they claimed is the rules'
 // to claim again.
 inline void leave_the_acts_unsaid(inference& inf) {
     auto& read = inf.correspondence.readings[inf.correspondence.chosen];
@@ -63,20 +63,12 @@ inline int passes_said(const inference& read) {
     return read.rest_says_more && read.rest ? passes_said(*read.rest) : read.pass;
 }
 
-// HOW MANY WORDS A READING SAYS: its line's, then each pass's after it that says
-// more (read_the_rest).
-inline int words_said(const inference& read) {
-    const auto& facts = read.correspondence;
-    const int own = facts.readings.empty() ? 0 : (int)facts.readings[facts.chosen].line.size();
-    return own + (read.rest_says_more && read.rest ? words_said(*read.rest) : 0);
-}
-
-// THE CANDIDATE WHOSE WORDS SAY THE MOST: each one read in the order given, and
+// THE CANDIDATE WHOSE RULES SAY THE MOST: each one read in the order given, and
 // the one whose reading leaves the fewest cells unsaid kept, a tie going to the
 // one read first. So once one leaves none, no later one is read. Every choice
-// the reading makes is made here and judged this one way, by its words: the
+// the reading makes is made here and judged this one way, by its rules: the
 // ground plan (infer), the cut (read_figures), each asked just above the first
-// word that reads it; the passes are read once a cut is chosen, so a cut is
+// rule that reads it; the passes are read once a cut is chosen, so a cut is
 // judged by its line alone. Whatever orders the candidates only breaks a tie.
 // Hands back the one kept, where it stood, and the cells each one left unsaid,
 // -1 for one never read.
@@ -144,7 +136,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // or keeps every color as a figure -- read with no election and no ground in
 // any reader, so every detector sees figures and empty cells, and an empty cell
 // is nothing (where a plan deleted the ground, what it fills last). What reads
-// no cut is asked once; what reads one is asked of each cut the words weigh.
+// no cut is asked once; what reads one is asked of each cut the rules weigh.
 // `pass` is which pass this reading is, and once its cut is chosen the rest of
 // the change is read on the picture its line draws (read_the_rest).
 inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles, const turning_shape& shape) {
@@ -210,7 +202,7 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
     return inf;
 }
 
-// The facts and matching belong to the figures, before any word changes them.
+// The facts and matching belong to the figures, before any rule changes them.
 // Each reading takes its own copy; its claims, frames and later pictures stay its own.
 inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles, int8_t pass,
                               bool partners, inference inf, figure_readings& readings) {
@@ -218,9 +210,9 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     inference_work.later_readings += pass > 1;
     inf.pass = pass;
     inf.partners = partners;
-    // THE CUT IS CHOSEN HERE, just above the first word that reads it: each cut
+    // THE CUT IS CHOSEN HERE, just above the first rule that reads it: each cut
     // in the matching's order is read to the end of its line, and the one whose
-    // words say the most is said (says_the_most).
+    // rules say the most is said (says_the_most).
     const vector<correspondence_election::reading_index> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
         read_the_cut(inf, train, tiles, readings);
@@ -235,7 +227,7 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     });
     inference best = std::move(said.reading);
     best.correspondence.left_by_rank = said.left;
-    // A tied opening the words ruled out -- read, and leaving more cells
+    // A tied opening the rules ruled out -- read, and leaving more cells
     // unsaid -- is no longer one the reading could not rule out.
     erase_if(best.correspondence.tied_with_chosen, [&](correspondence_election::reading_index tie) {
         const auto at = ranges::find(ranked, tie);
@@ -303,10 +295,10 @@ constexpr int8_t MOST_PASSES = 10;
 // THE REST OF THE CHANGE, READ ON THE PICTURE SO FAR (the user: build on the
 // output so far). Where a pass leaves cells unsaid and its line draws something
 // new, the picture it draws is the input of a puzzle of its own, from each
-// picture to its output, read by every word a puzzle has: the next pass. It is
+// picture to its output, read by every rule a puzzle has: the next pass. It is
 // said where it leaves fewer cells unsaid, and otherwise kept for the readout
 // alone; a pass that draws nothing new ends the passes, as the tenth does.
-// Every word is read on the picture the program hands it, so a pass after the
+// Every rule is read on the picture the program hands it, so a pass after the
 // first says one change (finish_the_line).
 inline void read_the_rest(inference& inf, const vector<example>& train, figure_readings& readings) {
     if (inf.pass >= MOST_PASSES || inf.picture.size() != train.size() || cells_left_unsaid(inf) == 0) return;
@@ -331,7 +323,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
     inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
 
-// THE WORDS THAT READ THE CUT, asked of the one `inf` reads on: the rules read
+// THE RULES THAT READ THE CUT, asked of the one `inf` reads on: the rules read
 // off its pieces, then -- once every rule is known -- the rivals, the rest of
 // its line, what no rule on it says, and a size change read through its frame.
 inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles,
@@ -375,7 +367,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
     // PIECES THAT DO NOT REDRAW THE OUTPUT where they lie: the cut's pieces,
     // matched, can leave nothing over and still not be the output -- 2013d3e2's
     // figure matched whole while the output is its corner, cce03e0d's copies
-    // matched where half of them are gone -- so a line with no words is held to
+    // matched where half of them are gone -- so a line with no rules is held to
     // what it would draw. Asked of the cut alone, before the line is chosen.
     inf.pieces_redraw = redraws_every_output(train, [&](const example& pair, grid& drawn) {
         const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation, tiles.of(pair),
@@ -388,11 +380,11 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
     });
 
     // Last, once every rule is known: the rivals, the rest of the cut's line,
-    // and only then what no rule on it says. THE ACTS, OR THE WORDS ALONE: the
-    // acts the matching read off the pieces open the line and the words read
-    // off the pieces go on from the hand they leave, or the acts are left
-    // unsaid and the words say every change themselves. A word that says what
-    // an act says and more is seen at work only on a hand the act has not
+    // and only then what no rule on it says. THE MATCHING'S ACTS, OR THE RULES
+    // ALONE: the acts the matching read off the pieces open the line and the
+    // rules read off the pieces go on from the hand they leave, or the acts are
+    // left unsaid and the rules say every change themselves. A rule that says
+    // what an act says and more is seen at work only on a hand the act has not
     // changed yet: 9565186b's "8 becomes 5" left its first pair nothing for
     // "every color but the most common becomes 5" to change. Whichever says
     // the most is said (says_the_most), a tie keeping the acts. EACH READ
@@ -433,7 +425,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
 
     // A SIZE CHANGE, READ THROUGH ITS FRAME: once the frame cuts the output's
     // grid out of the input's, what is left is a same-size puzzle, read by every
-    // word a same-size puzzle has -- from each framed input to its output. A
+    // rule a same-size puzzle has -- from each framed input to its output. A
     // pass after the first reads a picture its output's size.
     if (inf.pass > 1) return;
     inf.frame = choose_piece_frame(train, inf, tiles);
@@ -482,7 +474,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
 // Asks every question about the training pairs, in order, and returns the answers.
 // THE GROUND IS CHOSEN ONCE: the election names the plans a puzzle allows
 // (ground_plans), each plan's figures are read (read_figures), and the plan
-// whose words say the most is said (says_the_most), in the order the plans are
+// whose rules say the most is said (says_the_most), in the order the plans are
 // named. Each pass applies that plan before reading its figures.
 inline inference infer(const vector<example>& train) {
     figure_readings readings;
@@ -494,16 +486,16 @@ inline inference infer(const vector<example>& train) {
         return *read_with_ground(train, {}, 1, partners, readings, &prepared[(size_t)at], plans[(size_t)at]);
     };
     vector<inference::plan_read> plans_read;
-    // Each plan read, as the readout shows it: the words its line said.
+    // Each plan read, as the readout shows it: the rules its line said.
     auto note_read = [&](int plan, const inference& read) {
-        string words;
+        string rules;
         if (!read.correspondence.readings.empty()) {
             const auto& line = read.correspondence.readings[read.correspondence.chosen];
             for (const int8_t said : line.line)
-                words += (words.empty() ? "" : " | ") + string(line.fired[said].name) +
+                rules += (rules.empty() ? "" : " | ") + string(line.fired[said].name) +
                          (line.fired[said].says.empty() ? "" : " " + line.fired[said].says);
         }
-        plans_read.push_back({ plan, cells_left_unsaid(read), passes_said(read), words, read.partners });
+        plans_read.push_back({ plan, cells_left_unsaid(read), passes_said(read), rules, read.partners });
     };
     inference best = says_the_most(count, [&](int which) {
         const ground_plan& plan = plans[(size_t)which];

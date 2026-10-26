@@ -6,12 +6,12 @@
 
 ## How inference works
 
-1. Inference reads the training pairs, names the rule as a line of words, and says it as a DSL program.
+1. Inference reads the training pairs, names what changed as a line of rules, and spells it as a DSL program. A word is one operator.
 2. The reading matches pieces between input and output ("everything in ARC is this matches that").
 3. It writes every change down cell by cell.
-4. Each word crosses off the cells it explains.
-5. Whatever no word claims is listed as the word the language lacks.
-6. A word is said only after it is replayed on every training pair on the host, using the same arithmetic as the ops, and seen to change something in every pair. Doing nothing is not evidence that it explains the puzzle.
+4. Each rule crosses off the cells it explains.
+5. Whatever no rule claims is left over; where a match saw the change, it is listed by that change: the rule the reading lacks.
+6. Every rule is checked on all the training pairs before it is said, most by replaying it with the operators' own arithmetic. A replayed rule must bring each pair the line has not finished nearer its output: doing nothing is not evidence that it explains the puzzle.
 
 # 2. Getting Started
 1. Clone it: `git clone https://github.com/mohamedelsharkawy00/human-symbolic-arc`
@@ -43,9 +43,9 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 # 4. Layout
 1. `include\core` is the solver. Give it a puzzle, call `infer()`, read the best program off the puzzle. It has no thread, window, sound or settings file of its own.
 2. `include\gui` is the window: the puzzle list, pause, settings, sounds, and the pictures of what the reading drew. It never runs the solver itself (section 5).
-3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` links the solver's headers but not its ops (`src\ops.cpp`), so GUI code that tried to run a program would not link.
+3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` links the solver's headers but not its operators (`src\ops.cpp`), so GUI code that tried to run a program would not link.
 4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every reading the GUI shows, and the Kaggle run. Both come out of every build.
-5. Headers are numbered in the order they are meant to be read, core first. The number says where a file sits in the story, not what it may include: `14_vocabulary.hpp` needs only `0_core.hpp`, but its words name facts established by `1_readings.hpp` through `13_infer.hpp`.
+5. Headers are numbered in the order they are meant to be read, core first. The number says where a file sits in the story, not what it may include: `14_vocabulary.hpp` needs only `0_core.hpp`, but its operators name facts established by `1_readings.hpp` through `13_infer.hpp`.
 
 # 5. One puzzle, one process
 1. Every puzzle runs in a fresh `arc_headless` process of its own. A solver that has worked through one puzzle carries its memory and state into the next, and freeing it by hand never cleaned up as thoroughly as ending the process does; puzzles that ran after another went measurably worse than the same puzzle run first.

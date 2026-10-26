@@ -1,4 +1,4 @@
-// Which pieces a word picks, asked of the hand each pair holds (replay_facts),
+// Which pieces a rule picks, asked of the hand each pair holds (replay_facts),
 // and the frame a size change is read through, chosen (choose_piece_frame).
 #pragma once
 #include "9_rules.hpp"
@@ -144,8 +144,8 @@ static_assert(row_of(node_type::SelectPartner).high + 1 == SELECT_PARTNER_VALUES
 static_assert(row_of(node_type::SelectRunningAlong).high + 1 == (int)runs_along::count,
               "SelectRunningAlong takes one value for each way a piece runs");
 
-// THE PIECES A PICK TAKES, as its words take them on a canvas the size of
-// `canvas`, in the order pick_words says them: its colors or its kind; the
+// THE PIECES A PICK TAKES, as its operators take them on a canvas the size of
+// `canvas`, in the order pick_operators says them: its colors or its kind; the
 // pieces in the part those fence off, where it names a part; their partners,
 // where it names a partner; every piece but those, where it turns them round;
 // then WouldFit's and SelectLikeKey's keeps.
@@ -202,19 +202,19 @@ static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::Se
 // WHAT EVERY REPLAY BELOW IS HANDED: the training pairs, each input's pieces as
 // the cut hands them over, cut once, and the grounds the pairs were read on.
 //
-// AND WHAT EVERY ONE ASKS OF A WORD: that it is seen at work in every pair. A
-// word that does nothing in some pair holds there only by standing idle -- a
+// AND WHAT EVERY ONE ASKS OF A RULE: that it is seen at work in every pair. A
+// rule that does nothing in some pair holds there only by standing idle -- a
 // band of rows that pair's pieces do not make, a color it does not show -- and
-// a word that holds by standing idle is a word for the pairs, not a rule: the
-// test lays its bands and colors out afresh (22a4bbc2's rows, e3fe1151's
-// colors). At work is the one thing every replay asks the same way: at some
-// cell the word acts on, the output shows what its picked pieces did not show
-// there before -- a piece recolored, moved, copied, grown or cut back, never
-// only drawn again as it was. A copy laid on its own likeness is at work all
-// the same: 4938f0c2's last pair is already whole.
+// one that holds by standing idle is true of the pairs, not a rule of the
+// puzzle: the test lays its bands and colors out afresh (22a4bbc2's rows,
+// e3fe1151's colors). At work is the one thing every replay asks the same way:
+// at some cell the rule acts on, the output shows what its picked pieces did
+// not show there before -- a piece recolored, moved, copied, grown or cut
+// back, never only drawn again as it was. A copy laid on its own likeness is
+// at work all the same: 4938f0c2's last pair is already whole.
 //
 // BUT A FINISHED PAIR, whose grid read already shows its output, has nothing
-// left for any word to do, so it asks only that a word lays nothing wrong
+// left for any rule to do, so it asks only that a rule lays nothing wrong
 // there (the user): a pass after the first finds some pairs done and others
 // not (1190bc91's pair 2, whole once its rays are drawn, while each marker of
 // the other pairs still fills its part).
@@ -225,15 +225,15 @@ struct replay_facts {
     vector<bool> done;
     int open = 0;
     bool overlays = true;
-    // Whether `cuts` is still the hand the line leaves: false once a word on it
+    // Whether `cuts` is still the hand the line leaves: false once a rule on it
     // is one carry_the_hand cannot carry the pieces through.
     bool hand_known = true;
     // Whether the line lays its hand under what is down, as Underlay does, where
     // some piece sits on another -- else over it, as Union does (draw_the_hand).
     bool laid_under = false;
-    // Whether a word may lay cells wrong where it brings every pair nearer
+    // Whether a rule may lay cells wrong where it brings every pair nearer
     // (brings_nearer): only on a line that draws its picture, so the next pass
-    // can read the cells it left wrong, and only once no word that lays none
+    // can read the cells it left wrong, and only once no rule that lays none
     // says anything (finish_the_line). Off everywhere else.
     bool tolerant = false;
     // The pieces a named cut hands over, rather than the elected one; the shape
@@ -265,7 +265,7 @@ struct replay_facts {
     // The canvas pair `which`'s pieces lie on: its input's, as the ops take it.
     tile_size canvas(size_t which) const { return { train[which].input.width, train[which].input.height }; }
     // Whether pair `which` is finished: its grid read already its output,
-    // while some pair's is not. Where every pair's is, no word has anything to
+    // while some pair's is not. Where every pair's is, no rule has anything to
     // do anywhere, and none is let off (cd3c21df's framed pieces, each already
     // its output: a mirror that drew them again was said).
     bool finished(size_t which) const { return open > 0 && which < done.size() && done[which]; }
@@ -331,9 +331,9 @@ private:
     }
 };
 
-// THE PIECES A PICK TAKES, pair by pair, made ready once for a word asked many
+// THE PIECES A PICK TAKES, pair by pair, made ready once for a rule asked many
 // ways over -- every length, both ways round, every lay -- whose tries differ in
-// everything but the pieces. Kept only while that word is asked, and only while
+// everything but the pieces. Kept only while that rule is asked, and only while
 // nothing carries the hand: `facts` must not change under it.
 inline vector<partner_pieces> handed_pieces(const replay_facts& facts, const piece_pick& pick) {
     vector<partner_pieces> handed;
@@ -348,7 +348,7 @@ inline bool takes_the_same(const vector<partner_pieces>& one, const vector<partn
     return ranges::equal(one, other, [](const partner_pieces& a, const partner_pieces& b) { return a.picked == b.picked; });
 }
 
-// Local to one word on one unchanged hand. Record only eligible picks, so the
+// Local to one rule on one unchanged hand. Record only eligible picks, so the
 // first pick allowed to ask a value keeps its tie, even if another was skipped.
 struct asked_piece_sets {
     vector<vector<partner_pieces>> asked;
@@ -711,32 +711,32 @@ inline vector<correspondence_election::fired_rule> size_changes_from_matches(
             }
         }
     }
-    vector<rule> words;
+    vector<rule> rules;
     for (const auto& [color, position] : shared) {
         const bool largest = position.larger >= 0 &&
             (position.smaller < 0 || position.larger <= position.smaller);
         const int rank = largest ? position.larger : position.smaller;
         if (rank < 0 || rank >= SIZE_RANKS) return {};
-        rule word;
-        word.name = string(largest ? "Largest " : "Smallest ") + to_string(rank);
-        word.says = "becomes " + to_string(color);
-        word.as = rule::recolor_picked;
-        word.pick = {0, largest ? piece_pick::largest : piece_pick::smallest, (int8_t)rank};
-        word.value = (int8_t)color;
-        words.push_back(std::move(word));
+        rule one;
+        one.name = string(largest ? "Largest " : "Smallest ") + to_string(rank);
+        one.says = "becomes " + to_string(color);
+        one.as = rule::recolor_picked;
+        one.pick = {0, largest ? piece_pick::largest : piece_pick::smallest, (int8_t)rank};
+        one.value = (int8_t)color;
+        rules.push_back(std::move(one));
     }
-    if (words.empty()) return {};
+    if (rules.empty()) return {};
     if (removed_colors) {
-        rule word;
-        word.name = "Colors";
+        rule one;
+        one.name = "Colors";
         for (int color = 0; color < COLOR_COUNT; ++color)
-            if (removed_colors >> color & 1) word.name += " " + to_string(color);
-        word.says = "is removed";
-        word.as = rule::removed;
-        word.pick = {removed_colors};
-        words.push_back(std::move(word));
+            if (removed_colors >> color & 1) one.name += " " + to_string(color);
+        one.says = "is removed";
+        one.as = rule::removed;
+        one.pick = {removed_colors};
+        rules.push_back(std::move(one));
     }
-    return words;
+    return rules;
 }
 
 // THE PARTNERS OF A PICK (SelectPartner): of every piece, and of each color
@@ -824,7 +824,7 @@ inline vector<piece_pick> partner_picks(const replay_facts& facts) {
     return picks;
 }
 
-// Every pick a word is asked with: the colors an unsaid change starts from, when
+// Every pick a rule is asked with: the colors an unsaid change starts from, when
 // there are any, then every pick by holes, size, band, the color most cells
 // wear and how many cells the ops can make, then
 // each of `fit_colors` alone kept to its pieces that would fit into a gap of
@@ -1019,7 +1019,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         }
     // THE NEWEST PICKS, ASKED LAST, so an older pick that says as much takes the
     // tie (a61f2674's bars: a count asked ahead of the ranks by size took
-    // their words and left its line unfinished).
+    // their rules and left its line unfinished).
     // The one piece with no twin, each way twins are read (unique_piece): asked
     // only where it takes a piece in every pair, a twin being what tells the
     // rest apart from it.
@@ -1145,11 +1145,12 @@ inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick,
 
 // THE INPUT FRAMED: the pieces a pick takes, moved as one to the corner of the
 // canvas the size rule gives, and ground everywhere else -- what the frame's
-// words leave on the canvas. Several go together, keeping their places to each
-// other, as UnionList merges them; `several` says whether this pair's pick took
-// more than one. False when the pick takes no piece; when the canvas does not
-// show what it frames (shows_what_it_frames); and when a pick by size lands on a
-// tie (size_pick_ties), since the crop would be of whichever came first.
+// operators leave on the canvas. Several go together, keeping their places to
+// each other, as UnionList merges them; `several` says whether this pair's
+// pick took more than one. False when the pick takes no piece; when the canvas
+// does not show what it frames (shows_what_it_frames); and when a pick by size
+// lands on a tie (size_pick_ties), since the crop would be of whichever came
+// first.
 inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, const grid& input,
                          const output_dimension_rule& size, grid& framed, bool& several) {
     hand_answers fresh;
@@ -1232,8 +1233,8 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
     });
 }
 
-// THE CANVAS FILLED, as the filled frame's words leave it: the pieces a pick
-// takes, each recolored by the puzzle's table where `keyed` names a key
+// THE CANVAS FILLED, as the filled frame's operators leave it: the pieces a
+// pick takes, each recolored by the puzzle's table where `keyed` names a key
 // (ShapeColorMap[keyed]), filled to its box with its most common color
 // (AddColor[11]) and stretched over the canvas the size rule gives (Fit[1]),
 // laid in turn. Held only where every piece the pick takes comes out in one
@@ -1343,16 +1344,17 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
     });
 }
 
-// THE FRAME A SIZE CHANGE IS READ THROUGH, chosen. Of every cut with a word and
-// every pick a word is asked with -- each color on its own, then the picks by
-// holes, size, band and the color most cells wear -- the one whose framed
-// inputs share the most cells with their outputs, counted in the pair that
-// shares the fewest; a tie goes to the cut and the pick asked first. And ahead
-// of them the whole input scaled or tiled, where the size rule scales it; and
-// after them all the canvas filled in one color. Asked only of a size change,
-// and held only where the frame lands on the output's size in every pair. A
-// filled frame that reads its color off a table read off the pairs makes that
-// the puzzle's table (inf.shape_color_map), the one ShapeColorMap looks up.
+// THE FRAME A SIZE CHANGE IS READ THROUGH, chosen. Of every cut an operator
+// makes and every pick a rule is asked with -- each color on its own, then the
+// picks by holes, size, band and the color most cells wear -- the one whose
+// framed inputs share the most cells with their outputs, counted in the pair
+// that shares the fewest; a tie goes to the cut and the pick asked first. And
+// ahead of them the whole input scaled or tiled, where the size rule scales
+// it; and after them all the canvas filled in one color. Asked only of a size
+// change, and held only where the frame lands on the output's size in every
+// pair. A filled frame that reads its color off a table read off the pairs
+// makes that the puzzle's table (inf.shape_color_map), the one ShapeColorMap
+// looks up.
 inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf, const tiled_pieces& tiles) {
     if (train.empty() || inf.size.Chosen == output_dimension_rule::Identity) return {};
     // The framed grid is of figures: no ground is filled into it, so what a
@@ -1481,16 +1483,16 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
             }
         }
     }
-    // THE CANVAS IN ONE COLOR, the color a word names off the input, where every
-    // output is one color all over: the pieces a pick takes, each in one color --
-    // its own, or the one its shape or its symmetry names in a table read off the
-    // pairs (ShapeColorMap, read_off) -- filled to its box and stretched over the
-    // canvas, as a plan lays its fill (filled_input). Each piece's own color is
-    // asked before a table; a table only while the puzzle has none, and only
-    // where it is at work in every pair: some piece it takes comes out in a
-    // color it did not wear (44f52bb0's picture, 1 where a turn or flip leaves
-    // it as it was, else 7). The size rule gives the canvas, so not under
-    // BoundingBox.
+    // THE CANVAS IN ONE COLOR, the color an operator names off the input,
+    // where every output is one color all over: the pieces a pick takes, each
+    // in one color -- its own, or the one its shape or its symmetry names in a
+    // table read off the pairs (ShapeColorMap, read_off) -- filled to its box
+    // and stretched over the canvas, as a plan lays its fill (filled_input).
+    // Each piece's own color is asked before a table; a table only while the
+    // puzzle has none, and only where it is at work in every pair: some piece
+    // it takes comes out in a color it did not wear (44f52bb0's picture, 1
+    // where a turn or flip leaves it as it was, else 7). The size rule gives
+    // the canvas, so not under BoundingBox.
     const bool one_color = ranges::all_of(train, [](const example& pair) {
         const int first = pair.output.data[0][0];
         for (int row = 0; row < pair.output.height; ++row)

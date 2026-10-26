@@ -259,8 +259,8 @@ inline pipeline_fold fold_of(size_t ops, bool whole) {
 }
 
 // A program is sentences, so it reads as sentences: one to a line, four beats to
-// a sentence, and each beat in a column as wide as the widest word that lands in
-// it. The columns are what make GET under GET and ACT under ACT.
+// a sentence, and each beat in a column as wide as the widest operator that
+// lands in it. The columns are what make GET under GET and ACT under ACT.
 // One line per sentence. MUST agree with draw_pipeline or reflow and draw
 // disagree about where the block ends: both count the boxes fold_of says.
 inline int count_pipeline_lines(node *root, bool whole) {
@@ -549,7 +549,7 @@ inline void draw_footer_rows(
     const bool whole = app_state.show_whole_programs.load();
     const pipeline_fold fold = fold_of(ops.size(), whole);
     for (size_t i = 0; i < fold.shown + fold.toggle; ++i) {
-      // A new sentence starts a new line; inside one, words just follow on.
+      // A new sentence starts a new line; inside one, operators just follow on.
       if (i > 0 && i % 4 == 0) { x = start_x; y += line_h; }
       if (i == fold.shown) {
         // The fold's own box, pressed like any button: how many more, or FOLD.
@@ -925,7 +925,7 @@ inline vector<row_place> refusals_of(const vector<correspondence_election::pair_
 
 // The cells the reading could not account for, in the order they were found,
 // less the ones a fired rule accounts for after all: each place once, however
-// many words it still waits on.
+// many changes it still waits on.
 inline vector<row_place> left_over_of(const vector<correspondence_election::pair_info>& pairs) {
   vector<row_place> all;
   for (size_t pair = 0; pair < pairs.size(); ++pair) {
@@ -1733,9 +1733,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     if (task.inf.shape_color_map.count)
       named_row({{"SHAPE PICKS COLOR", to_text("%d LEARNED", (int)task.inf.shape_color_map.count)}});
 
-    // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN WORDS. Shown as the programs
-    // SPACE runs, not a prettier retelling, so what is on screen and what is
-    // run cannot drift apart. One sentence a row, four beats to a sentence.
+    // WHAT THE LOOKING SAID, IN THE SOLVER'S OWN OPERATORS. Shown as the
+    // programs SPACE runs, not a prettier retelling, so what is on screen and
+    // what is run cannot drift apart. One sentence a row, four beats to a sentence.
     // A LONG PROGRAM FOLDS: its first rows, then how many more it has. The
     // button on the heading opens every row and folds them again; every row at
     // once ran the pane off the bottom of the screen (31aa019c's fifteen

@@ -6,10 +6,10 @@
 # 2. Rules
 1. Inference is the target, not search. Nothing in the reading should be doing any search.
 2. Prefer solving for the general case rather than the specific puzzle given.
-3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the word it lacks, built in the op that owns it (read the whole op list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
+3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the rule it lacks, built in the operator that owns it (read the whole operator list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
-5. New words are compositions of existing ops where possible. Add an op only when none exists.
-6. No binary ops, no hidden state in ops, prefer the DSL over preprocessing.
+5. New rules are compositions of existing operators where possible. Add an operator only when none exists.
+6. No binary operators, no hidden state in operators, prefer the DSL over preprocessing.
 7. The agent has priority over the old code: change it when it is wrong, and say so.
 8. Finish one stage completely and consistently before starting the next.
    1. Complete the work fully from message to message, never stop mid work on half states.
@@ -82,7 +82,7 @@
 37. Check the code first, always.
 38. Be very careful and precise in what the agent says, the user does NOT miss a word.
    1. Read the user's words as exactly: a word means what it says ("all" is all). Where a default disagrees with the words, the words win; if unsure, ask.
-39. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing words block the unsolved puzzles).
+39. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing rules block the unsolved puzzles).
 40. A change is good when no solved puzzle is lost and no new "explained but unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
 41. The rules above are a result of the user being lazy-smart.
 # 3. Command Port

@@ -24,7 +24,7 @@ struct program_run {
     run_lists& lists;
     // WHERE THIS EXAMPLE'S PANES LIE. Geometry, not cells: Panes clips whatever
     // the chain holds to these boxes, so what counts as figure stays the
-    // caller's words (Colors, SelectColor, DeleteSelection).
+    // caller's operators (Colors, SelectColor, DeleteSelection).
     vector<pane_split_facts::pane> panes;
     // The training outputs' colors, most cells first (SizeRankColorMap).
     const int8_t* colors_by_size;
@@ -131,7 +131,7 @@ void paint_objects(const object_list& from, int width, int height, grid& out) {
 // as the reading's is, so the two cannot come to different answers;
 // segmentation never tightens a frame (Trim is the only shrinker). Cut by a
 // shape, its places come back picked and the rest not, as Bridge hands back
-// its bars, so a word after it acts on the places.
+// its bars, so an operator after it acts on the places.
 void segment_objects(const grid& g, object_list& out, grouping how, int x0, int y0, int width, int height,
                      const turning_shape* shape = nullptr) {
     out.count = 0;
@@ -197,7 +197,7 @@ void remap_picked(const object_list& from, object_list& res, Size size, Pixel pi
     res.count = count;
 }
 
-// THE OBJECTS A PARTNER WORD READS, as the op holds them: the box each one's
+// THE OBJECTS A PARTNER OPERATOR READS, as the op holds them: the box each one's
 // paint fills on the canvas, whether it paints a cell there, whether it is
 // picked, its color and the colors it holds -- the questions the partner
 // helpers ask (each_partner and kin, 15_op_math.hpp), asked as inference's
@@ -298,7 +298,7 @@ object_list& op_input(program_run& run) {
 
 // Output is a snapshot of the WHOLE canvas, including its empty frame, read
 // back as it is with its transparent cells kept, so what follows sees what has
-// been painted so far. Trim is the only word that reduces this frame to its
+// been painted so far. Trim is the only operator that reduces this frame to its
 // painted bounds.
 object_list& op_output(program_run& run) {
     object_list& res = run.fresh();
@@ -367,7 +367,8 @@ object_list& op_split(program_run& run, const object_list& from, int8_t depth) {
 }
 
 // Colors splits each source object into ALL its color layers, unselected.
-// Every layer keeps the source frame. Removal and trimming are separate words.
+// Every layer keeps the source frame. Removal and trimming are separate
+// operators.
 object_list& op_colors(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count; ++i) {
@@ -1169,9 +1170,9 @@ int shape_color(const program_run& run, const held_object& one, int kind) {
 // drawing as it was (shape_key_of, the key the reading learned) -- or the color
 // the table gives every other key. A key the table names no color for leaves
 // its piece as it was; nothing else changes. A piece colored by ANOTHER's shape
-// is said in words (009d5c81's key naming the figure's color): the key takes
-// its shape's color, the figure the key's (ColorFrom), and the key goes
-// (DeleteSelection).
+// is said with other operators (009d5c81's key naming the figure's color): the
+// key takes its shape's color, the figure the key's (ColorFrom), and the key
+// goes (DeleteSelection).
 object_list& op_shape_color_map(program_run& run, const object_list& from, int kind) {
     object_list& res = run.fresh();
     copy_list(res, from);

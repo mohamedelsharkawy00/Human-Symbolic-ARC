@@ -1,6 +1,6 @@
-// How a word is checked: replayed on every pair with the arithmetic its op runs,
-// and judged pair by pair (brings_nearer). One replay per word, and
-// carry_the_hand, which carries the pieces through the words already said.
+// How a rule is checked: replayed on every pair with the arithmetic its op runs,
+// and judged pair by pair (brings_nearer). One replay per rule, and
+// carry_the_hand, which carries the pieces through the rules already said.
 #pragma once
 #include "10_picks_and_frames.hpp"
 #include <algorithm>
@@ -30,7 +30,7 @@ inline bool on_cells(const cells_by_pair& cells, size_t which, int row, int col)
 
 // THE CELLS OF EVERY PAIR, MARKED where they lie: what on_cells answers, at a
 // look rather than a search, for a claim that asks it of every cell left over.
-// A cell past the edge of the largest grid -- a piece the words moved off it --
+// A cell past the edge of the largest grid -- a piece the rules moved off it --
 // is no cell left over, and is not marked.
 struct cell_marks {
     vector<std::bitset<MAX_GRID_CELLS>> at;
@@ -76,7 +76,7 @@ inline bool lands(int8_t lay, int8_t down) {
 // HOW A PAINT IS LAID: the way `lay` says (lands) on what `canvas` holds down,
 // pair by pair -- nothing, where there is no canvas -- and in the colors it
 // draws, or all in one color -- the one the output shows where it first lands,
-// the line's Recolor after the word, whatever the colors drawn -- or in the
+// the line's Recolor after the paint, whatever the colors drawn -- or in the
 // colors it draws where the output agrees, and else in one.
 struct laying {
     int8_t lay = correspondence_election::fired_rule::laid_over;
@@ -84,8 +84,8 @@ struct laying {
     enum colors : int8_t { as_drawn, in_one, own_else_one } in = as_drawn;
 };
 
-// WHAT A REPLAY SAW, where its word holds -- every replay below hands one back,
-// or nothing where the word does not hold. The cells the word lays down right
+// WHAT A REPLAY SAW, where its rule holds -- every replay below hands one back,
+// or nothing where the rule does not hold. The cells the rule lays down right
 // on each output, pair by pair: where its paint landed, where its pieces
 // landed, what they came out in or kept. The cells its picked pieces stood on
 // that it took them off or left as they were: where they slid from, what they
@@ -110,19 +110,19 @@ struct replayed {
     }
 };
 
-// THE ONE JUDGE OF A WORD, PAIR BY PAIR (the user: a word thrown out for one
-// wrong cell is thrown out too early). In a pair a word makes cells right --
+// THE ONE JUDGE OF A RULE, PAIR BY PAIR (the user: a rule thrown out for one
+// wrong cell is thrown out too early). In a pair a rule makes cells right --
 // `gained`: the output shows what it laid there, and the cell did not show it
 // before -- and lays cells wrong, where the output shows something else. It
 // holds in that pair where it gains more than it lays wrong, so it brings the
 // pair nearer its output, one cell gained at least: at work (replay_facts).
-// Its wrong cells are left for a word said after it, or the next pass on the
+// Its wrong cells are left for a rule said after it, or the next pass on the
 // picture so far, to set right (bdad9b1f's two lines, each wrong only where
 // they cross, the crossing a color of its own). Where the line does not draw
 // its picture (replay_facts::tolerant), no pass could see a cell left wrong,
-// and a word holds only where it lays none. A move or a removal is at work
+// and a rule holds only where it lays none. A move or a removal is at work
 // only where it changed a piece too (`acted`). In a finished pair
-// (replay_facts::finished) there is nothing to gain: a word holds there where
+// (replay_facts::finished) there is nothing to gain: a rule holds there where
 // it lays nothing wrong.
 struct pair_tally { int gained = 0, wrong = 0; bool acted = true; };
 inline bool brings_nearer(const replay_facts& facts, size_t which, const pair_tally& tally) {
@@ -364,7 +364,7 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
         // cell of them is no work.
         const auto& before = cut.shown(pair.input.width, pair.input.height);
         // Each cell's place in the walk, -1 for none yet: every cell, since a
-        // piece the words moved may lay one past the grid's edge.
+        // piece the rules moved may lay one past the grid's edge.
         int16_t index[MAX_GRID_DIM][MAX_GRID_DIM];
         std::memset(index, 0xFF, sizeof index);
         auto& cells = walk.pairs[which];
@@ -417,13 +417,13 @@ inline optional<paint_walk> walk_paint(const replay_facts& facts, const vector<p
     return walk;
 }
 
-// A PAINT LAID ON WHAT IS DOWN, replayed: what every replay of a word that
+// A PAINT LAID ON WHAT IS DOWN, replayed: what every replay of a rule that
 // draws asks, once -- its walk (walk_paint), laid the one way `how` says
 // (lay_paint), done with as soon as it cannot hold so. Laid in its own colors
 // or else in one, it is walked once and laid both ways: in its own colors where
 // they lay no cell wrong, else whichever way says more, right cells less wrong
 // ones, its own colors on a tie. Handed the pieces its pick takes
-// (handed_pieces), made ready once for every way the word is asked.
+// (handed_pieces), made ready once for every way the rule is asked.
 template <class Draw>
 inline optional<replayed> paint_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                       const laying& how, Draw draw) {
@@ -447,17 +447,17 @@ constexpr int8_t LEFT_AS_IT_IS = -2;
 
 // PICKED PIECES REPAINTED WHERE THEY LIE, replayed: what every recolor's replay
 // asks, once. On each pair, `colors_of(which, cut, i, to)` fills `to`, the color
-// each color picked piece i wears comes out in -- LEFT_AS_IT_IS where the word
+// each color picked piece i wears comes out in -- LEFT_AS_IT_IS where the rule
 // leaves it as it is (ColorFrom's piece with no partner; ShapeColorMap's key the
-// table does not name; a color no key pairs) -- or answers false where the word
+// table does not name; a color no key pairs) -- or answers false where the rule
 // cannot say; the piece is then a paint laid over itself in those colors
-// (paint_holds), so a piece the word leaves as it is has to come out as it
-// was: the word picked it, and does not get to leave it to another (4f537728's
+// (paint_holds), so a piece the rule leaves as it is has to come out as it
+// was: the rule picked it, and does not get to leave it to another (4f537728's
 // blocks in the marker's column, left by "takes the color of a piece in its
 // rows", came out recolored). Sees the cells of the pieces it repainted and
 // how many pieces changed color.
 // Cell by cell: `cells_of(which, cut, i, repaint)` hands each cell of picked
-// piece i to repaint(row, col, was, now), or answers false where the word
+// piece i to repaint(row, col, was, now), or answers false where the rule
 // cannot say.
 template <class CellsOf>
 inline optional<replayed> cells_repainted_hold(const replay_facts& facts, const vector<partner_pieces>& handed,
@@ -511,7 +511,7 @@ inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<
 // fixed pairs reads the key on each grid -- every piece not picked, along its
 // rows or its columns (key_swaps) -- and every cell of a picked piece in a color
 // the key pairs comes out in its partner's (repaints_hold). A key that names no
-// swap leaves them as they were, so that pair shows the word at no work.
+// swap leaves them as they were, so that pair shows the rule at no work.
 inline optional<replayed> key_swap_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                          int value) {
     vector<array<int8_t, COLOR_COUNT>> swaps(handed.size());
@@ -545,8 +545,8 @@ inline optional<replayed> empty_swap_holds(const replay_facts& facts, const vect
 // A PIECE THAT TAKES ITS COLOR FROM ANOTHER, replayed. ColorFrom paints every
 // picked piece in the color of its partner among the rest, and leaves one with
 // no partner as it is (recolors_hold: b7256dcd's shape with no dot at its side
-// stays 6). A piece whose partners disagree the op leaves too, but the word
-// cannot say it: which color the rule means there, no pair shows (d23f8c26's
+// stays 6). A piece whose partners disagree the op leaves too, but the rule
+// cannot say it: which color the puzzle means there, no pair shows (d23f8c26's
 // middle column, left by "takes the color of a piece in its columns", read as
 // a rule that kept it, and was wrong on its test).
 inline optional<replayed> color_from_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
@@ -565,7 +565,7 @@ static_assert(row_of(node_type::ColorFrom).high == COLORS_FROM_ITS_SHAPE + SHAPE
 // past the key by place paints each cell of every picked piece in the color of
 // the cell of its one partner of its shape it lies on (colors_from_its_shape,
 // the walk the op takes); a piece with no partner of its shape is left as it
-// is, one with several the word cannot say.
+// is, one with several the rule cannot say.
 inline optional<replayed> colors_from_its_shape_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                                       int like) {
     const partner_by way = (partner_by)((int)partner_by::same_shape + like);
@@ -585,7 +585,7 @@ inline optional<replayed> colors_from_its_shape_holds(const replay_facts& facts,
 // its partner ways reads the key on each grid -- every piece not picked -- and
 // paints the n-th picked piece in reading order in the key's n-th entry
 // (key_place_colors: 33b52de3's shapes, its key cell by cell). Where the key
-// does not say, every piece is left as it is, so that pair shows the word at no
+// does not say, every piece is left as it is, so that pair shows the rule at no
 // work (recolors_hold).
 inline optional<replayed> key_place_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
     vector<vector<int8_t>> places;
@@ -600,7 +600,7 @@ inline optional<replayed> key_place_holds(const replay_facts& facts, const vecto
 // A PIECE THAT TAKES THE KEY'S COLOR, replayed: ColorFrom [the key] paints
 // every picked piece in the one color the key wears -- every piece not picked
 // (key_color) -- and, where the key wears several, leaves every one as it is,
-// so that pair shows the word at no work (recolors_hold).
+// so that pair shows the rule at no work (recolors_hold).
 inline optional<replayed> key_color_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
     return recolors_hold(facts, handed, [&](size_t, const partner_pieces& cut, int, int8_t& color) {
         const int worn = key_color(cut);
@@ -666,7 +666,7 @@ inline optional<replayed> size_rank_holds(const replay_facts& facts, const color
 // drawing, not covered by a piece the line lays over it, and in the output --
 // and leaves its cell right where nothing else now covers it and the output
 // shows anything but the piece itself -- a cell still showing it was a copy
-// left behind, not a move; what does show there is another word's to say
+// left behind, not a move; what does show there is another rule's to say
 // (18286ef8's box closing behind its 9). Each cell otherwise is wrong. A right
 // cell is gained where the drawing changed there and now shows what the output
 // shows (brings_nearer, which its caller asks, with one piece at least moved).
@@ -708,10 +708,10 @@ inline bool slides_show(const example& pair, const partner_pieces& cut, bool und
     return true;
 }
 
-// PICKED PIECES SLID, EACH ITS OWN WAY, replayed: what every move word's replay
+// PICKED PIECES SLID, EACH ITS OWN WAY, replayed: what every move rule's replay
 // asks, once. On each pair, `where(which, cut, i, by)` says how far picked piece
-// i goes, down and across, or false where the word cannot say; the pieces then
-// slide as slides_show reads them, and the word holds only where one piece at
+// i goes, down and across, or false where the rule cannot say; the pieces then
+// slide as slides_show reads them, and the rule holds only where one piece at
 // least moved and it brings the pair nearer (brings_nearer). Sees the cells each
 // one left and the cells it landed on, right and wrong, and how many pieces
 // moved. Handed the pieces its pick takes (handed_pieces).
@@ -946,7 +946,7 @@ inline vector<vector<bool>> colored_right(const replay_facts& facts, const vecto
 // not picked, or a picked one that keeps that cell. Each cell otherwise is
 // wrong. A lost cell right is gained where the output shows something else
 // there now, and in each pair one piece at least lost such a cell, and the
-// word brings the pair nearer (brings_nearer). Sees the cells the picked pieces
+// rule brings the pair nearer (brings_nearer). Sees the cells the picked pieces
 // keep (drawn) and lose (left), right, the ones wrong, and how many pieces lost
 // a cell that shows it.
 template <class Keeps>
@@ -1506,7 +1506,7 @@ constexpr symmetry symmetries[] = {
 // `handed` holds in each pair, the grid's own size -- laid over itself posed
 // each way the symmetry names, in turn, every pose taken of what is drawn by
 // then, read through pose_source as the ops read it, as `Output SelectAll`
-// and the pose's words lay it around the grid's middle. A pose that trades
+// and the pose's operators lay it around the grid's middle. A pose that trades
 // rows for columns fits only a square grid.
 inline optional<replayed> symmetric_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                           const symmetry& kept) {
@@ -1709,7 +1709,7 @@ inline uint32_t room_key(const fenced_room& room, int kind) {
     });
 }
 
-// THE ROOMS' TABLE, read off the pairs (read_off) as the shape word reads its
+// THE ROOMS' TABLE, read off the pairs (read_off) as the shape rule reads its
 // pieces': each room's key of the kind `kind` names, and the one color the
 // output shows over it. A room the output leaves empty stays as it is and
 // says nothing. None where a room comes out in two colors, or none holds.
@@ -1894,22 +1894,22 @@ inline optional<replayed> interior_fills_hold(const replay_facts& facts, const s
     return seen;
 }
 
-// THE PIECES AS THE LINE LEAVES THEM. Each word on the line acts on the hand the
-// words before it left, as the program runs them, so a word asked after them is
+// THE PIECES AS THE LINE LEAVES THEM. Each rule on the line acts on the hand the
+// rules before it left, as the program runs them, so a rule asked after them is
 // replayed on that hand and not on the cut: the pieces it picks, where they
-// stand and what they wear. Carried here pair by pair, one word at a time, with
+// stand and what they wear. Carried here pair by pair, one rule at a time, with
 // the arithmetic its op runs -- the pick read off the hand as it is, each
 // partner found before any piece is touched, copies joining the end of the list.
-// A word that reads a table off the pairs is one stage more: the puzzle's shape
+// A rule that reads a table off the pairs is one stage more: the puzzle's shape
 // table and its palette by size are the reading's (inference). False for
-// anything else, after which the words below are asked the way they were
+// anything else, after which the rules below are asked the way they were
 // before the hand was carried.
 inline bool carry_the_hand(const correspondence_election::fired_rule& rule, const inference& inf,
                            replay_facts& facts) {
     using said = correspondence_election::fired_rule;
     const shape_color_map_rule& table = inf.shape_color_map;
     // A KEY'S SHAPE NAMING THE FIGURE'S COLOR, carried as beats_of says it, in
-    // three words: the key, the smallest, takes the color its own shape names;
+    // three rules: the key, the smallest, takes the color its own shape names;
     // the figure, the largest, its nearest piece's, the key's; and the key goes.
     if (rule.as == said::learned_table && table.claimed_by == shape_color_map_rule::body_recolor) {
         said key = listed("", "", said::shape_recolor, (int8_t)shape_key::shape);
