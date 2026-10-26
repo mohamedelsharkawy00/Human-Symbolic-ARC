@@ -4,6 +4,15 @@
 3. Tries to be how a human solves ARC, mostly how I solve it, ported to a computer program. Every part of it should be something a person does when they look at a puzzle, written down so a machine can do it too.
 4. It stays symbolic because a clear mechanism lets you spot what to improve at first sight, unlike the black box methods that are popular.
 
+## How inference works
+
+1. Inference reads the training pairs, names the rule as a line of words, and says it as a DSL program.
+2. The reading matches pieces between input and output ("everything in ARC is this matches that").
+3. It writes every change down cell by cell.
+4. Each word crosses off the cells it explains.
+5. Whatever no word claims is listed as the word the language lacks.
+6. A word is said only after it is replayed on every training pair on the host, using the same arithmetic as the ops, and seen to change something in every pair. Doing nothing is not evidence that it explains the puzzle.
+
 # 2. Getting Started
 1. Clone it: `git clone https://github.com/mohamedelsharkawy00/human-symbolic-arc`
 2. Needs Visual Studio with the C++ tools (CMake and Ninja come with it), the Vulkan SDK, and Python. Built against Visual Studio 18 and Vulkan 1.4.335.
