@@ -249,7 +249,7 @@ inline void report_fired(ostream& report, const correspondence_election& corresp
             if (rule.pieces || rule.cells)
                 report << "  " << rule.pieces << " pieces, " << rule.cells << " cells";
             if (!rule.says.empty()) report << "  " << rule.says;
-            if (!rule.no_word_for.empty()) report << "  no word for " << rule.no_word_for;
+            if (!rule.no_rule_for.empty()) report << "  no rule for " << rule.no_rule_for;
             report << "\n";
         }
         report << "    left over  " << reading.unclaimed() << " of " << correspondence.cells << " cells\n";

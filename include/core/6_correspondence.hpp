@@ -38,7 +38,7 @@ struct tiled_pieces {
     }
 };
 
-// Which pieces a word or frame takes. A color mask picks any piece wearing
+// Which pieces a rule or frame takes. A color mask picks any piece wearing
 // one of its colors; `how` instead names a pick by shape, size or place.
 // `part` optionally takes those as walls and picks the pieces lying in that
 // part of what they fence off instead (SelectPartition), and `partner` the
@@ -86,13 +86,13 @@ struct correspondence_election {
     using edge = object_matching::edge;
     using rejection = object_matching::rejection;
 
-    // WHAT A CHANGE CAN LEAVE UNSAID, a word each: where a carried piece went,
+    // WHAT A CHANGE CAN LEAVE UNSAID, a rule each: where a carried piece went,
     // where it was drawn again, how it turned, the colors it came out in, the
     // cells drawn on the ground about it, how it changed its shape, and how
     // much bigger or smaller it came out.
     enum class missing : int8_t { where_it_went, where_it_was_copied, how_it_turned, a_recolor,
                                   drawn_on_the_ground, how_it_changed_shape, how_it_was_scaled, count };
-    static constexpr const char* missing_words[] = {
+    static constexpr const char* missing_rules[] = {
         "where each piece went", "where each copy was drawn", "how each piece turned",
         "a recolor", "the cells drawn on the ground", "how a piece changed its shape",
         "how each piece was scaled" };
@@ -100,7 +100,7 @@ struct correspondence_election {
     // A CELL NOTHING HAS EXPLAINED YET, in the color its own grid shows it in.
     // Either no match covers it at all -- made_or_gone when no piece holding it
     // has an identified partner -- or a match carried it through a change, and
-    // it `waits` on the word for that change: about the input piece `about`,
+    // it `waits` on the rule for that change: about the input piece `about`,
     // the first written where pieces share the cell, -1 when no one piece is,
     // having shown `other` on the other grid -- what an input cell became, what
     // an output cell was. `piece` is the piece on its own grid the edge that
@@ -120,15 +120,15 @@ struct correspondence_election {
         int16_t about = -1;
         int8_t other = -1;
         int8_t in_place = -1;
-        bool waits_for(missing word) const { return waits == (int8_t)word; }
-        // WHETHER THE WORD FOR `word` CAN SAY THIS CELL: the one it waits on, and
+        bool waits_for(missing change) const { return waits == (int8_t)change; }
+        // WHETHER THE RULE FOR `change` CAN SAY THIS CELL: the one it waits on, and
         // a recolor or a move wherever its place came out in another color,
         // however the matching read it -- 5582e5ca's 9 read as grown over the
         // others, where every other color turned 9; 18286ef8's 9 read as
         // recolored where it stood, where it stepped toward the 6.
-        bool answers_to(missing word) const {
-            return waits_for(word) ||
-                   ((word == missing::a_recolor || word == missing::where_it_went) && in_place >= 0);
+        bool answers_to(missing change) const {
+            return waits_for(change) ||
+                   ((change == missing::a_recolor || change == missing::where_it_went) && in_place >= 0);
         }
     };
     using enum object_matching::refusal_reason;
@@ -210,7 +210,7 @@ struct correspondence_election {
         int made() const { return partnerless_cells(false); }
         int gone() const { return partnerless_cells(true); }
         // Left-over cells no fired rule accounts for: what is still unexplained
-        // once every rule has said what it says. A cell waiting on two words is
+        // once every rule has said what it says. A cell waiting on two rules is
         // one cell unexplained, so each place counts once.
         int unclaimed() const {
             bool counted[2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -308,11 +308,11 @@ struct correspondence_election {
         // colors traded as a key drawn in the grid pairs them, the pieces not
         // picked read the way BidiColorMap's `value` reads them (key_swap), or
         // one color traded with the empty cells of their boxes (empty_swap) -- or a
-        // swap of the pair numbered `value`, or the word a learned table or the size
-        // ranking picks; or one of the rules read off the cut's own pieces that is
-        // the whole rest of its line; or a rule that stands alone and says a whole
-        // program of its own, the one numbered `value`. 12_line groups the kinds by
-        // what they change (group_of); 16_sentences spells them.
+        // swap of the pair numbered `value`, or the operator a learned table or
+        // the size ranking picks; or one of the rules read off the cut's own pieces
+        // that is the whole rest of its line; or a rule that stands alone and says
+        // a whole program of its own, the one numbered `value`. 12_line groups the
+        // kinds by what they change (group_of); 16_sentences spells them.
         enum said_as : int8_t { unsaid, turn, move_down, move_across, recolor, swap_colors,
                                 learned_table, size_rank, color_from, align_to, mirror_around,
                                 extend_rays, bridged, filled, outlined, recolor_picked, removed, to_edge,
@@ -336,12 +336,12 @@ struct correspondence_election {
         enum laid : int8_t { laid_over, laid_under, laid_onto, laid_onto_color,
                              laid_off_color = laid_onto_color + COLOR_COUNT };
         int8_t lay = laid_over;
-        // A WORD READ OFF THE PICTURE THE LINE HAS DRAWN SO FAR -- the hand and
+        // A RULE READ OFF THE PICTURE THE LINE HAS DRAWN SO FAR -- the hand and
         // every paint said before it -- rather than off the hand: said after
         // those paints, in a sentence of its own that opens on the picture.
         bool on_the_picture = false;
-        // What the language has no word for, when this fired and cannot be said.
-        string no_word_for;
+        // On a No Rule entry, the change no rule says (list_what_is_missing).
+        string no_rule_for;
     };
     // The one rule the matching fires that no freedom names.
     static constexpr const char* sits_on_name = "Sits On";
@@ -370,7 +370,7 @@ struct correspondence_election {
         // for the combinations that lost to it.
         vector<fired_rule> fired;
         // THE CUT'S OWN LINE, in the order it is said: indices into `fired`. A
-        // rule that fired and has no word sits where it would have been said.
+        // change no rule says sits where its rule would have been said.
         vector<int8_t> line;
         // ONE MORE RULE, listed under the one it reads, said next on the line,
         // and accounting for the cells it explains: `claims(pair, cell)` names
@@ -393,7 +393,7 @@ struct correspondence_election {
         int8_t say_fired(fired_rule rule, int8_t under) {
             return say_fired(std::move(rule), under, [](size_t, const left_over_cell&) { return false; });
         }
-        // Lists a rule that claims cells the words on the line already account
+        // Lists a rule that claims cells the rules on the line already account
         // for together, and says nothing of its own: it is not put on the line.
         // Listed only where it claims a cell; -1 where it claims none.
         template <class Claims>
@@ -416,13 +416,13 @@ struct correspondence_election {
             return -1;
         }
         // THE CELLS THE LINE DRAWS WRONG that no cell left over stands for: a
-        // word said where it brings every pair nearer its output, though it
+        // rule said where it brings every pair nearer its output, though it
         // lays some cells wrong (brings_nearer, 11_replays), and none said after it
         // set them right. Left unsaid, for the next pass to read on the picture.
         int drawn_wrong = 0;
         // What every rule together still leaves unexplained, on every pair: the
         // cells nothing claims, whether no match covered them or a change they
-        // were carried through still waits on its word, and the cells the line
+        // were carried through still waits on its rule, and the cells the line
         // drew wrong.
         int unclaimed() const {
             int left = drawn_wrong;
@@ -462,9 +462,9 @@ struct correspondence_election {
     vector<reading_index> tied_with_chosen;
     // THE CUTS IN THE ORDER THE MATCHING RANKS THEM: each competing way of
     // seeing objects' best reading, the plainest first, beside the others whose
-    // matching ties with it. Which one is said is the words' to decide
+    // matching ties with it. Which one is said is the rules' to decide
     // (read_figures): the matching only orders them and breaks a tie. And the
-    // cells each one's words left unsaid, -1 for one never read.
+    // cells each one's rules left unsaid, -1 for one never read.
     vector<reading_index> ranked;
     vector<vector<reading_index>> ties_of_ranked;
     vector<int> left_by_rank;
@@ -480,26 +480,26 @@ struct correspondence_election {
         static const vector<pair_info> empty;
         return readings.empty() ? empty : readings[chosen].pairs;
     }
-    // WHAT EACH WAY OF SEEING OBJECTS STILL HAS NO WORD FOR, once every rule
-    // that says anything has claimed its cells: an entry for each word some
-    // cell still waits on, under the freedom it would be said with and on the
-    // line where the word would go, with the pieces and cells still waiting.
-    // Asked last, so a rule read off the elected reading after the acts has
-    // taken back what it says before anything is called missing.
+    // WHAT EACH WAY OF SEEING OBJECTS STILL HAS NO RULE FOR, once every rule
+    // that says anything has claimed its cells: an entry for each change some
+    // cell still waits on, under the freedom its rule would be said with and
+    // on the line where that rule would go, with the pieces and cells still
+    // waiting. Asked last, so a rule read off the elected reading after the
+    // acts has taken back what it says before anything is called missing.
     void list_what_is_missing() {
         for (size_t method = 0; method < best_of.size(); ++method) {
             if (best_of[method] < 0 || !competes((segmentation_methods)method)) continue;
             auto& read = readings[best_of[method]];
-            for (int word = 0; word < (int)missing::count; ++word) {
+            for (int change = 0; change < (int)missing::count; ++change) {
                 fired_rule rule;
-                rule.name = "No Word";
-                rule.no_word_for = missing_words[word];
+                rule.name = "No Rule";
+                rule.no_rule_for = missing_rules[change];
                 // Each piece once: the input piece a cell is about, or failing
                 // one, the output piece its change was read off.
                 vector<std::pair<size_t, int>> whose;
                 for (size_t which = 0; which < read.pairs.size(); ++which)
                     for (const auto& cell : read.pairs[which].left_over) {
-                        if (cell.claimed_by >= 0 || cell.waits != word) continue;
+                        if (cell.claimed_by >= 0 || cell.waits != change) continue;
                         ++rule.cells;
                         const int piece = cell.about >= 0 ? cell.about
                                         : !cell.from_input && cell.piece >= 0 ? -2 - cell.piece : -1;
@@ -508,14 +508,14 @@ struct correspondence_election {
                     }
                 if (!rule.cells) continue;
                 rule.pieces = (int)whose.size();
-                read.say_fired(std::move(rule), said_under(read, (missing)word));
+                read.say_fired(std::move(rule), said_under(read, (missing)change));
             }
         }
     }
-    // The rule a missing word would be said under: the freedom it needs.
-    static int8_t said_under(const reading& read, missing word) {
+    // What a missing rule is listed under: the freedom it needs.
+    static int8_t said_under(const reading& read, missing change) {
         const auto& freedom = degrees_of_freedom::freedom_names;
-        switch (word) {
+        switch (change) {
             case missing::where_it_went:
             case missing::where_it_was_copied:  return read.fired_named(freedom[0]);
             case missing::how_it_turned:        return read.fired_named(freedom[1]);
@@ -540,7 +540,7 @@ struct correspondence_election {
 
     // TEMPORARY: HOW MANY PIECES AN INPUT MAY BE CUT INTO FOR ITS CUT TO BE READ.
     // A speed limit and nothing else -- a program holds a piece for every cell
-    // (MAX_OBJECTS_IN_A_LIST), but reading the words of a cut of hundreds of
+    // (MAX_OBJECTS_IN_A_LIST), but reading the rules of a cut of hundreds of
     // pieces cost minutes a run (a full run took 137 s with no limit, against
     // about a minute without those cuts). f0df5ff0's inputs cut into 81. Lift it
     // once reading a big cut is cheap.
@@ -684,7 +684,7 @@ struct correspondence_election {
             unranked.erase(unranked.begin() + (ptrdiff_t)first);
         }
         // THE CUT BY SIDES ALONE COMES LAST. It sees the cells the cut by corners
-        // sees, only finer, so its words are said only where they say more
+        // sees, only finer, so its rules are said only where they say more
         // (aedd82e4's lone cells, which touch the rest at a corner). Read ahead of
         // the cut by corners -- four-connected until eight is needed, as the
         // partners are asked -- it took the ties, and lost 4938f0c2, 64a7c07e and
@@ -1454,8 +1454,8 @@ private:
         erase_if(acts_in_every_pair, [&](const seen_act& act) { return !said_of_every_piece(act); });
 
         // EVERY CHANGE IS WRITTEN DOWN BEFORE ANY ACT IS SAID, cell by cell, so
-        // an act accounts for what it says by claiming those cells, and whatever
-        // no rule claims is what the reading has no word for.
+        // an act accounts for what it says by claiming those cells, and a change
+        // no rule claims is listed as a missing rule.
         write_down_what_changed(train, prepared, facts);
 
         // WHAT THE ACTS SAY OF ONE PIECE. An act accounts only for the pieces it
@@ -1464,26 +1464,26 @@ private:
         // move when it went to one place and every landing is said down and
         // across. An act has to hold in every pair, so a slide that differs from
         // piece to piece leaves no act, and the line would paint the piece
-        // straight back: the language missing a word, not the piece standing
+        // straight back: the reading missing a rule, not the piece standing
         // still. Nor does any act say a landing found only from the output side,
         // or a piece drawn again where it stayed -- 06df4c85 said exactly that,
-        // with nothing to show a word was missing.
+        // with nothing to show a rule was missing.
         auto said_by_an_act = [&](fired_rule::said_as what, int value, size_t which, int piece) {
             return ranges::any_of(acts_in_every_pair, [&](const seen_act& act) {
                 return act.what == what && act.value == value &&
                        (act.color < 0 || holds_a_cell_of(which, piece, act.color)); });
         };
-        auto acts_say = [&](missing word, size_t which, int piece) {
+        auto acts_say = [&](missing change, size_t which, int piece) {
             const auto& pair = facts.pairs[which];
             if (piece < 0 || (size_t)piece >= pair.input_info.size()) return false;
-            if (word == missing::where_it_went && pair.places_went(piece) != 1) return false;
+            if (change == missing::where_it_went && pair.places_went(piece) != 1) return false;
             const auto& box = pair.input_info[piece].summary;
             bool carried = false;
             for (const auto& link : pair.edges) {
                 if (!link.from_input || !link.same_shape || link.from != piece) continue;
                 carried = true;
                 if (link.scale != 1) return false;
-                if (word == missing::how_it_turned) {
+                if (change == missing::how_it_turned) {
                     if (link.pose != 0 && !said_by_an_act(fired_rule::turn, link.pose, which, piece)) return false;
                     continue;
                 }
@@ -1527,17 +1527,17 @@ private:
             // picks, once the acts say their turn or their move whole. A recolor:
             // every cell that was its color and came out in its value, on either
             // grid, since a recolor is said of colors.
-            const missing word = act.what == fired_rule::turn    ? missing::how_it_turned
-                               : act.what == fired_rule::recolor ? missing::a_recolor
-                                                                 : missing::where_it_went;
+            const missing change = act.what == fired_rule::turn    ? missing::how_it_turned
+                                 : act.what == fired_rule::recolor ? missing::a_recolor
+                                                                   : missing::where_it_went;
             const int8_t under = act.what == fired_rule::turn    ? turns
                                : act.what == fired_rule::recolor ? colors : moves;
             facts.say_fired(std::move(rule), under, [&](size_t which, const left_over_cell& cell) {
-                if (!cell.waits_for(word)) return false;
-                if (word == missing::a_recolor)
+                if (!cell.waits_for(change)) return false;
+                if (change == missing::a_recolor)
                     return cell.from_input ? cell.color == act.color && cell.other == act.value
                                            : cell.color == act.value && cell.other == act.color;
-                return acts_say(word, which, cell.about) &&
+                return acts_say(change, which, cell.about) &&
                        (act.color < 0 || holds_a_cell_of(which, cell.about, act.color));
             });
         }
@@ -1547,9 +1547,9 @@ private:
     // show: a carried piece that went somewhere, was drawn again or turned; a
     // cell that came out in another color, or was drawn where the input had
     // ground; a piece that only sits on its landing. Written down whether or not
-    // anything says it yet: each cell waits on the word for its change, a rule
-    // that says the change claims it when it is said, and what none claims is
-    // what the reading has no word for. A cell waits on each word once.
+    // anything says it yet: each cell waits on a rule for its change, which
+    // claims it when it is said, and a change no rule claims is listed as a
+    // missing rule. A cell waits on each change once.
     static void write_down_what_changed(const vector<example>& train,
                                         const prepared_segmentation& prepared, reading& facts) {
         for (size_t which = 0; which < facts.pairs.size(); ++which) {
@@ -1562,14 +1562,14 @@ private:
             bool written[(int)missing::count][2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
             // Written down off the edge `link`, the piece on the cell's own
             // grid being the one the edge names there.
-            auto wait = [&](missing word, const edge& link, bool from_input, int row, int col, int about,
+            auto wait = [&](missing change, const edge& link, bool from_input, int row, int col, int about,
                             int8_t other) {
                 const grid& on = *grids[from_input];
                 if (!on.contains(row, col)) return;
                 const int8_t color = (int8_t)on.data[row][col];
                 // An empty cell, where the ground was, is no cell of anything.
                 if (!is_color(color)) return;
-                bool& done = written[(int)word][from_input][row][col];
+                bool& done = written[(int)change][from_input][row][col];
                 if (done) return;
                 done = true;
                 left_over_cell cell;
@@ -1578,7 +1578,7 @@ private:
                 cell.col = (int8_t)col;
                 cell.piece = from_input == link.from_input ? link.from : link.to;
                 cell.color = color;
-                cell.waits = (int8_t)word;
+                cell.waits = (int8_t)change;
                 cell.about = (int16_t)about;
                 cell.other = other;
                 pair.left_over.push_back(cell);
@@ -1629,13 +1629,13 @@ private:
                 if (!carried) turned = landed_turned;
                 const bool happened[] = { facts.allowed.translate && went, facts.allowed.translate && copied,
                                           facts.allowed.pose && turned, facts.allowed.scale && scaled };
-                const missing words[] = { missing::where_it_went, missing::where_it_was_copied,
-                                          missing::how_it_turned, missing::how_it_was_scaled };
+                const missing changes[] = { missing::where_it_went, missing::where_it_was_copied,
+                                            missing::how_it_turned, missing::how_it_was_scaled };
                 for (const auto& link : pair.edges) {
                     if (!link.same_shape || pair.input_piece_of(link) != piece) continue;
                     each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
-                        for (int i = 0; i < (int)size(words); ++i)
-                            if (happened[i]) wait(words[i], link, from_input, row, col, piece, from_input ? now : was);
+                        for (int i = 0; i < (int)size(changes); ++i)
+                            if (happened[i]) wait(changes[i], link, from_input, row, col, piece, from_input ? now : was);
                     });
                 }
             }
@@ -1643,12 +1643,12 @@ private:
             // A LANDING FOUND FROM THE OUTPUT SIDE THAT NAMES NO INPUT PIECE --
             // partly hidden, hanging off the grid, or fitting two -- still says
             // what is drawn there came from somewhere else. Found elsewhere or
-            // turned, its cells wait on the word for that as surely: 18286ef8's 9,
+            // turned, its cells wait on the rule for that as surely: 18286ef8's 9,
             // found one step up and to the left and partly hidden, was otherwise
             // said by nothing, and the line drew it nowhere. Both ends of it, as
             // every edge's (each_end): the cells it came from on the input, which
-            // the matching counts as carried, wait on that word too where they
-            // show the piece itself, so where no word says it they are left over
+            // the matching counts as carried, wait on that rule too where they
+            // show the piece itself, so where no rule says it they are left over
             // (4364c1c4's last pass: its block, found inside a piece of nine
             // cells and a step to the left, left the column it stood on drawn
             // where the output shows the ground, and no cell said so). A cell it
@@ -1673,7 +1673,7 @@ private:
             // A CELL THAT CAME OUT IN ANOTHER COLOR, read from either grid. Where
             // the input's own edge already speaks for the piece, it is that edge
             // that is asked. A cell the input had as ground was drawn there, and
-            // no piece held it to recolor: that is a word of its own. A piece
+            // no piece held it to recolor: that is a change of its own. A piece
             // recolored with no color named waits on a recolor all the same, one
             // no act or swap can say, since neither color is known.
             for (const auto& link : pair.edges) {

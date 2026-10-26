@@ -486,9 +486,9 @@ private:
 // an op to check a claim (9_rules.hpp).
 //
 // THE TWO MEASURES ARE NOT THE SAME ONE. A piece is dropped from the seeds by
-// the BOX it fills, while the word that hands the repeated piece over first,
-// SortBySize[0], ranks by CELLS. They usually agree and are not the same
-// question, so they are kept apart here rather than quietly merged.
+// the BOX it fills, while the operator that hands the repeated piece over
+// first, SortBySize[0], ranks by CELLS. They usually agree and are not the
+// same question, so they are kept apart here rather than quietly merged.
 struct seeded_pieces {
     // Indices into the boxes handed in. -1 when nothing was.
     int repeated = -1;

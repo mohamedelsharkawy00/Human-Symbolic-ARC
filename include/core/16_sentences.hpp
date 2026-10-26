@@ -1389,7 +1389,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         const auto& rule = read.fired[which];
         beat drawn;
         const char* paint = nullptr;
-        if (!rule.no_word_for.empty()) said.no_word_for.push_back(rule.no_word_for);
+        if (!rule.no_rule_for.empty()) said.no_word_for.push_back(rule.no_rule_for);
         else if (rule.as == said_as::symmetric)
             for (const int8_t pose : symmetries[rule.value].poses) {
                 if (pose < 0) break;

@@ -663,7 +663,8 @@ inline background_election elect_background(const vector<example>& train) {
 
 // WHAT A PROGRAM DOES WITH THE GROUND, decided once for the whole reading:
 // keep it as a color, or remove it after cuts that need it and fill it after
-// the figure words. Each pass repeats this order with the same chosen colors.
+// the operators on the figures. Each pass repeats this order with the same
+// chosen colors.
 struct ground_plan {
     background_source deleted;  // what every sentence's input loses first
     background_source filled;   // what the last sentence lays under the rest

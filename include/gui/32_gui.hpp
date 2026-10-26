@@ -1480,14 +1480,14 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           const auto& cell = pairs[at.pair].left_over[at.which];
           // MADE, GONE, or simply not accounted for — the mirror this pane used
           // to read dropped that field, so the number could be said and the
-          // reason could not. A cell a change carried names every word it still
-          // waits on instead.
+          // reason could not. A cell carried through a change names instead
+          // each change still waiting on a rule.
           string why;
           for (const auto& same : pairs[at.pair].left_over) {
             if (same.claimed_by >= 0 || same.from_input != cell.from_input ||
                 same.row != cell.row || same.col != cell.col) continue;
             if (!why.empty()) why += ", ";
-            why += same.waits >= 0 ? "NO WORD FOR " + string(correspondence_election::missing_words[same.waits])
+            why += same.waits >= 0 ? "NO RULE FOR " + string(correspondence_election::missing_rules[same.waits])
                  : !same.made_or_gone ? "UNEXPLAINED"
                  : same.from_input    ? "IT WENT NOWHERE"
                                       : "IT WAS MADE HERE";
@@ -1530,7 +1530,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
               : to_text("%-21s", rule.stands_alone ? "BY ITSELF" : "");
           string said = counts;
           if (!rule.says.empty()) said += "  " + rule.says;
-          if (!rule.no_word_for.empty()) said += "  NO WORD FOR " + rule.no_word_for;
+          if (!rule.no_rule_for.empty()) said += "  NO RULE FOR " + rule.no_rule_for;
           if (!measuring) draw_text(context, font, said, said_x, ty, scale);
           ty += row_h;
         }

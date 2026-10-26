@@ -3,14 +3,14 @@
 
   python scripts/readouts.py explained <before> <after>
       The puzzles whose elected reading explains every cell -- nothing left
-      over and no word missing -- while their program does not fit the
-      training pairs, before and after a change. A new one is a reading that
-      claims more than its program draws. A program that fits every pair
-      draws what it claims, so a wrong answer is not one.
+      over -- while their program does not fit the training pairs, before
+      and after a change. A new one is a reading that claims more than its
+      program draws. A program that fits every pair draws what it claims, so
+      a wrong answer is not one.
 
   python scripts/readouts.py missing <label>
-      Across the unsolved puzzles, each word the elected reading names as
-      missing: how many puzzles name it, and how many lack only that word.
+      Across the unsolved puzzles, each change the elected reading has no rule
+      for: how many puzzles name it, and how many lack only that rule.
 
   python scripts/readouts.py solved <before> <after>
       The puzzles solved before and not after, and the other way round.
@@ -55,7 +55,7 @@ def explained(label):
     found = set()
     for pid, readout in readouts(label):
         block = elected_block(readout)
-        if block and 'No Word' not in block and re.search(r'left over  0 of', block):
+        if block and re.search(r'left over  0 of', block):
             found.add(pid)
     return found
 
@@ -76,13 +76,13 @@ def main(argv):
             block = elected_block(readout)
             if not block:
                 continue
-            words = set(re.findall(r'No Word .*?no word for (.*)', block))
-            named.update(words)
-            if len(words) == 1:
-                only.update(words)
-        print('%-45s %8s %8s' % ('missing word', 'named', 'only it'))
-        for word, count in named.most_common():
-            print('%-45s %8d %8d' % (word, count, only[word]))
+            changes = set(re.findall(r'No Rule .*?no rule for (.*)', block))
+            named.update(changes)
+            if len(changes) == 1:
+                only.update(changes)
+        print('%-45s %8s %8s' % ('no rule for', 'named', 'only it'))
+        for change, count in named.most_common():
+            print('%-45s %8d %8d' % (change, count, only[change]))
     elif len(argv) == 3 and argv[0] == 'solved':
         before, after = said(argv[1]), said(argv[2])
         print('lost:  ', sorted(before - after))
