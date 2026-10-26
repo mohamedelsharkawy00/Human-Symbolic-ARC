@@ -236,11 +236,12 @@ struct replay_facts {
     // can read the cells it left wrong, and only once no word that lays none
     // says anything (finish_the_line). Off everywhere else.
     bool tolerant = false;
-    // The pieces a named cut hands over, rather than the elected one.
+    // The pieces a named cut hands over, rather than the elected one; the shape
+    // cut's by `shape`.
     replay_facts(const vector<example>& pairs, segmentation_methods cut,
-        const tiled_pieces& tiles) : train(pairs) {
+        const tiled_pieces& tiles, const turning_shape* shape = nullptr) : train(pairs) {
         for (const example& pair : train) {
-            hands.push_back(pieces_as_said(pair.input, cut, tiles.of(pair)));
+            hands.push_back(pieces_as_said(pair.input, cut, tiles.of(pair), shape));
             done.push_back(pair.input == pair.output);
             open += !done.back();
             overlays = overlays && pair.input.same_size(pair.output);
@@ -248,13 +249,13 @@ struct replay_facts {
         answers.resize(hands.size());
     }
     replay_facts(const inference& inf, const vector<example>& pairs, const tiled_pieces& tiles)
-        : replay_facts(pairs, inf.correspondence.segmentation, tiles) {}
+        : replay_facts(pairs, inf.correspondence.segmentation, tiles, &inf.correspondence.shape) {}
     // The pieces a named cut hands over of `grids`, one a pair, rather than of
     // the inputs: the picture the line has drawn so far, cut again.
     replay_facts(const vector<example>& pairs, const vector<grid>& grids, segmentation_methods cut,
-        const tiled_pieces& tiles) : train(pairs) {
+        const tiled_pieces& tiles, const turning_shape* shape = nullptr) : train(pairs) {
         for (size_t which = 0; which < train.size() && which < grids.size(); ++which) {
-            hands.push_back(pieces_as_said(grids[which], cut, tiles.of(train[which])));
+            hands.push_back(pieces_as_said(grids[which], cut, tiles.of(train[which]), shape));
             done.push_back(grids[which] == train[which].output);
             open += !done.back();
             overlays = overlays && train[which].input.same_size(train[which].output);

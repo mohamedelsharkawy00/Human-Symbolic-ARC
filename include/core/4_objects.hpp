@@ -20,10 +20,14 @@ using namespace std;
 // read after every other (6_correspondence.hpp), that joins one color's cells
 // by edges alone.
 // Surrounding space and holes use 4-way connectivity: edges only.
+// And one cut, read after all of them, takes every place the shape the pairs'
+// changes take fits on the colors it turns from and into (changed_shape) as a
+// piece, pieces free to share cells, then joins the rest as the connected
+// one-color cut does.
 // Segmentation methods are compared by how well they explain the training pairs.
 enum class segmentation_methods : int8_t {
     connected_monochrome, connected_multicolor, all_cells_of_one_color,
-    minimal_repeating_set, smallest_of_two_grids, four_connected_monochrome,
+    minimal_repeating_set, smallest_of_two_grids, four_connected_monochrome, shape_fits,
     // How many real methods there are, so a loop can run over them.
     count,
     // Nothing has been chosen yet. It shares count's value so that loops
@@ -43,17 +47,19 @@ inline constexpr const char* const segmentation_names[] = {
     "Minimal Repeating Set Of Cells",
     "Smallest Of The Two Grids",
     "4-Connected Monochrome Cells",
+    "Where The Changed Shape Fits, The Rest 8-Connected",
     "Not Chosen Yet"  // segmentation_methods::unset
 };
 
 // Whether a segmentation measures each object in the box its own cells make. The
-// connected and one-color groupings do; a repeating block keeps its whole block,
-// blank cells and all.
+// connected and one-color groupings and the shape cut do; a repeating block
+// keeps its whole block, blank cells and all.
 inline constexpr bool boxed_by_its_cells(segmentation_methods segmentation) {
     return segmentation == segmentation_methods::connected_monochrome ||
            segmentation == segmentation_methods::connected_multicolor ||
            segmentation == segmentation_methods::all_cells_of_one_color ||
-           segmentation == segmentation_methods::four_connected_monochrome;
+           segmentation == segmentation_methods::four_connected_monochrome ||
+           segmentation == segmentation_methods::shape_fits;
 }
 
 // An election nobody filled in must not pass for a real reading: unset is
@@ -94,6 +100,126 @@ inline void repeat_periods(const grid& g, int& width, int& height) {
     };
     width = smallest_period(g.width, true);
     height = smallest_period(g.height, false);
+}
+
+// EVERY PLACE A SHAPE FITS ON ONE COLOR of `one_grid`: each top-left where every
+// cell of `shape`, an object at its own box's corner, lands on a cell of one
+// color, within one copy where `tiles` bounds the copies -- handed to
+// `see(row, col, color)` in reading order.
+template <class See>
+inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_size tiles, See see) {
+    for (int row = 0; row + shape.summary.height <= one_grid.height; ++row)
+        for (int col = 0; col + shape.summary.width <= one_grid.width; ++col) {
+            int color = TRANSPARENT;
+            bool fits = true;
+            shape.each_cell([&](int down, int across, int8_t) {
+                const int at_row = row + down, at_col = col + across;
+                const int there = one_grid.data[at_row][at_col];
+                fits = fits && is_color(there) && (color == TRANSPARENT || there == color) &&
+                       (tiles.height <= 0 || at_row / tiles.height == row / tiles.height) &&
+                       (tiles.width <= 0 || at_col / tiles.width == col / tiles.width);
+                color = there;
+            });
+            if (fits && is_color(color)) see(row, col, color);
+        }
+}
+
+// A SHAPE WHOSE PLACES TURN ONE COLOR INTO ANOTHER (changed_shape): its cells,
+// an object at its own box's corner, the color its places turn `from` and the
+// one they turn `into`, the two the shape cut finds it on.
+struct turning_shape {
+    object cells;
+    int8_t from = TRANSPARENT, into = TRANSPARENT;
+    bool holds() const { return cells.summary.count > 0; }
+};
+
+// THE PIECES THE SHAPE CUT CUTS (shape_fits): every place the shape fits on the
+// color it turns from or into, a piece each, in reading order, places sharing
+// the cells where they overlap; then the cells no place took, joined as the
+// connected one-color cut joins them. As many as a list holds, one for each
+// cell of the largest grid, the rest dropped as Tile drops copies past the
+// list's room. Handed to `take(box, cells, count)` as each_object hands its
+// groups; hands back how many places came first.
+template <class Take>
+inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, object_walk_scratch& scratch,
+                            Take take, tile_size tiles = {}) {
+    grid rest = one_grid;
+    int pieces = 0;
+    int16_t cells[MAX_GRID_CELLS];
+    each_place_it_fits(one_grid, shape.cells, tiles, [&](int row, int col, int color) {
+        if ((color != shape.from && color != shape.into) || pieces >= MAX_GRID_CELLS) return;
+        int count = 0;
+        cell_box box;
+        shape.cells.each_cell([&](int down, int across, int8_t) {
+            cells[count++] = (int16_t)cell_index(row + down, col + across);
+            box.include_cell(row + down, col + across);
+            rest.data[row + down][col + across] = (int8_t)TRANSPARENT;
+        });
+        take(summary_of(box, count), cells, count);
+        ++pieces;
+    });
+    const int places = pieces;
+    each_object(rest, TRANSPARENT, grouping::touching_same_color, scratch,
+                [&](const object_summary& box, const int16_t* found, int count) {
+        if (pieces++ < MAX_GRID_CELLS) take(box, found, count);
+    }, tiles);
+    return places;
+}
+
+// THE SHAPE THE CHANGES TAKE: where cells of one color turn another in every
+// pair, the fewest of them that touch, two at least, joined by sides or
+// corners, as they lie -- held only where in every pair the places it fits on
+// the first color are the cells that turn, no more and no fewer. Read off the
+// pairs as given, their ground a color like any. The shape the shape cut cuts
+// by; none, with no cells, where none holds.
+inline turning_shape changed_shape(const vector<example>& train) {
+    if (train.empty()) return {};
+    for (const example& pair : train)
+        if (!pair.input.same_size(pair.output)) return {};
+    object_walk_scratch scratch;
+    for (int was = 0; was < COLOR_COUNT; ++was)
+        for (int now = 0; now < COLOR_COUNT; ++now) {
+            if (was == now) continue;
+            // Each pair's cells that turn, laid on an empty grid.
+            vector<grid> turned;
+            bool every = true;
+            for (const example& pair : train) {
+                grid turning(pair.input.width, pair.input.height);
+                bool any = false;
+                for (int row = 0; row < turning.height; ++row)
+                    for (int col = 0; col < turning.width; ++col)
+                        if (pair.input.data[row][col] == was && pair.output.data[row][col] == now) {
+                            turning.data[row][col] = (int8_t)now;
+                            any = true;
+                        }
+                every = every && any;
+                turned.push_back(turning);
+            }
+            if (!every) continue;
+            // The fewest that touch, the first found on a tie.
+            object shape;
+            for (const grid& turning : turned)
+                each_object(turning, TRANSPARENT, grouping::touching_same_color, scratch,
+                            [&](const object_summary& box, const int16_t* found, int count) {
+                    if (count >= 2 && (shape.summary.count == 0 || count < shape.summary.count))
+                        shape = object::from_cells(turning, box, found, count);
+                });
+            if (shape.summary.count == 0) continue;
+            shape.summary.row = shape.summary.col = 0;
+            bool held = true;
+            for (size_t which = 0; which < train.size() && held; ++which) {
+                grid covered(train[which].input.width, train[which].input.height);
+                each_place_it_fits(train[which].input, shape, {}, [&](int row, int col, int color) {
+                    if (color != was) return;
+                    shape.each_cell([&](int down, int across, int8_t) {
+                        covered.data[row + down][col + across] = (int8_t)now;
+                    });
+                });
+                held = covered == turned[which];
+            }
+            if (held) return { shape, (int8_t)was, (int8_t)now };
+        }
+    return {};
 }
 
 // A patch of background: its box and cell count, and whether the ground closes
@@ -149,11 +275,13 @@ struct object_segmentation {
     }
 
     // Divides a grid into objects, then sorts them by size (largest first) and position.
+    // The shape cut cuts by `shape`, and nothing without one.
     static void segment_for_correspondence(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
-                                    int step_width = 0, int step_height = 0, tile_size tiles = {}) {
-        segment_into_objects(one_grid, segmentation, info, objects, step_width, step_height, tiles);
+                                    int step_width = 0, int step_height = 0, tile_size tiles = {},
+                                    const turning_shape* shape = nullptr) {
+        segment_into_objects(one_grid, segmentation, info, objects, step_width, step_height, tiles, shape);
         vector<int> reading_order(info.size());
         iota(reading_order.begin(), reading_order.end(), 0);
         stable_sort(reading_order.begin(), reading_order.end(), [&](int left, int right) {
@@ -262,7 +390,8 @@ private:
     static void segment_into_objects(const grid& one_grid, segmentation_methods segmentation,
                                     vector<object_info>& info,
                                     vector<object>* objects,
-                                    int step_width = 0, int step_height = 0, tile_size tiles = {}) {
+                                    int step_width = 0, int step_height = 0, tile_size tiles = {},
+                                    const turning_shape* shape = nullptr) {
         // Allow up to one object per grid cell.
         static constexpr int MAX_OBJECTS = MAX_GRID_CELLS;
         // One object found: its record always, its cells when the caller keeps them.
@@ -306,15 +435,18 @@ private:
             return;
         }
         object_walk_scratch scratch;
-        each_object(one_grid, TRANSPARENT, grouping_of(segmentation), scratch,
-                    [&](const object_summary& found, const int16_t* found_cells, int how_many) {
+        auto take = [&](const object_summary& found, const int16_t* found_cells, int how_many) {
             if ((int)info.size() >= MAX_OBJECTS) return;
             // An object wears one color only if every cell of it does; -1 says several.
             int8_t color = (int8_t)one_grid.data[cell_row(found_cells[0])][cell_col(found_cells[0])];
             for (int i = 1; i < how_many && color >= 0; ++i)
                 if (one_grid.data[cell_row(found_cells[i])][cell_col(found_cells[i])] != color) color = -1;
             keep(object::from_cells(one_grid, found, found_cells, how_many), color);
-        }, tiles);
+        };
+        if (segmentation != segmentation_methods::shape_fits)
+            each_object(one_grid, TRANSPARENT, grouping_of(segmentation), scratch, take, tiles);
+        else if (shape)
+            each_shape_piece(one_grid, *shape, scratch, take, tiles);
     }
 
     // Canonical shape of an object: which cells of its box it fills, the same

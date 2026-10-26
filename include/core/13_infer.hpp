@@ -147,7 +147,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // no cut is asked once; what reads one is asked of each cut the words weigh.
 // `pass` is which pass this reading is, and once its cut is chosen the rest of
 // the change is read on the picture its line draws (read_the_rest).
-inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles) {
+inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles, const turning_shape& shape) {
     const time_into clock{ inference_time.ms[inference_times::preparing] };
     const auto started = preparation_audit ? std::chrono::steady_clock::now()
                                           : std::chrono::steady_clock::time_point{};
@@ -201,7 +201,7 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
 
     // Edge level of correspondence: the figures cut up every way that competes,
     // ranked by how well the pieces match.
-    inf.correspondence = correspondence_election::infer(train, tiles);
+    inf.correspondence = correspondence_election::infer(train, tiles, shape);
     if (preparation_audit)
         preparation_audit(train, tiles,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
@@ -246,10 +246,15 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     return best;
 }
 
+// A reading inside the puzzle's first one -- its framed reading, the passes
+// after it -- cuts by the shape that one learned (`inherited_shape`), the one
+// the program carries; the first reading, handed none, learns it off the pairs
+// as given, before the plan deletes their ground (changed_shape), so a shape
+// whose places turn into the ground is learned as well.
 inline shared_ptr<const inference> read_with_ground(const vector<example>& train, const tiled_pieces& tiles,
         int8_t pass, bool partners, figure_readings& readings,
         optional<inference>* prepared = nullptr, const ground_plan& plan = {},
-        const vector<int8_t>& elected = {}) {
+        const vector<int8_t>& elected = {}, const turning_shape* inherited_shape = nullptr) {
     string key = figures_key(train, tiles);
     for (const background_source side : {plan.deleted, plan.filled}) {
         key.push_back((char)side.color);
@@ -260,6 +265,16 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     for (const int8_t color : elected) key.push_back((char)color);
     key.push_back((char)pass);
     key.push_back((char)partners);
+    key.push_back((char)(inherited_shape != nullptr));
+    if (inherited_shape) {
+        const object& cells = inherited_shape->cells;
+        key.push_back((char)inherited_shape->from);
+        key.push_back((char)inherited_shape->into);
+        key.push_back((char)cells.summary.width);
+        key.push_back((char)cells.summary.height);
+        for (int row = 0; row < cells.summary.height; ++row)
+            for (int col = 0; col < cells.summary.width; ++col) key.push_back((char)cells.data[row][col]);
+    }
     if (const auto found = readings.completed.find(key); found != readings.completed.end())
         return found->second;
     optional<inference> local;
@@ -271,7 +286,7 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     const vector<example> figures = figures_only(train, plan, grounds);
     const tiled_pieces figure_tiles{figures.data(), tiles.originals};
     if (!facts) {
-        facts = prepare_figures(figures, figure_tiles);
+        facts = prepare_figures(figures, figure_tiles, inherited_shape ? *inherited_shape : changed_shape(train));
         facts->plan = plan;
         facts->elected_backgrounds = grounds;
         for (const example& pair : train) facts->before_ground.push_back(pair.input);
@@ -311,7 +326,8 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
     // A paint is still a figure on the next pass, even if it now fills most
     // of the picture. Keep the chosen ground rather than electing it again.
     inf.rest = read_with_ground(rest, {}, (int8_t)(inf.pass + 1), inf.partners, readings,
-        nullptr, ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds);
+        nullptr, ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds,
+        &inf.correspondence.shape);
     inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
 
@@ -362,7 +378,8 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
     // matched where half of them are gone -- so a line with no words is held to
     // what it would draw. Asked of the cut alone, before the line is chosen.
     inf.pieces_redraw = redraws_every_output(train, [&](const example& pair, grid& drawn) {
-        const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation, tiles.of(pair));
+        const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation, tiles.of(pair),
+                                           &inf.correspondence.shape);
         return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
                 paint_piece(canvas, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
@@ -456,7 +473,8 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
             // Split before Tile: each copy keeps the original input's boundaries.
             const tiled_pieces copies = inf.frame.kind == kind::tiled
                 ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
-            inf.framed = read_with_ground(framed, copies, 1, inf.partners, readings);
+            inf.framed = read_with_ground(framed, copies, 1, inf.partners, readings, nullptr, {}, {},
+                                          &inf.correspondence.shape);
         }
     }
 }

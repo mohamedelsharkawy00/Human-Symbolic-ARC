@@ -338,10 +338,12 @@ struct color_swap_candidates {
 };
 
 // Read just the pieces, in the same size-and-position order used by matching.
-inline vector<object> pieces_of(const grid& input, segmentation_methods segmentation, tile_size tiles = {}) {
+// The shape cut cuts by `shape`, and nothing without one.
+inline vector<object> pieces_of(const grid& input, segmentation_methods segmentation, tile_size tiles = {},
+                                const turning_shape* shape = nullptr) {
     vector<object_segmentation::object_info> info;
     vector<object> pieces;
-    object_segmentation::segment_for_correspondence(input, segmentation, info, &pieces, 0, 0, tiles);
+    object_segmentation::segment_for_correspondence(input, segmentation, info, &pieces, 0, 0, tiles, shape);
     return pieces;
 }
 
@@ -349,16 +351,21 @@ inline vector<object> pieces_of(const grid& input, segmentation_methods segmenta
 // make, which is what they are once Trim has had them. pieces_of reads the
 // same cut in matching's order; an op that works down its list in turn needs
 // the word's own order, or a reading lays a later piece under an earlier one.
-// Split hands them over in the order the walk meets them. Colors walks the
-// palette rather than the grid, so its layers come in colour order.
-inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation, tile_size tiles = {}) {
+// Split hands them over in the order the walk meets them, Split [4] the places
+// its shape fits first (each_shape_piece). Colors walks the palette rather
+// than the grid, so its layers come in colour order.
+inline vector<object> pieces_as_said(const grid& input, segmentation_methods segmentation, tile_size tiles = {},
+                                     const turning_shape* shape = nullptr) {
     vector<object> pieces;
     if (!boxed_by_its_cells(segmentation)) return pieces;
     object_walk_scratch scratch;
-    each_object(input, TRANSPARENT, grouping_of(segmentation), scratch,
-                [&](const object_summary& box, const int16_t* cells, int count) {
+    auto take = [&](const object_summary& box, const int16_t* cells, int count) {
         pieces.push_back(object::from_cells(input, box, cells, count));
-    }, tiles);
+    };
+    if (segmentation != segmentation_methods::shape_fits)
+        each_object(input, TRANSPARENT, grouping_of(segmentation), scratch, take, tiles);
+    else if (shape)
+        each_shape_piece(input, *shape, scratch, take, tiles);
     if (segmentation == segmentation_methods::all_cells_of_one_color)
         stable_sort(pieces.begin(), pieces.end(), [](const object& one, const object& other) {
             return one.first_color() < other.first_color(); });
@@ -616,7 +623,8 @@ struct shape_color_map_rule : shape_table {
             if (became < 0) return {};
             changed = changed || became != pieces[target].color;
 
-            const auto cut = pieces_of(train[which].input, correspondence.segmentation, tiles.of(train[which]));
+            const auto cut = pieces_of(train[which].input, correspondence.segmentation, tiles.of(train[which]),
+                                       &correspondence.shape);
             if (cut.size() != pieces.size()) return {};
             // The largest takes its color from its one nearest piece, as ColorFrom
             // finds it among the pieces not picked: that must be the key.

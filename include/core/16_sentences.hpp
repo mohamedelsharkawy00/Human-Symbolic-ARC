@@ -139,13 +139,15 @@ struct said_reading {
 
 // WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
 // how fine it cuts: Split[0] joins colors; Split[1] keeps them separate; Split[3]
-// keeps them separate and joins by sides alone. A cut names no ground: the
-// reading reads figures, and the plan's opening deleted it.
+// keeps them separate and joins by sides alone; Split[4] takes the changed shape's
+// places first. A cut names no ground: the reading reads figures, and the plan's
+// opening deleted it.
 inline string word_for_segmentation(segmentation_methods segmentation) {
     switch (segmentation) {
         case segmentation_methods::connected_monochrome:      return spell("Split", 1);
         case segmentation_methods::connected_multicolor:      return spell("Split", 0);
         case segmentation_methods::four_connected_monochrome: return spell("Split", 3);
+        case segmentation_methods::shape_fits:                return spell("Split", 4);
         case segmentation_methods::all_cells_of_one_color: return "Colors";
         case segmentation_methods::minimal_repeating_set:  return "Pattern";
         default:                                          return {};
@@ -1086,7 +1088,11 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             const string rooms = background_marks(plan);
             const string walls = rule.pick.every() ? rooms + " InvertSelection" : pick;
             string act = "Partition ";
-            if (rule.value == ROOM_EVERY)
+            if (rule.value == ROOM_SHAPE)
+                // The ground's layer alone, the changed shape's places cut off it
+                // and handed back picked (Split [4]).
+                act = "DeleteSelection " + spell("Split", 4) + " " + spell("Recolor", rule.paint);
+            else if (rule.value == ROOM_EVERY)
                 act += rooms + " " + spell("Recolor", rule.paint);
             else if (rule.value >= ROOM_TABLE)
                 // Every room, each in the color the puzzle's table names for its key.

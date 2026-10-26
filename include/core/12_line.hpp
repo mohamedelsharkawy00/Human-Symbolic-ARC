@@ -186,11 +186,19 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     if (by_shape) {
         rule one = listed("Shape Picks Color", "the shape of the key names the color", rule::learned_table);
         one.pieces = (int)shapes.read.size();
+        // Each pair's key off the cut the matching numbered it in, asked for its
+        // own cells, which another piece may share.
+        vector<object> keys;
+        for (size_t which = 0; which < shapes.read.size() && which < train.size(); ++which) {
+            const vector<object> cut = pieces_of(train[which].input, election.segmentation, boundaries.of(train[which]),
+                                                 &election.shape);
+            const int key = shapes.read[which].key;
+            keys.push_back(key >= 0 && (size_t)key < cut.size() ? cut[(size_t)key] : object{});
+        }
         read.say_fired(std::move(one), colors, [&](size_t which, const auto& cell) {
-            if (which >= shapes.read.size()) return false;
-            const auto& seen = shapes.read[which];
-            return (cell.from_input && cell.waits < 0 && cell.piece == seen.key) ||
-                   (cell.waits_for(missing::a_recolor) && cell.about == seen.target);
+            if (which >= keys.size()) return false;
+            return (cell.from_input && cell.waits < 0 && keys[which].holds(cell.row, cell.col)) ||
+                   (cell.waits_for(missing::a_recolor) && cell.about == shapes.read[which].target);
         });
     }
 
@@ -1522,7 +1530,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             return group_of(read.fired[which].as) == word_group::paints; });
         const uint16_t from = starts_from(missing::a_recolor);
         if (!painted_yet || !from || line_drawn.size() != facts.train.size()) return best;
-        const replay_facts picture(facts.train, the_picture(also), election.segmentation, boundaries);
+        const replay_facts picture(facts.train, the_picture(also), election.segmentation, boundaries, &election.shape);
         for (const piece_pick& pick : picks_to_ask(picture, from)) {
             const vector<partner_pieces> handed = handed_pieces(picture, pick);
             if (!whole(handed)) continue;
@@ -1643,7 +1651,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // EVERY ROOM AT ONCE, EACH IN THE COLOR ITS OWN KEY NAMES (rooms_table): the
     // puzzle's one table, so asked only in the first pass while nothing else
     // holds one (shape_word), and said, it is the table the program carries.
-    optional<vector<vector<fenced_room>>> rooms_of_every_piece;
+    // AND THE GROUND'S PLACES SHAPED LIKE THE SHAPE THE CHANGES TAKE, every one
+    // at once (shaped_rooms), where the pairs learned one: no walls fence them.
+    optional<vector<vector<fenced_room>>> rooms_of_every_piece, rooms_of_the_shape;
     auto room_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
@@ -1688,14 +1698,32 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 !takes_the_same(handed_by_pick[at], every_piece_handed))
                 ask(at, pick, handed_by_pick[at], rooms_by_pick[at]);
         }
+        if (election.shape.holds()) {
+            if (!rooms_of_the_shape) rooms_of_the_shape = shaped_rooms(opened, election.shape, inf.before_ground);
+            for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
+                if (lay == rule::laid_under && !down_known()) continue;
+                const auto& seen = replayed_once(replays, 8, draw_picks.size() + 1, lay, ROOM_SHAPE, [&] {
+                    return room_holds(opened, every_piece_handed, *rooms_of_the_shape, canvas, ROOM_EVERY, lay); });
+                if (!seen) continue;
+                const int before = best.said;
+                weigh_paint(best, ROOM_SHAPE, piece_pick::all(), *seen,
+                            lay == rule::laid_over ? covered_claims(seen->drawn) : drawn_claims(seen->drawn));
+                if (best.said > before) {
+                    best_lay = lay;
+                    best_table = {};
+                }
+            }
+        }
         if (best.value < 0) return {};
         return { best.said, [&, best, best_lay, best_table] {
-            const bool by_table = best.value >= ROOM_TABLE;
+            const bool by_table = best.value >= ROOM_TABLE && best.value < ROOM_SHAPE;
             if (by_table) inf.shape_color_map = best_table;
+            const string paint = ", filled in color " + to_string(best.seen.paint);
             const int8_t said = say_paint(best, rule::filled_room,
                 (by_table ? "fences off its rooms, each taking the color its " +
                                 string(keys_named[best.value - ROOM_TABLE]) + " names"
-                          : "fences off " + room_named(best.value) + ", filled in color " + to_string(best.seen.paint)) +
+                 : best.value == ROOM_SHAPE ? "cuts the changed shape's places off the ground" + paint
+                                            : "fences off " + room_named(best.value) + paint) +
                     laid_words(best_lay));
             read.fired[said].lay = best_lay;
         }, laid_by(best.seen) };

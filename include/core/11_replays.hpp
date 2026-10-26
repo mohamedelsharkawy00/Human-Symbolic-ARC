@@ -1564,10 +1564,11 @@ inline optional<replayed> box_holds(const replay_facts& facts, const vector<part
 // off, numbered as SelectPartition numbers the parts.
 // Past those, every room at once, each in the color its own key names -- its
 // shape or its symmetry (shape_key) -- as a table read off the pairs says
-// (rooms_table).
+// (rooms_table). Last, the ground's places shaped like the shape the pairs'
+// changes take, every one (shaped_rooms).
 constexpr int ROOM_EVERY = 0, ROOM_SIZES = 1, ROOM_PARTS = ROOM_SIZES + 2 * SIZE_RANKS,
               ROOM_CHOICES = ROOM_PARTS + row_of(node_type::SelectPartition).high + 1;
-constexpr int ROOM_TABLE = ROOM_CHOICES, ROOM_VALUES = ROOM_TABLE + (int)shape_key::count;
+constexpr int ROOM_TABLE = ROOM_CHOICES, ROOM_VALUES = ROOM_TABLE + (int)shape_key::count, ROOM_SHAPE = ROOM_VALUES;
 constexpr bool room_by_size(int chosen) { return chosen >= ROOM_SIZES && chosen < ROOM_PARTS; }
 constexpr bool room_largest(int chosen) { return (chosen - ROOM_SIZES) % 2 == 0; }
 constexpr int room_rank(int chosen) { return (chosen - ROOM_SIZES) / 2; }
@@ -1613,6 +1614,30 @@ inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const
                     if (!room.cells.empty()) rooms[which].push_back(std::move(room));
                 }
             });
+    }
+    return rooms;
+}
+
+// THE GROUND'S PLACES SHAPED LIKE THE SHAPE THE CHANGES TAKE, on each pair:
+// every place the shape fits (each_place_it_fits) on the color it turns from
+// or into, on the input before its ground is deleted, its every cell ground
+// there -- the places Split [4] cuts off the ground's layer, as Partition cuts
+// rooms off it, overlapping where they do.
+inline vector<vector<fenced_room>> shaped_rooms(const replay_facts& facts, const turning_shape& shape,
+                                                const vector<grid>& before_ground) {
+    vector<vector<fenced_room>> rooms(facts.train.size());
+    for (size_t which = 0; which < facts.train.size() && which < before_ground.size() && shape.holds(); ++which) {
+        const grid& figures = facts.train[which].input;
+        each_place_it_fits(before_ground[which], shape.cells, {}, [&](int row, int col, int color) {
+            if (color != shape.from && color != shape.into) return;
+            fenced_room room;
+            bool ground = true;
+            shape.cells.each_cell([&](int down, int across, int8_t) {
+                ground = ground && figures.data[row + down][col + across] == TRANSPARENT;
+                room.cells.push_back((int16_t)cell_index(row + down, col + across));
+            });
+            if (ground) rooms[which].push_back(std::move(room));
+        });
     }
     return rooms;
 }

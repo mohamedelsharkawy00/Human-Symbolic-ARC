@@ -191,6 +191,32 @@ struct object_matching {
         return { width * edge.scale, height * edge.scale };
     }
 
+    // EVERY CELL ONE EDGE CARRIED, as the two places it joins: where the cell
+    // sat on the input, in the color it had there, and where it sat on the
+    // output, in the color it came out in -- handed to `visit(in_row, in_col,
+    // was, out_row, out_col, now)` whichever grid the edge was read from. Only
+    // where the landing shows the piece: a cell behind something else is not
+    // one it carried. Found bigger, a cell lands on its whole block.
+    template <class Visit>
+    static void each_carried_cell(const edge& link, const object& piece, const grid& landing, Visit&& visit) {
+        if (!link.same_shape) return;
+        const int scale = link.scale;
+        piece.each_cell([&](int row, int col, int8_t color) {
+            const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
+                                                    row - piece.summary.row, col - piece.summary.col);
+            for (int block_row = 0; block_row < scale; ++block_row)
+                for (int block_col = 0; block_col < scale; ++block_col) {
+                    const int at_row = link.row + down * scale + block_row;
+                    const int at_col = link.col + across * scale + block_col;
+                    if (!landing.contains(at_row, at_col)) continue;
+                    const int8_t there = (int8_t)landing.data[at_row][at_col];
+                    if (there != link.color_map.apply(color)) continue;
+                    if (link.from_input) visit(row, col, color, at_row, at_col, there);
+                    else                 visit(at_row, at_col, there, row, col, color);
+                }
+        });
+    }
+
     // Movement from input to output in the original grid coordinates.
     // Reverse an output-to-input correspondence so both directions agree.
     static pair<int, int> move_of(const edge& edge,
@@ -875,17 +901,24 @@ private:
         return on_a_figure;
     }
 
-    // One candidate object: the match it came from, the cells it paints, and the
-    // cells of its own that something else paints — which is what puts it BEHIND.
+    // One candidate object: the match it came from, the piece that match is
+    // of, the cells it paints, and the cells of its own that something else
+    // paints — which is what puts it BEHIND. Where pieces share a cell
+    // (fitting::shared), also the cell of its own grid each painted cell
+    // carries there (each_carried_cell), -1 where it carries none.
     struct candidate {
         size_t match_index = 0;
-        vector<int> cells, behind;
+        int piece = -1;
+        vector<int> cells, behind, carried;
     };
 
     // The objects, and which cells each of them could paint.
     struct fitting {
         // Number of target cells, empty ones included.
         size_t cell_count = 0;
+        // Whether two pieces of the grid matched from share a cell: only then
+        // may two landings paint one cell (painters).
+        bool shared = false;
         // One per match, in match order; empty cells mean it shows nothing
         vector<candidate> objects;
         // Every object, best first (comes_first); a tie keeps match order. Sorted
@@ -956,28 +989,50 @@ private:
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             laid_out.travel[found_index] =
                 travel_of(found[found_index], from_objects[found[found_index].from].summary);
+        bool held[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+        for (const object& piece : from_objects)
+            piece.each_cell([&](int row, int col, int8_t) {
+                laid_out.shared = laid_out.shared || held[row][col];
+                held[row][col] = true;
+            });
+        // Where pieces share a cell: the cell of its own grid one landing carries
+        // to each target cell, -1 for none, and the target cells it set, cleared
+        // for the next.
+        vector<int> carried_from(laid_out.shared ? laid_out.cell_count : 0, -1), carried_to;
 
         // Include recolored matches as candidates: their shapes still need to fit.
         for (size_t found_index = 0; found_index < found.size(); ++found_index) {
-            const grid cells = edge_footprint(found[found_index], from_objects, into_objects);
-            candidate candidate{ found_index, {}, {} };
+            const edge& link = found[found_index];
+            const grid cells = edge_footprint(link, from_objects, into_objects);
+            candidate candidate{ found_index, link.from };
             for (int row = 0; row < cells.height; ++row)
                 for (int col = 0; col < cells.width; ++col) {
                     if (cells.data[row][col] == TRANSPARENT) continue;
-                    const int into_row = found[found_index].row + row;
-                    const int into_col = found[found_index].col + col;
+                    const int into_row = link.row + row;
+                    const int into_col = link.col + col;
                     // Off the edge is not a cell of this grid at all: it is
                     // neither painted nor hidden, it was simply never shown.
                     if (!into.contains(into_row, into_col)) continue;
                     const int id = into_row * into.width + into_col;
                     // The cells it is hidden at are its own too — kept apart,
                     // because they are what puts it BEHIND whoever paints them.
-                    if (!landing_shows(found[found_index], cells, into, row, col)) {
+                    if (!landing_shows(link, cells, into, row, col)) {
                         candidate.behind.push_back(id);
                         continue;
                     }
                     candidate.cells.push_back(id);
                 }
+            if (laid_out.shared) {
+                each_carried_cell(link, from_objects[link.from], into,
+                                  [&](int in_row, int in_col, int8_t, int out_row, int out_col, int8_t) {
+                    const int to = link.from_input ? out_row * into.width + out_col : in_row * into.width + in_col;
+                    carried_from[(size_t)to] = link.from_input ? cell_index(in_row, in_col) : cell_index(out_row, out_col);
+                    carried_to.push_back(to);
+                });
+                for (const int id : candidate.cells) candidate.carried.push_back(carried_from[(size_t)id]);
+                for (const int to : carried_to) carried_from[(size_t)to] = -1;
+                carried_to.clear();
+            }
             laid_out.objects.push_back(std::move(candidate));
         }
 
@@ -1007,13 +1062,75 @@ private:
         return laid_out;
     }
 
-    // Find objects that cover each required cell exactly once; store them in `chosen`.
+    // WHICH OBJECTS PAINT EACH CELL, as they are chosen: the first to paint it,
+    // the cell of its own grid that one carries there, and any after it. One
+    // more may paint a cell only where it is another piece's and carries that
+    // same cell there: the two pieces share it, and its one change is said once
+    // (fitting::shared).
+    struct painters {
+        const fitting& laid_out;
+        vector<int> first, carried;
+        vector<vector<int>> after;
+        explicit painters(const fitting& laid) : laid_out(laid), first(laid.cell_count, -1) {
+            if (!laid.shared) return;
+            carried.assign(laid.cell_count, -1);
+            after.resize(laid.cell_count);
+        }
+        bool painted(size_t id) const { return first[id] >= 0; }
+        // Every object painting cell `id`, the first first.
+        template <class See>
+        void each(size_t id, See see) const {
+            if (first[id] < 0) return;
+            see(first[id]);
+            if (laid_out.shared) ranges::for_each(after[id], see);
+        }
+        bool paints(int object_index, size_t id) const {
+            bool found = false;
+            each(id, [&](int one) { found = found || one == object_index; });
+            return found;
+        }
+        // Whether the object may paint every cell it shows, `asked()` for
+        // each cell asked.
+        template <class Asked>
+        bool may_paint(int object_index, Asked asked) const {
+            const candidate& mine = laid_out.objects[(size_t)object_index];
+            for (size_t at = 0; at < mine.cells.size(); ++at) {
+                asked();
+                const size_t id = (size_t)mine.cells[at];
+                if (first[id] < 0) continue;
+                if (!laid_out.shared || mine.carried[at] < 0 || mine.carried[at] != carried[id]) return false;
+                bool same_piece = false;
+                each(id, [&](int one) { same_piece = same_piece || laid_out.objects[(size_t)one].piece == mine.piece; });
+                if (same_piece) return false;
+            }
+            return true;
+        }
+        void paint(int object_index) {
+            const candidate& mine = laid_out.objects[(size_t)object_index];
+            for (size_t at = 0; at < mine.cells.size(); ++at) {
+                const size_t id = (size_t)mine.cells[at];
+                if (first[id] < 0) {
+                    first[id] = object_index;
+                    if (laid_out.shared) carried[id] = mine.carried[at];
+                } else after[id].push_back(object_index);
+            }
+        }
+        // Undoes paint, the object painted last undone first.
+        void unpaint(int object_index) {
+            for (const int id : laid_out.objects[(size_t)object_index].cells)
+                if (first[(size_t)id] == object_index) first[(size_t)id] = -1;
+                else after[(size_t)id].pop_back();
+        }
+    };
+
+    // Find objects that cover each required cell, once or by pieces that share
+    // it (painters); store them in `chosen`.
     static fit_verdict fit_the_objects_together(const fitting& laid_out,
                                     vector<int>& chosen) {
         if (!ranges::any_of(laid_out.required, [](bool needed) { return needed; }))
             return fit_verdict::no_fit;
 
-        vector<int> painted_by(laid_out.cell_count, -1);
+        painters painting(laid_out);
         long long work = 0;
         // Limit the search based on problem size, counting each cell checked.
         // Report when the limit is reached; a solution may still exist.
@@ -1026,21 +1143,17 @@ private:
         // Reject an object if it would be both in front of and behind another object.
         auto contradicts = [&](int object_index) {
             for (int behind_id : laid_out.objects[object_index].behind) {
-                const int in_front = painted_by[behind_id];
-                if (in_front < 0) continue;
-                for (int its_behind_id : laid_out.objects[in_front].behind)
-                    if (painted_by[its_behind_id] == object_index) return true;
+                bool both_ways = false;
+                painting.each((size_t)behind_id, [&](int in_front) {
+                    for (int its_behind_id : laid_out.objects[in_front].behind)
+                        both_ways = both_ways || painting.paints(object_index, (size_t)its_behind_id);
+                });
+                if (both_ways) return true;
             }
             return false;
         };
 
-        auto cells_are_free = [&](int object_index) {
-            for (int id : laid_out.objects[object_index].cells) {
-                ++work;
-                if (painted_by[id] >= 0) return false;
-            }
-            return true;
-        };
+        auto cells_are_free = [&](int object_index) { return painting.may_paint(object_index, [&] { ++work; }); };
 
         // WHETHER AN OBJECT IS STILL FREE, asked once a step. It covers many
         // cells, and asked again at every one of them a step cost the square of
@@ -1067,7 +1180,7 @@ private:
             // drive the search — a made cell is answered by being left alone.
             int target = -1, fewest = 0;
             for (size_t id = 0; id < laid_out.cell_count; ++id) {
-                if (painted_by[id] >= 0 || !laid_out.required[id]) continue;
+                if (painting.painted(id) || !laid_out.required[id]) continue;
                 int options = 0;
                 for (int object_index : laid_out.options_at(id)) {
                     ++work;
@@ -1084,11 +1197,11 @@ private:
             // Try candidates in preference order; an object does not have to be selected.
             for (int object_index : laid_out.options_at((size_t)target)) {
                 if (!cells_are_free(object_index)) continue;
-                for (int id : laid_out.objects[object_index].cells) painted_by[id] = object_index;
+                painting.paint(object_index);
                 chosen.push_back(object_index);
                 if (!contradicts(object_index) && self(self)) return true;
                 chosen.pop_back();
-                for (int id : laid_out.objects[object_index].cells) painted_by[id] = -1;
+                painting.unpaint(object_index);
                 if (out_of_budget) return false;
             }
             return false;
@@ -1098,29 +1211,29 @@ private:
         return out_of_budget ? fit_verdict::gave_up : fit_verdict::no_fit;
     }
 
-    // Keep the chosen matches and any extras that do not overlap; log rejected overlaps.
+    // Keep the chosen matches and any extras that paint no cell another does,
+    // but where pieces share it (painters); log rejected overlaps.
     static void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
                                const vector<edge>& found,
                                vector<edge>& edges,
                                vector<rejection>* discarded) {
         sort(chosen.begin(), chosen.end());
         vector<bool> kept(found.size(), false);
-        vector<bool> painted(laid_out.cell_count, false);
+        painters painting(laid_out);
         for (int object_index : chosen) {
             const size_t match_index = laid_out.objects[object_index].match_index;
             edges.push_back(found[match_index]);
             kept[match_index] = true;
-            for (int id : laid_out.objects[object_index].cells) painted[id] = true;
+            painting.paint(object_index);
         }
         // Add matches that cover cells the solution left free, best matches first.
         for (int object_index : laid_out.best_first) {
             const size_t match_index = laid_out.objects[object_index].match_index;
             if (kept[match_index] || laid_out.objects[object_index].cells.empty()) continue;
-            if (ranges::any_of(laid_out.objects[object_index].cells,
-                               [&](int id) { return painted[id]; })) continue;
+            if (!painting.may_paint(object_index, [] {})) continue;
             edges.push_back(found[match_index]);
             kept[match_index] = true;
-            for (int id : laid_out.objects[object_index].cells) painted[id] = true;
+            painting.paint(object_index);
         }
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             if (!kept[found_index])

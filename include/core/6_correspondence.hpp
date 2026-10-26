@@ -98,16 +98,17 @@ struct correspondence_election {
         "how each piece was scaled" };
 
     // A CELL NOTHING HAS EXPLAINED YET, in the color its own grid shows it in.
-    // Either no match covers it at all -- made_or_gone when its object has no
-    // identified partner -- or a match carried it through a change, and it
-    // `waits` on the word for that change: about the input piece `about`, -1
-    // when no one piece is, having shown `other` on the other grid -- what an
-    // input cell became, what an output cell was. `piece` is its object on its
-    // own grid, -1 for a cell no piece holds, and `claimed_by` the fired rule
-    // that accounts for it after all, -1 while nothing does. `in_place` is the
-    // color the other grid shows at this very place when that is another color
-    // -- the cell was recolored where it lies, however the matching read it --
-    // and -1 otherwise.
+    // Either no match covers it at all -- made_or_gone when no piece holding it
+    // has an identified partner -- or a match carried it through a change, and
+    // it `waits` on the word for that change: about the input piece `about`,
+    // the first written where pieces share the cell, -1 when no one piece is,
+    // having shown `other` on the other grid -- what an input cell became, what
+    // an output cell was. `piece` is the piece on its own grid the edge that
+    // carried it names there, -1 where none does, and `claimed_by` the fired
+    // rule that accounts for it after all, -1 while nothing does. `in_place` is
+    // the color the other grid shows at this very place when that is another
+    // color -- the cell was recolored where it lies, however the matching read
+    // it -- and -1 otherwise.
     struct left_over_cell {
         bool from_input = true;
         int8_t row = 0, col = 0;
@@ -266,6 +267,10 @@ struct correspondence_election {
     int cells = 0;
     // The selected segmentation, shared by all training pairs.
     segmentation_methods segmentation = segmentation_methods::unset;
+    // THE SHAPE THE SHAPE CUT CUTS BY (changed_shape): learned by the puzzle's
+    // first reading and handed to the readings inside it, the one the program's
+    // Split [4] cuts by; none where the pairs show none.
+    turning_shape shape;
     // A RULE A READING WAS TAKEN TO SAY, and what it accounts for: the input
     // pieces its edges are about and the cells on both grids they carry, or,
     // for a rule that explains a choice rather than cells, what it says.
@@ -490,7 +495,7 @@ struct correspondence_election {
                 rule.name = "No Word";
                 rule.no_word_for = missing_words[word];
                 // Each piece once: the input piece a cell is about, or failing
-                // one, the output piece it is.
+                // one, the output piece its change was read off.
                 vector<std::pair<size_t, int>> whose;
                 for (size_t which = 0; which < read.pairs.size(); ++which)
                     for (const auto& cell : read.pairs[which].left_over) {
@@ -544,7 +549,9 @@ struct correspondence_election {
     // 1. Compare the readings and keep the one that best explains the examples.
     // Try every segmentation and permission combination, then return the selected reading.
     // The pairs are figures: the plan deleted any ground (3_background.hpp).
-    static correspondence_election infer(const vector<example>& train, const tiled_pieces& tiles = {}) {
+    // The shape cut is read only where there is a `shape` to cut by.
+    static correspondence_election infer(const vector<example>& train, const tiled_pieces& tiles = {},
+                                         const turning_shape& shape = {}) {
 
         // HOW BIG THE THING BEING EXPLAINED IS. Counted once, off the pairs alone,
         // because every reading's leftovers are a share of it.
@@ -555,7 +562,8 @@ struct correspondence_election {
 
         vector<prepared_segmentation> preparations;
         for (int method = 0; method < (int)segmentation_methods::count; ++method)
-            preparations.push_back(prepare_segmentation(train, (segmentation_methods)method, tiles));
+            if (method != (int)segmentation_methods::shape_fits || shape.holds())
+                preparations.push_back(prepare_segmentation(train, (segmentation_methods)method, tiles, shape));
         // THE CUT BY SIDES ALONE, READ ONLY WHERE IT IS ANOTHER READING THE READING
         // CAN READ. Where every grid cuts into the same pieces by corners, it is
         // that reading said again; where an input cuts into more pieces than the
@@ -590,7 +598,12 @@ struct correspondence_election {
 
         correspondence_election facts;
         facts.cells = facts_cells;
-        facts.readings.resize((int)segmentation_methods::count * degrees_of_freedom::COMBINATIONS);
+        facts.shape = shape;
+        // A slot for every cut and every set of freedoms, the shape cut's, the
+        // last, only where there is a shape to cut by.
+        static_assert((int)segmentation_methods::shape_fits + 1 == (int)segmentation_methods::count);
+        const int cuts = (int)segmentation_methods::count - (shape.holds() ? 0 : 1);
+        facts.readings.resize(cuts * degrees_of_freedom::COMBINATIONS);
         auto better_match = [](const reading& left, const reading& right) {
             if (left.left_over != right.left_over) return left.left_over < right.left_over;
             if (left.objects_used != right.objects_used) return left.objects_used < right.objects_used;
@@ -601,6 +614,7 @@ struct correspondence_election {
         // A claim's best reading is kept too, for its rule to read, but it does
         // not stand.
         vector<int> best_of_method;
+        int shape_cut = -1;
         facts.best_of.assign((size_t)segmentation_methods::count, -1);
         for (const auto& prepared : preparations) {
             int best = -1;
@@ -622,7 +636,8 @@ struct correspondence_election {
             if (!competes(prepared.look.segmentation)) continue;
             list_what_fired(train, prepared, facts.readings[best]);
             read_the_acts(train, prepared, facts.readings[best]);
-            best_of_method.push_back(best);
+            if (prepared.look.segmentation == segmentation_methods::shape_fits) shape_cut = best;
+            else best_of_method.push_back(best);
         }
 
         // Combine compression cost with the cost of unexplained cells.
@@ -680,6 +695,10 @@ struct correspondence_election {
         // one it would is.
         if (ranges::any_of(facts.ranked, [&](reading_index one) { return read_in_time(facts.readings[one]); }))
             erase_if(facts.ranked, [&](reading_index one) { return !read_in_time(facts.readings[one]); });
+        // THE SHAPE CUT COMES AFTER EVERY OTHER, ranked apart from them, so they
+        // keep the order they have without it: a cut read off the changes
+        // themselves is said only where it says more than every way of seeing.
+        if (shape_cut >= 0 && read_in_time(facts.readings[shape_cut])) facts.ranked.push_back((reading_index)shape_cut);
         for (const reading_index one : facts.ranked) {
             vector<reading_index> ties;
             for (const int other : best_of_method)
@@ -733,8 +752,8 @@ private:
     }
 
     // 2. Prepare each segmentation once, before trying its permissions.
-    static prepared_segmentation prepare_segmentation(const vector<example>& train,
-                                                      segmentation_methods segmentation, const tiled_pieces& tiles) {
+    static prepared_segmentation prepare_segmentation(const vector<example>& train, segmentation_methods segmentation,
+                                                      const tiled_pieces& tiles, const turning_shape& shape) {
         prepared_segmentation prepared;
         prepared.look.segmentation = segmentation;
         prepared.pairs.resize(train.size());
@@ -756,9 +775,9 @@ private:
             vector<object>& input_objects = saved.input_objects;
             vector<object>& output_objects = saved.output_objects;
             object_segmentation::segment_for_correspondence(input, segmentation, pair.input_info,
-                                       &input_objects, step_width, step_height, tiles.of(train[pair_index]));
+                                       &input_objects, step_width, step_height, tiles.of(train[pair_index]), &shape);
             object_segmentation::segment_for_correspondence(output, segmentation, pair.output_info,
-                                       &output_objects, step_width, step_height);
+                                       &output_objects, step_width, step_height, {}, &shape);
             // Group copies and choose the most typical member while their cells are available.
             const bool one_set_for_the_grid = (segmentation == segmentation_methods::minimal_repeating_set);
             object_segmentation::find_copies(pair.input_info, input_objects, one_set_for_the_grid);
@@ -1121,21 +1140,20 @@ private:
                 cells_it_took(edge, our_objects[edge.from], other_grid,
                               [&](int row, int col) { carried[row][col] = true; });
             }
-            // Which object each cell belongs to, so a cell can be asked about
-            // the object it is part of.
-            int16_t object_at[MAX_GRID_DIM][MAX_GRID_DIM];
-            for (auto& row : object_at) ranges::fill(row, (int16_t)-1);
+            // What every piece holding a cell says of it -- pieces may share a
+            // cell: whether one is an instance its matched representative
+            // explains, and whether one has a partner.
+            bool of_an_instance[MAX_GRID_DIM][MAX_GRID_DIM] = {}, partnered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
             for (size_t i = 0; i < ours.size() && i < our_objects.size(); ++i)
-                our_objects[i].each_cell([&](int row, int col, int8_t) { object_at[row][col] = (int16_t)i; });
+                our_objects[i].each_cell([&](int row, int col, int8_t) {
+                    of_an_instance[row][col] = of_an_instance[row][col] || ours[i].instance_of >= 0;
+                    partnered[row][col] = partnered[row][col] || has_a_partner[i];
+                });
             one_grid.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
-                if (carried[row][col]) return;
-                if (object_at[row][col] >= 0 && ours[object_at[row][col]].instance_of >= 0) return;
-                // An uncovered cell is created or removed if its object has no partner.
-                const int16_t which = object_at[row][col];
-                const bool nobody_claims_the_object =
-                    which < 0 || !has_a_partner[which];
-                pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col,
-                                           nobody_claims_the_object, which, -1, (int8_t)color });
+                if (carried[row][col] || of_an_instance[row][col]) return;
+                // An uncovered cell is created or removed if no piece holding it has a partner.
+                pair.left_over.push_back({ from_input, (int8_t)row, (int8_t)col, !partnered[row][col], -1, -1,
+                                           (int8_t)color });
             });
         };
         unexplained(output, forward, input_objects, output_objects,
@@ -1541,15 +1559,11 @@ private:
             const grid* grids[2] = { &train[which].output, &train[which].input };
             const vector<object>* pieces[2] = { &prepared.pairs[which].output_objects,
                                                 &prepared.pairs[which].input_objects };
-            int16_t piece_at[2][MAX_GRID_DIM][MAX_GRID_DIM];
-            for (const bool side : { false, true }) {
-                for (auto& row : piece_at[side]) ranges::fill(row, (int16_t)-1);
-                for (size_t i = 0; i < pieces[side]->size(); ++i)
-                    (*pieces[side])[i].each_cell([&](int row, int col, int8_t) {
-                        piece_at[side][row][col] = (int16_t)i; });
-            }
             bool written[(int)missing::count][2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
-            auto wait = [&](missing word, bool from_input, int row, int col, int about, int8_t other) {
+            // Written down off the edge `link`, the piece on the cell's own
+            // grid being the one the edge names there.
+            auto wait = [&](missing word, const edge& link, bool from_input, int row, int col, int about,
+                            int8_t other) {
                 const grid& on = *grids[from_input];
                 if (!on.contains(row, col)) return;
                 const int8_t color = (int8_t)on.data[row][col];
@@ -1562,7 +1576,7 @@ private:
                 cell.from_input = from_input;
                 cell.row = (int8_t)row;
                 cell.col = (int8_t)col;
-                cell.piece = piece_at[from_input][row][col];
+                cell.piece = from_input == link.from_input ? link.from : link.to;
                 cell.color = color;
                 cell.waits = (int8_t)word;
                 cell.about = (int16_t)about;
@@ -1582,7 +1596,7 @@ private:
                     if (link.from_input) visit(true, row, col, color, mapped);
                     else                 visit(false, row, col, mapped, color);
                 });
-                each_carried_cell(link, from[link.from], *grids[!link.from_input],
+                object_matching::each_carried_cell(link, from[link.from], *grids[!link.from_input],
                                   [&](int in_row, int in_col, int8_t was, int out_row, int out_col, int8_t now) {
                     visit(true, in_row, in_col, was, now);
                     visit(false, out_row, out_col, was, now);
@@ -1621,7 +1635,7 @@ private:
                     if (!link.same_shape || pair.input_piece_of(link) != piece) continue;
                     each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
                         for (int i = 0; i < (int)size(words); ++i)
-                            if (happened[i]) wait(words[i], from_input, row, col, piece, from_input ? now : was);
+                            if (happened[i]) wait(words[i], link, from_input, row, col, piece, from_input ? now : was);
                     });
                 }
             }
@@ -1651,8 +1665,8 @@ private:
                 if (!copied && !turned) continue;
                 each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
                     if (from_input && was != now) return;
-                    if (copied) wait(missing::where_it_was_copied, from_input, row, col, -1, now);
-                    if (turned) wait(missing::how_it_turned, from_input, row, col, -1, now);
+                    if (copied) wait(missing::where_it_was_copied, link, from_input, row, col, -1, now);
+                    if (turned) wait(missing::how_it_turned, link, from_input, row, col, -1, now);
                 });
             }
 
@@ -1673,13 +1687,13 @@ private:
                     if (was == now) return;
                     named = true;
                     if (was != TRANSPARENT)
-                        wait(missing::a_recolor, from_input, row, col, piece, from_input ? now : was);
+                        wait(missing::a_recolor, link, from_input, row, col, piece, from_input ? now : was);
                     else if (!from_input)
-                        wait(missing::drawn_on_the_ground, false, row, col, piece, was);
+                        wait(missing::drawn_on_the_ground, link, false, row, col, piece, was);
                 });
                 if (!named)
                     each_end(link, [&](bool from_input, int row, int col, int8_t, int8_t) {
-                        if (from_input == link.from_input) wait(missing::a_recolor, from_input, row, col, piece, -1);
+                        if (from_input == link.from_input) wait(missing::a_recolor, link, from_input, row, col, piece, -1);
                     });
             }
 
@@ -1697,7 +1711,7 @@ private:
                     const grid& other = *grids[!side];
                     (*pieces[side])[index].each_cell([&](int row, int col, int8_t color) {
                         if (other.contains(row, col) && other.data[row][col] == color) return;
-                        wait(missing::how_it_changed_shape, side, row, col, piece, -1); });
+                        wait(missing::how_it_changed_shape, link, side, row, col, piece, -1); });
                 }
             }
 
@@ -1710,32 +1724,6 @@ private:
                     if (is_color(there) && there != cell.color) cell.in_place = there;
                 }
         }
-    }
-
-    // EVERY CELL ONE EDGE CARRIED, as the two places it joins: where the cell
-    // sat on the input, in the color it had there, and where it sat on the
-    // output, in the color it came out in -- handed to `visit(in_row, in_col,
-    // was, out_row, out_col, now)` whichever grid the edge was read from. Only
-    // where the landing shows the piece: a cell behind something else is not
-    // one it carried. Found bigger, a cell lands on its whole block.
-    template <class Visit>
-    static void each_carried_cell(const edge& link, const object& piece, const grid& landing, Visit&& visit) {
-        if (!link.same_shape) return;
-        const int scale = link.scale;
-        piece.each_cell([&](int row, int col, int8_t color) {
-            const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
-                                                    row - piece.summary.row, col - piece.summary.col);
-            for (int block_row = 0; block_row < scale; ++block_row)
-                for (int block_col = 0; block_col < scale; ++block_col) {
-                    const int at_row = link.row + down * scale + block_row;
-                    const int at_col = link.col + across * scale + block_col;
-                    if (!landing.contains(at_row, at_col)) continue;
-                    const int8_t there = (int8_t)landing.data[at_row][at_col];
-                    if (there != link.color_map.apply(color)) continue;
-                    if (link.from_input) visit(row, col, color, at_row, at_col, there);
-                    else                 visit(at_row, at_col, there, row, col, color);
-                }
-        });
     }
 
 };

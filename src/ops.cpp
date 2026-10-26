@@ -31,6 +31,8 @@ struct program_run {
     int colors_by_size_count;
     // The learned shape -> color table (ShapeColorMap and kin).
     const shape_table& shape_colors;
+    // The shape the pairs' changes take (changed_shape), the one Split [4] cuts by.
+    const turning_shape& cut_shape;
     // How NormalizeOrientation posed this example, for RestoreOrientation to
     // undo exactly that: 1 when it laid a landscape input upright, 8 | the pose
     // while a canonical pose is active.
@@ -125,14 +127,17 @@ void paint_objects(const object_list& from, int width, int height, grid& out) {
 
 // The pieces of `g`, each in the frame of what they were cut from (x0, y0,
 // width, height, which holds every painted cell of g). What counts as one
-// object is arc::each_object's to say, as the reading's is, so the two cannot
-// come to different answers; segmentation never tightens a frame (Trim is the
-// only shrinker).
-void segment_objects(const grid& g, object_list& out, grouping how, int x0, int y0, int width, int height) {
+// object is arc::each_object's to say, or cut by a shape each_shape_piece's,
+// as the reading's is, so the two cannot come to different answers;
+// segmentation never tightens a frame (Trim is the only shrinker). Cut by a
+// shape, its places come back picked and the rest not, as Bridge hands back
+// its bars, so a word after it acts on the places.
+void segment_objects(const grid& g, object_list& out, grouping how, int x0, int y0, int width, int height,
+                     const turning_shape* shape = nullptr) {
     out.count = 0;
     if (g.width <= 0 || g.height <= 0 || width <= 0 || height <= 0) return;
     object_walk_scratch scratch;
-    each_object(g, TRANSPARENT, how, scratch, [&](const object_summary&, const int16_t* taken, int taken_count) {
+    auto take = [&](const object_summary&, const int16_t* taken, int taken_count) {
         if (out.count >= MAX_OBJECTS_IN_A_LIST) return;
         held_object& one = out.objects[out.count++];
         one.x0 = (int16_t)x0; one.y0 = (int16_t)y0;
@@ -143,7 +148,13 @@ void segment_objects(const grid& g, object_list& out, grouping how, int x0, int 
             const int row = cell_row(taken[i]), col = cell_col(taken[i]);
             one.mask[row - y0][col - x0] = g.data[row][col];
         }
-    });
+    };
+    if (!shape) {
+        each_object(g, TRANSPARENT, how, scratch, take);
+        return;
+    }
+    const int places = each_shape_piece(g, *shape, scratch, take);
+    for (int i = 0; i < places && i < out.count; ++i) out.objects[i].selected = true;
 }
 
 // Calls cell(row, col, color) for each painted, on-canvas cell of the picked
@@ -308,7 +319,9 @@ object_list& op_output(program_run& run) {
 // Split[depth]: segmentation depth, coarse to fine. [0] = connected object,
 // colors mixed. [1] = connected object of one color. [2] = single pixels.
 // [3], finer than [1] and coarser than [2], came last: one color's cells
-// joined by sides alone, a corner joining nothing.
+// joined by sides alone, a corner joining nothing. [4] takes every place the
+// shape the pairs' changes take (run.cut_shape) fits on the colors it turns
+// from and into as a piece, picked, then cuts the rest as [1] does.
 object_list& op_split(program_run& run, const object_list& from, int8_t depth) {
     object_list& res = run.fresh();
     grid drawn;
@@ -349,7 +362,7 @@ object_list& op_split(program_run& run, const object_list& from, int8_t depth) {
                     depth == 0 ? grouping::touching_any_color
                     : depth == 3 ? grouping::touching_sides_same_color
                                  : grouping::touching_same_color,
-                    x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+                    x0, y0, x1 - x0 + 1, y1 - y0 + 1, depth == 4 ? &run.cut_shape : nullptr);
     return res;
 }
 
@@ -2624,6 +2637,7 @@ grid environment::draw(const node* tree, const example& ex, const puzzle& p, obj
         .colors_by_size = read.colors.output_colors_by_size,
         .colors_by_size_count = read.colors.output_colors_by_size_count,
         .shape_colors = read.shape_color_map.holds() ? static_cast<const shape_table&>(read.shape_color_map) : no_table,
+        .cut_shape = read.correspondence.shape,
     };
     // The canvas the size rule gives this input, the reading's own sizing.
     int width = 0, height = 0;

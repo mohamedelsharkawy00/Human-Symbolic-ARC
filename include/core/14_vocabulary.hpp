@@ -430,8 +430,11 @@ enum class inferred_amount { none, some, all };
   X(ShapeColorMap               , 0                 , 1                        , map      , all , false)        \
   /* A skew leans one way or the other, and 0 is the lean nobody takes. */       \
   X(Skew                        , -1                , 1                        , translate, none, false)        \
-  /* Split[3] joins one color's cells by sides alone, the finest connected cut. */ \
-  X(Split                       , 0                 , 3                        , generate , none, true )        \
+  /* Split[3] joins one color's cells by sides alone, the finest connected cut; */ \
+  /* Split[4] takes every place the shape the pairs' changes take fits on the  */ \
+  /* colors it turns from and into as a piece (changed_shape, the reading's),  */ \
+  /* picked, then joins the rest as [1] does.                                  */ \
+  X(Split                       , 0                 , 4                        , generate , some, true )        \
   /* Cells slide a step and pile at the wall, so a step past the wall says */    \
   X(SlamColumn                  , -1                , 1                        , translate, none, false)        \
   /* nothing new: the answers run out at the object, not at the grid. */         \
