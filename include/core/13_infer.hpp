@@ -16,19 +16,6 @@
 
 namespace arc {
 
-// THE ACTS LEFT UNSAID: the line the matching opened with its acts, cleared.
-// They stay listed, claiming nothing, and every cell they claimed is the rules'
-// to claim again.
-inline void leave_the_acts_unsaid(inference& inf) {
-    auto& read = inf.correspondence.readings[inf.correspondence.chosen];
-    for (auto& pair : read.pairs)
-        for (auto& cell : pair.left_over)
-            if (cell.claimed_by >= 0 && ranges::find(read.line, cell.claimed_by) != read.line.end())
-                cell.claimed_by = -1;
-    for (const int8_t which : read.line) read.fired[which].cells = 0;
-    read.line.clear();
-}
-
 // WHETHER THE CUT'S PIECES GO UNSAID WHOLE: matched, they do not redraw the
 // outputs where they lie, and nothing on the line says what else happened.
 inline bool pieces_go_unsaid(const inference& read) {

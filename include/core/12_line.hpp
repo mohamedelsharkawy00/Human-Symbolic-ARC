@@ -102,6 +102,19 @@ inline int compose_poses(int first, int then) {
     return 0;
 }
 
+// THE ACTS LEFT UNSAID: the line the matching opened with its acts, cleared.
+// They stay listed, claiming nothing, and every cell they claimed is the rules'
+// to claim again.
+inline void leave_the_acts_unsaid(inference& inf) {
+    auto& read = inf.correspondence.readings[inf.correspondence.chosen];
+    for (auto& pair : read.pairs)
+        for (auto& cell : pair.left_over)
+            if (cell.claimed_by >= 0 && ranges::find(read.line, cell.claimed_by) != read.line.end())
+                cell.claimed_by = -1;
+    for (const int8_t which : read.line) read.fired[which].cells = 0;
+    read.line.clear();
+}
+
 // THE CUT'S PAINTS, READ ONCE FOR EVERY LINE READ ON IT: what a paint reads
 // is the cut opened again, the same for each line read on one cut -- with its
 // acts or the rules alone, plainly or reading ahead (read_the_cut) -- so the
@@ -176,34 +189,75 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     const bool recolors = read.allowed.recolor && ranges::any_of(read.pairs, [](const auto& pair) {
         return pair.found_recolored > 0; });
 
+    // THE HAND AS THE LINE LEAVES IT: the cut's pieces carried through every rule
+    // already on the line, the hand the rules asked below are replayed on, laid
+    // under what is down where a piece sits on another, as the line is said.
+    replay_facts facts(inf, train, boundaries);
+    picks_on_hand hand_picks;
+    facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
+    // THE MATCHING'S ACTS, REPLAYED BEFORE THEY ARE SAID: carried on a copy of
+    // the hand one by one, each at work in every pair (hand_changes_everywhere),
+    // and what they come to judged as one (hand_change_holds) -- a piece that
+    // moves and changes color lands in its old color before its recolor, wrong
+    // alone and right together. Acts that do not hold are left unsaid.
+    if (!read.line.empty()) {
+        replay_facts carried = facts;
+        bool hold = true;
+        for (size_t at = 0; at < read.line.size() && hold; ++at) {
+            const replay_facts before = carried;
+            hold = carry_the_hand(read.fired[read.line[at]], inf, carried) && hand_changes_everywhere(before, carried);
+        }
+        if (!hold || !hand_change_holds(facts, carried)) leave_the_acts_unsaid(inf);
+    }
+    for (const int8_t which : read.line)
+        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
+    // Carries the hand through a rule just said on the line. Once it cannot,
+    // the line no longer draws its picture, and no rule after lays a cell wrong
+    // (the sure rules first, below).
+    auto carry = [&](int8_t which) {
+        hand_picks.clear();
+        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
+    };
+
     // THE KEY'S SHAPE NAMES THE TARGET'S COLOR. The rule read the elected
     // reading's recolor, so it says so on that reading, under the recolor --
     // freedom 2, Color -- accounting for the target's recolored cells and for
     // the keys it used up: their cells are the ones the reading had left over
     // as gone. Said ahead of the swaps, since a swap is only said where no rule
-    // already accounts for what it would change.
-    const bool by_shape = recolors && shapes.holds() && shapes.claimed_by == shape_color_map_rule::body_recolor;
-    if (by_shape) {
+    // already accounts for what it would change. Replayed first: its three
+    // operators carried on a copy of the hand, and what they come to judged as
+    // one (hand_change_holds).
+    bool by_shape = false;
+    if (recolors && shapes.holds() && shapes.claimed_by == shape_color_map_rule::body_recolor && facts.hand_known) {
         rule one = listed("Shape Picks Color", "the shape of the key names the color", rule::learned_table);
-        one.pieces = (int)shapes.read.size();
-        // Each pair's key off the cut the matching numbered it in, asked for its
-        // own cells, which another piece may share.
-        vector<object> keys;
-        for (size_t which = 0; which < shapes.read.size() && which < train.size(); ++which) {
-            const vector<object> cut = pieces_of(train[which].input, election.segmentation, boundaries.of(train[which]),
-                                                 &election.shape);
-            const int key = shapes.read[which].key;
-            keys.push_back(key >= 0 && (size_t)key < cut.size() ? cut[(size_t)key] : object{});
+        replay_facts checked = facts;
+        by_shape = carry_the_hand(one, inf, checked) && hand_change_holds(facts, checked);
+        if (by_shape) {
+            one.pieces = (int)shapes.read.size();
+            // Each pair's key off the cut the matching numbered it in, asked for
+            // its own cells, which another piece may share.
+            vector<object> keys;
+            for (size_t which = 0; which < shapes.read.size() && which < train.size(); ++which) {
+                const vector<object> cut = pieces_of(train[which].input, election.segmentation,
+                                                     boundaries.of(train[which]), &election.shape);
+                const int key = shapes.read[which].key;
+                keys.push_back(key >= 0 && (size_t)key < cut.size() ? cut[(size_t)key] : object{});
+            }
+            carry(read.say_fired(std::move(one), colors, [&](size_t which, const auto& cell) {
+                if (which >= keys.size()) return false;
+                return (cell.from_input && cell.waits < 0 && keys[which].holds(cell.row, cell.col)) ||
+                       (cell.waits_for(missing::a_recolor) && cell.about == shapes.read[which].target);
+            }));
         }
-        read.say_fired(std::move(one), colors, [&](size_t which, const auto& cell) {
-            if (which >= keys.size()) return false;
-            return (cell.from_input && cell.waits < 0 && keys[which].holds(cell.row, cell.col)) ||
-                   (cell.waits_for(missing::a_recolor) && cell.about == shapes.read[which].target);
-        });
     }
 
-    // A swap is said over the pieces, so it only has to hold where a piece is.
-    // Candidates that fail even that remain available to search.
+    // THE SWAPS, said over the pieces as one table: a color table trades several
+    // pairs, each shown in some pairs only (0d3d703e's 1 5, 2 6, 3 4 and 8 9).
+    // Every pair of it changed somewhere and lays no figure wrong
+    // (color_swap_candidates); the table is replayed on the hand the line
+    // leaves with BidiColorMap's own arithmetic, every pair of it at once
+    // (repaints_hold), and said only where it holds in every pair
+    // (brings_nearer).
     //
     // AND ONLY WHERE THE READING LET A COLOUR CHANGE AT ALL. A swap IS a
     // recolour, so a reading that matched every piece without one has already
@@ -237,36 +291,41 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                    one.paint == color;
         });
     };
-    if (read.allowed.recolor)
-        for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant)
-            if (const auto [first, second] = color_pair::from_index(variant);
-                inf.color_swaps.over_the_pieces[variant] &&
+    if (read.allowed.recolor && facts.hand_known) {
+        vector<int> table;
+        uint16_t traded = 0;
+        for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant) {
+            const auto [first, second] = color_pair::from_index(variant);
+            const uint16_t both = (uint16_t)(1u << first | 1u << second);
+            if (inf.color_swaps.over_the_pieces[variant] && !(traded & both) &&
                 !painted_by_the_line(first) && !painted_by_the_line(second) &&
                 !swap_already_claimed(inf, variant)) {
+                table.push_back(variant);
+                traded = (uint16_t)(traded | both);
+            }
+        }
+        const bool holds = !table.empty() &&
+            repaints_hold(facts, handed_pieces(facts, piece_pick::all()),
+                          [&](size_t, const partner_pieces&, int, int8_t* to) {
+                for (const int variant : table) {
+                    const auto [first, second] = color_pair::from_index(variant);
+                    to[first] = (int8_t)second;
+                    to[second] = (int8_t)first;
+                }
+                return true;
+            });
+        if (holds)
+            for (const int variant : table) {
+                const auto [first, second] = color_pair::from_index(variant);
                 const string says = to_string(first) + " and " + to_string(second) + " trade places";
-                read.say_fired(listed("Swap", says.c_str(), rule::swap_colors, (int8_t)variant), colors,
-                               [&](size_t, const auto& cell) {
+                carry(read.say_fired(listed("Swap", says.c_str(), rule::swap_colors, (int8_t)variant), colors,
+                                     [first, second](size_t, const auto& cell) {
                     return cell.waits_for(missing::a_recolor) &&
                            ((cell.color == first && cell.other == second) ||
                             (cell.color == second && cell.other == first));
-                });
+                }));
             }
-
-    // THE HAND AS THE LINE LEAVES IT: the cut's pieces carried through every rule
-    // already on the line, the hand the rules asked below are replayed on, laid
-    // under what is down where a piece sits on another, as the line is said.
-    replay_facts facts(inf, train, boundaries);
-    picks_on_hand hand_picks;
-    facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
-    for (const int8_t which : read.line)
-        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
-    // Carries the hand through a rule just said on the line. Once it cannot,
-    // the line no longer draws its picture, and no rule after lays a cell wrong
-    // (the sure rules first, below).
-    auto carry = [&](int8_t which) {
-        hand_picks.clear();
-        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
-    };
+    }
 
     // Validate the derived sequence on a separate hand before saying any of it.
     // The existing replays check each rule; they do not choose its pick or value.

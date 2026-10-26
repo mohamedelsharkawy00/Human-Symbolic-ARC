@@ -8,83 +8,86 @@
 2. Prefer solving for the general case rather than the specific puzzle given.
 3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the rule it lacks, built in the operator that owns it (read the whole operator list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
-5. New rules are compositions of existing operators where possible. Add an operator only when none exists.
-6. No binary operators, no hidden state in operators, prefer the DSL over preprocessing.
-7. The agent has priority over the old code: change it when it is wrong, and say so.
-8. Finish one stage completely and consistently before starting the next.
+5. A rule is said only after it is replayed on every training pair and seen to change something in every pair; a pair already finished asks only that it lay nothing wrong.
+   1. The replay runs the arithmetic the operator runs: a shared helper in `15_op_math.hpp` the operator (`src/ops.cpp`) calls.
+   2. Anything less would let the language say a rule the pairs don't back.
+6. New rules are compositions of existing operators where possible. Add an operator only when none exists.
+7. No binary operators, no hidden state in operators, prefer the DSL over preprocessing.
+8. The agent has priority over the old code: change it when it is wrong, and say so.
+9. Finish one stage completely and consistently before starting the next.
    1. Complete the work fully from message to message, never stop mid work on half states.
-9. A case that breaks an abstraction calls for reviewing the break, not abandoning the abstraction. Find the implementation bug or missing general distinction and fix it at its owner, without puzzle-specific exceptions. Revert unsafe code when needed, but keep the abstraction under investigation; reject it only when the evidence contradicts its shared definition.
-10. Every concept has one owner. If the same handling starts spreading into more places, stop and move it to its owner instead of patching each place (DRY, separation of concerns).
+10. A case that breaks an abstraction calls for reviewing the break, not abandoning the abstraction. Find the implementation bug or missing general distinction and fix it at its owner, without puzzle-specific exceptions. Revert unsafe code when needed, but keep the abstraction under investigation; reject it only when the evidence contradicts its shared definition.
+11. Every concept has one owner. If the same handling starts spreading into more places, stop and move it to its owner instead of patching each place (DRY, separation of concerns).
    1. Stay DRY (don't repeat yourself).
       1. Do not duplicate, core types have one home, include it rather than redefining.
       2. Keep one source of truth, state a fact once, derive the rest.
    2. Separation of concerns, strictly enforced in the project.
-11. Short, plain words, no jargon. The user often replies "TLDR": keep answers to a few lines.
+12. Short, plain words, no jargon. The user often replies "TLDR": keep answers to a few lines.
    1. ELI5, no jargon anywhere.
       1. If a term needs a decoder, explain it, drop it, or rename it.
       2. Name things with plain words that read like the question the thing answers.
       3. List structure only, telegraph level of conciseness.
       4. Never name anything using single letters, descriptive names are preferred.
-12. Think with the user first on design choices. Agreed work, just do.
+13. Think with the user first on design choices. Agreed work, just do.
    1. Never change anything before the user accepts first.
       1. The user prefers to think out loud with the agent, then act later.
       2. Do not rush, feeling rushed means slow down, not speed up.
-13. Don't ask the user to commit. The user says when.
-14. After every change, give the numbers: right, wrong, gained, lost.
-15. Be **ultra concise**.
+14. Don't ask the user to commit. The user says when.
+15. After every change, give the numbers: right, wrong, gained, lost.
+16. Be **ultra concise**.
    1. Compress toward principles.
    2. Never bind to the particular, shortness follows from generality.
    3. Be intensional, not extensional, state the property, negations close the world the property leaves open.
    4. Intensional applies to solutions too, prefer what holds on the whole domain over what holds on a subset.
-16. Write standard modern C++20.
+17. Write standard modern C++20.
    1. Do not assume older standards.
    2. Follow standard C++ library style, use namespaces.
    3. Avoid non-standard headers if a standard alternative exists.
    4. Write text files with LF: binary output mode in C++, newline="\n" in Python.
-17. Treat cleanliness as production-class on this year-long project.
+18. Treat cleanliness as production-class on this year-long project.
    1. Prefer the debt-free path.
    2. Clean up after adding anything, no obsolete files, no root clutter, tools in dedicated directories.
    3. Clean as you go.
-18. Less code is better than more code.
+19. Less code is better than more code.
    1. Prefer removal to addition, the best diff is a deletion.
    2. Every line must earn its keep, code that exists must justify itself.
-19. Never launch the app until the user accepts.
-20. Keep the console silent, all diagnostics and metrics go to files in `logs/`.
-21. Keep the build warning-free, give the compiler what it asks for.
-22. Comments are for the person reading the code, never for the agent. Keep only the comments that person needs to understand the code.
+20. Never launch the app until the user accepts.
+21. Keep the console silent, all diagnostics and metrics go to files in `logs/`.
+22. Keep the build warning-free, give the compiler what it asks for.
+23. Comments are for the person reading the code, never for the agent. Keep only the comments that person needs to understand the code.
    1. Placed above the line, never trailing.
    2. Prose, design stories, and experiment records live in `notes/`, in the note whose topic they belong to, not in code comments.
    3. A comment the reader does not need is bloat, read by every person and every agent who opens the file, every time.
-23. Do not steer the conversation.
+24. Do not steer the conversation.
    1. Answer what was asked, then stop, the user sets the pace and the topic.
    2. Match the user's granularity, one small step per exchange.
    3. If the agent wants to offer a next step, offer only one, the next in line, importance as the tiebreaker.
    4. Do not use the AskUserQuestion tool, ask in plain text.
    5. When the user rejects something, ask what failed, then propose.
    6. Never tell the user to stop, pause, take a break, or come back later, when to stop is the user's call alone.
-24. Truth first and foremost, the agent defaults truth-last, fluent before checked. It must not.
-25. Verify before asserting, flag guesses as guesses.
-26. If the agent is not sure, it should say so.
-27. Do not assume what is seen is all there is (WYSIATI).
+25. Truth first and foremost, the agent defaults truth-last, fluent before checked. It must not.
+26. Verify before asserting, flag guesses as guesses.
+27. If the agent is not sure, it should say so.
+28. Do not assume what is seen is all there is (WYSIATI).
    1. Read files whole. A partial read is a guess, and the part not read is where the answer usually is.
    2. Size is the only reason to read part of one, and it is the file that is big, never the folder it came from. Look before assuming which. Say so when it happens.
    3. The same applies to a change: read every caller of what was touched, not the change alone.
-28. Name the cause, not the symptom. A short principle beats a long checklist.
-29. A prompt costs the user effort, effort is spent because the obvious already failed, so what reaches the agent is never trivial.
-30. Prefer solutions that cannot fail, over solutions that usually work.
-31. Theories die in the logs, not in debate. When theory and log disagree, instrument, then decide.
+29. Name the cause, not the symptom. A short principle beats a long checklist.
+30. A prompt costs the user effort, effort is spent because the obvious already failed, so what reaches the agent is never trivial.
+31. Prefer solutions that cannot fail, over solutions that usually work.
+32. Theories die in the logs, not in debate. When theory and log disagree, instrument, then decide.
    1. When the answer is known, search for it in the evidence, its absence is the loudest signal.
-32. Machinery that never pays is debt, delete it once the evidence votes, un-building is progress.
-33. A trigger should be a verdict, not a timer. Prefer the system's own events over thresholds and magic numbers.
-34. Never undo an experiment before the user has seen its results, the verdict is the user's, never the agent's.
-35. Progressing is not converging, watch for the asymptotic crawl.
-36. When a mechanism fights the problem, ask what a human does, then implement that order.
-37. Check the code first, always.
-38. Be very careful and precise in what the agent says, the user does NOT miss a word.
+33. Machinery that never pays is debt, delete it once the evidence votes, un-building is progress.
+34. A trigger should be a verdict, not a timer. Prefer the system's own events over thresholds and magic numbers.
+35. Never undo an experiment before the user has seen its results, the verdict is the user's, never the agent's.
+36. Progressing is not converging, watch for the asymptotic crawl.
+37. When a mechanism fights the problem, ask what a human does, then implement that order.
+38. Check the code first, always.
+39. Be very careful and precise in what the agent says, the user does NOT miss a word.
    1. Read the user's words as exactly: a word means what it says ("all" is all). Where a default disagrees with the words, the words win; if unsure, ask.
-39. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing rules block the unsolved puzzles).
-40. A change is good when no solved puzzle is lost and no new "explained but unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
-41. The rules above are a result of the user being lazy-smart.
+40. Compare two runs with `scripts\readouts.py`: `solved <before> <after>` (lost and gained), `explained <before> <after>` (readings that claim every cell while their program does not fit the training pairs; must not grow), `missing <label>` (which missing rules block the unsolved puzzles).
+41. A change is good when no solved puzzle is lost and no new "explained but unsolved" appears. New wrong answers are allowed (the user, 2026-10-11).
+42. The rules above are a result of the user being lazy-smart.
 # 3. Command Port
 1. The GUI app listens on `127.0.0.1:<port>`, one TCP connection per command: connect, send one line, read one reply line (`ok ...` or `error ...`), app closes.
    1. The first app takes 2026 and each later one the next free port up, so two apps never fight, `--port N` says where to start looking.

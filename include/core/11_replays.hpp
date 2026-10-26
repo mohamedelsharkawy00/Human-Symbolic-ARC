@@ -507,11 +507,12 @@ inline optional<replayed> recolors_hold(const replay_facts& facts, const vector<
     });
 }
 
-// COLORS THAT TRADE PLACES AS A KEY PAIRS THEM, replayed: BidiColorMap past its
-// fixed pairs reads the key on each grid -- every piece not picked, along its
-// rows or its columns (key_swaps) -- and every cell of a picked piece in a color
-// the key pairs comes out in its partner's (repaints_hold). A key that names no
-// swap leaves them as they were, so that pair shows the rule at no work.
+// COLORS THAT TRADE PLACES, replayed as BidiColorMap trades them (swaps_of): a
+// fixed pair, or past those the pairs a key drawn in the grid names -- every
+// piece not picked, read along its rows or its columns (key_swaps) -- every cell
+// of a picked piece in a color the pair or the key names coming out in its
+// partner's (repaints_hold). A key that names no swap leaves them as they were,
+// so that pair shows the rule at no work.
 inline optional<replayed> key_swap_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                          int value) {
     vector<array<int8_t, COLOR_COUNT>> swaps(handed.size());
@@ -1538,22 +1539,33 @@ inline optional<replayed> symmetric_holds(const replay_facts& facts, const vecto
     });
 }
 
-// A PIECE'S BOX FILLED, replayed. AddColor paints every cell of each picked
-// piece's box in its one color -- laid under what is down (paint_holds), so it
-// fills only what the piece and every paint before it leave empty.
+// A PIECE'S BOX FILLED, replayed. AddColor paints the cells each picked piece
+// leaves empty in its box in one color, and the box is laid under what is down
+// (paint_holds) as the sentence lays it: the fill, and the piece itself in its
+// own colors -- where the line moved the piece, its old place shows it again
+// (834ec97d). The fill alone chooses the color.
 inline optional<replayed> box_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                     const vector<cells>& canvas) {
     using rule = correspondence_election::fired_rule;
-    return paint_holds(facts, handed, { rule::laid_under, &canvas, laying::in_one },
-                       [&](size_t, const partner_pieces& cut, auto&& put) {
-        for (int i = 0; i < cut.count(); ++i) {
-            if (!cut.picked[i]) continue;
-            const cell_box& box = cut.boxes[i];
-            for (int row = box.row0; row <= box.row1; ++row)
-                for (int col = box.col0; col <= box.col1; ++col) put(row, col, (int8_t)TRANSPARENT);
-        }
-        return true;
-    });
+    auto boxes = [](bool with_the_piece, int8_t fill) {
+        return [with_the_piece, fill](size_t, const partner_pieces& cut, auto&& put) {
+            for (int i = 0; i < cut.count(); ++i) {
+                if (!cut.picked[i]) continue;
+                const cell_box& box = cut.boxes[i];
+                for (int row = box.row0; row <= box.row1; ++row)
+                    for (int col = box.col0; col <= box.col1; ++col)
+                        if (const int8_t own = (int8_t)cut.color_at(i, row, col); !is_color(own)) put(row, col, fill);
+                        else if (with_the_piece) put(row, col, own);
+            }
+            return true;
+        };
+    };
+    const auto filled = paint_holds(facts, handed, { rule::laid_under, &canvas, laying::in_one },
+                                    boxes(false, (int8_t)TRANSPARENT));
+    if (!filled) return nullopt;
+    auto seen = paint_holds(facts, handed, { rule::laid_under, &canvas }, boxes(true, filled->paint));
+    if (seen) seen->paint = filled->paint;
+    return seen;
 }
 
 // WHICH ROOM A ROOM PAINT FILLS (filled_room's value), in the order a tie goes:
@@ -2095,6 +2107,51 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
             return false;
         }
     }
+    return true;
+}
+
+// WHAT A CHANGE OF THE HAND COMES TO, pair by pair (pair_tally): the hand
+// drawn before and after it as the line lays it (draw_the_hand), a cell gained
+// where the drawing changed to what the output shows there and wrong where it
+// changed to anything else. None where a pair does not lie over its output, or
+// a hand cannot be drawn.
+inline optional<vector<pair_tally>> hand_change(const replay_facts& before, const replay_facts& after) {
+    if (!before.overlays) return nullopt;
+    auto still = [](size_t) { return direction_step{ 0, 0 }; };
+    vector<pair_tally> tallies(before.cuts().size());
+    for (size_t which = 0; which < tallies.size(); ++which) {
+        const grid& output = before.train[which].output;
+        grid was(output.width, output.height), now(output.width, output.height);
+        if (!draw_the_hand(was, before.cuts()[which], before.laid_under, /*clip=*/true, still) ||
+            !draw_the_hand(now, after.cuts()[which], after.laid_under, /*clip=*/true, still))
+            return nullopt;
+        for (int row = 0; row < output.height; ++row)
+            for (int col = 0; col < output.width; ++col)
+                if (now.data[row][col] != was.data[row][col])
+                    ++(now.data[row][col] == output.data[row][col] ? tallies[which].gained : tallies[which].wrong);
+    }
+    return tallies;
+}
+
+// RULES CARRIED ON A COPY OF THE HAND, JUDGED AS ONE (brings_nearer) by what
+// they come to (hand_change): steps that read wrong alone -- a key recolored
+// and then removed, a piece moved before its recolor -- are judged together.
+inline bool hand_change_holds(const replay_facts& before, const replay_facts& after) {
+    const auto tallies = hand_change(before, after);
+    if (!tallies) return false;
+    for (size_t which = 0; which < tallies->size(); ++which)
+        if (!brings_nearer(before, which, (*tallies)[which])) return false;
+    return true;
+}
+
+// Whether a change of the hand changed something in every pair not finished
+// (replay_facts::finished): each rule of a chain judged as one is still seen
+// at work everywhere.
+inline bool hand_changes_everywhere(const replay_facts& before, const replay_facts& after) {
+    const auto tallies = hand_change(before, after);
+    if (!tallies) return false;
+    for (size_t which = 0; which < tallies->size(); ++which)
+        if (!before.finished(which) && (*tallies)[which].gained + (*tallies)[which].wrong == 0) return false;
     return true;
 }
 
