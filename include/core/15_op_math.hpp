@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <utility>
+#include <vector>
 
 namespace arc {
 using namespace std;
@@ -302,7 +303,23 @@ inline int overlapping_bands(int count, const int16_t* lows,
     return bands;
 }
 
-// REDUCE · Outline, Fit
+// THE BANDS `count` BOXES SIT IN, of rows or of columns, as overlapping_bands
+// groups them for Layout, SelectRow and SelectColumn: each box's band into
+// `band`, and how many bands there are. `box_of(i)` is box i.
+template <class BoxOf>
+inline int bands_of(int count, bool rows, BoxOf box_of, int8_t* band) {
+    count = min(count, MAX_GRID_CELLS);
+    int16_t lows[MAX_GRID_CELLS], highs[MAX_GRID_CELLS];
+    int order[MAX_GRID_CELLS];
+    for (int i = 0; i < count; ++i) {
+        const cell_box box = box_of(i);
+        lows[i] = (int16_t)(rows ? box.row0 : box.col0);
+        highs[i] = (int16_t)(rows ? box.row1 : box.col1);
+    }
+    return overlapping_bands(count, lows, highs, band, order);
+}
+
+// REDUCE · Outline, Fit, IntersectionList
 
 // The boundary used by Outline: any missing eight-way neighbour makes an edge.
 // The caller supplies occupancy, including false outside its own frame.
@@ -335,9 +352,20 @@ inline int fit_source_cell(int target_cell, int source_size, int target_size) {
     return target_cell * source_size / target_size;
 }
 
-// SELECT · SelectUnique, SelectAtLeastCells, SelectObjectsWithHoles,
-// SelectRunningAlong, SelectRowFromMiddle, WouldFit, SelectPartition,
-// SelectLikeKey, SelectPartner
+// WHAT IntersectionList KEEPS OF A CELL, for the op and the reading that
+// replays it: where every one of `count` pieces paints it, the first one's
+// color -- color_of(i) is piece i's there, TRANSPARENT where it paints none --
+// and nothing elsewhere.
+template <class ColorOf>
+inline int8_t intersected_cell(int count, ColorOf color_of) {
+    for (int i = 0; i < count; ++i)
+        if (color_of(i) == TRANSPARENT) return (int8_t)TRANSPARENT;
+    return count > 0 ? (int8_t)color_of(0) : (int8_t)TRANSPARENT;
+}
+
+// SELECT · SelectLargestObject and SelectSmallestObject, SelectUnique,
+// SelectAtLeastCells, SelectObjectsWithHoles, SelectRunningAlong,
+// SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey, SelectPartner
 
 // WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
 // many cells of its `height` by `width` box. Counted here for the op and for
@@ -407,6 +435,39 @@ inline void each_extreme(int count, bool most, Value value, Pick pick) {
     if (best == other) return;
     for (int i = 0; i < count; ++i)
         if (value(i) == best) pick(i);
+}
+
+// THE ORDER SelectLargestObject, SelectSmallestObject and SortBySize take
+// pieces in, said once for the ops and the readings that replay them: the
+// `count` pieces by their cells, cells_of(i) piece i's, the most first -- or
+// the fewest, `largest` false -- a tie keeping the order they came in. The
+// k-th piece of that order into order[k].
+template <class CellsOf>
+inline void size_order(int count, bool largest, CellsOf cells_of, int* order) {
+    count = max(count, 0);
+    vector<int> sizes((size_t)count);
+    for (int i = 0; i < count; ++i) {
+        sizes[(size_t)i] = cells_of(i);
+        order[i] = i;
+    }
+    stable_sort(order, order + count, [&](int one, int other) {
+        return largest ? sizes[(size_t)one] > sizes[(size_t)other] : sizes[(size_t)one] < sizes[(size_t)other];
+    });
+}
+
+// THE COLOR LAYERS Colors HANDS OVER, a color each, lowest first, in the order
+// SelectLargestObject -- or, `largest` false, SelectSmallestObject -- takes
+// them (size_order), `counts` how many cells each color has: into `colors`,
+// and how many there are.
+inline int layers_by_size(const color_tally& counts, bool largest, int8_t* colors) {
+    int8_t layers[COLOR_COUNT];
+    int count = 0;
+    for (int color = 0; color < COLOR_COUNT; ++color)
+        if (counts.has(color)) layers[count++] = (int8_t)color;
+    int order[COLOR_COUNT];
+    size_order(count, largest, [&](int i) { return counts[layers[i]]; }, order);
+    for (int i = 0; i < count; ++i) colors[i] = layers[order[i]];
+    return count;
 }
 
 // WHAT MAKES TWO PIECES TWINS, SelectUnique's value: the same drawing,
@@ -685,8 +746,8 @@ inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
     }
 }
 
-// TRANSLATE · NormalizeOrientation, ScaleDown, Shift, MoveToEdge, MoveToward,
-// SlamRow and SlamColumn, AlignToCanvas
+// TRANSLATE · NormalizeOrientation, ScaleDown, Layout, Shift, MoveToEdge,
+// MoveToward, SlamRow and SlamColumn, AlignToCanvas
 
 // A GRID LYING ON ITS SIDE runs along its rows, as a piece holding every cell
 // of it would (way_it_runs): it is wider than it is tall. NormalizeOrientation[0]
@@ -708,6 +769,43 @@ inline int8_t majority_vote(const cells& mask, int row, int col,
             if (source_row < height && source_col < width) tally.add(mask[source_row][source_col]);
         }
     return tally.most();
+}
+
+// WHERE Layout LAYS ITS PIECES, for the op and the readings that replay it: on
+// graph paper whose cells are `cell` wide and tall -- or, for 0, as wide as the
+// widest drawing and as tall as the tallest -- each piece in the cell of the
+// row band and the column band its frame, frame(i), sits in (bands_of). What
+// it draws is drawing(i), the box its paint fills in that frame, read by
+// color_at(i, row, col) there: copied unresized from that box's corner into
+// its cell, clipped to the cell and to the paper, each painted cell handed to
+// lay(row, col, color). Hands back the cell's size and the paper's, none where
+// there is nothing to lay out.
+struct layout_paper { int cell_width = 0, cell_height = 0, width = 0, height = 0; };
+template <class Frame, class Drawing, class ColorAt, class Lay>
+inline layout_paper lay_out(int count, int cell, Frame frame, Drawing drawing, ColorAt color_at, Lay lay) {
+    count = min(count, MAX_GRID_CELLS);
+    if (count <= 0 || cell < 0) return {};
+    layout_paper paper{ cell, cell };
+    if (cell == 0)
+        for (int i = 0; i < count; ++i) {
+            paper.cell_width = max(paper.cell_width, drawing(i).width());
+            paper.cell_height = max(paper.cell_height, drawing(i).height());
+        }
+    if (paper.cell_width <= 0 || paper.cell_height <= 0) return {};
+    int8_t row_band[MAX_GRID_CELLS], column_band[MAX_GRID_CELLS];
+    paper.height = min(bands_of(count, true, frame, row_band) * paper.cell_height, MAX_GRID_DIM);
+    paper.width = min(bands_of(count, false, frame, column_band) * paper.cell_width, MAX_GRID_DIM);
+    for (int i = 0; i < count; ++i) {
+        const cell_box held = drawing(i);
+        const int top = row_band[i] * paper.cell_height, left = column_band[i] * paper.cell_width;
+        for (int row = 0; row < min(paper.cell_height, held.height()); ++row)
+            for (int col = 0; col < min(paper.cell_width, held.width()); ++col) {
+                const int color = color_at(i, held.row0 + row, held.col0 + col);
+                if (top + row < paper.height && left + col < paper.width && color != TRANSPARENT)
+                    lay(top + row, left + col, color);
+            }
+    }
+    return paper;
 }
 
 // WHERE SHIFT MOVES A BOX, its own size away: one step that way (step_of), its

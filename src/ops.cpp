@@ -82,6 +82,10 @@ cell_box painted_box(const held_object& one) {
     return box;
 }
 
+// The box an object declares on the grid, its frame: what Layout and the band
+// picks read.
+cell_box frame_of(const held_object& one) { return { one.y0, one.x0, one.y1, one.x1 }; }
+
 // An object's first painted color in reading order, TRANSPARENT when it has none.
 int8_t first_color(const held_object& one) {
     for (int row = 0; row < one.height; ++row)
@@ -426,33 +430,23 @@ object_list& op_select_most_common_color(program_run& run, const object_list& fr
     return res;
 }
 
-// SortBySize: reorder the PICKED objects by pixel count, among the slots they
-// already occupy. Everything unpicked stays exactly where it is, so the act
-// touches only what was chosen -- the same law the other acts follow, said for
-// an ordering: a sort of some is a sort of their own places. Biggest first
-// when `biggest_first`. Nothing picked means nothing is reordered.
+// SortBySize: reorder the PICKED objects by pixel count (size_order), among the
+// slots they already occupy. Everything unpicked stays exactly where it is, so
+// the act touches only what was chosen -- the same law the other acts follow,
+// said for an ordering: a sort of some is a sort of their own places. Biggest
+// first when `biggest_first`. Nothing picked means nothing is reordered.
 object_list& op_sort_by_size(program_run& run, const object_list& from, bool biggest_first) {
     object_list& res = run.fresh();
     if (from.count <= 0) return res;
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
     copy_objects(res, from, count);
-    int slots[MAX_OBJECTS_IN_A_LIST], sizes[MAX_OBJECTS_IN_A_LIST], order[MAX_OBJECTS_IN_A_LIST];
+    int slots[MAX_OBJECTS_IN_A_LIST], order[MAX_OBJECTS_IN_A_LIST];
     int picked = 0;
     for (int i = 0; i < count; ++i)
-        if (from.objects[i].selected) {
-            slots[picked] = i;
-            order[picked] = i;
-            sizes[picked] = painted_count(from.objects[i]);
-            ++picked;
-        }
-    if (picked == 0) return res;
-    for (int i = 1; i < picked; ++i)
-        for (int j = i; j > 0 && (biggest_first ? sizes[j] > sizes[j - 1] : sizes[j] < sizes[j - 1]); --j) {
-            swap(sizes[j], sizes[j - 1]);
-            swap(order[j], order[j - 1]);
-        }
-    // The k-th picked slot receives the k-th object in sorted order.
-    for (int k = 0; k < picked; ++k) res.objects[slots[k]] = from.objects[order[k]];
+        if (from.objects[i].selected) slots[picked++] = i;
+    size_order(picked, biggest_first, [&](int k) { return painted_count(from.objects[slots[k]]); }, order);
+    // The k-th picked slot receives the k-th picked object in size order.
+    for (int k = 0; k < picked; ++k) res.objects[slots[k]] = from.objects[slots[order[k]]];
     return res;
 }
 
@@ -488,8 +482,8 @@ object_list& op_select_unique(program_run& run, const object_list& from, int8_t 
 }
 
 // SelectLargestObject[rank] / SelectSmallestObject[rank]: mark the rank-th
-// object by pixel count, biggest (or smallest) first. Past the ranks, every
-// object with the most -- or the fewest -- of a count (count_of).
+// object by pixel count, biggest (or smallest) first (size_order). Past the
+// ranks, every object with the most -- or the fewest -- of a count (count_of).
 object_list& op_select_object_by_size(program_run& run, const object_list& from, int rank, bool largest) {
     object_list& res = run.fresh();
     copy_list(res, from);
@@ -503,16 +497,8 @@ object_list& op_select_object_by_size(program_run& run, const object_list& from,
         return res;
     }
     if (rank < 0 || rank >= res.count) return res;
-    int sizes[MAX_OBJECTS_IN_A_LIST], order[MAX_OBJECTS_IN_A_LIST];
-    for (int i = 0; i < res.count; ++i) {
-        sizes[i] = painted_count(res.objects[i]);
-        order[i] = i;
-    }
-    for (int i = 1; i < res.count; ++i)
-        for (int j = i; j > 0 && (largest ? sizes[j] > sizes[j - 1] : sizes[j] < sizes[j - 1]); --j) {
-            swap(sizes[j], sizes[j - 1]);
-            swap(order[j], order[j - 1]);
-        }
+    int order[MAX_OBJECTS_IN_A_LIST];
+    size_order(res.count, largest, [&](int i) { return painted_count(res.objects[i]); }, order);
     res.objects[order[rank]].selected = true;
     return res;
 }
@@ -1282,25 +1268,19 @@ object_list& op_origin(program_run& run, const object_list& from) {
 
 // --- Reduce, folding a list ---
 
-// Intersect the objects whose `selected` equals `want` into ONE object (a cell
-// survives only where every such object is painted, on the shared smallest box
-// at the origin). Appends it to res carrying the shared flag if anything
-// survives. The first of the group gives the color.
+// Intersect the objects whose `selected` equals `want` into ONE object, each
+// cell as intersected_cell keeps it, on the shared smallest box at the origin.
+// Appends it to res carrying the shared flag if anything survives.
 void intersect_group(const object_list& from, bool want, object_list& res) {
-    int members = 0, first = -1, least_width = 0, least_height = 0;
+    int members[MAX_OBJECTS_IN_A_LIST], count = 0, least_width = 0, least_height = 0;
     for (int i = 0; i < from.count; ++i) {
-        if (from.objects[i].selected != want) continue;
-        if (first < 0) {
-            first = i;
-            least_width = from.objects[i].width;
-            least_height = from.objects[i].height;
-        } else {
-            least_width = min(least_width, (int)from.objects[i].width);
-            least_height = min(least_height, (int)from.objects[i].height);
-        }
-        ++members;
+        const held_object& one = from.objects[i];
+        if (one.selected != want) continue;
+        least_width = count ? min(least_width, (int)one.width) : one.width;
+        least_height = count ? min(least_height, (int)one.height) : one.height;
+        members[count++] = i;
     }
-    if (members == 0 || least_width <= 0 || least_height <= 0 || res.count >= MAX_OBJECTS_IN_A_LIST) return;
+    if (count == 0 || least_width <= 0 || least_height <= 0 || res.count >= MAX_OBJECTS_IN_A_LIST) return;
     held_object one;
     one.width = (int16_t)least_width; one.height = (int16_t)least_height;
     one.x1 = (int16_t)(least_width - 1); one.y1 = (int16_t)(least_height - 1);
@@ -1308,10 +1288,10 @@ void intersect_group(const object_list& from, bool want, object_list& res) {
     int kept = 0;
     for (int row = 0; row < least_height; ++row)
         for (int col = 0; col < least_width; ++col) {
-            bool every = true;
-            for (int i = 0; i < from.count && every; ++i)
-                every = from.objects[i].selected != want || from.objects[i].mask[row][col] != TRANSPARENT;
-            if (every) { one.mask[row][col] = from.objects[first].mask[row][col]; ++kept; }
+            const int8_t color = intersected_cell(count, [&](int k) { return from.objects[members[k]].mask[row][col]; });
+            if (color == TRANSPARENT) continue;
+            one.mask[row][col] = color;
+            ++kept;
         }
     if (kept == 0) return;
     res.objects[res.count++] = one;
@@ -1374,24 +1354,11 @@ object_list& op_union_list(program_run& run, const object_list& from) {
 
 // --- Bands ---
 
-// Bands for Layout: objects whose spans overlap meaningfully share a band
-// (overlapping_bands). `rows` reads vertical spans (row bands), else
-// horizontal (column bands). band_of[i] = the object's band rank.
-int layout_bands(const object_list& from, int count, bool rows, int8_t* band_of) {
-    int16_t lows[MAX_OBJECTS_IN_A_LIST], highs[MAX_OBJECTS_IN_A_LIST];
-    int order[MAX_OBJECTS_IN_A_LIST];
-    for (int i = 0; i < count; ++i) {
-        lows[i] = rows ? from.objects[i].y0 : from.objects[i].x0;
-        highs[i] = rows ? from.objects[i].y1 : from.objects[i].x1;
-    }
-    return overlapping_bands(count, lows, highs, band_of, order);
-}
-
 // WHICH BAND A PIECE SITS IN, not what the piece is. Every other selector names
 // something the piece carries -- its color, its holes, its size -- so none of
 // them can say "the middle row of them". This one names where a piece sits among
 // the others, which is a question about the arrangement and not about the piece.
-// Bands come from layout_bands, the same grouping Layout reads, so a row
+// Bands come from bands_of, the same grouping Layout reads, so a row
 // means one thing wherever it is asked about. Selectors ADD, so a band past the
 // last one marks nothing rather than clearing what is already picked.
 object_list& op_select_band(program_run& run, const object_list& from, int8_t which, bool rows) {
@@ -1400,7 +1367,7 @@ object_list& op_select_band(program_run& run, const object_list& from, int8_t wh
     const int count = min(res.count, MAX_OBJECTS_IN_A_LIST);
     if (count <= 0) return res;
     int8_t band_of[MAX_OBJECTS_IN_A_LIST];
-    layout_bands(res, count, rows, band_of);
+    bands_of(count, rows, [&](int i) { return frame_of(res.objects[i]); }, band_of);
     for (int i = 0; i < count; ++i)
         if (band_of[i] == which) res.objects[i].selected = true;
     return res;
@@ -1450,47 +1417,24 @@ object_list& op_select_from_middle(program_run& run, const object_list& from, in
 // Panes the bands are the panes' own rows and columns while each cell gets the
 // figure the pane holds, wherever it sat inside it.
 // Layout[0] reads the cell off the pieces instead of taking it as a number: as
-// wide as the widest drawing and as tall as the tallest.
+// wide as the widest drawing and as tall as the tallest. Where each drawing
+// lands is lay_out's (15_op_math.hpp), which the readings replay.
 object_list& op_layout(program_run& run, const object_list& from, int cell) {
     object_list& res = run.fresh();
-    const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
-    if (count <= 0 || cell < 0) return res;
-    // Where each drawing starts inside its frame, and the cell that holds them.
-    int8_t top_of[MAX_OBJECTS_IN_A_LIST], left_of[MAX_OBJECTS_IN_A_LIST];
-    int cell_width = cell, cell_height = cell;
-    for (int i = 0; i < count; ++i) {
-        const cell_box drawing = painted_box(from.objects[i]);
-        top_of[i] = (int8_t)(drawing.empty() ? 0 : drawing.row0);
-        left_of[i] = (int8_t)(drawing.empty() ? 0 : drawing.col0);
-        if (cell == 0) {
-            cell_width = max(cell_width, drawing.width());
-            cell_height = max(cell_height, drawing.height());
-        }
-    }
-    if (cell_width <= 0 || cell_height <= 0) return res;
-    int8_t row_band[MAX_OBJECTS_IN_A_LIST], column_band[MAX_OBJECTS_IN_A_LIST];
-    const int rows = layout_bands(from, count, true, row_band);
-    const int columns = layout_bands(from, count, false, column_band);
-    const int width = min(columns * cell_width, MAX_GRID_DIM);
-    const int height = min(rows * cell_height, MAX_GRID_DIM);
     held_object& laid = res.objects[0];
-    laid.x0 = 0; laid.y0 = 0;
-    laid.x1 = (int16_t)(width - 1); laid.y1 = (int16_t)(height - 1);
-    laid.width = (int16_t)width; laid.height = (int16_t)height;
     laid.mask.clear();
-    for (int i = 0; i < count; ++i) {
-        const held_object& source = from.objects[i];
-        const int at_col = column_band[i] * cell_width, at_row = row_band[i] * cell_height;
-        const int top = top_of[i], left = left_of[i];
+    const layout_paper paper = lay_out(min(from.count, MAX_OBJECTS_IN_A_LIST), cell,
+        [&](int i) { return frame_of(from.objects[i]); },
+        [&](int i) { return painted_box(from.objects[i]); },
         // Shift/Union can grow the box beyond what the mask holds.
-        const int source_height = min((int)source.height, MAX_GRID_DIM), source_width = min((int)source.width, MAX_GRID_DIM);
-        for (int row = 0; row < cell_height && top + row < source_height; ++row)
-            for (int col = 0; col < cell_width && left + col < source_width; ++col) {
-                const int to_row = at_row + row, to_col = at_col + col;
-                const int8_t color = source.mask[top + row][left + col];
-                if (to_row < height && to_col < width && color != TRANSPARENT) laid.mask[to_row][to_col] = color;
-            }
-    }
+        [&](int i, int row, int col) {
+            return row < MAX_GRID_DIM && col < MAX_GRID_DIM ? (int)from.objects[i].mask[row][col] : TRANSPARENT;
+        },
+        [&](int row, int col, int color) { laid.mask[row][col] = (int8_t)color; });
+    if (paper.width <= 0) return res;
+    laid.x0 = 0; laid.y0 = 0;
+    laid.x1 = (int16_t)(paper.width - 1); laid.y1 = (int16_t)(paper.height - 1);
+    laid.width = (int16_t)paper.width; laid.height = (int16_t)paper.height;
     res.count = 1;
     return res;
 }

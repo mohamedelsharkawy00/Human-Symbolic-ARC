@@ -17,8 +17,8 @@ namespace arc {
 // pieces as the cut hands them over: every one with `value` holes
 // (object_hole_count, the count SelectObjectsWithHoles makes), or the one `value`
 // down the order of painted cells, largest or smallest first, ties keeping the
-// order the pieces came in -- the insertion sort SelectLargestObject and
-// SelectSmallestObject run -- or the first `value` of that order, one selector
+// order the pieces came in -- the order SelectLargestObject and
+// SelectSmallestObject take (size_order) -- or the first `value` of it, one selector
 // a rank, or every one painting at least `value` cells, or every one with a
 // cell on the row or the column `value` lines past the middle of all the
 // pieces paint (line_from_middle), or every one running the way `value` names
@@ -121,12 +121,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         return picked;
     }
     vector<int> order(pieces.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
     const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks;
-    stable_sort(order.begin(), order.end(), [&](int one, int other) {
-        return largest ? pieces[one].summary.count > pieces[other].summary.count
-                       : pieces[one].summary.count < pieces[other].summary.count;
-    });
+    size_order((int)pieces.size(), largest, [&](int i) { return (int)pieces[(size_t)i].summary.count; }, order.data());
     if (how == piece_pick::largest || how == piece_pick::smallest) {
         if (value >= 0 && value < (int)order.size()) picked[order[value]] = true;
         return picked;
@@ -431,11 +427,8 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     const auto hole_range = row_of(node_type::SelectObjectsWithHoles);
     classes(piece_pick::by_holes, holes, hole_range.low, hole_range.high);
     for (const bool largest : {true, false}) {
-        vector<size_t> order;
-        for (size_t index = 0; index < count; ++index) order.push_back(index);
-        ranges::stable_sort(order, [&](size_t one, size_t other) {
-            return largest ? sizes[one] > sizes[other] : sizes[one] < sizes[other];
-        });
+        vector<int> order(count);
+        size_order((int)count, largest, [&](int index) { return sizes[(size_t)index]; }, order.data());
         group prefix(count, false);
         bool untied = true;
         for (size_t rank = 0; rank < count; ++rank) {
@@ -1180,12 +1173,11 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
     });
 }
 
-// THE PIECES LAID OUT: the ones a pick takes, as many as one list holds, each
-// drawn unresized into its own cell of graph paper `cell` wide -- or, for 0, as
-// wide as the widest and as tall as the tallest -- in the row band and column
-// band its box sits in (overlapping_bands, the grouping Layout and the band
-// picks read), clipped to the cell, the paper laid at the corner of the canvas
-// -- where each cell shows the piece it frames, and the canvas the paper
+// THE PIECES LAID OUT: the ones a pick takes, as many as one list holds, laid
+// out as Layout lays them (lay_out) on graph paper `cell` wide -- or, for 0, as
+// wide as the widest and as tall as the tallest -- each trimmed piece's box its
+// frame and its drawing, the paper laid at the corner of the canvas -- where
+// each cell shows the piece it frames, and the canvas the paper
 // (shows_what_it_frames).
 inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick, int cell, const grid& input,
                            const output_dimension_rule& size, grid& framed) {
@@ -1194,35 +1186,22 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
     vector<const object*> kept;
     for (size_t i = 0; i < pieces.size() && kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST; ++i)
         if (picked[i]) kept.push_back(&pieces[i]);
-    const int count = (int)kept.size();
-    if (count == 0) return false;
-    int cell_width = cell, cell_height = cell;
-    if (cell == 0)
-        for (const object* piece : kept) {
-            cell_width = max(cell_width, (int)piece->summary.width);
-            cell_height = max(cell_height, (int)piece->summary.height);
-        }
-    if (cell_width <= 0 || cell_height <= 0) return false;
-    vector<int8_t> row_band(count), col_band(count);
-    auto kept_box = [&](int i) { return kept[(size_t)i]->summary.box(); };
-    const int rows = bands_of(count, true, kept_box, row_band.data());
-    const int cols = bands_of(count, false, kept_box, col_band.data());
-    const int paper_width = min(cols * cell_width, MAX_GRID_DIM), paper_height = min(rows * cell_height, MAX_GRID_DIM);
-    grid paper(paper_width, paper_height);
-    for (int i = 0; i < count; ++i) {
-        const object& piece = *kept[i];
-        grid drawing(piece.summary.width, piece.summary.height);
-        for (int row = 0; row < piece.summary.height; ++row)
-            for (int col = 0; col < piece.summary.width; ++col) drawing.data[row][col] = piece.data[row][col];
-        if (!shows_what_it_frames(drawing, cell_height, cell_width)) return false;
-        const int top = row_band[i] * cell_height, left = col_band[i] * cell_width;
-        for (int row = 0; row < cell_height && row < piece.summary.height; ++row)
-            for (int col = 0; col < cell_width && col < piece.summary.width; ++col) {
-                const int at_row = top + row, at_col = left + col;
-                const int8_t color = piece.data[row][col];
-                if (at_row < paper_height && at_col < paper_width && color != (int8_t)TRANSPARENT)
-                    paper.data[at_row][at_col] = color;
-            }
+    grid paper(MAX_GRID_DIM, MAX_GRID_DIM);
+    const layout_paper laid = lay_out((int)kept.size(), cell, [&](int i) { return kept[(size_t)i]->summary.box(); },
+        [&](int i) {
+            const object_summary& box = kept[(size_t)i]->summary;
+            return cell_box{ 0, 0, box.height - 1, box.width - 1 };
+        },
+        [&](int i, int row, int col) { return (int)kept[(size_t)i]->data[row][col]; },
+        [&](int row, int col, int color) { paper.data[row][col] = (int8_t)color; });
+    if (laid.width <= 0) return false;
+    paper.width = laid.width;
+    paper.height = laid.height;
+    for (const object* piece : kept) {
+        grid drawing(piece->summary.width, piece->summary.height);
+        for (int row = 0; row < piece->summary.height; ++row)
+            for (int col = 0; col < piece->summary.width; ++col) drawing.data[row][col] = piece->data[row][col];
+        if (!shows_what_it_frames(drawing, laid.cell_height, laid.cell_width)) return false;
     }
     return draw_on_canvas(input, size, framed, [&](grid& canvas) {
         if (!shows_what_it_frames(paper, canvas.height, canvas.width)) return false;

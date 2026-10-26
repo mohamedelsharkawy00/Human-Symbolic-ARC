@@ -110,21 +110,10 @@ struct color_facts {
         output_colors_by_size_count = 0;
         if (train.empty()) return;
 
-        // Biggest first; returns how many colors this output actually has.
+        // Biggest first (layers_by_size); returns how many colors this output
+        // actually has.
         auto rank_for_output = [&](const grid& out, int8_t ranking[COLOR_COUNT]) -> int {
-            const color_tally counts(out);
-            // Only the first `present` entries are ever read, and each is written
-            // before it is, so there is nothing to start them at.
-            int order[COLOR_COUNT] = {}, present = 0;
-            for (int color = 0; color < COLOR_COUNT; ++color) {
-                if (counts[color] <= 0) continue;
-                order[present++] = color;
-            }
-            for (int i = 1; i < present; ++i)
-                for (int j = i; j > 0 && counts[order[j]] > counts[order[j-1]]; --j)
-                    swap(order[j], order[j-1]);
-            for (int i = 0; i < present; ++i) ranking[i] = (int8_t)order[i];
-            return present;
+            return layers_by_size(color_tally(out), true, ranking);
         };
 
         int8_t first_ranking[COLOR_COUNT] = {};
@@ -870,21 +859,6 @@ bool draw_on_canvas(const grid& input, const output_dimension_rule& size, grid& 
 }
 static_assert(row_of(node_type::Fit).high + 1 == (int)fit_to::count,
               "Fit takes one value for each target it stretches to");
-
-// THE BANDS `count` BOXES SIT IN, of rows or of columns, as overlapping_bands
-// groups them for Layout, SelectRow and SelectColumn: each box's band into
-// `band`, and how many bands there are. `box_of(i)` is box i.
-template <class BoxOf>
-inline int bands_of(int count, bool rows, BoxOf box_of, int8_t* band) {
-    vector<int16_t> lows((size_t)count), highs((size_t)count);
-    vector<int> order((size_t)count);
-    for (int i = 0; i < count; ++i) {
-        const cell_box box = box_of(i);
-        lows[(size_t)i] = (int16_t)(rows ? box.row0 : box.col0);
-        highs[(size_t)i] = (int16_t)(rows ? box.row1 : box.col1);
-    }
-    return overlapping_bands(count, lows.data(), highs.data(), band, order.data());
-}
 
 // Most objects a list can hold: one per cell of the biggest grid.
 constexpr int MAX_OBJECTS_IN_A_LIST = MAX_GRID_CELLS;

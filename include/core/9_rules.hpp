@@ -275,12 +275,11 @@ struct ray_extension_rule {
     vector<branch> branches;
     bool holds() const { return !branches.empty(); }
 
+    // The color layers as SelectSmallestObject takes them (layers_by_size).
     static bool rank_colors(const grid& input, ranked_colors& ranked) {
         const color_tally counts(input);
-        ranked.clear();
-        for (int color = 0; color < COLOR_COUNT; ++color)
-            if (counts[color]) ranked.push_back((int8_t)color);
-        sort(ranked.begin(), ranked.end(), [&](int8_t x, int8_t y) { return counts[x] < counts[y]; });
+        int8_t layers[COLOR_COUNT];
+        ranked.assign(layers, layers + layers_by_size(counts, false, layers));
         // Equal sizes do not establish a color-independent rank.
         for (size_t i = 1; i < ranked.size(); ++i)
             if (counts[ranked[i - 1]] == counts[ranked[i]]) return false;
@@ -1468,15 +1467,17 @@ struct ranked_layout_rule {
         if (!holds() || pair.input.empty() || discarded_colors < 0 || discarded_colors > COLOR_COUNT ||
             cell_size < 2 || cell_size > 10 || (split_mode != 0 && split_mode != 1)) return false;
 
-        const color_tally frequencies(pair.input);
+        // Each SelectMostCommonColor deletes the color most of what is left
+        // wears, as the op counts it (color_tally).
         bool removed[COLOR_COUNT] = {};
         for (int rank = 0; rank < discarded_colors; ++rank) {
-            int common = -1;
-            for (int color = 0; color < COLOR_COUNT; ++color) {
-                if (removed[color] || frequencies[color] == 0) continue;
-                if (common < 0 || frequencies[color] > frequencies[common]) common = color;
-            }
-            if (common >= 0) removed[common] = true;
+            color_tally left;
+            pair.input.for_each_colored_cell(TRANSPARENT, [&](int, int, int color) {
+                if (!removed[color]) left.add(color);
+            });
+            const int common = left.most();
+            if (common < 0) break;
+            removed[common] = true;
         }
 
         grid remaining(pair.input.width, pair.input.height);
@@ -1498,28 +1499,19 @@ struct ranked_layout_rule {
             });
         if (pieces.empty()) return false;
 
-        int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
-        auto piece_box = [&](int i) { return pieces[(size_t)i].summary.box(); };
-        const int rows = bands_of((int)pieces.size(), true, piece_box, row_of);
-        const int cols = bands_of((int)pieces.size(), false, piece_box, col_of);
-        const int width = min(cols * (int)cell_size, MAX_GRID_DIM);
-        const int height = min(rows * (int)cell_size, MAX_GRID_DIM);
+        // Trimmed, so each piece's box is its frame and its drawing, laid out
+        // as Layout lays them (lay_out).
+        grid arranged(MAX_GRID_DIM, MAX_GRID_DIM);
+        const layout_paper paper = lay_out((int)pieces.size(), cell_size,
+            [&](int i) { return pieces[(size_t)i].summary.box(); },
+            [&](int i) {
+                const object_summary& box = pieces[(size_t)i].summary;
+                return cell_box{ 0, 0, box.height - 1, box.width - 1 };
+            },
+            [&](int i, int row, int col) { return (int)pieces[(size_t)i].data[row][col]; },
+            [&](int row, int col, int color) { arranged.data[row][col] = (int8_t)color; });
+        const int width = paper.width, height = paper.height;
         if (width <= 0 || height <= 0) return false;
-
-        object arranged;
-        arranged.summary = {0, 0, (int8_t)width, (int8_t)height, 0};
-        for (int i = 0; i < (int)pieces.size(); ++i) {
-            const object& piece = pieces[i];
-            const int top = row_of[i] * cell_size;
-            const int left = col_of[i] * cell_size;
-            for (int row = 0; row < piece.summary.height && row < cell_size; ++row)
-                for (int col = 0; col < piece.summary.width && col < cell_size; ++col) {
-                    const int destination_row = top + row, destination_col = left + col;
-                    if (destination_row < height && destination_col < width &&
-                        piece.data[row][col] != TRANSPARENT)
-                        arranged.data[destination_row][destination_col] = piece.data[row][col];
-                }
-        }
 
         const int reduced_width = max((width + cell_size - 1) / cell_size, 1);
         const int reduced_height = max((height + cell_size - 1) / cell_size, 1);
@@ -1571,16 +1563,12 @@ struct rarest_color_rule {
     bool holds() const { return held; }
 
     static bool draw(const grid& input, grid& drawn) {
+        // The color layers as SelectSmallestObject takes them (layers_by_size).
         const color_tally counts(input);
-        int rarest = -1, colors = 0;
-        bool tied = false;
-        for (int color = 0; color < COLOR_COUNT; ++color) {
-            if (!counts[color]) continue;
-            ++colors;
-            if (rarest >= 0 && counts[color] == counts[rarest]) tied = true;
-            else if (rarest < 0 || counts[color] < counts[rarest]) { rarest = color; tied = false; }
-        }
-        if (colors < 2 || tied) return false;
+        int8_t ranked[COLOR_COUNT];
+        const int count = layers_by_size(counts, false, ranked);
+        if (count < 2 || counts[ranked[0]] == counts[ranked[1]]) return false;
+        const int rarest = ranked[0];
         cell_box bounds;
         for (int row = 0; row < input.height; ++row)
             for (int col = 0; col < input.width; ++col)

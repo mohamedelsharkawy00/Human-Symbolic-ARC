@@ -623,7 +623,7 @@ inline optional<replayed> picked_recolor_holds(const replay_facts& facts, const 
 // ONE PAIR'S HAND AS SizeRankColorMap'S SENTENCE RANKS IT (beats_of): where the
 // cut takes every cell of one color as one piece, each split into its connected
 // pieces first (Split [0]), then biggest first, ties keeping that order
-// (SortBySize [0]). The n-th piece takes the palette's n-th color.
+// (SortBySize [0], size_order). The n-th piece takes the palette's n-th color.
 inline vector<object> ranked_by_size(const vector<object>& hand, const grid& input, segmentation_methods cut) {
     vector<object> ranked;
     if (cut != segmentation_methods::all_cells_of_one_color) ranked = hand;
@@ -637,9 +637,11 @@ inline vector<object> ranked_by_size(const vector<object>& hand, const grid& inp
                 ranked.push_back(object::from_cells(layer, box, cells, count));
             });
         }
-    stable_sort(ranked.begin(), ranked.end(), [](const object& one, const object& other) {
-        return one.summary.count > other.summary.count; });
-    return ranked;
+    vector<int> order(ranked.size());
+    size_order((int)ranked.size(), true, [&](int i) { return (int)ranked[(size_t)i].summary.count; }, order.data());
+    vector<object> sorted;
+    for (const int i : order) sorted.push_back(ranked[(size_t)i]);
+    return sorted;
 }
 
 // SIZE RANK, replayed. SizeRankColorMap takes the pieces as the line hands them
@@ -1663,18 +1665,15 @@ inline const fenced_room* room_chosen(const vector<fenced_room>& rooms, int chos
         const auto found = ranges::find(rooms, room_part(chosen), &fenced_room::part);
         return found == rooms.end() || found->shared ? nullptr : &*found;
     }
-    const bool largest = room_largest(chosen);
     const size_t rank = (size_t)room_rank(chosen);
     if (rank >= rooms.size()) return nullptr;
-    vector<const fenced_room*> ranked;
-    for (const fenced_room& room : rooms) ranked.push_back(&room);
-    ranges::stable_sort(ranked, [&](const fenced_room* one, const fenced_room* other) {
-        return largest ? one->cells.size() > other->cells.size() : one->cells.size() < other->cells.size();
-    });
-    const size_t size = ranked[rank]->cells.size();
-    const bool tied = (rank > 0 && ranked[rank - 1]->cells.size() == size) ||
-                      (rank + 1 < ranked.size() && ranked[rank + 1]->cells.size() == size);
-    return tied ? nullptr : ranked[rank];
+    vector<int> order(rooms.size());
+    size_order((int)rooms.size(), room_largest(chosen), [&](int i) { return (int)rooms[(size_t)i].cells.size(); },
+               order.data());
+    auto cells_at = [&](size_t at) { return rooms[(size_t)order[at]].cells.size(); };
+    const bool tied = (rank > 0 && cells_at(rank - 1) == cells_at(rank)) ||
+                      (rank + 1 < order.size() && cells_at(rank + 1) == cells_at(rank));
+    return tied ? nullptr : &rooms[(size_t)order[rank]];
 }
 
 // A ROOM FILLED, replayed. Partition hands back the ground of each part the

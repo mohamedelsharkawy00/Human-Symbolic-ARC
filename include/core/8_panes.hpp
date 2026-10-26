@@ -355,6 +355,22 @@ struct pane_mask_rule {
     bool held = false;
     bool holds() const { return held; }
 
+    // A mask holds a bit a pane in a byte (may_copy), so it counts eight at most.
+    static constexpr int MOST_PANES = 8;
+
+    // HOW ITS OPERATORS SAY THE TABLE (say_panes), read off it and kept only
+    // where they redraw every output as they draw (draw_said): one color laid
+    // where every pane has something, any pane, exactly one, or none; or an
+    // order, the first pane that has something winning in its own colors, or
+    // the panes' colors winning one before another, the ground laid under
+    // either. Unsaid where none of them redraws the outputs.
+    enum class said_as : int8_t { unsaid, every_pane, any_pane, one_pane, no_pane, first_pane, first_color };
+    said_as as = said_as::unsaid;
+    // The color the four shapes lay, the ground the orders lay under, and the
+    // colors in the order they win.
+    int8_t lit = -1, ground = TRANSPARENT;
+    int8_t wins[MOST_PANES] = {};
+
     // What pane p shows at (r, c). The first pane is read as it lies; the rest
     // are turned into its frame, which is what makes them comparable.
     static int shown(const vector<pane_split_facts::pane>& boxes, int p, const grid& input,
@@ -377,7 +393,7 @@ struct pane_mask_rule {
         pane_mask_rule rule;
         if (train.size() != split.pairs.size() || split.pairs.empty()) return {};
         const int panes = (int)split.pairs.front().size();
-        if (panes < 2 || panes > 8) return {};
+        if (panes < 2 || panes > MOST_PANES) return {};
         rule.panes = (int8_t)panes;
         rule.posed = (int8_t)pose;
         rule.by_mask.assign((size_t)1 << panes, {});
@@ -453,6 +469,143 @@ struct pane_mask_rule {
         return true;
     }
 
+    // WHAT ITS OPERATORS DRAW of one input, as each op draws: every pane after
+    // the first turned by the pose, all of them stacked at the corner, then
+    // folded -- IntersectionList as the op folds (intersected_cell), UnionList
+    // a later pane over an earlier, as the op lays them -- recolored, laid over
+    // or under one another or cleared; and under an order, the ground laid
+    // beneath it across the whole pane wherever the input holds anything to
+    // cut. False where the split will not cut this grid as the pairs were cut.
+    bool draw_said(const grid& input, const pane_split_facts& split, grid& drawn) const {
+        vector<pane_split_facts::pane> boxes;
+        if (as == said_as::unsaid || !split.panes_of(input, boxes) || (int)boxes.size() != panes) return false;
+        const auto& first = boxes.front();
+        for (const auto& box : boxes)
+            if (box.width != first.width || box.height != first.height || !box.keeps_size(posed)) return false;
+        auto at = [&](int p, int r, int c) { return shown(boxes, p, input, r, c, posed); };
+        // Whether the input holds anything to cut, and the panes anything at all.
+        bool figures = false, covered = false;
+        input.for_each_colored_cell(TRANSPARENT, [&](int, int, int) { figures = true; });
+        for (int r = 0; r < first.height; ++r)
+            for (int c = 0; c < first.width; ++c)
+                for (int p = 0; p < panes; ++p) covered = covered || at(p, r, c) != TRANSPARENT;
+        const bool order = as == said_as::first_pane || as == said_as::first_color;
+        drawn = grid(first.width, first.height);
+        for (int r = 0; r < drawn.height; ++r)
+            for (int c = 0; c < drawn.width; ++c) {
+                const int every = intersected_cell(panes, [&](int p) { return at(p, r, c); });
+                int earliest = TRANSPARENT, latest = TRANSPARENT;
+                for (int p = 0; p < panes; ++p)
+                    if (const int color = at(p, r, c); color != TRANSPARENT) {
+                        if (earliest == TRANSPARENT) earliest = color;
+                        latest = color;
+                    }
+                int laid = TRANSPARENT;
+                switch (as) {
+                case said_as::every_pane: if (every != TRANSPARENT) laid = lit; break;
+                case said_as::any_pane:   if (latest != TRANSPARENT) laid = lit; break;
+                case said_as::one_pane:   if (latest != TRANSPARENT && every == TRANSPARENT) laid = lit; break;
+                // The union filled to its box in the color, and that color's cells kept.
+                case said_as::no_pane:    if (covered && (latest == TRANSPARENT || latest == lit)) laid = lit; break;
+                case said_as::first_pane: laid = earliest; break;
+                case said_as::first_color:
+                    for (int i = 0; i < panes && laid == TRANSPARENT; ++i)
+                        for (int p = 0; p < panes; ++p)
+                            if (at(p, r, c) == wins[i]) laid = wins[i];
+                    break;
+                default: break;
+                }
+                if (laid == TRANSPARENT && order && figures) laid = ground;
+                drawn.data[r][c] = (int8_t)laid;
+            }
+        return true;
+    }
+
+    // Reads off the table how its operators say it, each way in the order a tie
+    // goes, and keeps the first whose operators redraw every output.
+    void read_how_said(const vector<example>& train, const pane_split_facts& split) {
+        auto holds_as = [&](said_as shape, int paint, int under) {
+            as = shape;
+            lit = (int8_t)paint;
+            ground = (int8_t)under;
+            if (redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                    return draw_said(pair.input, split, drawn); }))
+                return true;
+            as = said_as::unsaid;
+            return false;
+        };
+        const int patterns = 1 << panes;
+        if (!by_mask[0].said()) return;
+        // What each pattern lays: a color, nothing, or a pane copied.
+        constexpr int copies = -2;
+        auto laid = [&](int m) -> int {
+            return by_mask[m].leaves_empty ? TRANSPARENT : by_mask[m].paint >= 0 ? by_mask[m].paint : copies;
+        };
+        // WHICH COLOR IS THE GROUND IS NOT OBVIOUS. The pattern where no pane has
+        // anything is the ground for most shapes -- and is the one and only thing
+        // NOR paints, so assuming it costs every NOR its sentence. Each color in
+        // the table is tried as the ground instead, and the shape that holds names
+        // it. THE ELECTED GROUND IS TRIED FIRST, and that is not a preference but
+        // the whole difference between two readings of one table. A table that
+        // says "8 where no pane has anything, 0 everywhere else" reads equally as
+        // NOR painting 8 and as OR painting 0 -- and only the first is a program,
+        // since painting the ground is not the same as leaving it there.
+        // WHERE A PLAN DELETED THE GROUND the table leaves those cells empty, and
+        // empty is the ground: nothing paints it, the plan fills it last.
+        int8_t grounds[COLOR_COUNT + 1];
+        int ground_count = 0;
+        for (int m = 0; m < patterns; ++m) {
+            const int color = by_mask[m].said() ? laid(m) : copies;
+            if (color == copies || find(grounds, grounds + ground_count, color) != grounds + ground_count) continue;
+            grounds[ground_count++] = (int8_t)color;
+        }
+        for (int g = 0; g < ground_count; ++g) {
+            // The four shapes lay one color wherever they lay anything.
+            int paint = -1;
+            bool one_paint = true;
+            for (int m = 0; m < patterns && one_paint; ++m) {
+                if (!by_mask[m].said() || laid(m) == grounds[g]) continue;
+                one_paint = laid(m) >= 0 && (paint < 0 || paint == laid(m));
+                paint = laid(m);
+            }
+            if (!one_paint || paint < 0) continue;
+            auto shape_holds = [&](auto predicate) {
+                for (int m = 0; m < patterns; ++m)
+                    if (by_mask[m].said() && predicate(m) != (laid(m) != grounds[g])) return false;
+                return true;
+            };
+            if ((shape_holds([&](int m) { return m == patterns - 1; }) && holds_as(said_as::every_pane, paint, TRANSPARENT)) ||
+                (shape_holds([](int m) { return m != 0; }) && holds_as(said_as::any_pane, paint, TRANSPARENT)) ||
+                (shape_holds([](int m) { return popcount((unsigned)m) == 1; }) && holds_as(said_as::one_pane, paint, TRANSPARENT)) ||
+                (shape_holds([](int m) { return m == 0; }) && holds_as(said_as::no_pane, paint, TRANSPARENT)))
+                return;
+        }
+        // AN ORDER, when the panes do not agree and one of them always wins, laid
+        // over what the pattern where no pane has anything lays. THE PANES LAID
+        // DOWN AS THEY COME, the first that has anything winning, need nothing
+        // named, so they say panes whose colors are not one apiece too.
+        const int under = laid(0);
+        if (under == copies || holds_as(said_as::first_pane, -1, under)) return;
+        // The panes' own colors, one color a pane, in the order read off the
+        // table: whoever takes the pattern where every pane is still in wins
+        // first, then the same question again without it.
+        int8_t alone[MOST_PANES];
+        for (int p = 0; p < panes; ++p) {
+            alone[p] = by_mask[(size_t)1 << p].said() ? by_mask[(size_t)1 << p].paint : (int8_t)-1;
+            if (alone[p] < 0) return;
+        }
+        int count = 0;
+        for (int left = patterns - 1; left && by_mask[left].said() && count < panes;) {
+            int won = -1;
+            for (int p = 0; p < panes && won < 0; ++p)
+                if ((left >> p & 1) && alone[p] == by_mask[left].paint) won = p;
+            if (won < 0) break;
+            wins[count++] = alone[won];
+            left &= ~(1 << won);
+        }
+        if (count == panes) holds_as(said_as::first_color, -1, under);
+    }
+
     // Tries every pose and keeps the plainest one that redraws every output. As
     // is comes first, so a pose is only ever worn when it is doing work.
     // With no ground color, "nothing here" is an empty cell: what is left
@@ -461,10 +614,13 @@ struct pane_mask_rule {
                                  const pane_split_facts& split) {
         if (!split.holds()) return {};
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
-            const pane_mask_rule rule = read_with(train, split, pose);
+            pane_mask_rule rule = read_with(train, split, pose);
             if (rule.holds() && redraws_every_output(train, [&](const example& pair, grid& drawn) {
                     return rule.draw(pair.input, split, drawn);
-                })) return rule;
+                })) {
+                rule.read_how_said(train, split);
+                return rule;
+            }
         }
         return {};
     }
@@ -677,45 +833,27 @@ struct pane_gather_rule {
 
     // Draws what the sentence paints for one input, on the canvas the size rule
     // gives it -- or, under BoundingBox, on the largest canvas there is, closed on
-    // what was painted, as the ops close it. Declines when no pane holds
+    // what was painted, as the ops close it -- each pane's drawing laid out as
+    // Layout lays it (lay_out), its frame the pane. Declines when no pane holds
     // anything, since then nothing is laid out at all.
     static bool draw(const grid& input, const pane_split_facts& split, const output_dimension_rule& size,
                      grid& drawn) {
         vector<pane_split_facts::pane> boxes;
         if (!split.panes_of(input, boxes) || boxes.empty() ||
             (int)boxes.size() > MAX_OBJECTS_IN_A_LIST) return false;
-        const int count = (int)boxes.size();
-        // What each pane holds, and the cell that holds the largest of them.
-        vector<cell_box> drawings((size_t)count);
-        int cell_w = 0, cell_h = 0;
-        for (int p = 0; p < count; ++p) {
-            const auto& box = boxes[(size_t)p];
-            for (int r = 0; r < box.height; ++r)
-                for (int c = 0; c < box.width; ++c)
-                    if (box.color_at(input, r, c) != TRANSPARENT) drawings[(size_t)p].include_cell(r, c);
-            cell_w = max(cell_w, drawings[(size_t)p].width());
-            cell_h = max(cell_h, drawings[(size_t)p].height());
-        }
-        if (cell_w == 0 || cell_h == 0) return false;
-        // The bands come off the frames, the same grouping Layout reads.
-        int8_t row_of[MAX_OBJECTS_IN_A_LIST], col_of[MAX_OBJECTS_IN_A_LIST];
-        auto frame = [&](int p) { return boxes[(size_t)p].box(); };
-        const int rows = bands_of(count, true, frame, row_of), cols = bands_of(count, false, frame, col_of);
-        const int laid_w = min(cols * cell_w, MAX_GRID_DIM), laid_h = min(rows * cell_h, MAX_GRID_DIM);
+        // What each pane holds: the box its paint fills, in the pane.
+        vector<cell_box> drawings(boxes.size());
+        for (size_t p = 0; p < boxes.size(); ++p)
+            for (int r = 0; r < boxes[p].height; ++r)
+                for (int c = 0; c < boxes[p].width; ++c)
+                    if (boxes[p].color_at(input, r, c) != TRANSPARENT) drawings[p].include_cell(r, c);
         return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
-            for (int p = 0; p < count; ++p) {
-                const auto& box = boxes[(size_t)p];
-                const cell_box& drawing = drawings[(size_t)p];
-                for (int r = 0; r < min(cell_h, drawing.height()); ++r)
-                    for (int c = 0; c < min(cell_w, drawing.width()); ++c) {
-                        const int row = row_of[p] * cell_h + r, col = col_of[p] * cell_w + c;
-                        const int color = box.color_at(input, drawing.row0 + r, drawing.col0 + c);
-                        if (color == TRANSPARENT || row >= min(laid_h, canvas.height) ||
-                            col >= min(laid_w, canvas.width)) continue;
-                        canvas.data[row][col] = (int8_t)color;
-                    }
-            }
-            return true;
+            return lay_out((int)boxes.size(), 0, [&](int p) { return boxes[(size_t)p].box(); },
+                [&](int p) { return drawings[(size_t)p]; },
+                [&](int p, int row, int col) { return boxes[(size_t)p].color_at(input, row, col); },
+                [&](int row, int col, int color) {
+                    if (canvas.contains(row, col)) canvas.data[row][col] = (int8_t)color;
+                }).width > 0;
         });
     }
 

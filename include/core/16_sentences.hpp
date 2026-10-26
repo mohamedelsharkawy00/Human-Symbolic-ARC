@@ -29,7 +29,6 @@
 #pragma once
 #include "13_infer.hpp"
 #include "14_vocabulary.hpp"
-#include <bit>
 #include <optional>
 #include <tuple>
 #include <string>
@@ -529,14 +528,15 @@ inline bool say_input_blocks(const inference& inf, said_reading& said) {
     return true;
 }
 
-// THE PANES, SAID. The split cut the input into panes and the mask says what
-// they come to; both are facts, so the program is read off them and nothing is
-// tried. Every sentence here opens with a GET of its own, which is why it does
-// not go through say_sentence: that one carries the hand forward with
-// CurrentObjects, and a sentence that carried the hand forward would carve what
-// the last sentence left instead of the input -- right-looking and silently
-// wrong. Origin is what stacks the panes; without it they stay where they were
-// cut and nothing lines up.
+// THE PANES, SAID. The split cut the input into panes, and the mask read how
+// its operators say what they come to and replayed them (pane_mask_rule::as);
+// both are facts, so the program is read off them and nothing is tried. Every
+// sentence here opens with a GET of its own, which is why it does not go
+// through say_sentence: that one carries the hand forward with CurrentObjects,
+// and a sentence that carried the hand forward would carve what the last
+// sentence left instead of the input -- right-looking and silently wrong.
+// Origin is what stacks the panes; without it they stay where they were cut
+// and nothing lines up.
 inline bool say_panes(const inference& inf, said_reading& said) {
     const auto& split = inf.pane_split;
     const auto& mask = inf.pane_mask;
@@ -559,160 +559,51 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         for (const string& written : operators_for_pose(mask.posed)) turn += " " + written;
         turn += " SelectAll";
     }
-    const int panes = mask.panes;
-    if (panes < 2 || panes > 8) return false;
-    const int patterns = 1 << panes;
-    const auto& says = mask.by_mask;
-    if ((int)says.size() != patterns || !says[0].said()) return false;
-    // WHICH COLOR IS THE GROUND IS NOT OBVIOUS. The pattern where no pane has
-    // anything is the ground for most shapes -- and is the one and only thing
-    // NOR paints, so assuming it costs every NOR its sentence. Each color in the
-    // table is tried as the ground instead, and the shape that holds names it.
-    // THE ELECTED GROUND IS TRIED FIRST, and that is not a preference but the
-    // whole difference between two readings of one table. A table that says
-    // "8 where no pane has anything, 0 everywhere else" reads equally as NOR
-    // painting 8 and as OR painting 0 -- and only the first is a program, since
-    // painting the ground is not the same as leaving it there.
-    // WHERE A PLAN DELETED THE GROUND the table leaves those cells empty, and
-    // empty is the ground: nothing paints it, the plan fills it last. What each
-    // pattern lays is a color, nothing, or a pane copied -- never confused.
-    constexpr int copies = -2;
-    auto laid = [&](int m) -> int {
-        return says[m].leaves_empty ? TRANSPARENT : says[m].paint >= 0 ? says[m].paint : copies;
-    };
-    int8_t grounds[COLOR_COUNT + 2];
-    int ground_count = 0;
-    auto offer = [&](int color) {
-        if ((!is_color(color) && color != TRANSPARENT) || ground_count > COLOR_COUNT) return;
-        for (int g = 0; g < ground_count; ++g) if (grounds[g] == color) return;
-        grounds[ground_count++] = (int8_t)color;
-    };
-    for (int m = 0; m < patterns; ++m) {
-        if (says[m].said()) offer(laid(m));
-    }
-    if (ground_count == 0) return false;
-
-    // Each pane's own color is what it alone comes to.
-    int8_t alone[8];
-    bool one_color_each = true;
-    for (int p = 0; p < panes; ++p) {
-        const auto& only = says[(size_t)1 << p];
-        alone[p] = only.said() ? only.paint : (int8_t)-1;
-        if (alone[p] < 0) one_color_each = false;
-    }
-
-    const string head = (string("Input") + " Panes") + (turn.empty() ? " SelectAll" : turn) + " Origin";
-    for (int g = 0; g < ground_count; ++g) {
-        const int8_t ground = grounds[g];
-        // Every pattern that paints must paint the same color for the four
-        // boolean shapes; a table that does not is an order, or nothing said.
-        int8_t lit_color = -1;
-        bool one_lit_color = true;
-        for (int m = 0; m < patterns; ++m) {
-            if (!says[m].said() || laid(m) == ground) continue;
-            if (laid(m) < 0) { one_lit_color = false; break; }
-            if (lit_color < 0) lit_color = (int8_t)laid(m);
-            else if (lit_color != laid(m)) { one_lit_color = false; break; }
-        }
-        if (!one_lit_color || lit_color < 0) continue;
-        auto shape_holds = [&](auto predicate) {
-            for (int m = 0; m < patterns; ++m) {
-                if (!says[m].said()) continue;
-                if (predicate(m) != (laid(m) != ground)) return false;
-            }
-            return true;
-        };
-        const string recolor = " " + spell("Recolor", lit_color);
-        if (shape_holds([&](int m) { return m == patterns - 1; })) {
-            say_closed(said, head + " IntersectionList" + recolor, "Union");
-            return true;
-        }
-        if (shape_holds([&](int m) { return m != 0; })) {
-            say_closed(said, head + " UnionList" + recolor, "Union");
-            return true;
-        }
-        if (shape_holds([&](int m) { return popcount((unsigned)m) == 1; })) {
-            // Everything the panes cover, less what they all agree on.
-            say_closed(said, head + " UnionList" + recolor, "Union");
-            say_closed(said, head + " IntersectionList", "Difference");
-            return true;
-        }
-        if (shape_holds([&](int m) { return m == 0; })) {
-            // What the panes do NOT cover: fill the box, then keep only the fill.
-            say_closed(said, head + " UnionList " + spell("AddColor", lit_color) + (" " + string("Colors") + " ") +
-                             spell("SelectColor", lit_color) + " InvertSelection DeleteSelection", "Union");
-            return true;
-        }
-    }
-
-    // AN ORDER, when the panes do not agree and one of them always wins. Read
-    // off the table: whoever takes the pattern where every pane is still in wins
-    // first, then the same question again without it.
-    const int ground = laid(0);
-    const bool ground_known = is_color(ground) || ground == TRANSPARENT;
+    if (!mask.by_mask[0].said()) return false;
+    using shape = pane_mask_rule::said_as;
+    const string stacked = (turn.empty() ? string(" SelectAll") : turn) + " Origin";
+    const string head = "Input Panes" + stacked;
+    const string recolor = " " + spell("Recolor", mask.lit);
     // The ground is laid last, under everything already painted, since the
     // canvas starts empty when the outputs elect no ground. Left empty, it is
     // the plan's to fill, and nothing here lays it. Panes cut after a plan
     // deleted the ground have empty cells, filled before they are recolored.
     auto lay_ground = [&] {
-        if (!is_color(ground)) return;
-        const string fill = !inf.plan.keeps() ? spell("AddColor", ground) + " " : string();
-        say_closed(said, "Input Panes SelectAll Origin " + fill + spell("Recolor", ground), "Underlay");
+        if (!is_color(mask.ground)) return;
+        const string fill = !inf.plan.keeps() ? spell("AddColor", mask.ground) + " " : string();
+        say_closed(said, "Input Panes SelectAll Origin " + fill + spell("Recolor", mask.ground), "Underlay");
     };
-    // THE PANES LAID DOWN AS THEY COME, when what wins is simply the first pane
-    // that has anything. Nothing has to be named, so this says the panes whose
-    // colors are not one apiece too -- including the ones that never overlap,
-    // where there is no order to get wrong.
-    if (ground_known) {
-        bool list_order = true;
-        for (int m = 1; m < patterns && list_order; ++m) {
-            if (!says[m].said()) continue;
-            int first = -1;
-            for (int p = 0; p < panes && first < 0; ++p) if (m >> p & 1) first = p;
-            list_order = says[m].copy_pane == first ||
-                         (says[m].paint >= 0 && alone[first] == says[m].paint);
-        }
-        if (list_order) {
-            say_closed(said, head, "Underlay");
-            lay_ground();
-            return true;
-        }
+    switch (mask.as) {
+    case shape::every_pane:
+        say_closed(said, head + " IntersectionList" + recolor, "Union");
+        return true;
+    case shape::any_pane:
+        say_closed(said, head + " UnionList" + recolor, "Union");
+        return true;
+    case shape::one_pane:
+        // Everything the panes cover, less what they all agree on.
+        say_closed(said, head + " UnionList" + recolor, "Union");
+        say_closed(said, head + " IntersectionList", "Difference");
+        return true;
+    case shape::no_pane:
+        // What the panes do NOT cover: fill the box, then keep only the fill.
+        say_closed(said, head + " UnionList " + spell("AddColor", mask.lit) + " Colors " +
+                         spell("SelectColor", mask.lit) + " InvertSelection DeleteSelection", "Union");
+        return true;
+    case shape::first_pane:
+        say_closed(said, head, "Underlay");
+        lay_ground();
+        return true;
+    case shape::first_color:
+        for (int i = 0; i < mask.panes; ++i)
+            say_closed(said, "Input Colors " + spell("SelectColor", mask.wins[i]) +
+                             " InvertSelection DeleteSelection Panes" + stacked, i == 0 ? "Union" : "Underlay");
+        lay_ground();
+        return true;
+    default:
+        said.no_operator_for.push_back("what the panes come to");
+        return false;
     }
-    if (one_color_each && ground_known) {
-        int order[8], count = 0, left = patterns - 1;
-        while (left) {
-            if (!says[left].said()) break;
-            int won = -1;
-            for (int p = 0; p < panes; ++p)
-                if ((left >> p & 1) && alone[p] == says[left].paint) { won = p; break; }
-            if (won < 0) break;
-            order[count++] = won;
-            left &= ~(1 << won);
-        }
-        if (count == panes) {
-            // Every pattern must come to the first pane in that order that has
-            // anything -- otherwise the order is a coincidence of the big masks.
-            bool every = true;
-            for (int m = 0; m < patterns && every; ++m) {
-                if (!says[m].said()) continue;
-                int wins = ground;
-                for (int i = 0; i < panes; ++i)
-                    if (m >> order[i] & 1) { wins = alone[order[i]]; break; }
-                every = laid(m) == wins;
-            }
-            if (every) {
-                for (int i = 0; i < panes; ++i)
-                    say_closed(said, ("Input " + string("Colors") + " ") + spell("SelectColor", alone[order[i]]) +
-                                     " InvertSelection DeleteSelection Panes SelectAll Origin",
-                               i == 0 ? "Union" : "Underlay");
-                lay_ground();
-                return true;
-            }
-        }
-    }
-
-    said.no_operator_for.push_back("what the panes come to");
-    return false;
 }
 
 // THE CHOSEN PANE, directly or fitted behind the walls. Occupancy has operators

@@ -204,3 +204,20 @@ That is what say_pane_pick emits today and what solves 2dee498d. The lattice
 question underneath is NOT answered by it: both spellings drew nothing back
 when a paint still ignored the mark, so the cause there is still whatever it
 was. It has not been re-asked since.
+
+## The table said only as its operators draw it, 2026-10-26
+
+AGENTS 2.5 again: a rule is replayed with the operators' own arithmetic
+before it is said. The mask was replayed by its table alone, and say_panes
+then picked the shape by checking the table against itself. Now the mask
+reads the shape off the table and keeps it only where the shape's operators
+redraw every output, drawn as each op draws (pane_mask_rule::read_how_said,
+draw_said); IntersectionList's fold is one helper for the op and the replay
+(intersected_cell); say_panes only spells what the mask kept. The priority
+sentences carry the pose's turn as the others do (no puzzle needs it yet).
+
+d47aa2ff, among the 6 above, had since been said wrong: "as they come"
+compared a one-pane pattern's paint with itself, so "paint 2" read as "copy
+the pane", and the program kept the panes' own colors. Replayed, that fails;
+its readout says NO OPERATOR FOR what the panes come to again. Training
+otherwise unchanged: the 32 pane-mask puzzles solved, programs identical.
