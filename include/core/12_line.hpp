@@ -56,7 +56,7 @@ inline constexpr rule_group group_of(correspondence_election::fired_rule::said_a
         case rule::turn: case rule::move_down: case rule::move_across:
         case rule::learned_table: case rule::align_to: case rule::mirror_around:
         case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
-        case rule::empty_swap: case rule::fit_into:
+        case rule::empty_swap: case rule::fit_into: case rule::shape_from:
             return rule_group::changes_pieces;
         case rule::removed: return rule_group::removes;
         // Paints: the hand on the line is left alone.
@@ -412,7 +412,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         { "At Least", "Fewer Than" }, { "The Largest", "All But The Largest" },
         { "The Smallest", "All But The Smallest" }, { "Row From The Middle", "Off The Row From The Middle" },
         { "Column From The Middle", "Off The Column From The Middle" },
-        { "The One With No Twin By", "All But The One With No Twin By" }, { "Running", "Not Running" } };
+        { "The One With No Twin By", "All But The One With No Twin By" }, { "Running", "Not Running" },
+        { "Walls", "All But The Walls" } };
     static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
     static constexpr const char* running_ways[] = { "Along Its Rows", "Along Its Columns",
         "Along Its Diagonals Down To The Right", "Along Its Diagonals Up To The Right", "No Way",
@@ -521,7 +522,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 name = measure_named(at_least_kind(best.pick.value)) + " " + name + " " +
                        to_string(at_least_many(best.pick.value));
             else if (best.pick.how == piece_pick::running_along) name += string(" ") + running_ways[best.pick.value];
-            else if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
+            else if (best.pick.takes_a_value()) name += " " + to_string(best.pick.value);
         }
         else if (best.pick.partner >= 0) {
             // SelectPartner: the partners its base's pieces have, on a side or any.
@@ -1009,6 +1010,31 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 weigh(best, way, piece_pick::all(), *seen, move_claims(*seen));
         if (best.value < 0) return {};
         return { best.said, [&, best] { carry(say(best, rule::fit_into, goes_in[best.value], moves)); } };
+    };
+
+    // A PIECE BECOME ITS PARTNER MIRRORED (shape_from_holds): every picked piece
+    // takes the shape of its one partner, each way partner_by finds one,
+    // mirrored across the partner's side that faces it, in its own color
+    // (11dc524f's block of 5s, once the 2s have slid up to it). Asked of the
+    // colors a change of shape starts from; it accounts for the cells left and
+    // filled, as a move does.
+    auto shape_from_rule = [&]() -> offer {
+        const uint16_t from = starts_from(missing::how_it_changed_shape);
+        if (!facts.hand_known || !from) return {};
+        heard best;
+        asked_piece_sets asked;
+        for (const piece_pick& pick : hand_picks.get(facts, from)) {
+            const auto handed = handed_pieces(facts, pick);
+            if (asked.before(handed)) continue;
+            for (int how = 0; how < ways; ++how)
+                if (!facts.asks_way((partner_by)how)) continue;
+                else if (const auto seen = shape_from_holds(facts, handed, how))
+                    weigh(best, how, pick, *seen, move_claims(*seen));
+        }
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
+            carry(say(best, rule::shape_from, "takes the shape of " + value_written(node_type::ShapeFrom, best.value),
+                      read.fired_named(correspondence_election::sits_on_name))); } };
     };
 
     // The picks a paint is asked with: each color on its own, then the picks by
@@ -1857,7 +1883,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                             { mirror_rule, false, true }, { outline_rule, false, true },
                             { recolor_rule, false, false }, { shape_rule, false, false },
                             { [&] { return key_rule(!frozen); }, false, false },
-                            { removal_rule, false, true }, { socket_rule, false, true }, { ray_paint, true, false },
+                            { removal_rule, false, true }, { socket_rule, false, true },
+                            { shape_from_rule, false, true }, { ray_paint, true, false },
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },

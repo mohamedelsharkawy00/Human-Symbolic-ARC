@@ -22,7 +22,8 @@ namespace arc {
 // a rank, or every one painting at least `value` cells, or every one with a
 // cell on the row or the column `value` lines past the middle of all the
 // pieces paint (line_from_middle), or every one running the way `value` names
-// (way_it_runs). A pick's but_those turns any of them round.
+// (way_it_runs). The walls need the canvas, so the overload below takes them.
+// A pick's but_those turns any of them round.
 inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int value) {
     vector<bool> picked(pieces.size(), false);
     if (how == piece_pick::middle_row || how == piece_pick::middle_column) {
@@ -146,14 +147,19 @@ static_assert(row_of(node_type::SelectRunningAlong).high == WAY_MOST_CELLS_RUN,
               "SelectRunningAlong takes one value for each way a piece runs, then the way most cells run");
 
 // THE PIECES A PICK TAKES, as its operators take them on a canvas the size of
-// `canvas`, in the order pick_operators says them: its colors or its kind; the
+// `canvas`, in the order pick_operators says them: its colors or its kind, the
+// walls of that canvas among the kinds (is_wall, as SelectWalls takes them); the
 // pieces in the part those fence off, where it names a part; their partners,
 // where it names a partner; every piece but those, where it turns them round;
 // then WouldFit's and SelectLikeKey's keeps.
 inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick, tile_size canvas,
                                   hand_answers& answers) {
     vector<bool> picked(pieces.size(), false);
-    if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
+    if (pick.how == piece_pick::walls)
+        for (size_t i = 0; i < pieces.size(); ++i)
+            picked[i] = is_wall(canvas.width, canvas.height, pieces[i].summary.box(),
+                                [&](int row, int col) { return pieces[i].holds(row, col); });
+    else if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
     else
         for (size_t i = 0; i < pieces.size(); ++i) picked[i] = (palette(pieces[i]) & pick.colors) != 0;
     if (pick.part >= 0) {
@@ -1127,18 +1133,17 @@ inline bool same_drawing(const object& one, const object& other) {
 }
 
 // WHETHER A CANVAS SHOWS WHAT IT FRAMES: all of `drawing`, or the corner of it
-// that says the rest -- half of it as tall or as wide, rounded up, on every
-// side the canvas cuts, the drawing coming back on itself there: mirrored
-// across the cut, or a half turn for a half, a quarter turn for a quarter, as
-// 2013d3e2's figure does in its corner. Any other cut shows whatever happened
-// to lie in the corner: 39a8645d's shapes, laid out, with one of them there, or
-// its layer, scattered, with one copy in it.
+// that says the rest, the drawing coming back on itself past the cut: the
+// corner repeated, as a room one color all over is its one cell (1190e5a7's
+// rooms, a cell each); or half of it as tall or as wide, rounded up, on every
+// side the canvas cuts, mirrored across the cut, or a half turn for a half, a
+// quarter turn for a quarter, as 2013d3e2's figure does in its corner. Any
+// other cut shows whatever happened to lie in the corner: 39a8645d's shapes,
+// laid out, with one of them there, or its layer, scattered, with one copy in it.
 inline bool shows_what_it_frames(const grid& drawing, int height, int width) {
     const int tall = drawing.height, wide = drawing.width;
     const bool cut_down = height < tall, cut_across = width < wide;
     if (!cut_down && !cut_across) return true;
-    auto half = [](int whole, int kept) { return (whole + 1) / 2 == kept; };
-    if ((cut_down && !half(tall, height)) || (cut_across && !half(wide, width))) return false;
     // Whether the drawing is the same read through `at`, cell for cell.
     auto comes_back = [&](auto at) {
         for (int row = 0; row < tall; ++row)
@@ -1148,6 +1153,10 @@ inline bool shows_what_it_frames(const grid& drawing, int height, int width) {
             }
         return true;
     };
+    if (height > 0 && width > 0 && comes_back([&](int row, int col) { return std::pair{ row % height, col % width }; }))
+        return true;
+    auto half = [](int whole, int kept) { return (whole + 1) / 2 == kept; };
+    if ((cut_down && !half(tall, height)) || (cut_across && !half(wide, width))) return false;
     const bool across_mirror = comes_back([&](int row, int col) { return std::pair{ row, wide - 1 - col }; });
     const bool down_mirror = comes_back([&](int row, int col) { return std::pair{ tall - 1 - row, col }; });
     const bool half_turn = comes_back([&](int row, int col) { return std::pair{ tall - 1 - row, wide - 1 - col }; });
@@ -1362,11 +1371,11 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
 // framed inputs share the most cells with their outputs, counted in the pair
 // that shares the fewest; a tie goes to the cut and the pick asked first. And
 // ahead of them the whole input scaled or tiled, where the size rule scales
-// it; and after them all the canvas filled in one color. Asked only of a size
-// change, and held only where the frame lands on the output's size in every
-// pair. A filled frame that reads its color off a table read off the pairs
-// makes that the puzzle's table (inf.shape_color_map), the one ShapeColorMap
-// looks up.
+// it; after them all the canvas filled in one color; and last, every piece but
+// the walls laid out. Asked only of a size change, and held only where the
+// frame lands on the output's size in every pair. A filled frame that reads
+// its color off a table read off the pairs makes that the puzzle's table
+// (inf.shape_color_map), the one ShapeColorMap looks up.
 inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf, const tiled_pieces& tiles) {
     if (train.empty() || inf.size.Chosen == output_dimension_rule::Identity) return {};
     // The framed grid is of figures: no ground is filled into it, so what a
@@ -1455,6 +1464,22 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         for (const piece_pick& pick : picks_to_ask(facts, 0, 0, inf.partners)) picks.push_back(pick);
         return picks;
     };
+    // Laid out on graph paper: the pieces a pick takes off a cut, in cells of
+    // every size Layout takes, the size read off the pieces first.
+    auto weigh_laid_out = [&](segmentation_methods cut, const replay_facts& facts, const piece_pick& pick) {
+        const auto cells = row_of(node_type::Layout);
+        for (int cell = cells.low; cell <= cells.high; ++cell) {
+            piece_frame_rule frame;
+            frame.kind = piece_frame_rule::laid_out;
+            frame.factor = (int8_t)cell;
+            frame.held = true;
+            frame.cut = cut;
+            frame.pick = pick;
+            weigh(frame, [&](size_t which, grid& framed) {
+                return laid_out_input(facts.cuts()[which], pick, cell, train[which].input, inf.size, framed);
+            });
+        }
+    };
     for (const segmentation_methods cut : frame_cuts) {
         const replay_facts facts(train, cut, tiles);
         const vector<piece_pick> picks = picks_of(facts);
@@ -1477,23 +1502,9 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                                     several);
             });
         }
-        // Laid out on graph paper: every piece, or the pieces of one color, in
-        // cells of every size Layout takes, the size read off the pieces first.
-        const auto cells = row_of(node_type::Layout);
-        for (size_t which_pick = 0; which_pick <= (size_t)COLOR_COUNT; ++which_pick) {
-            const piece_pick pick = picks[which_pick];
-            for (int cell = cells.low; cell <= cells.high; ++cell) {
-                piece_frame_rule frame;
-                frame.kind = piece_frame_rule::laid_out;
-                frame.factor = (int8_t)cell;
-                frame.held = true;
-                frame.cut = cut;
-                frame.pick = pick;
-                weigh(frame, [&](size_t which, grid& framed) {
-                    return laid_out_input(facts.cuts()[which], pick, cell, train[which].input, inf.size, framed);
-                });
-            }
-        }
+        // Laid out: every piece, or the pieces of one color.
+        for (size_t which_pick = 0; which_pick <= (size_t)COLOR_COUNT; ++which_pick)
+            weigh_laid_out(cut, facts, picks[which_pick]);
     }
     // THE CANVAS IN ONE COLOR, the color an operator names off the input,
     // where every output is one color all over: the pieces a pick takes, each
@@ -1565,6 +1576,11 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
                 }
         }
     }
+    // AND LAST, EVERY PIECE BUT THE WALLS laid out, what the grid is divided by
+    // left out (SelectWalls): asked after every other frame, it is said only
+    // where it shares more than all of them -- 1190e5a7's rooms, a cell each.
+    for (const segmentation_methods cut : frame_cuts)
+        weigh_laid_out(cut, replay_facts(train, cut, tiles), { 0, piece_pick::walls, 0, -1, true });
     if (best.kind == piece_frame_rule::filled && best.keyed >= 0) inf.shape_color_map = best_table;
     return best;
 }

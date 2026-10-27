@@ -605,7 +605,11 @@ enum class inferred_amount { none, some, all };
   /* Into a socket: each color of the picked pieces poured into the one gap */ \
   /* that holds as many cells [0] (each_pour); each picked piece moved,     */ \
   /* turned as it needs, into the one piece it fits into [1] (each_fit_move). */ \
-  X(FitInto                     , 0                 , (int)arc::fit_into_way::count - 1, translate, none, false)
+  X(FitInto                     , 0                 , (int)arc::fit_into_way::count - 1, translate, none, false) \
+  /* ColorFrom's sibling, for the shape: each picked piece becomes its one     */ \
+  /* partner, each way partner_by finds one, mirrored across the partner's     */ \
+  /* side that faces it, in the color most of it wears (each_shape_taken).     */ \
+  X(ShapeFrom                   , 0                 , (int)arc::partner_by::count - 1, map, none, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, clears) id,
@@ -682,7 +686,7 @@ inline constexpr bool said_by_name(node_type t) {
     switch (t) {
     case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
     case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
-    case node_type::SelectAtLeast: case node_type::FitInto:
+    case node_type::SelectAtLeast: case node_type::FitInto: case node_type::ShapeFrom:
         return true;
     default: return false;
     }
@@ -718,6 +722,7 @@ inline std::string value_written(node_type t, int value) {
     case node_type::SelectAtLeast:
         return std::to_string(at_least_many(value)) + " " + measure_written(at_least_kind(value), at_least_many(value));
     case node_type::FitInto: return std::string(fit_into_ways[value]);
+    case node_type::ShapeFrom: return way(value) + ", mirrored";
     default: return way(value);
     }
 }

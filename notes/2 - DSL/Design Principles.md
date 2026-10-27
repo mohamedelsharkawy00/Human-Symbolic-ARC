@@ -172,6 +172,18 @@ cells or colors, and ColorFrom's `the key`, the key's one color. The line reads
 ColorFrom off the pairs: the recolored pieces, the find that colors them as
 the output does, their name (`pick_for_group`), one replay.
 
+ShapeFrom (2026-10-28, 11dc524f), ColorFrom's sibling for the shape (the user:
+"how come we dont allow shape changes"): a piece could change its own shape
+(Outline, AddColor, ExtendTo, the scales, Fit, Skew, the slams), but none could
+take another's; a color could flow from a partner, a shape could not.
+`ShapeFrom [the nearest piece, mirrored]`: each picked piece becomes its one
+partner, mirrored across the partner's side that faces it, in its own color
+(`each_shape_taken`): 11dc524f's block of 5s, once the 2s have slid up to it.
+MirrorAround toward the partner, then a recolor, was tried on paper first and
+could not be said: the mirror keeps the piece and its copy both picked, and the
+block, needed as the mirror's partner and gone after, looks like the copy once
+recolored. Training 277 -> 278 right, none lost; evaluation unchanged.
+
 Still to fold, each blocked by one missing thing: rays (a word upstream that
 cuts each piece to its middle cell), moves (`start: last`, and whether each cell
 stops on its own or the whole piece), trails and growth (`end` at the first

@@ -50,7 +50,7 @@ struct tiled_pieces {
 struct piece_pick {
     enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
                              at_least, largest_ranks, smallest_ranks, middle_row, middle_column,
-                             only_one, running_along, pick_kinds };
+                             only_one, running_along, walls, pick_kinds };
     uint16_t colors = 0;
     int8_t how = -1;
     int16_t value = 0;
@@ -66,6 +66,9 @@ struct piece_pick {
     bool by_color() const { return how < 0 && part < 0 && partner < 0 && !but_those; }
     // A pick by shape, size or place may take any color.
     bool may_take_color(int color) const { return !by_color() || (colors >> color & 1) != 0; }
+    // Whether its kind is told a value: which color most cells wear, and which
+    // pieces are walls, the pieces say themselves.
+    bool takes_a_value() const { return how != most_common && how != walls; }
     bool operator==(const piece_pick& other) const {
         return how == other.how && fits == other.fits && part == other.part && like == other.like &&
                partner == other.partner && but_those == other.but_those &&
@@ -287,8 +290,9 @@ struct correspondence_election {
         bool stands_alone = false;
         // HOW IT IS SAID, when it is: an act on the pieces of `pick` -- turned by
         // pose `value`, moved `value` down or across, recolored to `value`,
-        // painted the color of the partner partner_by `value` finds, moved level
-        // with that partner's rows or columns, or drawn again mirrored around its
+        // painted the color of the partner partner_by `value` finds, or become
+        // that partner mirrored across its side facing them (shape_from), moved
+        // level with that partner's rows or columns, or drawn again mirrored around its
         // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
         // diagonals for `value` past 32 and otherwise up, down and to the sides,
         // `value` % 32 long, painted `paint` (paint_value); the bars bridged between
@@ -323,7 +327,7 @@ struct correspondence_election {
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
-                                empty_swap, own_sentences, fit_into, kind_count } as = unsaid;
+                                empty_swap, own_sentences, fit_into, shape_from, kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;

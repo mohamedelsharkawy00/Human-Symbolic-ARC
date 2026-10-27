@@ -95,7 +95,7 @@ inline string foreground_input(const ground_plan& plan, bool on_picture) {
 // A PICK AS OPERATORS, picked from none: by a kind of pick -- holes, size, band,
 // the color most cells wear, at least so many cells, the first so many by size,
 // the ones on a row or a column from the middle, the one with no twin, the way
-// a piece runs -- when `how` names one, else by
+// a piece runs, the walls -- when `how` names one, else by
 // its colors, SelectAll where it takes every color; then, when `part` names
 // one, SelectPartition takes those as walls and the pieces in that part
 // instead; when `partner` names one, SelectPartner their partners; turned round
@@ -111,7 +111,7 @@ inline string pick_operators(const piece_pick& pick) {
                                                  "SelectMostCommonColor", "SelectAtLeast",
                                                  "SelectLargestObject", "SelectSmallestObject",
                                                  "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique",
-                                                 "SelectRunningAlong" };
+                                                 "SelectRunningAlong", "SelectWalls" };
     static_assert(size(selectors) == (size_t)piece_pick::pick_kinds);
     string chosen = "SelectAll InvertSelection";
     if (how < 0 && colors == piece_pick::all().colors) chosen = "SelectAll";
@@ -119,13 +119,11 @@ inline string pick_operators(const piece_pick& pick) {
         for (int color = 0; color < COLOR_COUNT; ++color)
             if (colors >> color & 1) chosen += " " + spell("SelectColor", color);
     } else {
-        // SelectMostCommonColor takes no value: which color it picks is the list's to say.
-        const bool valued = how != piece_pick::most_common;
         // The first so many by size: one selector a rank, since selectors add.
         const bool ranks = how == piece_pick::largest_ranks || how == piece_pick::smallest_ranks;
         if (ranks)
             for (int rank = 0; rank < value; ++rank) chosen += " " + spell(selectors[how], rank);
-        else chosen += " " + (valued ? spell(selectors[how], value) : string(selectors[how]));
+        else chosen += " " + (pick.takes_a_value() ? spell(selectors[how], value) : string(selectors[how]));
     }
     if (part >= 0) chosen += " " + spell("SelectPartition", part);
     if (partner >= 0) chosen += " " + spell("SelectPartner", partner);
@@ -904,6 +902,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::recolor_picked: beats.push_back({pick, spell("Recolor", rule.value)}); break;
         case said_as::removed:     beats.push_back({pick, "DeleteSelection"}); break;
         case said_as::fit_into:    beats.push_back({pick, spell("FitInto", rule.value)}); break;
+        case said_as::shape_from:  beats.push_back({pick, spell("ShapeFrom", rule.value)}); break;
         case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;

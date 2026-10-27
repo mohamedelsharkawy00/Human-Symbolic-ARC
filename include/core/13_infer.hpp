@@ -242,6 +242,24 @@ inline vector<int8_t> plan_grounds(const vector<example>& train, const ground_pl
     return grounds;
 }
 
+// THE PLAN READ: the first the election allows (ground_plans) that leaves every
+// output something to draw where the size is drawn. Under BoundingBox the
+// canvas closes on what was painted (draw_on_canvas), so an output a plan
+// empties whole is one no drawing can be: 1190e5a7's outputs are all ground,
+// one cell a room.
+inline ground_plan plan_to_read(const vector<example>& train, const background_election& election) {
+    const vector<ground_plan> plans = ground_plans(election);
+    if (output_dimension_rule::infer_rule(train).Chosen != output_dimension_rule::BoundingBox) return plans.front();
+    for (const ground_plan& plan : plans)
+        if (ranges::none_of(figures_only(train, plan, plan_grounds(train, plan)), [](const example& pair) {
+                bool drawn = false;
+                pair.output.for_each_colored_cell(TRANSPARENT, [&](int, int, int) { drawn = true; });
+                return !drawn;
+            }))
+            return plan;
+    return plans.front();
+}
+
 // THE WALLS OF A GRID OF FIGURES: its one-color pieces, joined at sides or
 // corners as Split [1] joins them, that are walls (is_wall) -- each cell of
 // each handed to `see(row, col)`.
@@ -515,15 +533,16 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
 
 // Asks every question about the training pairs, in order, and returns the answers.
 // THE GROUND IS CHOSEN ONCE: the election names the plans a puzzle allows
-// (ground_plans) and the first is read (read_figures) -- then, where every pair
-// has walls that stand as they were, the same plan with its walls set apart
+// (ground_plans) and the first that leaves every output something to draw is
+// read (plan_to_read, read_figures) -- then, where every pair has walls that
+// stand as they were, the same plan with its walls set apart
 // (set_the_walls_apart), and the one whose rules say the most, in the fewest
 // passes, is said (says_the_most), a tie keeping the walls in. Each pass
 // applies that plan before reading its figures.
 inline inference infer(const vector<example>& train) {
     figure_readings readings;
     const background_election election = elect_background(train);
-    const ground_plan elected = ground_plans(election).front();
+    const ground_plan elected = plan_to_read(train, election);
     vector<ground_plan> plans{ elected };
     if (vector<example> figures = figures_only(train, elected, plan_grounds(train, elected));
         !elected.keeps() && set_the_walls_apart(figures)) {

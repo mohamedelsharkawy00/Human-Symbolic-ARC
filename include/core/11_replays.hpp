@@ -1139,13 +1139,45 @@ inline bool into_sockets(vector<object>& hand, const vector<bool>& picked, hand_
                                            : pour_the_hand(hand, picked, answers);
 }
 
-// PIECES PUT INTO THEIR SOCKETS, replayed: each pair's hand put in as the op
-// puts it, the way `way` names (into_sockets), drawn before and after
-// (draw_the_hand), and judged by the cells that changes there (brings_nearer,
-// something put in every pair): a cell right where it now shows what the
-// output shows -- a gap's cell filled, a cell its piece left -- and wrong
-// elsewhere. Sees the cells left and filled, and how many pairs it acted in.
-inline optional<replayed> fit_into_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
+// THE HAND, EACH PICKED PIECE BECOME ITS PARTNER MIRRORED, as ShapeFrom makes
+// it (each_shape_taken, the partners found the way `how` names): its cells the
+// ones handed for it, every partner read off the hand as it was. False, the
+// hand as it was, where no piece takes a shape.
+inline bool take_partner_shapes(vector<object>& hand, const vector<bool>& picked, hand_answers& answers, int how) {
+    vector<object> taken = hand;
+    grid drawn(MAX_GRID_DIM, MAX_GRID_DIM);
+    vector<int16_t> at;
+    int taking = -1;
+    cell_box box;
+    auto set_drawing = [&] {
+        if (taking >= 0)
+            taken[(size_t)taking] = object::from_cells(drawn, summary_of(box, (int)at.size()), at.data(), (int)at.size());
+    };
+    each_shape_taken(how, partner_pieces(hand, picked, answers), [&](int i, int row, int col, int color) {
+        if (i != taking) {
+            set_drawing();
+            taking = i;
+            at.clear();
+            box = {};
+        }
+        drawn.data[row][col] = (int8_t)color;
+        at.push_back((int16_t)cell_index(row, col));
+        box.include_cell(row, col);
+    });
+    set_drawing();
+    if (taking < 0) return false;
+    hand = std::move(taken);
+    return true;
+}
+
+// A CHANGE OF THE HAND, replayed: each pair's hand changed as the op changes
+// it -- act(hand, picked, answers), answering whether it acted -- drawn before
+// and after (draw_the_hand), and judged by the cells that changes there
+// (brings_nearer, something done in every pair): a cell right where it now
+// shows what the output shows -- a cell filled, a cell its piece left -- and
+// wrong elsewhere. Sees the cells left and filled, and how many pairs it acted in.
+template <class Act>
+inline optional<replayed> hand_act_holds(const replay_facts& facts, const vector<partner_pieces>& handed, Act act) {
     if (!facts.overlays) return nullopt;
     replayed seen;
     seen.left.assign(facts.train.size(), {});
@@ -1157,7 +1189,7 @@ inline optional<replayed> fit_into_holds(const replay_facts& facts, const vector
         seen.every_piece = seen.every_piece && cut.every_piece_picked();
         vector<object> hand = facts.cuts()[which];
         pair_tally tally;
-        tally.acted = into_sockets(hand, cut.picked, facts.answers_of(which), way);
+        tally.acted = act(hand, cut.picked, facts.answers_of(which));
         const grid& output = facts.train[which].output;
         grid was(output.width, output.height), now = was;
         if (!draw_the_hand(was, facts.cuts()[which], facts.laid_under, /*clip=*/true, still) ||
@@ -1179,6 +1211,24 @@ inline optional<replayed> fit_into_holds(const replay_facts& facts, const vector
         if (!brings_nearer(facts, which, tally)) return nullopt;
     }
     return seen;
+}
+
+// PIECES PUT INTO THEIR SOCKETS, replayed: each pair's hand put in as FitInto
+// puts it, the way `way` names (into_sockets), judged as every change of the
+// hand is (hand_act_holds).
+inline optional<replayed> fit_into_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int way) {
+    return hand_act_holds(facts, handed, [&](vector<object>& hand, const vector<bool>& picked, hand_answers& answers) {
+        return into_sockets(hand, picked, answers, way);
+    });
+}
+
+// PIECES BECOME THEIR PARTNERS MIRRORED, replayed: each pair's hand as ShapeFrom
+// leaves it, its partners found the way `how` names (take_partner_shapes),
+// judged as every change of the hand is (hand_act_holds).
+inline optional<replayed> shape_from_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int how) {
+    return hand_act_holds(facts, handed, [&](vector<object>& hand, const vector<bool>& picked, hand_answers& answers) {
+        return take_partner_shapes(hand, picked, answers, how);
+    });
 }
 
 // A PIECE DRAWN AGAIN MIRRORED AROUND ANOTHER'S MIDDLE, replayed. MirrorAround
@@ -2158,6 +2208,9 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
         }
         case said::fit_into:
             into_sockets(hand, picked, facts.answers_of(which), rule.value);
+            break;
+        case said::shape_from:
+            take_partner_shapes(hand, picked, facts.answers_of(which), rule.value);
             break;
         case said::outlined:
             for (size_t i = 0; i < hand.size(); ++i)

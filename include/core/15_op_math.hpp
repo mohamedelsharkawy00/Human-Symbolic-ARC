@@ -18,7 +18,7 @@
 namespace arc {
 using namespace std;
 
-// SHARED · partners (ColorFrom, AlignTo, MoveToward,
+// SHARED · partners (ColorFrom, ShapeFrom, AlignTo, MoveToward,
 // MirrorAround, WouldFit, SelectLikeKey) and bands (Layout, SelectRow,
 // SelectColumn)
 
@@ -1073,8 +1073,8 @@ inline std::pair<int, int> shift_to_touch(const cell_box& moving,
     return {down, across};
 }
 
-// MAP · Recolor and AddColor, ShapeColorMap, BidiColorMap, VoteDenoise,
-// SnapToAnchors, ProjectOnSeeds, OverlapCorner
+// MAP · Recolor and AddColor, ShapeColorMap, BidiColorMap, ColorFrom and
+// ShapeFrom, VoteDenoise, SnapToAnchors, ProjectOnSeeds, OverlapCorner
 
 // THE CORNER CHAIN OverlapCorner lays: the pieces in the order of their boxes'
 // left columns, top rows on a tie, the first with its top-left at the grid's
@@ -1411,6 +1411,45 @@ inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows,
     if (entries == picked) return true;
     for (int i = 0; i < count; ++i) color[i] = -1;
     return false;
+}
+
+// A PIECE BECOME ITS PARTNER MIRRORED, said once for ShapeFrom and for the
+// reading that replays it: each picked piece's one partner by `how` among the
+// pieces not picked (partner_of), where it lies wholly past one side of the
+// piece, mirrored across its own side that faces the piece, every cell it
+// paints in the color most of the piece wears (11dc524f's block of 5s, once the
+// 2s have slid up to it). Each cell of each piece's new drawing handed to
+// cell(i, row, col, color), a piece's cells together, none off the largest
+// grid; a piece with no one partner, or one not wholly past a side, gets none.
+// The pieces are asked as each_partner asks them.
+template <class Pieces, class Cell>
+inline void each_shape_taken(int how, const Pieces& pieces, Cell cell) {
+    if (how < 0 || how >= (int)partner_by::count) return;
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (!pieces.is_picked(i)) continue;
+        const int partner = partner_of((partner_by)how, i, pieces);
+        if (partner < 0) continue;
+        const cell_box own = pieces.box(i), there = pieces.box(partner);
+        const bool left = there.col1 < own.col0, right = there.col0 > own.col1;
+        const bool above = there.row1 < own.row0, below = there.row0 > own.row1;
+        if (left + right + above + below != 1) continue;
+        color_tally worn;
+        for (int row = own.row0; row <= own.row1; ++row)
+            for (int col = own.col0; col <= own.col1; ++col) worn.add(pieces.color_at(i, row, col));
+        const int color = worn.most();
+        // Twice the line the partner is mirrored across, so a line between two
+        // cells is whole: its side that faces the piece.
+        const int row2 = above ? 2 * there.row1 + 1 : 2 * there.row0 - 1;
+        const int col2 = left ? 2 * there.col1 + 1 : 2 * there.col0 - 1;
+        const bool down = above || below;
+        for (int row = there.row0; row <= there.row1; ++row)
+            for (int col = there.col0; col <= there.col1; ++col) {
+                if (!pieces.painted(partner, row, col)) continue;
+                const int to_row = down ? row2 - row : row, to_col = down ? col : col2 - col;
+                if (to_row >= 0 && to_col >= 0 && to_row < MAX_GRID_DIM && to_col < MAX_GRID_DIM)
+                    cell(i, to_row, to_col, color);
+            }
+    }
 }
 
 // VoteDenoise's arithmetic, in one place for the op and for inference.

@@ -826,6 +826,44 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
     return res;
 }
 
+// ShapeFrom[how]: each picked object becomes its one partner among the objects
+// not picked, the way partner_by `how` finds it, mirrored across the partner's
+// side that faces it, in the color most of the object wears -- its old cells
+// gone, its frame the new drawing's box (each_shape_taken, 15_op_math.hpp, the
+// walk inference replays). An object with no one partner, or one not wholly
+// past a side of it, stays as it is.
+object_list& op_shape_from(program_run& run, const object_list& from, int8_t how) {
+    object_list& res = run.fresh();
+    copy_list(res, from);
+    // Each new drawing gathered whole on a grid of its own, then laid as its
+    // object's mask; every partner is read off the list as it came.
+    int taking = -1;
+    cells drawn;
+    cell_box box;
+    auto set_drawing = [&] {
+        if (taking < 0) return;
+        held_object& one = res.objects[taking];
+        one.mask.clear();
+        for (int row = box.row0; row <= box.row1; ++row)
+            for (int col = box.col0; col <= box.col1; ++col) one.mask[row - box.row0][col - box.col0] = drawn[row][col];
+        one.x0 = (int16_t)box.col0; one.y0 = (int16_t)box.row0;
+        one.x1 = (int16_t)box.col1; one.y1 = (int16_t)box.row1;
+        one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
+    };
+    each_shape_taken(how, partner_view{ from }, [&](int i, int row, int col, int color) {
+        if (i != taking) {
+            set_drawing();
+            taking = i;
+            drawn.clear();
+            box = {};
+        }
+        drawn[row][col] = (int8_t)color;
+        box.include_cell(row, col);
+    });
+    set_drawing();
+    return res;
+}
+
 // WouldFit[how]: of the picked objects, only those that would fit into a gap of
 // their one partner among the objects not picked stay picked -- the partner by
 // `how`, as partner_of (15_op_math.hpp) finds it, and the fit as would_fit asks
@@ -2502,6 +2540,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::SelectRunningAlong:      return op_select_running_along(run, in, value);
     case node_type::SelectWalls:             return op_select_walls(run, in);
     case node_type::FitInto:                 return op_fit_into(run, in, value);
+    case node_type::ShapeFrom:               return op_shape_from(run, in, value);
     case node_type::SelectColor:             return op_select_color(run, in, value);
     case node_type::SelectElectedBackground: return op_select_elected_background(run, in, value);
     case node_type::SelectAll:               return op_select_all(run, in);
