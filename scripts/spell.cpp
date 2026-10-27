@@ -1,6 +1,7 @@
-// A SPELLING BENCH. Hands one program string to one puzzle and shows what it
-// paints beside what was wanted, pair by pair. Nothing is searched: this only
-// answers "can the operators we have already say this?".
+// A SPELLING BENCH. Hands one program string to one puzzle, training or
+// evaluation, and shows what it paints beside what was wanted, pair by pair.
+// Nothing is searched: this only answers "can the operators we have already
+// say this?".
 //
 //   spell <task-id> "<program>"          one program
 //   spell <task-id> "<program>" --test   and what it draws on each test, fitting or not
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
         every_test = argc > 3 && string(argv[3]) == "--test";
     }
 
-    task_set set = load_task_set(DS_TRAIN);
+    task_set set = load_task_set(DS_TRAIN | DS_EVAL);
     puzzle task;
     bool found = false;
     for (const auto& entry : set.tasks)

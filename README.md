@@ -37,7 +37,7 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 5. It reads a puzzle on every CPU thread and takes 3 to 10 minutes on the 20-thread laptop, by how warm it is and what the reading asks (383 s on 2026-10-24, 344 s cold and 581 s warm on 2026-10-20).
 6. `ARC_THREADS=1` reads one at a time (the profiler does, under the label `profile`).
 7. `ARC_DATASET=eval` reads the evaluation set instead (training by default).
-8. Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"` shows what it drew beside what was wanted, pair by pair; `--test` after the program also shows each test, whether it fits the pairs or not.
+8. Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"` shows what it drew beside what was wanted, pair by pair, for a training or evaluation puzzle; `--test` after the program also shows each test, whether it fits the pairs or not.
 9. Tests: none besides the score and the readouts. `tests/puzzles` holds small made-up puzzles to view in the app (the CUS dataset button).
 
 # 4. Layout
