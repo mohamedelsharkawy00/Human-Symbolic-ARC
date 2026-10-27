@@ -317,6 +317,58 @@ inline constexpr std::string_view partner_way_names[] = {
 // THE LIKENESSES OF SHAPE, the partner ways from same_shape on, six of them: as
 // it lies, then turned, at its own size, at any size, stretched.
 constexpr int SHAPE_LIKENESSES = (int)partner_by::same_shape_stretched_turned - (int)partner_by::same_shape + 1;
+// THE LIKENESSES TO A PIECE OF THE KEY (SelectLikeKey), the partner ways from
+// same_shape on: each likeness of shape, then as many holes, cells or colors.
+constexpr int KEY_LIKENESSES = (int)partner_by::as_many_colors - (int)partner_by::same_shape + 1;
+
+// WHAT A PIECE COUNTS, the measure every count reads (count_of, 15_op_math.hpp)
+// -- the most, the fewest, the odd one out, at least so many, as many as another
+// -- (the user, 2026-10-13: the reading could not count; 2026-10-27: nor measure
+// a length): its cells, its colors, its holes, its cells of one color
+// (of_color + the color), or the cells of its longest straight line along its
+// rows, its columns, its diagonals, or any way.
+enum class count_kind : int8_t { cells, colors, holes, of_color,
+                                 line_along_rows = of_color + COLOR_COUNT, line_along_columns,
+                                 line_along_diagonals, longest_line, count };
+inline constexpr std::string_view line_ways[] = { "along its rows", "along its columns", "along its diagonals",
+                                                  "any way" };
+static_assert(std::size(line_ways) == (size_t)count_kind::count - (size_t)count_kind::line_along_rows);
+
+// A measure as a program and a readout write it after `many` of it: 4 cells,
+// 1 hole, 3 cells in a line along its diagonals.
+inline std::string measure_written(int kind, int many = 2) {
+    const std::string cells = many == 1 ? "cell" : "cells";
+    if (kind == (int)count_kind::colors) return many == 1 ? "color" : "colors";
+    if (kind == (int)count_kind::holes) return many == 1 ? "hole" : "holes";
+    if (kind >= (int)count_kind::line_along_rows)
+        return cells + " in a line " + std::string(line_ways[kind - (int)count_kind::line_along_rows]);
+    if (kind >= (int)count_kind::of_color) return cells + " of color " + std::to_string(kind - (int)count_kind::of_color);
+    return cells;
+}
+
+// THE RANKS BY SIZE SelectLargestObject and SelectSmallestObject take, the
+// n-th piece by its cells; past them, every piece with the most -- or the
+// fewest -- of a measure, value - SIZE_RANKS, ties and all.
+constexpr int SIZE_RANKS = 10;
+
+// WHAT MAKES TWO PIECES TWINS, SelectUnique's value: the same drawing,
+// colors and all [0]; the same shape as it lies [1] or any way round [2],
+// colors aside (same_shape); the same colors, wherever they lie [3]; or past
+// those, as many of a measure, by_count + the measure.
+enum class twin_by : int8_t { drawing, shape, shape_turned, colors, by_count,
+                              count = by_count + (int)count_kind::count };
+
+// THE VALUES SelectAtLeast TAKES: at least one to AT_LEAST_STEPS of each
+// measure, the measures in order (value_written spells them by name).
+constexpr int AT_LEAST_STEPS = 10, AT_LEAST_VALUES = (int)count_kind::count * AT_LEAST_STEPS;
+constexpr int at_least_value(int kind, int many) { return kind * AT_LEAST_STEPS + many - 1; }
+constexpr int at_least_kind(int value) { return value / AT_LEAST_STEPS; }
+constexpr int at_least_many(int value) { return value % AT_LEAST_STEPS + 1; }
+
+// HOW A PIECE GOES INTO ITS SOCKET (FitInto), by name: poured, as many cells as
+// the gap holds.
+inline constexpr std::string_view fit_into_ways[] = { "poured" };
+constexpr int FIT_INTO_WAYS = (int)std::size(fit_into_ways);
 
 // THE VALUES THE PARTNER OPS TAKE, a few choices packed in one number a program
 // never shows (value_written spells them by name): ColorFrom's partner ways,
@@ -476,14 +528,14 @@ enum class inferred_amount { none, some, all };
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false)        \
   /* The one picked-from piece with no twin (unique_piece, 15_op_math.hpp):   */ \
   /* twins by drawing [0], shape as it lies [1], any way round [2], colors [3], */ \
-  /* or past those the same count of what count_kind names [4-16].            */ \
-  X(SelectUnique                , 0                 , 16                       , select   , none, false)        \
+  /* or past those as many of a measure (twin_by).                            */ \
+  X(SelectUnique                , 0                 , (int)arc::twin_by::count - 1, select, none, false)       \
   /* Elect from the current pieces [0], or the original input [1]. */          \
   X(SelectElectedBackground     , 0                 , 1                        , select   , none, false)        \
   /* The n-th piece by its cells [0-9]; past those, every piece with the most */ \
-  /* (fewest, SelectSmallestObject) of what count_kind names (count_of).     */ \
-  X(SelectLargestObject         , 0                 , 22                       , select   , none, false)        \
-  X(SelectSmallestObject        , 0                 , 22                       , select   , none, false)        \
+  /* (fewest, SelectSmallestObject) of a measure (count_of).                  */ \
+  X(SelectLargestObject         , 0                 , arc::SIZE_RANKS + (int)arc::count_kind::count - 1, select, none, false) \
+  X(SelectSmallestObject        , 0                 , arc::SIZE_RANKS + (int)arc::count_kind::count - 1, select, none, false) \
   X(AddColor                    , 0                 , 11                       , generate , none, false)        \
   X(MaskBy                      , 0                 , 10                       , map      , none, false)        \
   X(MaskOut                     , 0                 , 10                       , map      , none, false)        \
@@ -511,9 +563,10 @@ enum class inferred_amount { none, some, all };
   /* Toward a partner: how far (step, own size, until touching) x the partner, */ \
   /* each way partner_by finds one and then by each color (move_toward).      */ \
   X(MoveToward                  , 0                 , arc::TOWARD_FARS * arc::PARTNER_KINDS - 1, translate, none, false) \
-  /* The pieces that paint at least so many cells (paints_at_least); fewer, */  \
-  /* turned round by InvertSelection. One cell picks every piece, so 2 up.  */  \
-  X(SelectAtLeastCells          , 2                 , 10                       , select   , none, false)        \
+  /* The pieces with at least so many of a measure (counts_at_least): 4    */  \
+  /* cells, 2 holes, 3 cells in a line along its diagonals; fewer, turned  */  \
+  /* round by InvertSelection.                                             */  \
+  X(SelectAtLeast               , 0                 , arc::AT_LEAST_VALUES - 1 , select   , none, false)        \
   /* The pieces on the row or column `from` lines past the middle of all    */ \
   /* they paint together (line_from_middle): 0 is the middle itself.        */ \
   X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false)        \
@@ -524,16 +577,24 @@ enum class inferred_amount { none, some, all };
   X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* Of the picked pieces, only those like a piece of the key -- every    */ \
   /* piece not picked -- stay picked: of its shape as it lies or turned    */ \
-  /* any way, at its size, any size or stretched (like_the_key).           */ \
-  X(SelectLikeKey               , 0                 , arc::SHAPE_LIKENESSES - 1, select   , none, false)        \
+  /* any way, at its size, any size or stretched, or with as many holes,   */ \
+  /* cells or colors (like_the_key).                                       */ \
+  X(SelectLikeKey               , 0                 , arc::KEY_LIKENESSES - 1  , select   , none, false)        \
   /* The pick moves onto every partner each picked piece has, the way       */ \
   /* partner_by finds it, lying on any side or on each of the eight         */ \
   /* directions, from up clockwise (each_partner_picked, 15_op_math).       */ \
   X(SelectPartner               , 0                 , arc::SELECT_PARTNER_VALUES - 1, select, none, false)    \
   /* The pieces that run one way, as their longest straight line of cells    */ \
   /* lies (way_it_runs, 15_op_math.hpp): along their rows, their columns,    */ \
-  /* their diagonals down or up to the right, or no way, two ways tying.     */ \
-  X(SelectRunningAlong          , 0                 , 4                        , select   , none, false)
+  /* their diagonals down or up to the right, or no way, two ways tying;     */ \
+  /* past those [5], the way most cells run (the_way_most_cells_run).        */ \
+  X(SelectRunningAlong          , 0                 , 5                        , select   , none, false)        \
+  /* The pieces that are walls (is_wall): each reaches two edges of the     */ \
+  /* canvas and fences it into two parts at least.                         */ \
+  X(SelectWalls                 , 0                 , 0                        , select   , none, false)        \
+  /* Into a socket: each color of the picked pieces poured into the one gap */ \
+  /* that holds as many cells [0] (each_pour).                              */ \
+  X(FitInto                     , 0                 , arc::FIT_INTO_WAYS - 1   , translate, none, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, clears) id,
@@ -602,13 +663,15 @@ inline constexpr inferred_amount how_much_is_inferred(node_type t) { return row_
 inline constexpr bool said_in_slots(node_type t) { return t == node_type::Tile; }
 
 // WHETHER AN OP SAYS ITS CHOICE BY NAME: the partner ops, whose one number
-// packs the way a partner is found with what is done with it. value_written
-// spells it and value_read reads it back, so a way added to PARTNER_WAYS moves
-// no program's spelling.
+// packs the way a partner is found with what is done with it, and SelectAtLeast,
+// whose packs a count with its measure. value_written spells it and value_read
+// reads it back, so a way added to PARTNER_WAYS, or a measure to count_kind,
+// moves no program's spelling.
 inline constexpr bool said_by_name(node_type t) {
     switch (t) {
     case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
     case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
+    case node_type::SelectAtLeast: case node_type::FitInto:
         return true;
     default: return false;
     }
@@ -641,6 +704,9 @@ inline std::string value_written(node_type t, int value) {
     case node_type::MoveToward: return std::string(toward_names[value / PARTNER_KINDS]) + ", " + kind(value % PARTNER_KINDS);
     case node_type::Bridge:
         return value < BRIDGE_TO_PARTNER ? std::string(bridge_reach_names[value]) : "an L to " + kind(value - BRIDGE_TO_PARTNER);
+    case node_type::SelectAtLeast:
+        return std::to_string(at_least_many(value)) + " " + measure_written(at_least_kind(value), at_least_many(value));
+    case node_type::FitInto: return std::string(fit_into_ways[value]);
     default: return way(value);
     }
 }

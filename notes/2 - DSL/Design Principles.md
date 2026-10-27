@@ -179,3 +179,76 @@ thing in the way, or meeting another walk), MoveToward, AlignTo, Origin and
 AlignToCanvas (more relative numbers), ProjectOnSeeds (its seeds come from a
 hidden list). Fractal stays its own word: its copies go only where its own
 drawing is.
+
+## P3. A measure, a comparison, and what it is compared against
+
+Agreed 2026-10-27 (the user: "we need counting or length measurement soon",
+"we gonna need comparisons too"). The wrong ARC-AGI-2 puzzles left each need a
+number the reading cannot read yet:
+
+| puzzle | measure | comparison | against |
+| --- | --- | --- | --- |
+| 1d61978c | cells, by the way each line runs | the most | the other ways |
+| 97d7923e | a bar's length | the n-th longest | n read off the key, its column's length |
+| 7acdf6d3 | the loose color's cells | equal | a cup's hollow |
+| ecb67b6d | a diagonal run's length | at least 3 | a number |
+| e3721c99 (solved 2026-10-27) | holes | equal | a piece of the key |
+
+Today each comparison is welded to a few measures:
+
+- **equal**: the partner ways by count (as many holes, cells or colors,
+  `count_of`) and SelectLikeKey by those counts;
+- **the most, the fewest**: SelectLargestObject and SelectSmallestObject past
+  their ranks, by cells, colors, holes or one color's cells, and
+  SelectMostCommonColor, the color most cells wear;
+- **at least so many**: cells only (SelectAtLeastCells);
+- **the n-th**: cells only (the size ranks);
+- **no twin**: SelectUnique, by drawing, shape, colors or a count;
+- **a number that flows into another op**: Tile's measures only (own width and
+  height, row and column gap, color count, key width and height).
+
+So the shape: a measure (cells, holes, colors, length along a way, width,
+height) times a comparison (equal, the most, the fewest, at least, the n-th)
+times what it is compared against (a number, another piece, the key), each one
+helper every op asks the same way. The last column is the big one: a number
+read off one piece that decides another rule's argument (97d7923e's rank).
+
+### Applied (2026-10-27)
+
+- **Equal, holes, a piece of the key** (e3721c99): SelectLikeKey takes the
+  counts as likenesses too (as many holes, cells or colors), and ColorFrom names
+  the pieces it colors by its own way, `SelectColor [5] SelectLikeKey [the piece
+  with as many holes] ColorFrom [the piece with as many holes]`, the 5s left
+  removed after. First the fence had to leave the partners: a wall is a piece
+  that reaches two edges of the grid and fences it into two parts at least
+  (`is_wall`, SelectWalls), set apart as the ground is (`ground_plan::walls_apart`)
+  in a second reading of the plan, made where every pair's walls stand as they
+  were and kept where it says as much in fewer passes. Evaluation 2 -> 3 right,
+  test outputs 3 -> 5 of 167; training unchanged.
+- **The most, cells by the way they run** (1d61978c): SelectRunningAlong [5],
+  the pieces running the way most cells run (`the_way_most_cells_run`), as
+  SelectMostCommonColor picks the color most cells wear; a tie picks nothing.
+  Training 269 -> 270 right, 33 -> 32 wrong, none lost; evaluation unchanged.
+- **At least, every measure, and a line's length** (ecb67b6d): the measures
+  (`count_kind`) moved to the vocabulary with their names (`measure_written`),
+  and gained the cells of the longest line along a piece's rows, its columns,
+  its diagonals, or any way (`longest_line`). One `SelectAtLeast [n measure]`
+  replaced SelectAtLeastCells (`SelectAtLeast [4 cells]`,
+  `SelectAtLeast [3 cells in a line along its diagonals]`); the most, the fewest
+  and the one with no twin read the new measures as they read the old. The
+  newer measures are asked after every older pick. Training 270 -> 273 right
+  (gained ecb67b6d, a934301b, bd14c3bf, by a line's length and by at least so
+  many cells of one color), wrong 32 -> 32 (new 332202d5, ff72ca3e), none lost;
+  evaluation unchanged.
+- **Equal, a color's cells against another piece's gap: into its socket**
+  (7acdf6d3, the user: "arc is also full of fit this stuff in their sockets").
+  A gap is WouldFit's, one helper now (`each_gap`): a run of the empty cells of
+  a piece's box that meets the box's edge on one side alone, the mouth of a cup.
+  `FitInto [poured]`: each color of the picked pieces, its cells together,
+  poured into the one gap of a piece wearing none of it that holds as many
+  (`each_pour`), asked with every piece picked, so the relation names both roles
+  and no color is said: 7acdf6d3's test trades the cups' and the dots' colors.
+  Still to come, the same act by shape: a piece moved into the gap it fills
+  whole (WouldFit asks it, nothing moves it; a1570a43's missing FitInto).
+  Training 273 -> 274 right, 32 -> 31 wrong, none lost, one readout changed;
+  evaluation unchanged.

@@ -48,6 +48,23 @@ inline string spell(const tile_value& tile) {
     return "Tile [" + tile_written(tile) + "]";
 }
 
+// WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
+// how fine it cuts: Split[0] joins colors; Split[1] keeps them separate; Split[3]
+// keeps them separate and joins by sides alone; Split[4] takes the changed shape's
+// places first. A cut names no ground: the reading reads figures, and the plan's
+// opening deleted it.
+inline string operator_for_segmentation(segmentation_methods segmentation) {
+    switch (segmentation) {
+        case segmentation_methods::connected_monochrome:      return spell("Split", 1);
+        case segmentation_methods::connected_multicolor:      return spell("Split", 0);
+        case segmentation_methods::four_connected_monochrome: return spell("Split", 3);
+        case segmentation_methods::shape_fits:                return spell("Split", 4);
+        case segmentation_methods::all_cells_of_one_color: return "Colors";
+        case segmentation_methods::minimal_repeating_set:  return "Pattern";
+        default:                                          return {};
+    }
+}
+
 // A color layer is an object before it is picked or deleted. These are
 // compositions, not executor modes: every program carries the actual color.
 // Only a plan says them (say_the_plan); the reading reads figures. The input a
@@ -63,10 +80,16 @@ inline string background_marks(const ground_plan& plan) {
     return mark(plan.deleted) + (filled == plan.deleted ? string() : mark(filled));
 }
 
+// Where the plan sets the walls apart, the figures lose them too, cut as
+// Split [1] cuts them: the reading read what lies between them.
 inline string foreground_input(const ground_plan& plan, bool on_picture) {
     const string marks = background_marks(plan);
-    return marks.empty() ? "Input" : "Input Colors" + marks +
+    const string figures = marks.empty() ? "Input" : "Input Colors" + marks +
         (on_picture ? " Difference CurrentObjects" : "") + " DeleteSelection UnionList";
+    return plan.walls_apart && !on_picture
+        ? figures + " " + operator_for_segmentation(segmentation_methods::connected_monochrome) +
+              " SelectWalls DeleteSelection UnionList"
+        : figures;
 }
 
 // A PICK AS OPERATORS, picked from none: by a kind of pick -- holes, size, band,
@@ -85,7 +108,7 @@ inline string pick_operators(const piece_pick& pick) {
     const auto& [colors, how, value, fits, but_those, part, like, partner] = pick;
     static constexpr const char* selectors[] = { "SelectObjectsWithHoles", "SelectLargestObject",
                                                  "SelectSmallestObject", "SelectRow", "SelectColumn",
-                                                 "SelectMostCommonColor", "SelectAtLeastCells",
+                                                 "SelectMostCommonColor", "SelectAtLeast",
                                                  "SelectLargestObject", "SelectSmallestObject",
                                                  "SelectRowFromMiddle", "SelectColumnFromMiddle", "SelectUnique",
                                                  "SelectRunningAlong" };
@@ -136,23 +159,6 @@ struct said_reading {
     size_t hand_sentences = 0;
     bool hand_rules = false;
 };
-
-// WHAT AN OBJECT IS, as the operation that segments the same way. Split's argument is
-// how fine it cuts: Split[0] joins colors; Split[1] keeps them separate; Split[3]
-// keeps them separate and joins by sides alone; Split[4] takes the changed shape's
-// places first. A cut names no ground: the reading reads figures, and the plan's
-// opening deleted it.
-inline string operator_for_segmentation(segmentation_methods segmentation) {
-    switch (segmentation) {
-        case segmentation_methods::connected_monochrome:      return spell("Split", 1);
-        case segmentation_methods::connected_multicolor:      return spell("Split", 0);
-        case segmentation_methods::four_connected_monochrome: return spell("Split", 3);
-        case segmentation_methods::shape_fits:                return spell("Split", 4);
-        case segmentation_methods::all_cells_of_one_color: return "Colors";
-        case segmentation_methods::minimal_repeating_set:  return "Pattern";
-        default:                                          return {};
-    }
-}
 
 // ONE OF THE EIGHT WAYS ROUND (1_readings.hpp), said in turns and mirrors.
 // Every one of the eight is sayable, four of them in one operator.
@@ -294,6 +300,15 @@ inline string closed_with(const string& operators, const string& combine) {
 // means rather than the closer guessing.
 inline string closed_on_the_pick(const string& operators, const string& combine) {
     return operators + " " + combine;
+}
+
+// THE WALLS LAID BACK, last, where the plan set them apart: the figures, cut
+// as Split [1] cuts them, their walls laid over whatever is there.
+inline string walls_laid_back(ground_plan plan) {
+    plan.walls_apart = false;
+    return closed_on_the_pick(foreground_input(plan, false) + " " +
+                              operator_for_segmentation(segmentation_methods::connected_monochrome) +
+                              " SelectWalls", "Union");
 }
 
 // ONE SENTENCE THAT OPENS WITH A SOURCE OF ITS OWN, as written, closed.
@@ -888,6 +903,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::outlined:    beats.push_back({pick, "Outline"}); break;
         case said_as::recolor_picked: beats.push_back({pick, spell("Recolor", rule.value)}); break;
         case said_as::removed:     beats.push_back({pick, "DeleteSelection"}); break;
+        case said_as::poured:      beats.push_back({pick, spell("FitInto", rule.value)}); break;
         case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;
@@ -1483,6 +1499,7 @@ inline said_reading say_the_reading(const inference& inf) {
     said_reading said = cheapest ? *cheapest : said_reading{};
     said.no_rule_for.insert(said.no_rule_for.begin(), no_rule_for.begin(), no_rule_for.end());
     said.no_operator_for.insert(said.no_operator_for.begin(), no_operator_for.begin(), no_operator_for.end());
+    if (inf.plan.walls_apart && !said.sentences.empty()) said.sentences.push_back(walls_laid_back(inf.plan));
     const int ground = inf.plan.deleted.color;
     for (string& sentence : said.sentences) sentence = without_redundant_steps(sentence, ground);
     for (string& opening : said.other_openings) opening = without_redundant_steps(opening, ground);

@@ -45,7 +45,7 @@ inline thread_local inference_work_counts inference_work;
 struct inference_times {
     static constexpr const char* names[] = { "plain", "partners", "preparing",
         "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
-        "recolor", "shape", "key", "removal", "ray", "trail", "copy", "repeat", "turned", "bar",
+        "recolor", "shape", "key", "removal", "pour", "ray", "trail", "copy", "repeat", "turned", "bar",
         "fill", "box", "room", "symmetry", "picture" };
     enum at { plain, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
     double ms[size(names)] = {};

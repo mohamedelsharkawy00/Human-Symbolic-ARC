@@ -83,13 +83,13 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
         return picked;
     }
-    if (how == piece_pick::at_least_cells) {
-        // Every piece painting at least `value` cells (paints_at_least, the count
-        // SelectAtLeastCells makes).
+    if (how == piece_pick::at_least) {
+        // Every piece with at least so many of a measure (counts_at_least, the
+        // count SelectAtLeast makes).
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
-            picked[i] = paints_at_least(piece.summary.height, piece.summary.width, [&](int row, int col) {
-                return piece.data[row][col] != (int8_t)TRANSPARENT; }, value);
+            picked[i] = counts_at_least(value, piece.summary.height, piece.summary.width,
+                                        [&](int row, int col) { return (int)piece.data[row][col]; });
         }
         return picked;
     }
@@ -113,11 +113,16 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         return picked;
     }
     if (how == piece_pick::running_along) {
-        for (size_t i = 0; i < pieces.size(); ++i) {
-            const object& piece = pieces[i];
-            picked[i] = way_it_runs(piece.summary.height, piece.summary.width, [&](int row, int col) {
-                return piece.data[row][col] != (int8_t)TRANSPARENT; }) == (runs_along)value;
-        }
+        auto runs = [&](int i) {
+            const object& piece = pieces[(size_t)i];
+            return way_it_runs(piece.summary.height, piece.summary.width, [&](int row, int col) {
+                return piece.data[row][col] != (int8_t)TRANSPARENT; });
+        };
+        const runs_along wanted = value == WAY_MOST_CELLS_RUN
+            ? the_way_most_cells_run((int)pieces.size(), runs, [&](int i) { return (int)pieces[(size_t)i].summary.count; })
+            : (runs_along)value;
+        if (value == WAY_MOST_CELLS_RUN && wanted == runs_along::no_way) return picked;
+        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = runs((int)i) == wanted;
         return picked;
     }
     vector<int> order(pieces.size());
@@ -137,8 +142,8 @@ static_assert(row_of(node_type::SelectLikeKey).high + 1 == KEY_LIKENESSES,
               "SelectLikeKey takes one value for each likeness to the key");
 static_assert(row_of(node_type::SelectPartner).high + 1 == SELECT_PARTNER_VALUES,
               "SelectPartner takes each partner way on any side, then on each of the eight directions");
-static_assert(row_of(node_type::SelectRunningAlong).high + 1 == (int)runs_along::count,
-              "SelectRunningAlong takes one value for each way a piece runs");
+static_assert(row_of(node_type::SelectRunningAlong).high == WAY_MOST_CELLS_RUN,
+              "SelectRunningAlong takes one value for each way a piece runs, then the way most cells run");
 
 // THE PIECES A PICK TAKES, as its operators take them on a canvas the size of
 // `canvas`, in the order pick_operators says them: its colors or its kind; the
@@ -468,12 +473,11 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     }
     if (const auto most = colors.find(worn.most()); most != colors.end())
         both({0, piece_pick::most_common}, most->second);
-    const auto cell_range = row_of(node_type::SelectAtLeastCells);
-    for (int boundary = cell_range.low; boundary <= cell_range.high; ++boundary) {
+    for (int boundary = 1; boundary <= AT_LEAST_STEPS; ++boundary) {
         group larger(count, false);
         for (size_t index = 0; index < count; ++index) larger[index] = sizes[index] >= boundary;
         if (ranges::find(larger, false) != larger.end())
-            both({0, piece_pick::at_least_cells, (int8_t)boundary}, larger);
+            both({0, piece_pick::at_least, (int16_t)at_least_value((int)count_kind::cells, boundary)}, larger);
     }
     // Room numbers come from the walls, not from a sweep over possible numbers.
     for (const auto& [color, members] : colors) {
@@ -502,19 +506,31 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     }
     for (int kind = 0; kind < (int)twin_by::count; ++kind)
         both({0, piece_pick::only_one, (int8_t)kind}, picked_pieces(pieces, piece_pick::only_one, kind));
+    // Each piece's count of each measure (count_of), read once.
+    vector<vector<int>> counts((size_t)count_kind::count);
     for (int kind = 0; kind < (int)count_kind::count; ++kind) {
-        vector<int> counts;
         for (const auto& piece : pieces)
-            counts.push_back(count_of(kind, piece.summary.height, piece.summary.width,
+            counts[(size_t)kind].push_back(count_of(kind, piece.summary.height, piece.summary.width,
                 [&](int row, int col) { return (int)piece.data[row][col]; }));
         for (const bool most : {true, false}) {
             group members(count, false);
-            each_extreme((int)count, most, [&](int index) { return counts[(size_t)index]; },
+            each_extreme((int)count, most, [&](int index) { return counts[(size_t)kind][(size_t)index]; },
                 [&](int index) { members[(size_t)index] = true; });
             both({0, most ? piece_pick::largest : piece_pick::smallest, (int8_t)(SIZE_RANKS + kind)}, members);
         }
     }
     classes(piece_pick::running_along, runs, 0, (int)runs_along::count - 1);
+    both({0, piece_pick::running_along, (int8_t)WAY_MOST_CELLS_RUN},
+         picked_pieces(pieces, piece_pick::running_along, WAY_MOST_CELLS_RUN));
+    // At least so many of each measure past cells (counts_at_least), where that
+    // leaves some piece out: the newest names, after every older one.
+    for (int kind = (int)count_kind::cells + 1; kind < (int)count_kind::count; ++kind)
+        for (int many = 1; many <= AT_LEAST_STEPS; ++many) {
+            group larger(count, false);
+            for (size_t index = 0; index < count; ++index) larger[index] = counts[(size_t)kind][index] >= many;
+            if (ranges::find(larger, false) != larger.end())
+                both({0, piece_pick::at_least, (int16_t)at_least_value(kind, many)}, larger);
+        }
     // EVERY PIECE BUT THOSE OF ONE COLOR, after every kind of pick: a color's
     // part can change on a test, where a kind of piece keeps its own (1da012fc's
     // 2, a dot of the key in its pairs, the shapes' color on its test, where the
@@ -615,13 +631,12 @@ inline optional<piece_pick> pick_for_group(const replay_facts& facts, const vect
     }
     if (all_in) return piece_pick::all();
     if (stable_colors) return piece_pick{shared_colors};
-    const auto cells = row_of(node_type::SelectAtLeastCells);
-    const int above_kept = max((int)cells.low, largest_kept + 1);
-    const int above_in = max((int)cells.low, largest_in + 1);
-    if (above_kept <= smallest_in && above_kept <= cells.high)
-        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_kept};
-    if (above_in <= smallest_kept && above_in <= cells.high)
-        return piece_pick{0, piece_pick::at_least_cells, (int8_t)above_in, -1, true};
+    const int above_kept = largest_kept + 1, above_in = largest_in + 1;
+    constexpr int cells = (int)count_kind::cells;
+    if (above_kept <= smallest_in && above_kept <= AT_LEAST_STEPS)
+        return piece_pick{0, piece_pick::at_least, (int16_t)at_least_value(cells, above_kept)};
+    if (above_in <= smallest_kept && above_in <= AT_LEAST_STEPS)
+        return piece_pick{0, piece_pick::at_least, (int16_t)at_least_value(cells, above_in), -1, true};
     auto names = names_of_group(facts, 0, group[0]);
     for (size_t which = 1; which < group.size() && !names.empty(); ++which) {
         const auto here = names_of_group(facts, which, group[which]);
@@ -878,18 +893,29 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             picks.push_back({ 0, how, (int8_t)value });
     }
     for (const bool but_those : { false, true }) picks.push_back({ 0, piece_pick::most_common, 0, -1, but_those });
-    // By how many cells, at least so many or fewer, each count asked only where
-    // it splits some pair's pieces: one at least taken there and one left.
-    const auto cells = row_of(node_type::SelectAtLeastCells);
-    for (int value = cells.low; value <= cells.high; ++value) {
-        if (ranges::none_of(facts.cuts(), [&](const vector<object>& cut) {
-                const vector<bool> taken = picked_pieces(cut, piece_pick::at_least_cells, value);
-                return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
-            }))
-            continue;
-        for (const bool but_those : { false, true })
-            picks.push_back({ 0, piece_pick::at_least_cells, (int8_t)value, -1, but_those });
-    }
+    // AT LEAST SO MANY OF A MEASURE, or fewer, each count asked only where it
+    // splits some pair's pieces: one at least taken there and one left. Cells
+    // here; the newer measures with the newest picks, below.
+    auto at_least_of = [&](int kind) {
+        // Each piece's count, once a pair (count_of, as counts_at_least reads it).
+        vector<vector<int>> counts;
+        for (const auto& cut : facts.cuts()) {
+            vector<int>& one = counts.emplace_back();
+            for (const object& piece : cut)
+                one.push_back(count_of(kind, piece.summary.height, piece.summary.width,
+                                       [&](int row, int col) { return (int)piece.data[row][col]; }));
+        }
+        for (int many = 1; many <= AT_LEAST_STEPS; ++many) {
+            if (ranges::none_of(counts, [&](const vector<int>& one) {
+                    return ranges::any_of(one, [&](int has) { return has >= many; }) &&
+                           ranges::any_of(one, [&](int has) { return has < many; });
+                }))
+                continue;
+            for (const bool but_those : { false, true })
+                picks.push_back({ 0, piece_pick::at_least, (int16_t)at_least_value(kind, many), -1, but_those });
+        }
+    };
+    at_least_of((int)count_kind::cells);
     // The first so many by size, largest or smallest first, and every piece but
     // those (9caf5b84: every color but the two most common becomes 7), each asked
     // only where in every pair the order parts there, the last piece taken
@@ -1023,13 +1049,13 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             for (const bool but_those : { false, true })
                 picks.push_back({ 0, piece_pick::only_one, (int8_t)value, -1, but_those });
     // The most and the fewest of each count past size (count_of): the pieces
-    // with the most colors, holes or cells of one color, or the fewest, and
-    // every piece but those, asked only where the count parts some pair's
-    // pieces: one at least taken there and one left. A count of one color's
-    // cells only where some piece mixes that color with another: among pieces
-    // of one color each it is the size of the ones of that color, which the
-    // ranks by size say -- asked anyway, it peeled a61f2674's bars off one at
-    // a time and left its line unfinished.
+    // with the most colors, holes, cells of one color or cells in a line, or
+    // the fewest, and every piece but those, asked only where the count parts
+    // some pair's pieces: one at least taken there and one left. A count of one
+    // color's cells only where some piece mixes that color with another: among
+    // pieces of one color each it is the size of the ones of that color, which
+    // the ranks by size say -- asked anyway, it peeled a61f2674's bars off one
+    // at a time and left its line unfinished.
     auto mixes = [&](int color) {
         return ranges::any_of(facts.cuts(), [&](const vector<object>& cut) {
             return ranges::any_of(cut, [&](const object& piece) {
@@ -1038,9 +1064,12 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             });
         });
     };
+    auto worth_counting = [&](int kind) {
+        return kind < (int)count_kind::of_color || kind >= (int)count_kind::line_along_rows ||
+               mixes(kind - (int)count_kind::of_color);
+    };
     for (int kind = 0; kind < (int)count_kind::count; ++kind) {
-        if (kind == (int)count_kind::cells) continue;
-        if (kind >= (int)count_kind::of_color && !mixes(kind - (int)count_kind::of_color)) continue;
+        if (kind == (int)count_kind::cells || !worth_counting(kind)) continue;
         for (const int8_t how : { (int8_t)piece_pick::largest, (int8_t)piece_pick::smallest }) {
             const int value = SIZE_RANKS + kind;
             if (ranges::none_of(facts.cuts(), [&](const vector<object>& cut) {
@@ -1052,12 +1081,12 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
                 picks.push_back({ 0, how, (int8_t)value, -1, but_those });
         }
     }
-    // The way each piece runs (way_it_runs), each way asked only where it parts
-    // some pair's pieces: one at least taken there and one left. Every way
-    // first, then every piece but those, so where a way takes the pieces another
-    // turned round takes, the way is said.
+    // The way each piece runs (way_it_runs), then the way most cells run, each
+    // asked only where it parts some pair's pieces: one at least taken there and
+    // one left. Every way first, then every piece but those, so where a way takes
+    // the pieces another turned round takes, the way is said.
     vector<int8_t> ways;
-    for (int way = 0; way < (int)runs_along::count; ++way)
+    for (int way = 0; way <= WAY_MOST_CELLS_RUN; ++way)
         if (ranges::any_of(facts.cuts(), [&](const vector<object>& cut) {
                 const vector<bool> taken = picked_pieces(cut, piece_pick::running_along, way);
                 return ranges::find(taken, true) != taken.end() && ranges::find(taken, false) != taken.end();
@@ -1065,6 +1094,10 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
             ways.push_back((int8_t)way);
     for (const bool but_those : { false, true })
         for (const int8_t way : ways) picks.push_back({ 0, piece_pick::running_along, way, -1, but_those });
+    // At least so many of each measure past cells (at_least_of), where it is
+    // worth counting, as the most and the fewest are.
+    for (int kind = (int)count_kind::cells + 1; kind < (int)count_kind::count; ++kind)
+        if (worth_counting(kind)) at_least_of(kind);
     if (partners)
         for (const piece_pick& pick : partner_picks(facts)) picks.push_back(pick);
     return picks;

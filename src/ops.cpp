@@ -1042,32 +1042,102 @@ object_list& op_select_objects_with_holes(program_run& run, const object_list& f
     return res;
 }
 
-// SelectAtLeastCells[n]: mark the objects that paint at least n cells
-// (paints_at_least, which the reading replays); the rest ride through
+// SelectAtLeast[n of a measure]: mark the objects with at least n of it
+// (counts_at_least, which the reading replays); the rest ride through
 // unmarked. InvertSelection after it says "fewer than n".
-object_list& op_select_at_least_cells(program_run& run, const object_list& from, int8_t cells_wanted) {
+object_list& op_select_at_least(program_run& run, const object_list& from, int value) {
     object_list& res = run.fresh();
     copy_list(res, from);
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
-        if (paints_at_least(min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
-                            [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; }, cells_wanted))
+        if (counts_at_least(value, min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
+                            [&](int row, int col) { return (int)one.mask[row][col]; }))
             one.selected = true;
     }
     return res;
 }
 
 // SelectRunningAlong[way]: mark the objects that run that way (way_it_runs,
-// which the reading replays); the rest ride through unmarked.
+// which the reading replays), or past the ways the way most cells run
+// (the_way_most_cells_run); the rest ride through unmarked.
 object_list& op_select_running_along(program_run& run, const object_list& from, int8_t way) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    for (int i = 0; i < res.count; ++i) {
-        held_object& one = res.objects[i];
-        if (way_it_runs(min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
-                        [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; }) == (runs_along)way)
-            one.selected = true;
+    auto runs = [&](int i) {
+        const held_object& one = res.objects[i];
+        return way_it_runs(min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
+                           [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; });
+    };
+    runs_along wanted = (runs_along)way;
+    if (way == WAY_MOST_CELLS_RUN) {
+        wanted = the_way_most_cells_run(res.count, runs, [&](int i) {
+            const held_object& one = res.objects[i];
+            int cells = 0;
+            for (int row = 0; row < min((int)one.height, MAX_GRID_DIM); ++row)
+                for (int col = 0; col < min((int)one.width, MAX_GRID_DIM); ++col) cells += one.mask[row][col] != TRANSPARENT;
+            return cells;
+        });
+        if (wanted == runs_along::no_way) return res;
     }
+    for (int i = 0; i < res.count; ++i)
+        if (runs(i) == wanted) res.objects[i].selected = true;
+    return res;
+}
+
+// FitInto[poured]: each color the picked objects wear, every picked cell of it
+// together, poured into the one gap of an object wearing none of it that holds
+// as many cells (each_pour, which the reading replays): its cells gone from the
+// picked objects, an object left with none gone with them, and the gap's cells
+// one new object in that color, picked.
+object_list& op_fit_into(program_run& run, const object_list& from, int8_t) {
+    object_list& res = run.fresh();
+    copy_list(res, from);
+    vector<held_object> gaps;
+    vector<int8_t> poured;
+    each_pour(partner_view{ from }, [&](int color, const int16_t* rows, const int16_t* cols, int count) {
+        cell_box box;
+        for (int k = 0; k < count; ++k) box.include_cell(rows[k], cols[k]);
+        held_object& one = gaps.emplace_back();
+        one.x0 = (int16_t)box.col0; one.y0 = (int16_t)box.row0;
+        one.x1 = (int16_t)box.col1; one.y1 = (int16_t)box.row1;
+        one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
+        one.mask.clear();
+        for (int k = 0; k < count; ++k) one.mask[rows[k] - box.row0][cols[k] - box.col0] = (int8_t)color;
+        one.selected = true;
+        poured.push_back((int8_t)color);
+    });
+    if (gaps.empty()) return res;
+    int kept = 0;
+    for (int i = 0; i < res.count; ++i) {
+        held_object one = res.objects[i];
+        bool lost = false, left = false;
+        for (int row = 0; row < min((int)one.height, MAX_GRID_DIM); ++row)
+            for (int col = 0; col < min((int)one.width, MAX_GRID_DIM); ++col) {
+                int8_t& cell = one.mask[row][col];
+                if (one.selected && ranges::find(poured, cell) != poured.end()) {
+                    cell = (int8_t)TRANSPARENT;
+                    lost = true;
+                }
+                left = left || cell != (int8_t)TRANSPARENT;
+            }
+        if (left || !lost) res.objects[kept++] = one;
+    }
+    res.count = kept;
+    for (const held_object& gap : gaps)
+        if (res.count < MAX_OBJECTS_IN_A_LIST) res.objects[res.count++] = gap;
+    return res;
+}
+
+// SelectWalls: mark the objects that are walls of the input's canvas (is_wall,
+// which the reading replays); the rest ride through unmarked.
+object_list& op_select_walls(program_run& run, const object_list& from) {
+    object_list& res = run.fresh();
+    copy_list(res, from);
+    const partner_view view{ from };
+    for (int i = 0; i < res.count; ++i)
+        if (is_wall(run.input.width, run.input.height, view.box(i),
+                    [&](int row, int col) { return view.painted(i, row, col); }))
+            res.objects[i].selected = true;
     return res;
 }
 
@@ -2403,8 +2473,10 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::MoveToward:              return op_move_toward(run, in, value);
     case node_type::MirrorAround:            return op_mirror_around(run, in, value);
     case node_type::SelectObjectsWithHoles:  return op_select_objects_with_holes(run, in, value);
-    case node_type::SelectAtLeastCells:      return op_select_at_least_cells(run, in, value);
+    case node_type::SelectAtLeast:           return op_select_at_least(run, in, op.value);
     case node_type::SelectRunningAlong:      return op_select_running_along(run, in, value);
+    case node_type::SelectWalls:             return op_select_walls(run, in);
+    case node_type::FitInto:                 return op_fit_into(run, in, value);
     case node_type::SelectColor:             return op_select_color(run, in, value);
     case node_type::SelectElectedBackground: return op_select_elected_background(run, in, value);
     case node_type::SelectAll:               return op_select_all(run, in);

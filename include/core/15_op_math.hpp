@@ -34,13 +34,13 @@ using namespace std;
 constexpr shape_freedom likeness_freedom(int like) {
     return { (like & 1) != 0, like / 2 == 1, like / 2 == 2 };
 }
-// The likeness a partner way is, -1 for a way that is none.
+// The likeness to a piece of the key a partner way is, -1 for a way that is none.
 constexpr int likeness_of(partner_by how) {
     const int like = (int)how - (int)partner_by::same_shape;
-    return like >= 0 && like < SHAPE_LIKENESSES ? like : -1;
+    return like >= 0 && like < KEY_LIKENESSES ? like : -1;
 }
-// Whether a likeness lets size change: at any size, or stretched.
-constexpr bool sized_likeness(int like) { return like >= 2; }
+// Whether a likeness of shape lets size change: at any size, or stretched.
+constexpr bool sized_likeness(int like) { return like >= 2 && like < SHAPE_LIKENESSES; }
 static_assert(SHAPE_LIKENESSES == 6, "the likenesses: as it lies or turned, at its size, any size, stretched");
 static_assert(PARTNER_SIDES == 1 + direction::count && std::size(direction_names) == direction::count,
               "SelectPartner's sides: any, then each direction");
@@ -124,17 +124,46 @@ inline int object_hole_count(int height, int width, Occupied occupied) {
     return holes;
 }
 
-// WHAT A PIECE COUNTS, the measure a pick of the most, the fewest or the odd
-// one out reads (the user, 2026-10-13: the reading could not count), and the
-// partner ways by count match: its cells, its colors, its holes
-// (object_hole_count), or its cells of one color, of_color + the color.
-// color_at(row, col) reads the piece in its box, TRANSPARENT where it paints
-// none. Said once for the ops and the reading.
-enum class count_kind : int8_t { cells, colors, holes, of_color, count = of_color + COLOR_COUNT };
+// THE LONGEST STRAIGHT LINE of a `height` by `width` piece's cells running
+// `toward` one direction from each line's first cell, occupied(row, col) saying
+// which cells of its box it holds: how many cells it has.
+template <class Occupied>
+inline int longest_line(int height, int width, Occupied occupied, int toward) {
+    auto held = [&](int row, int col) {
+        return row >= 0 && row < height && col >= 0 && col < width && occupied(row, col);
+    };
+    const direction_step step = step_of(toward);
+    int line = 0;
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            if (held(row - step.down, col - step.across)) continue;
+            int cells = 0;
+            while (held(row + cells * step.down, col + cells * step.across)) ++cells;
+            line = max(line, cells);
+        }
+    return line;
+}
+
+// HOW MUCH OF A MEASURE A PIECE HAS (count_kind, 14_vocabulary.hpp): its cells,
+// its colors, its holes (object_hole_count), its cells of one color, or the
+// cells of its longest line along a way (longest_line). color_at(row, col)
+// reads the piece in its box, TRANSPARENT where it paints none. Said once for
+// the ops and the reading.
 template <class ColorAt>
 inline int count_of(int kind, int height, int width, ColorAt color_at) {
+    auto held = [&](int row, int col) { return is_color(color_at(row, col)); };
     if (kind == (int)count_kind::holes)
         return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+    if (kind >= (int)count_kind::line_along_rows) {
+        const int rows = longest_line(height, width, held, direction::right);
+        const int columns = longest_line(height, width, held, direction::down);
+        const int diagonals = max(longest_line(height, width, held, direction::down_right),
+                                  longest_line(height, width, held, direction::up_right));
+        return kind == (int)count_kind::line_along_rows      ? rows
+             : kind == (int)count_kind::line_along_columns   ? columns
+             : kind == (int)count_kind::line_along_diagonals ? diagonals
+                                                             : max(max(rows, columns), diagonals);
+    }
     uint32_t colors = 0;
     int cells = 0;
     for (int row = 0; row < height; ++row)
@@ -364,18 +393,16 @@ inline int8_t intersected_cell(int count, ColorOf color_of) {
 }
 
 // SELECT · SelectLargestObject and SelectSmallestObject, SelectUnique,
-// SelectAtLeastCells, SelectObjectsWithHoles, SelectRunningAlong,
+// SelectAtLeast, SelectObjectsWithHoles, SelectRunningAlong,
 // SelectRowFromMiddle, WouldFit, SelectPartition, SelectLikeKey, SelectPartner
 
-// WHETHER SelectAtLeastCells[at_least] PICKS A PIECE: it paints at least that
-// many cells of its `height` by `width` box. Counted here for the op and for
-// the reading that replays it, so the two cannot pick different pieces.
-template <class Occupied>
-inline bool paints_at_least(int height, int width, Occupied occupied, int at_least) {
-    int cells = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) cells += occupied(row, col) ? 1 : 0;
-    return cells >= at_least;
+// WHETHER SelectAtLeast[value] PICKS A PIECE: its `height` by `width` box holds
+// at least at_least_many(value) of the measure at_least_kind(value) (count_of).
+// Counted here for the op and for the reading that replays it, so the two
+// cannot pick different pieces.
+template <class ColorAt>
+inline bool counts_at_least(int value, int height, int width, ColorAt color_at) {
+    return count_of(at_least_kind(value), height, width, color_at) >= at_least_many(value);
 }
 
 // THE WAY A PIECE RUNS, SelectRunningAlong's value: the way its longest
@@ -390,23 +417,12 @@ enum class runs_along : int8_t { rows, columns, diagonals_down_right, diagonals_
 // replays it, and for a grid lying on its side (lies_on_its_side).
 template <class Occupied>
 inline runs_along way_it_runs(int height, int width, Occupied occupied) {
-    auto held = [&](int row, int col) {
-        return row >= 0 && row < height && col >= 0 && col < width && occupied(row, col);
-    };
     // Each way by the direction its lines run toward from their first cell.
     constexpr int8_t toward[] = { direction::right, direction::down, direction::down_right, direction::up_right };
     runs_along way = runs_along::no_way;
     int longest = 0;
     for (int along = 0; along < (int)runs_along::no_way; ++along) {
-        const direction_step step = step_of(toward[along]);
-        int line = 0;
-        for (int row = 0; row < height; ++row)
-            for (int col = 0; col < width; ++col) {
-                if (held(row - step.down, col - step.across)) continue;
-                int cells = 0;
-                while (held(row + cells * step.down, col + cells * step.across)) ++cells;
-                line = max(line, cells);
-            }
+        const int line = longest_line(height, width, occupied, toward[along]);
         if (line > longest) {
             longest = line;
             way = (runs_along)along;
@@ -415,10 +431,30 @@ inline runs_along way_it_runs(int height, int width, Occupied occupied) {
     return way;
 }
 
-// THE RANKS BY SIZE SelectLargestObject and SelectSmallestObject take, the
-// n-th piece by its cells; past them, every piece with the most -- or the
-// fewest -- of what count_kind names, value - SIZE_RANKS, ties and all.
-constexpr int SIZE_RANKS = 10;
+// SelectRunningAlong's value past the ways: the pieces running the way most
+// cells run (the_way_most_cells_run).
+constexpr int WAY_MOST_CELLS_RUN = (int)runs_along::count;
+
+// THE WAY MOST CELLS RUN: of `count` pieces, the way (way_it_runs) whose pieces
+// paint the most cells together, as SelectMostCommonColor picks the color most
+// cells wear -- no way where two tie or no piece runs one. `way_of(i)` is the
+// way piece i runs, `cells_of(i)` how many cells it paints. Read here for the
+// op and for the reading that replays it.
+template <class WayOf, class CellsOf>
+inline runs_along the_way_most_cells_run(int count, WayOf way_of, CellsOf cells_of) {
+    int cells[(int)runs_along::no_way] = {};
+    for (int i = 0; i < count; ++i)
+        if (const runs_along way = way_of(i); way != runs_along::no_way) cells[(int)way] += cells_of(i);
+    runs_along most = runs_along::no_way;
+    int most_cells = 0;
+    for (int way = 0; way < (int)runs_along::no_way; ++way) {
+        if (cells[way] > most_cells) {
+            most_cells = cells[way];
+            most = (runs_along)way;
+        } else if (cells[way] == most_cells && most_cells > 0) most = runs_along::no_way;
+    }
+    return most;
+}
 
 // EVERY ONE OF `count` WITH THE MOST -- or the fewest -- of what value(i)
 // counts, handed to pick(i), ties and all; none where every one counts the
@@ -469,13 +505,6 @@ inline int layers_by_size(const color_tally& counts, bool largest, int8_t* color
     for (int i = 0; i < count; ++i) colors[i] = layers[order[i]];
     return count;
 }
-
-// WHAT MAKES TWO PIECES TWINS, SelectUnique's value: the same drawing,
-// colors and all [0]; the same shape as it lies [1] or any way round [2],
-// colors aside (same_shape); the same colors, wherever they lie [3]; or past
-// those, the same count of what count_kind names, by_count + the kind.
-enum class twin_by : int8_t { drawing, shape, shape_turned, colors, by_count,
-                              count = by_count + (int)count_kind::count };
 
 // The number twins by colors or by a count share: the colors a piece wears,
 // a bit each, or what it counts (count_of); -1 for the twins by shape.
@@ -538,31 +567,66 @@ inline int line_from_middle(int lo, int hi, int from) {
     return line >= lo && line <= hi ? line : -1;
 }
 
+// THE GAPS OF A PIECE, the sockets another piece fits or pours into: each run
+// of the cells of its `box` the piece leaves empty, joined side to side, that
+// meets the edge of the box on one side alone -- the mouth of a cup, open that
+// way. painted(row, col) says whether the piece paints a cell of the grid. Each
+// handed to see(opens, run_row, run_col, count), in reading order: the side it
+// opens to (box_side), its cells in the box's own rows and columns, the first
+// first in reading order, and how many; see answers true to stop at it, and so
+// does this.
+enum box_side : uint8_t { side_top = 1, side_bottom = 2, side_left = 4, side_right = 8 };
+template <class Painted, class See>
+inline bool each_gap(const cell_box& box, Painted painted, See see) {
+    const int tall = box.height(), wide = box.width();
+    bool walked[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    int16_t run_row[MAX_GRID_CELLS], run_col[MAX_GRID_CELLS];
+    for (int start_row = 0; start_row < tall; ++start_row)
+        for (int start_col = 0; start_col < wide; ++start_col) {
+            if (walked[start_row][start_col] || painted(box.row0 + start_row, box.col0 + start_col)) continue;
+            // Walk the run from its first cell in reading order, noting the box's sides it meets.
+            uint8_t meets = 0;
+            walked[start_row][start_col] = true;
+            run_row[0] = (int16_t)start_row;
+            run_col[0] = (int16_t)start_col;
+            const int count = walk_out<4>(tall, wide, run_row, run_col, 1,
+                [&](int row, int col) {
+                    if (walked[row][col] || painted(box.row0 + row, box.col0 + col)) return false;
+                    walked[row][col] = true;
+                    return true;
+                },
+                [&](int row, int col) {
+                    if (row == 0) meets |= side_top;
+                    if (row == tall - 1) meets |= side_bottom;
+                    if (col == 0) meets |= side_left;
+                    if (col == wide - 1) meets |= side_right;
+                });
+            const bool one_side = meets == side_top || meets == side_bottom || meets == side_left || meets == side_right;
+            if (one_side && see(meets, run_row, run_col, count)) return true;
+        }
+    return false;
+}
+
 // WHETHER THE PIECE `mine` WOULD FIT INTO `partner`: turned or mirrored any of
 // the eight ways and set down anywhere, it fills one of the partner's gaps
-// whole, paints no cell the partner paints, and whatever it has over hangs out
-// past the partner's box on the side the gap opens to. A GAP, for now: a run of
-// the cells in the partner's box the partner leaves empty, joined side to side,
-// that meets the edge of that box on one side alone -- a side the piece lies
-// past. Nothing moves: this is the question WouldFit asks, and moving a piece
-// into its gap would be the same question answered with the place. The pieces
-// are asked as each_partner asks them.
+// (each_gap) whole, paints no cell the partner paints, and whatever it has over
+// hangs out past the partner's box on the side the gap opens to -- a side the
+// piece lies past. Nothing moves: this is the question WouldFit asks, and
+// moving a piece into its gap would be the same question answered with the
+// place. The pieces are asked as each_partner asks them.
 template <class Pieces>
 inline bool would_fit(int mine, int partner, const Pieces& pieces) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
-    constexpr uint8_t top = 1, bottom = 2, left = 4, right = 8;
-    const uint8_t past = (uint8_t)((own.row1 < box.row0 ? top : 0) | (own.row0 > box.row1 ? bottom : 0) |
-                                   (own.col1 < box.col0 ? left : 0) | (own.col0 > box.col1 ? right : 0));
+    const uint8_t past = (uint8_t)((own.row1 < box.row0 ? side_top : 0) | (own.row0 > box.row1 ? side_bottom : 0) |
+                                   (own.col1 < box.col0 ? side_left : 0) | (own.col0 > box.col1 ? side_right : 0));
     if (!past) return false;
     int cells = 0;
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) cells += painted(mine, row, col) ? 1 : 0;
-    const int tall = box.height(), wide = box.width();
-    // Each empty cell of the box: 0 not walked yet, 1 walked, 2 in the run walked now.
-    uint8_t seen[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    int16_t run_row[MAX_GRID_CELLS], run_col[MAX_GRID_CELLS];
+    // The cells of the gap asked now, in the box's own rows and columns.
+    bool in_run[MAX_GRID_DIM][MAX_GRID_DIM];
     // Whether the piece, some way round, fills whole the run of `count` cells
     // starting at (first_row, first_col), hanging out past `side` with whatever
     // it has over.
@@ -587,11 +651,11 @@ inline bool would_fit(int mine, int partner, const Pieces& pieces) {
                             const int on_row = row + down, on_col = col + across;
                             if (painted(partner, on_row, on_col)) { sits = false; break; }
                             if (on_row >= box.row0 && on_row <= box.row1 && on_col >= box.col0 && on_col <= box.col1) {
-                                if (seen[on_row - box.row0][on_col - box.col0] == 2) ++covered;
+                                if (in_run[on_row - box.row0][on_col - box.col0]) ++covered;
                                 else sits = false;
                             } else {
-                                sits = side == top ? on_row < box.row0 : side == bottom ? on_row > box.row1
-                                     : side == left ? on_col < box.col0 : on_col > box.col1;
+                                sits = side == side_top ? on_row < box.row0 : side == side_bottom ? on_row > box.row1
+                                     : side == side_left ? on_col < box.col0 : on_col > box.col1;
                             }
                         }
                     if (sits && covered == count) return true;
@@ -599,31 +663,53 @@ inline bool would_fit(int mine, int partner, const Pieces& pieces) {
         }
         return false;
     };
-    for (int start_row = 0; start_row < tall; ++start_row)
-        for (int start_col = 0; start_col < wide; ++start_col) {
-            if (seen[start_row][start_col] || painted(partner, box.row0 + start_row, box.col0 + start_col)) continue;
-            // Walk the run from its first cell in reading order, noting the box's sides it meets.
-            uint8_t meets = 0;
-            seen[start_row][start_col] = 2;
-            run_row[0] = (int16_t)start_row;
-            run_col[0] = (int16_t)start_col;
-            const int count = walk_out<4>(tall, wide, run_row, run_col, 1,
-                [&](int row, int col) {
-                    if (seen[row][col] || painted(partner, box.row0 + row, box.col0 + col)) return false;
-                    seen[row][col] = 2;
-                    return true;
-                },
-                [&](int row, int col) {
-                    if (row == 0) meets |= top;
-                    if (row == tall - 1) meets |= bottom;
-                    if (col == 0) meets |= left;
-                    if (col == wide - 1) meets |= right;
-                });
-            const bool one_side = meets == top || meets == bottom || meets == left || meets == right;
-            if (one_side && (meets & past) && count <= cells && fills(start_row, start_col, count, meets)) return true;
-            for (int i = 0; i < count; ++i) seen[run_row[i]][run_col[i]] = 1;
+    return each_gap(box, [&](int row, int col) { return painted(partner, row, col); },
+                    [&](uint8_t opens, const int16_t* run_row, const int16_t* run_col, int count) {
+        if (!(opens & past) || count > cells) return false;
+        for (int row = 0; row < box.height(); ++row)
+            for (int col = 0; col < box.width(); ++col) in_run[row][col] = false;
+        for (int i = 0; i < count; ++i) in_run[run_row[i]][run_col[i]] = true;
+        return fills(run_row[0], run_col[0], count, opens);
+    });
+}
+
+// WHERE THE PICKED PIECES POUR (FitInto [poured]): each color they wear, every
+// picked cell of it together, into the one gap (each_gap) of a piece wearing
+// none of it that holds exactly as many cells -- nowhere where no gap does or
+// several do (7acdf6d3's dots, into the cup that holds them all, whichever
+// color the cups and the dots wear). Each pour, color by color, lowest first,
+// handed to pour(color, gap_row, gap_col, count), the gap's cells on the grid.
+// The pieces are asked as each_partner asks them.
+template <class Pieces, class Pour>
+inline void each_pour(const Pieces& pieces, Pour pour) {
+    int cells_of[COLOR_COUNT] = {};
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (!pieces.is_picked(i)) continue;
+        const cell_box box = pieces.box(i);
+        for (int row = box.row0; row <= box.row1; ++row)
+            for (int col = box.col0; col <= box.col1; ++col)
+                if (const int color = pieces.color_at(i, row, col); is_color(color)) ++cells_of[color];
+    }
+    int16_t gap_row[MAX_GRID_CELLS], gap_col[MAX_GRID_CELLS];
+    for (int color = 0; color < COLOR_COUNT; ++color) {
+        if (cells_of[color] == 0) continue;
+        int found = 0;
+        for (int j = 0; j < pieces.count() && found < 2; ++j) {
+            const cell_box box = pieces.box(j);
+            if (box.empty() || pieces.holds(j, color)) continue;
+            each_gap(box, [&](int row, int col) { return pieces.painted(j, row, col); },
+                     [&](uint8_t, const int16_t* run_row, const int16_t* run_col, int count) {
+                if (count != cells_of[color]) return false;
+                if (++found == 1)
+                    for (int k = 0; k < count; ++k) {
+                        gap_row[k] = (int16_t)(box.row0 + run_row[k]);
+                        gap_col[k] = (int16_t)(box.col0 + run_col[k]);
+                    }
+                return found > 1;
+            });
         }
-    return false;
+        if (found == 1) pour(color, gap_row, gap_col, cells_of[color]);
+    }
 }
 
 // THE PARTS WALLS FENCE OFF: every cell of a canvas `width` by `height` that is
@@ -710,14 +796,30 @@ inline bool lies_in_part(const Pieces& pieces, int mine, int which,
     return true;
 }
 
+// A WALL: a piece that reaches two edges of a canvas `width` by `height` and
+// fences it into two parts at least (fence_parts) -- a line across it, or bent
+// across a corner -- what the grid is divided by, not a figure on it
+// (e3721c99's fence between its key and the pieces the key colors). `box` is
+// the box its cells fill, `painted(row, col)` whether it paints that cell.
+// SelectWalls picks these, and the reading sets them apart (set_the_walls_apart).
+template <class Painted>
+inline bool is_wall(int width, int height, const cell_box& box, Painted painted) {
+    if (box.empty()) return false;
+    const int edges = (box.row0 <= 0) + (box.row1 >= height - 1) + (box.col0 <= 0) + (box.col1 >= width - 1);
+    if (edges < 2) return false;
+    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
+    return fence_parts(width, height, [&](int row, int col) {
+        return row >= box.row0 && row <= box.row1 && col >= box.col0 && col <= box.col1 && painted(row, col);
+    }, part) >= 2;
+}
+
 // WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --
-// every piece not picked, as the key operators read it (each_key_entry) -- is of
-// its shape, by the likeness `how` names (SHAPE_LIKENESSES: as it lies or
-// turned any of the eight ways, at its size, any size or stretched), as
-// each_partner finds a piece of the same shape (63613498: the piece shaped as
-// the key in the grey corner lies turns grey, not the ones turned). The pieces
-// are asked as each_partner asks them.
-constexpr int KEY_LIKENESSES = SHAPE_LIKENESSES;
+// every piece not picked, as the key operators read it (each_key_entry) -- is
+// like it, by the likeness `how` names (KEY_LIKENESSES: of its shape as it
+// lies or turned any of the eight ways, at its size, any size or stretched, or
+// with as many holes, cells or colors), as each_partner finds such a piece
+// (63613498: the piece shaped as the key in the grey corner lies turns grey, not
+// the ones turned). The pieces are asked as each_partner asks them.
 template <class Pieces>
 inline bool like_the_key(int how, int mine, const Pieces& pieces) {
     return how >= 0 && how < KEY_LIKENESSES &&

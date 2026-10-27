@@ -587,23 +587,27 @@ inline void log_inference(const string& id, const inference& inf,
              : is_color(ground.color) ? to_string((int)ground.color) : string("none");
     };
     // A plan as words: what the inputs lose -- the ground deleted, and what the
-    // fill takes off them as well -- and what is filled last.
+    // fill takes off them as well -- what is filled last, and the walls set apart.
     auto plan_said = [&](const ground_plan& plan) {
         const background_source also = plan.filled_on_input();
         const string deleted = !also.removes_color() || also == plan.deleted ? side(plan.deleted)
                              : !plan.deleted.removes_color() ? side(also)
                              : side(plan.deleted) + " and " + side(also);
-        return "delete " + deleted + ", fill " + side(plan.filled);
+        return "delete " + deleted + ", fill " + side(plan.filled) + (plan.walls_apart ? ", walls apart" : "");
     };
-    const vector<ground_plan> plans = ground_plans(inf.ground_election);
-    for (const ground_plan& plan : plans) report << "  |" << (plan == inf.plan ? "*" : " ") << plan_said(plan);
+    // The plan kept, starred among the election's, which name no walls.
+    ground_plan kept = inf.plan;
+    kept.walls_apart = false;
+    for (const ground_plan& plan : ground_plans(inf.ground_election))
+        report << "  |" << (plan == kept ? "*" : " ") << plan_said(plan);
+    if (inf.plan.walls_apart) report << "  | walls apart";
     // Kept with the partner picks (inference::partners).
     if (inf.partners) report << "  | with the partner picks";
     report << "\n";
     // Each plan read, in order, until one said every cell with no pass after it.
-    report << "[plans read] in order, the first to say the most kept\n";
+    report << "[plans read] in order, the one to say the most in the fewest passes kept\n";
     for (const auto& read : inf.plans_read)
-        report << "  " << ((size_t)read.plan < plans.size() ? plan_said(plans[(size_t)read.plan]) : string("?"))
+        report << "  " << plan_said(read.plan)
                << (read.partners ? ", with the partner picks" : "") << ": " << read.left << " unsaid, "
                << read.passes << (read.passes == 1 ? " pass" : " passes")
                << (read.rules.empty() ? string() : ": " + read.rules) << "\n";

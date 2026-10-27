@@ -56,7 +56,7 @@ inline constexpr rule_group group_of(correspondence_election::fired_rule::said_a
         case rule::turn: case rule::move_down: case rule::move_across:
         case rule::learned_table: case rule::align_to: case rule::mirror_around:
         case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
-        case rule::empty_swap:
+        case rule::empty_swap: case rule::poured:
             return rule_group::changes_pieces;
         case rule::removed: return rule_group::removes;
         // Paints: the hand on the line is left alone.
@@ -390,9 +390,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // tie going to the plainer: the colors before holes and size, the smaller
     // value before the larger. Where every piece of every pair is picked, it picks
     // every piece, since a test can hold a color no pair did (496994bd).
-    // How a piece is like the key (SelectLikeKey), each likeness of shape in turn.
-    static constexpr const char* likenesses[] = { "", " Any Way Round", " At Any Size", " At Any Size, Any Way Round",
-                                                  " Stretched", " Stretched, Any Way Round" };
+    // How a piece is like the key (SelectLikeKey): each likeness of shape in
+    // turn, then each count.
+    static constexpr const char* likenesses[] = {
+        " Shaped Like The Key", " Shaped Like The Key Any Way Round", " Shaped Like The Key At Any Size",
+        " Shaped Like The Key At Any Size, Any Way Round", " Shaped Like The Key Stretched",
+        " Shaped Like The Key Stretched, Any Way Round", " With As Many Holes As A Piece Of The Key",
+        " With As Many Cells As A Piece Of The Key", " With As Many Colors As A Piece Of The Key" };
     static_assert(size(likenesses) == (size_t)KEY_LIKENESSES);
     // A partner by name (partner_way_names): each way partner_by finds one, and,
     // of any kind (partner_of_kind), then the piece of each color.
@@ -401,17 +405,27 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return kind < (int)partner_by::count ? partners(kind)
                                              : "the piece of color " + to_string(kind - (int)partner_by::count);
     };
-    // Each kind of pick by name, then turned round, every piece but those.
+    // Each kind of pick by name, then turned round, every piece but those; at
+    // least so many after its measure's name.
     static constexpr const char* pick_names[][2] = { { "Holes", "" }, { "Largest", "" }, { "Smallest", "" },
         { "Row Band", "" }, { "Column Band", "" }, { "Most Common Color", "Not Most Common Color" },
-        { "Cells At Least", "Cells Fewer Than" }, { "The Largest", "All But The Largest" },
+        { "At Least", "Fewer Than" }, { "The Largest", "All But The Largest" },
         { "The Smallest", "All But The Smallest" }, { "Row From The Middle", "Off The Row From The Middle" },
         { "Column From The Middle", "Off The Column From The Middle" },
         { "The One With No Twin By", "All But The One With No Twin By" }, { "Running", "Not Running" } };
     static_assert(size(pick_names) == (size_t)piece_pick::pick_kinds);
     static constexpr const char* running_ways[] = { "Along Its Rows", "Along Its Columns",
-        "Along Its Diagonals Down To The Right", "Along Its Diagonals Up To The Right", "No Way" };
-    static_assert(size(running_ways) == (size_t)runs_along::count);
+        "Along Its Diagonals Down To The Right", "Along Its Diagonals Up To The Right", "No Way",
+        "The Way Most Cells Run" };
+    static_assert(size(running_ways) == (size_t)WAY_MOST_CELLS_RUN + 1);
+    // A measure as a readout names it, each word capitalized: Cells Of Color 3.
+    auto measure_named = [](int kind) {
+        string named = measure_written(kind);
+        for (size_t at = 0; at < named.size(); ++at)
+            if ((at == 0 || named[at - 1] == ' ') && named[at] >= 'a' && named[at] <= 'z')
+                named[at] = (char)(named[at] - 'a' + 'A');
+        return named;
+    };
     using left_over_cell = correspondence_election::left_over_cell;
     using claim = std::function<bool(size_t, const left_over_cell&)>;
     // The best a rule heard: its value and pick, how many cells nothing else
@@ -502,10 +516,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 const int kind = best.pick.value - (best.pick.how == piece_pick::only_one ? (int)twin_by::by_count : SIZE_RANKS);
                 name += string(best.pick.how == piece_pick::smallest ? " Fewest " : best.pick.how == piece_pick::largest
                                                                                          ? " Most " : " Count Of ") +
-                        (kind == (int)count_kind::cells ? "Cells" : kind == (int)count_kind::colors ? "Colors"
-                         : kind == (int)count_kind::holes ? "Holes"
-                         : "Cells Of Color " + to_string(kind - (int)count_kind::of_color));
-            } else if (best.pick.how == piece_pick::running_along) name += string(" ") + running_ways[best.pick.value];
+                        measure_named(kind);
+            } else if (best.pick.how == piece_pick::at_least)
+                name = measure_named(at_least_kind(best.pick.value)) + " " + name + " " +
+                       to_string(at_least_many(best.pick.value));
+            else if (best.pick.how == piece_pick::running_along) name += string(" ") + running_ways[best.pick.value];
             else if (best.pick.how != piece_pick::most_common) name += " " + to_string(best.pick.value);
         }
         else if (best.pick.partner >= 0) {
@@ -530,8 +545,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         }
         if (!every_piece && best.pick.fits >= 0)
             name += string(" That Would Fit ") + partners(best.pick.fits);
-        if (!every_piece && best.pick.like >= 0)
-            name += string(" Shaped Like The Key") + likenesses[best.pick.like];
+        if (!every_piece && best.pick.like >= 0) name += likenesses[best.pick.like];
         rule one = listed(name.c_str(), says.c_str(), as, (int8_t)best.value);
         one.pick = every_piece ? piece_pick::all() : best.pick;
         one.pieces = best.seen.pieces;
@@ -611,16 +625,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             }
         }
         if (found < 0) return {};
-        // The group by its name, else by the colors it wears, which may take a
-        // piece the rule leaves as it is (b7256dcd's shape with no dot beside it).
-        vector<piece_pick> picks;
-        if (const auto named = pick_for_group(facts, group)) picks.push_back(*named);
         uint16_t worn = 0;
         for (size_t which = 0; which < group.size(); ++which)
             for (size_t index = 0; index < group[which].size(); ++index)
                 if (group[which][index]) worn = (uint16_t)(worn | palette(facts.cuts()[which][index]));
-        if (worn && same_colors_every_pair(facts, worn) && ranges::find(picks, piece_pick{ worn }) == picks.end())
-            picks.push_back(piece_pick{ worn });
+        const bool steady = worn && same_colors_every_pair(facts, worn);
+        // THE GROUP AS THE RULE NAMES IT, where its way is a likeness: of the
+        // colors it wears, the pieces with a partner that way, like a piece of
+        // the key that way (SelectLikeKey) -- the op leaves a piece with none as
+        // it is, and the pairs may show it gone (e3721c99's shapes no piece of
+        // the key has as many holes as). Then the group by a name every pair
+        // gives it, which can be where the pairs' pieces happen to lie (e3721c99's
+        // key, in the top band of both pairs, on the side of its tests); else by
+        // the colors it wears, which may take a piece the rule leaves as it is
+        // (b7256dcd's shape with no dot beside it).
+        vector<piece_pick> picks;
+        if (const int like = found < KEY_BY_PLACE ? likeness_of((partner_by)found) : -1; like >= 0 && steady) {
+            piece_pick liked{ worn };
+            liked.like = (int8_t)like;
+            picks.push_back(liked);
+        }
+        if (const auto named = pick_for_group(facts, group)) picks.push_back(*named);
+        if (steady && ranges::find(picks, piece_pick{ worn }) == picks.end()) picks.push_back(piece_pick{ worn });
         for (const piece_pick& pick : picks) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             const auto seen = found >= COLORS_FROM_ITS_SHAPE ? colors_from_its_shape_holds(facts, handed, found - COLORS_FROM_ITS_SHAPE)
@@ -962,6 +988,22 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         });
         if (best.value < 0) return {};
         return { best.said, [&, best] { carry(say(best, rule::removed, "is removed", -1)); } };
+    };
+
+    // INTO ITS SOCKET, POURED: each color poured into the one gap that holds as
+    // many cells (pour_holds), every piece picked -- the pour names both its
+    // roles, the color and the socket, so no pick of a color is asked, and a
+    // test that trades the colors round pours all the same (7acdf6d3). It
+    // accounts for the cells it left and filled, as a move does.
+    auto pour_rule = [&]() -> offer {
+        if (!facts.hand_known || already_said(rule::poured, piece_pick::all(), 0)) return {};
+        const auto seen = pour_holds(facts, handed_pieces(facts, piece_pick::all()));
+        if (!seen) return {};
+        heard best;
+        weigh(best, 0, piece_pick::all(), *seen, move_claims(*seen));
+        if (best.value < 0) return {};
+        return { best.said, [&, best] {
+            carry(say(best, rule::poured, "pours into the one gap that holds as many cells", moves)); } };
     };
 
     // The picks a paint is asked with: each color on its own, then the picks by
@@ -1810,7 +1852,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                             { mirror_rule, false, true }, { outline_rule, false, true },
                             { recolor_rule, false, false }, { shape_rule, false, false },
                             { [&] { return key_rule(!frozen); }, false, false },
-                            { removal_rule, false, true }, { ray_paint, true, false },
+                            { removal_rule, false, true }, { pour_rule, false, true }, { ray_paint, true, false },
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },

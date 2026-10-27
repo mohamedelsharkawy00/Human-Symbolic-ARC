@@ -807,6 +807,83 @@ inline optional<replayed> shift_holds(const replay_facts& facts, const vector<pa
     });
 }
 
+// THE HAND, POURED, as FitInto [poured] pours its objects: every pour each_pour
+// finds on `hand` with `picked` marked -- that color's cells gone from the
+// picked pieces, a piece left with none gone with them, and each gap one piece
+// in that color at the end. False, the hand as it was, where nothing pours.
+inline bool pour_the_hand(vector<object>& hand, const vector<bool>& picked, hand_answers& answers) {
+    vector<object> gaps;
+    uint16_t poured = 0;
+    each_pour(partner_pieces(hand, picked, answers), [&](int color, const int16_t* rows, const int16_t* cols, int count) {
+        cell_box box;
+        for (int k = 0; k < count; ++k) box.include_cell(rows[k], cols[k]);
+        object& gap = gaps.emplace_back();
+        gap.summary = summary_of(box, count);
+        for (int k = 0; k < count; ++k) gap.data[rows[k] - box.row0][cols[k] - box.col0] = (int8_t)color;
+        poured = (uint16_t)(poured | 1u << color);
+    });
+    if (gaps.empty()) return false;
+    vector<object> kept;
+    for (size_t i = 0; i < hand.size(); ++i) {
+        object piece = hand[i];
+        int lost = 0;
+        if (picked[i])
+            for (int row = 0; row < piece.summary.height; ++row)
+                for (int col = 0; col < piece.summary.width; ++col)
+                    if (int8_t& cell = piece.data[row][col]; is_color(cell) && (poured >> cell & 1)) {
+                        cell = (int8_t)TRANSPARENT;
+                        ++lost;
+                    }
+        piece.summary.count = (int16_t)(piece.summary.count - lost);
+        if (!lost || piece.summary.count > 0) kept.push_back(piece);
+    }
+    for (const object& gap : gaps)
+        if (kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST) kept.push_back(gap);
+    hand = std::move(kept);
+    return true;
+}
+
+// A COLOR POURED INTO ITS SOCKET, replayed: each pair's hand poured as the op
+// pours it (pour_the_hand), drawn before and after (draw_the_hand), and judged
+// by the cells the pour changes there (brings_nearer, a pour in every pair): a
+// cell right where it now shows what the output shows -- a gap's cell filled,
+// a poured cell left -- and wrong elsewhere. Sees the cells it left and filled.
+inline optional<replayed> pour_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
+    if (!facts.overlays) return nullopt;
+    replayed seen;
+    seen.left.assign(facts.train.size(), {});
+    seen.drawn.assign(facts.train.size(), {});
+    seen.wrong.assign(facts.train.size(), {});
+    auto still = [](size_t) { return direction_step{ 0, 0 }; };
+    for (size_t which = 0; which < facts.train.size(); ++which) {
+        const partner_pieces& cut = handed[which];
+        seen.every_piece = seen.every_piece && cut.every_piece_picked();
+        vector<object> hand = facts.cuts()[which];
+        pair_tally tally;
+        tally.acted = pour_the_hand(hand, cut.picked, facts.answers_of(which));
+        const grid& output = facts.train[which].output;
+        grid was(output.width, output.height), now = was;
+        if (!draw_the_hand(was, facts.cuts()[which], facts.laid_under, /*clip=*/true, still) ||
+            !draw_the_hand(now, hand, facts.laid_under, /*clip=*/true, still))
+            return nullopt;
+        for (int row = 0; row < output.height; ++row)
+            for (int col = 0; col < output.width; ++col) {
+                const int8_t shows = now.data[row][col];
+                if (shows == was.data[row][col]) continue;
+                if (shows == output.data[row][col]) {
+                    (shows == (int8_t)TRANSPARENT ? seen.left : seen.drawn)[which].push_back({ row, col });
+                    ++tally.gained;
+                } else {
+                    ++tally.wrong;
+                    seen.wrong[which].push_back({ (int8_t)row, (int8_t)col, shows });
+                }
+            }
+        seen.pieces += tally.acted;
+        if (!brings_nearer(facts, which, tally)) return nullopt;
+    }
+    return seen;
+}
+
 // Where the first piece a pick takes could have gone in the first pair: every
 // offset at which the output shows it whole, it not standing still. Moves are
 // read off the output, not guessed, and every one is then replayed on every pair.
@@ -2048,6 +2125,9 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
             hand.swap(kept);
             break;
         }
+        case said::poured:
+            pour_the_hand(hand, picked, facts.answers_of(which));
+            break;
         case said::outlined:
             for (size_t i = 0; i < hand.size(); ++i)
                 if (picked[i]) hand[i] = outlined(hand[i]);

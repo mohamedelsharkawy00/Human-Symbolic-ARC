@@ -1739,7 +1739,7 @@ struct inference {
     // and whether with the partner picks -- the readout's [plans read], which
     // shows why one plan was kept over another (a61f2674's lost line was found
     // this way).
-    struct plan_read { int plan = 0; int left = 0, passes = 0; string rules; bool partners = false; };
+    struct plan_read { ground_plan plan; int left = 0, passes = 0; string rules; bool partners = false; };
     vector<plan_read> plans_read;
 };
 

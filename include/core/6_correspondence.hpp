@@ -49,10 +49,12 @@ struct tiled_pieces {
 // The empty mask picks nothing; all() picks every color, of_color() just one.
 struct piece_pick {
     enum picked_by : int8_t { by_holes, largest, smallest, row_band, column_band, most_common,
-                             at_least_cells, largest_ranks, smallest_ranks, middle_row, middle_column,
+                             at_least, largest_ranks, smallest_ranks, middle_row, middle_column,
                              only_one, running_along, pick_kinds };
     uint16_t colors = 0;
-    int8_t how = -1, value = 0, fits = -1;
+    int8_t how = -1;
+    int16_t value = 0;
+    int8_t fits = -1;
     bool but_those = false;
     int8_t part = -1, like = -1;
     int16_t partner = -1;
@@ -321,7 +323,7 @@ struct correspondence_election {
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
-                                empty_swap, own_sentences, kind_count } as = unsaid;
+                                empty_swap, own_sentences, poured, kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;
