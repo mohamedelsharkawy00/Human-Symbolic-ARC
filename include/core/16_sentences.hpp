@@ -903,7 +903,7 @@ inline vector<beat> beats_of(const correspondence_election::fired_rule& rule, co
         case said_as::outlined:    beats.push_back({pick, "Outline"}); break;
         case said_as::recolor_picked: beats.push_back({pick, spell("Recolor", rule.value)}); break;
         case said_as::removed:     beats.push_back({pick, "DeleteSelection"}); break;
-        case said_as::poured:      beats.push_back({pick, spell("FitInto", rule.value)}); break;
+        case said_as::fit_into:    beats.push_back({pick, spell("FitInto", rule.value)}); break;
         case said_as::to_edge:     beats.push_back({pick, spell("MoveToEdge", rule.value)}); break;
         case said_as::shifted:     beats.push_back({pick, spell("Shift", rule.value)}); break;
         case said_as::swap_colors: beats.push_back({"SelectAll", spell("BidiColorMap", rule.value)}); break;

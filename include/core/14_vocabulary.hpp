@@ -366,9 +366,19 @@ constexpr int at_least_kind(int value) { return value / AT_LEAST_STEPS; }
 constexpr int at_least_many(int value) { return value % AT_LEAST_STEPS + 1; }
 
 // HOW A PIECE GOES INTO ITS SOCKET (FitInto), by name: poured, as many cells as
-// the gap holds.
-inline constexpr std::string_view fit_into_ways[] = { "poured" };
-constexpr int FIT_INTO_WAYS = (int)std::size(fit_into_ways);
+// the gap holds; or moved, turned as it needs, into the gap it fills whole.
+#define FIT_INTO_WAYS X(poured, "poured") X(moved, "moved")
+enum class fit_into_way : int8_t {
+#define X(id, name) id,
+    FIT_INTO_WAYS
+#undef X
+    count
+};
+inline constexpr std::string_view fit_into_ways[] = {
+#define X(id, name) name,
+    FIT_INTO_WAYS
+#undef X
+};
 
 // THE VALUES THE PARTNER OPS TAKE, a few choices packed in one number a program
 // never shows (value_written spells them by name): ColorFrom's partner ways,
@@ -593,8 +603,9 @@ enum class inferred_amount { none, some, all };
   /* canvas and fences it into two parts at least.                         */ \
   X(SelectWalls                 , 0                 , 0                        , select   , none, false)        \
   /* Into a socket: each color of the picked pieces poured into the one gap */ \
-  /* that holds as many cells [0] (each_pour).                              */ \
-  X(FitInto                     , 0                 , arc::FIT_INTO_WAYS - 1   , translate, none, false)
+  /* that holds as many cells [0] (each_pour); each picked piece moved,     */ \
+  /* turned as it needs, into the one piece it fits into [1] (each_fit_move). */ \
+  X(FitInto                     , 0                 , (int)arc::fit_into_way::count - 1, translate, none, false)
 
 enum class node_type : uint8_t {
 #define X(id, low, high, role, inferred, clears) id,

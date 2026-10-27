@@ -1084,14 +1084,39 @@ object_list& op_select_running_along(program_run& run, const object_list& from, 
     return res;
 }
 
+// FitInto[moved]: each picked object moved into the one object it fits into
+// (each_fit_move, which the reading replays), its painted cells turned as the
+// place names and laid with their corner there, the rest where they were.
+void fit_moved(object_list& res, const object_list& from) {
+    each_fit_move(partner_view{ from }, [&](int i, int pose, int row, int col) {
+        const held_object& source = from.objects[i];
+        const cell_box paint = painted_box(source);
+        const auto [broad, high] = posed_size(pose, paint.width(), paint.height());
+        held_object& one = res.objects[i];
+        one.mask.clear();
+        for (int down = 0; down < high; ++down)
+            for (int across = 0; across < broad; ++across) {
+                const auto [from_row, from_col] = pose_source(pose, paint.width(), paint.height(), down, across);
+                one.mask[down][across] = source.mask[paint.row0 + from_row][paint.col0 + from_col];
+            }
+        one.x0 = (int16_t)col; one.y0 = (int16_t)row;
+        one.width = (int16_t)broad; one.height = (int16_t)high;
+        one.x1 = (int16_t)(col + broad - 1); one.y1 = (int16_t)(row + high - 1);
+    });
+}
+
 // FitInto[poured]: each color the picked objects wear, every picked cell of it
 // together, poured into the one gap of an object wearing none of it that holds
 // as many cells (each_pour, which the reading replays): its cells gone from the
 // picked objects, an object left with none gone with them, and the gap's cells
-// one new object in that color, picked.
-object_list& op_fit_into(program_run& run, const object_list& from, int8_t) {
+// one new object in that color, picked. FitInto[moved]: fit_moved.
+object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
     copy_list(res, from);
+    if (how == (int8_t)fit_into_way::moved) {
+        fit_moved(res, from);
+        return res;
+    }
     vector<held_object> gaps;
     vector<int8_t> poured;
     each_pour(partner_view{ from }, [&](int color, const int16_t* rows, const int16_t* cols, int count) {

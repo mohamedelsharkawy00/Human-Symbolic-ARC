@@ -323,7 +323,7 @@ struct correspondence_election {
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
-                                empty_swap, own_sentences, poured, kind_count } as = unsaid;
+                                empty_swap, own_sentences, fit_into, kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;

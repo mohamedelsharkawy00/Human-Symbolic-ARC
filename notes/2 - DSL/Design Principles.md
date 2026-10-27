@@ -248,7 +248,18 @@ read off one piece that decides another rule's argument (97d7923e's rank).
   poured into the one gap of a piece wearing none of it that holds as many
   (`each_pour`), asked with every piece picked, so the relation names both roles
   and no color is said: 7acdf6d3's test trades the cups' and the dots' colors.
-  Still to come, the same act by shape: a piece moved into the gap it fills
-  whole (WouldFit asks it, nothing moves it; a1570a43's missing FitInto).
   Training 273 -> 274 right, 32 -> 31 wrong, none lost, one readout changed;
   evaluation unchanged.
+- **The same act by shape** (fe45cba4, the user's ids): `FitInto [moved]`,
+  each picked piece moved, turned as it needs, into the gap it fills whole
+  (`each_fit`, WouldFit's question with the place, one helper; `each_fit_move`)
+  -- of the gaps it fits, the one holding the most cells, its deepest fit; a tie
+  for the most leaves it where it is. "The one socket it fits" refused
+  fe45cba4: its shape fits its own color's cup whole and, turned, the other
+  cup's one-cell gap by its tip. Training 274 -> 275 right, none lost;
+  evaluation unchanged (16b78196 says it of two of its pieces, still no fit).
+  The user's other ids, by what they lack: 16b78196, each piece into the
+  socket the one before it left (a chain); d4f3cd78, aba27056, b9e38dc0, a
+  container filled and leaking out of its opening; b7cb93ac, 7b3084d4, pieces
+  fitted to each other into one block; e45ef808, the deepest notch and the
+  highest peak (a measure).

@@ -607,21 +607,20 @@ inline bool each_gap(const cell_box& box, Painted painted, See see) {
     return false;
 }
 
-// WHETHER THE PIECE `mine` WOULD FIT INTO `partner`: turned or mirrored any of
-// the eight ways and set down anywhere, it fills one of the partner's gaps
-// (each_gap) whole, paints no cell the partner paints, and whatever it has over
-// hangs out past the partner's box on the side the gap opens to -- a side the
-// piece lies past. Nothing moves: this is the question WouldFit asks, and
-// moving a piece into its gap would be the same question answered with the
-// place. The pieces are asked as each_partner asks them.
-template <class Pieces>
-inline bool would_fit(int mine, int partner, const Pieces& pieces) {
+// WHERE THE PIECE `mine` FITS INTO `partner`: turned or mirrored any of the
+// eight ways and set down so it fills one of the partner's gaps (each_gap)
+// whole, a gap opening to one of the sides `opening` names, paints no cell the
+// partner paints, and whatever it has over hangs out past the partner's box on
+// the side the gap opens to. Each gap it fits, in reading order, handed to
+// see(pose, row, col, cells) with its first place -- poses in order, then where
+// it lands: the pose it is set in, where the corner of its box, so posed,
+// lands, and how many cells the gap holds; see answers true to stop, and so
+// does this. The pieces are asked as each_partner asks them.
+template <class Pieces, class See>
+inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t opening, See see) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
-    const uint8_t past = (uint8_t)((own.row1 < box.row0 ? side_top : 0) | (own.row0 > box.row1 ? side_bottom : 0) |
-                                   (own.col1 < box.col0 ? side_left : 0) | (own.col0 > box.col1 ? side_right : 0));
-    if (!past) return false;
     int cells = 0;
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) cells += painted(mine, row, col) ? 1 : 0;
@@ -629,7 +628,7 @@ inline bool would_fit(int mine, int partner, const Pieces& pieces) {
     bool in_run[MAX_GRID_DIM][MAX_GRID_DIM];
     // Whether the piece, some way round, fills whole the run of `count` cells
     // starting at (first_row, first_col), hanging out past `side` with whatever
-    // it has over.
+    // it has over -- and if so, whether `see` stops there.
     auto fills = [&](int first_row, int first_col, int count, uint8_t side) {
         const int anchor_row = box.row0 + first_row, anchor_col = box.col0 + first_col;
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
@@ -658,19 +657,67 @@ inline bool would_fit(int mine, int partner, const Pieces& pieces) {
                                      : side == side_left ? on_col < box.col0 : on_col > box.col1;
                             }
                         }
-                    if (sits && covered == count) return true;
+                    if (sits && covered == count) return (bool)see(pose, down, across, count);
                 }
         }
         return false;
     };
     return each_gap(box, [&](int row, int col) { return painted(partner, row, col); },
                     [&](uint8_t opens, const int16_t* run_row, const int16_t* run_col, int count) {
-        if (!(opens & past) || count > cells) return false;
+        if (!(opens & opening) || count > cells) return false;
         for (int row = 0; row < box.height(); ++row)
             for (int col = 0; col < box.width(); ++col) in_run[row][col] = false;
         for (int i = 0; i < count; ++i) in_run[run_row[i]][run_col[i]] = true;
         return fills(run_row[0], run_col[0], count, opens);
     });
+}
+
+// WHETHER THE PIECE `mine` WOULD FIT INTO `partner` (each_fit) through a gap
+// opening to a side the piece lies past. Nothing moves: this is the question
+// WouldFit asks; FitInto [moved] answers it with the place. The pieces are
+// asked as each_partner asks them.
+template <class Pieces>
+inline bool would_fit(int mine, int partner, const Pieces& pieces) {
+    const cell_box own = pieces.box(mine), box = pieces.box(partner);
+    if (own.empty() || box.empty()) return false;
+    const uint8_t past = (uint8_t)((own.row1 < box.row0 ? side_top : 0) | (own.row0 > box.row1 ? side_bottom : 0) |
+                                   (own.col1 < box.col0 ? side_left : 0) | (own.col0 > box.col1 ? side_right : 0));
+    return past && each_fit(mine, partner, pieces, past, [](int, int, int, int) { return true; });
+}
+
+// WHERE EACH PICKED PIECE GOES INTO ITS SOCKET (FitInto [moved]): of the gaps
+// of the other pieces it fits, a gap opening to any side (each_fit), the one
+// holding the most cells, its deepest fit, at the first place there -- and
+// nowhere where it fits none, or two tie for the most, or the most is in a
+// piece one before it went into (fe45cba4's shape, into its own color's cup
+// whole, not the other cup's one-cell gap by its tip). Each move handed to
+// move(i, pose, row, col), as each_fit names the place. The pieces are asked
+// as each_partner asks them.
+template <class Pieces, class Move>
+inline void each_fit_move(const Pieces& pieces, Move move) {
+    constexpr uint8_t any_side = side_top | side_bottom | side_left | side_right;
+    vector<bool> filled((size_t)pieces.count(), false);
+    for (int i = 0; i < pieces.count(); ++i) {
+        if (!pieces.is_picked(i)) continue;
+        int socket = -1, pose = 0, row = 0, col = 0, most = 0, tied = 0;
+        for (int j = 0; j < pieces.count(); ++j) {
+            if (j == i) continue;
+            each_fit(i, j, pieces, any_side, [&](int posed, int at_row, int at_col, int cells) {
+                if (cells > most) {
+                    most = cells;
+                    tied = 1;
+                    socket = j;
+                    pose = posed;
+                    row = at_row;
+                    col = at_col;
+                } else if (cells == most) ++tied;
+                return false;
+            });
+        }
+        if (tied != 1 || filled[(size_t)socket]) continue;
+        filled[(size_t)socket] = true;
+        move(i, pose, row, col);
+    }
 }
 
 // WHERE THE PICKED PIECES POUR (FitInto [poured]): each color they wear, every

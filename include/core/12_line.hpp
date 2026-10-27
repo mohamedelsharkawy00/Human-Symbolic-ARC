@@ -56,7 +56,7 @@ inline constexpr rule_group group_of(correspondence_election::fired_rule::said_a
         case rule::turn: case rule::move_down: case rule::move_across:
         case rule::learned_table: case rule::align_to: case rule::mirror_around:
         case rule::outlined: case rule::to_edge: case rule::shifted: case rule::move_toward:
-        case rule::empty_swap: case rule::poured:
+        case rule::empty_swap: case rule::fit_into:
             return rule_group::changes_pieces;
         case rule::removed: return rule_group::removes;
         // Paints: the hand on the line is left alone.
@@ -990,20 +990,25 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] { carry(say(best, rule::removed, "is removed", -1)); } };
     };
 
-    // INTO ITS SOCKET, POURED: each color poured into the one gap that holds as
-    // many cells (pour_holds), every piece picked -- the pour names both its
-    // roles, the color and the socket, so no pick of a color is asked, and a
-    // test that trades the colors round pours all the same (7acdf6d3). It
-    // accounts for the cells it left and filled, as a move does.
-    auto pour_rule = [&]() -> offer {
-        if (!facts.hand_known || already_said(rule::poured, piece_pick::all(), 0)) return {};
-        const auto seen = pour_holds(facts, handed_pieces(facts, piece_pick::all()));
-        if (!seen) return {};
+    // INTO ITS SOCKET (fit_into_holds): each color poured into the one gap that
+    // holds as many cells, or each piece moved, turned as it needs, into the one
+    // piece it fits into -- every piece picked: the act names both its roles,
+    // what goes in and where, so no pick of a color is asked, and a test that
+    // trades the colors round goes in all the same (7acdf6d3). Poured first, so
+    // it takes a tie. It accounts for the cells left and filled, as a move does.
+    static constexpr const char* goes_in[] = { "pours into the one gap that holds as many cells",
+                                               "moves, turned as it needs, into the gap it fills whole" };
+    static_assert(size(goes_in) == (size_t)fit_into_way::count);
+    auto socket_rule = [&]() -> offer {
+        if (!facts.hand_known) return {};
+        const vector<partner_pieces> handed = handed_pieces(facts, piece_pick::all());
         heard best;
-        weigh(best, 0, piece_pick::all(), *seen, move_claims(*seen));
+        for (int way = 0; way < (int)fit_into_way::count; ++way)
+            if (already_said(rule::fit_into, piece_pick::all(), way)) continue;
+            else if (const auto seen = fit_into_holds(facts, handed, way))
+                weigh(best, way, piece_pick::all(), *seen, move_claims(*seen));
         if (best.value < 0) return {};
-        return { best.said, [&, best] {
-            carry(say(best, rule::poured, "pours into the one gap that holds as many cells", moves)); } };
+        return { best.said, [&, best] { carry(say(best, rule::fit_into, goes_in[best.value], moves)); } };
     };
 
     // The picks a paint is asked with: each color on its own, then the picks by
@@ -1852,7 +1857,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                             { mirror_rule, false, true }, { outline_rule, false, true },
                             { recolor_rule, false, false }, { shape_rule, false, false },
                             { [&] { return key_rule(!frozen); }, false, false },
-                            { removal_rule, false, true }, { pour_rule, false, true }, { ray_paint, true, false },
+                            { removal_rule, false, true }, { socket_rule, false, true }, { ray_paint, true, false },
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },
