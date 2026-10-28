@@ -353,7 +353,7 @@ inline vector<object> pieces_as_said(const grid& input, segmentation_methods seg
         pieces.push_back(object::from_cells(input, box, cells, count));
     };
     if (segmentation != segmentation_methods::shape_fits)
-        each_object(input, TRANSPARENT, grouping_of(segmentation), scratch, take, tiles);
+        each_object(input, grouping_of(segmentation), scratch, take, tiles);
     else if (shape)
         each_shape_piece(input, *shape, scratch, take, tiles);
     if (segmentation == segmentation_methods::all_cells_of_one_color)
@@ -654,7 +654,7 @@ struct shape_color_map_rule : shape_table {
             const grid& in = ex.input;
             const grid& out = ex.output;
             bool consistent = true;
-            each_object(in, TRANSPARENT, grouping::touching_same_color, scratch,
+            each_object(in, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int found) {
                 if (!consistent) return;
                 const int left = box.col, top = box.row, width = box.width, height = box.height;

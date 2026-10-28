@@ -121,7 +121,8 @@ struct figure_readings {
     }
 };
 
-inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles,
+inline void read_the_cut(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+                         const tiled_pieces& tiles,
                          figure_readings& readings);
 inline void read_the_rest(inference& inf, const vector<example>& train, figure_readings& readings);
 
@@ -197,7 +198,9 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
 
 // The facts and matching belong to the figures, before any rule changes them.
 // Each reading takes its own copy; its claims, frames and later pictures stay its own.
-inline inference read_figures(const vector<example>& train, const tiled_pieces& tiles, int8_t pass,
+// The complete pairs stay with the caller and remain available while rules read.
+inline inference read_figures(const vector<example>& train, const vector<example>& whole_pairs,
+                              const tiled_pieces& tiles, int8_t pass,
                               bool partners, inference inf, figure_readings& readings) {
     ++inference_work.readings;
     inference_work.later_readings += pass > 1;
@@ -208,14 +211,14 @@ inline inference read_figures(const vector<example>& train, const tiled_pieces& 
     // rules say the most is said (says_the_most).
     const vector<correspondence_election::reading_index> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
-        read_the_cut(inf, train, tiles, readings);
+        read_the_cut(inf, train, whole_pairs, tiles, readings);
         read_the_rest(inf, train, readings);
         return inf;
     }
     said_most said = says_the_most((int)ranked.size(), [&](int rank) {
         inference read = inf;
         read.correspondence.choose((size_t)rank);
-        read_the_cut(read, train, tiles, readings);
+        read_the_cut(read, train, whole_pairs, tiles, readings);
         return read;
     });
     inference best = std::move(said.reading);
@@ -266,7 +269,7 @@ inline ground_plan plan_to_read(const vector<example>& train, const background_e
 template <class See>
 inline void each_wall_cell(const grid& figures, See see) {
     object_walk_scratch scratch;
-    each_object(figures, TRANSPARENT, grouping::touching_same_color, scratch,
+    each_object(figures, grouping::touching_same_color, scratch,
                 [&](const object_summary& found, const int16_t* cells, int count) {
         const object piece = object::from_cells(figures, found, cells, count);
         if (is_wall(figures.width, figures.height, found.box(),
@@ -341,9 +344,8 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
         facts = prepare_figures(figures, figure_tiles, inherited_shape ? *inherited_shape : changed_shape(train));
         facts->plan = plan;
         facts->elected_backgrounds = grounds;
-        for (const example& pair : train) facts->before_ground.push_back(pair.input);
     }
-    auto read = make_shared<const inference>(read_figures(figures, figure_tiles, pass, partners,
+    auto read = make_shared<const inference>(read_figures(figures, train, figure_tiles, pass, partners,
         prepared ? *facts : std::move(*facts), readings));
     readings.keep(std::move(key), read);
     return read;
@@ -386,7 +388,8 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // THE RULES THAT READ THE CUT, asked of the one `inf` reads on: the rules read
 // off its pieces, then -- once every rule is known -- the rivals, the rest of
 // its line, what no rule on it says, and a size change read through its frame.
-inline void read_the_cut(inference& inf, const vector<example>& train, const tiled_pieces& tiles,
+inline void read_the_cut(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+                         const tiled_pieces& tiles,
                          figure_readings& readings) {
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
@@ -477,7 +480,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const til
         if (ahead && !recolor_unsaid(plain[(size_t)opening])) return plain[(size_t)opening];
         inference read = inf;
         if (opening == 1) leave_the_acts_unsaid(read);
-        finish_the_line(read, train, tiles, ahead, paints);
+        finish_the_line(read, train, whole_pairs, tiles, ahead, paints);
         if (!ahead) plain[(size_t)opening] = read;
         return read;
     }).reading;

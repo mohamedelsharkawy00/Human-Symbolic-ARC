@@ -143,7 +143,7 @@ struct turning_shape {
 template <class Take>
 inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, object_walk_scratch& scratch,
                             Take take, tile_size tiles = {}) {
-    grid rest = one_grid;
+    bool in_shape[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     int pieces = 0;
     int16_t cells[MAX_GRID_CELLS];
     each_place_it_fits(one_grid, shape.cells, tiles, [&](int row, int col, int color) {
@@ -153,16 +153,16 @@ inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, ob
         shape.cells.each_cell([&](int down, int across, int8_t) {
             cells[count++] = (int16_t)cell_index(row + down, col + across);
             box.include_cell(row + down, col + across);
-            rest.data[row + down][col + across] = (int8_t)TRANSPARENT;
+            in_shape[row + down][col + across] = true;
         });
         take(summary_of(box, count), cells, count);
         ++pieces;
     });
     const int places = pieces;
-    each_object(rest, TRANSPARENT, grouping::touching_same_color, scratch,
+    each_object(one_grid, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* found, int count) {
         if (pieces++ < MAX_GRID_CELLS) take(box, found, count);
-    }, tiles);
+    }, tiles, [&](int row, int col) { return !in_shape[row][col]; });
     return places;
 }
 
@@ -199,7 +199,7 @@ inline turning_shape changed_shape(const vector<example>& train) {
             // The fewest that touch, the first found on a tie.
             object shape;
             for (const grid& turning : turned)
-                each_object(turning, TRANSPARENT, grouping::touching_same_color, scratch,
+                each_object(turning, grouping::touching_same_color, scratch,
                             [&](const object_summary& box, const int16_t* found, int count) {
                     if (count >= 2 && (shape.summary.count == 0 || count < shape.summary.count))
                         shape = object::from_cells(turning, box, found, count);
@@ -444,7 +444,7 @@ private:
             keep(object::from_cells(one_grid, found, found_cells, how_many), color);
         };
         if (segmentation != segmentation_methods::shape_fits)
-            each_object(one_grid, TRANSPARENT, grouping_of(segmentation), scratch, take, tiles);
+            each_object(one_grid, grouping_of(segmentation), scratch, take, tiles);
         else if (shape)
             each_shape_piece(one_grid, *shape, scratch, take, tiles);
     }

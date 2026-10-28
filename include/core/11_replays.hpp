@@ -632,7 +632,7 @@ inline vector<object> ranked_by_size(const vector<object>& hand, const grid& inp
             grid layer(input.width, input.height);
             paint_piece(layer, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
             object_walk_scratch scratch;
-            each_object(layer, -1, grouping::touching_any_color, scratch,
+            each_object(layer, grouping::touching_any_color, scratch,
                         [&](const object_summary& box, const int16_t* cells, int count) {
                 ranked.push_back(object::from_cells(layer, box, cells, count));
             });
@@ -1760,7 +1760,7 @@ struct fenced_room {
 // (each_fenced_part, the op's own walk), on the canvas the pieces lie on,
 // as Partition reads it.
 inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                               const vector<grid>& before_ground) {
+                                               const vector<example>& whole_pairs) {
     vector<vector<fenced_room>> rooms(handed.size());
     for (size_t which = 0; which < handed.size() && which < facts.train.size(); ++which) {
         const tile_size canvas = facts.canvas(which);
@@ -1779,8 +1779,8 @@ inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const
                     fenced_room room{ part, {}, clipped };
                     for (int row = box.row0; row <= box.row1; ++row)
                         for (int col = box.col0; col <= box.col1; ++col)
-                            if (which < before_ground.size() && before_ground[which].contains(row, col) &&
-                                before_ground[which].data[row][col] == color &&
+                            if (which < whole_pairs.size() && whole_pairs[which].input.contains(row, col) &&
+                                whole_pairs[which].input.data[row][col] == color &&
                                 facts.train[which].input.data[row][col] == TRANSPARENT && in_part(row, col))
                                 room.cells.push_back((int16_t)cell_index(row, col));
                     if (!room.cells.empty()) rooms[which].push_back(std::move(room));
@@ -1796,11 +1796,11 @@ inline vector<vector<fenced_room>> rooms_fenced(const replay_facts& facts, const
 // there -- the places Split [4] cuts off the ground's layer, as Partition cuts
 // rooms off it, overlapping where they do.
 inline vector<vector<fenced_room>> shaped_rooms(const replay_facts& facts, const turning_shape& shape,
-                                                const vector<grid>& before_ground) {
+                                                const vector<example>& whole_pairs) {
     vector<vector<fenced_room>> rooms(facts.train.size());
-    for (size_t which = 0; which < facts.train.size() && which < before_ground.size() && shape.holds(); ++which) {
+    for (size_t which = 0; which < facts.train.size() && which < whole_pairs.size() && shape.holds(); ++which) {
         const grid& figures = facts.train[which].input;
-        each_place_it_fits(before_ground[which], shape.cells, {}, [&](int row, int col, int color) {
+        each_place_it_fits(whole_pairs[which].input, shape.cells, {}, [&](int row, int col, int color) {
             if (color != shape.from && color != shape.into) return;
             fenced_room room;
             bool ground = true;

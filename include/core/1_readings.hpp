@@ -281,11 +281,10 @@ struct tile_size { int width = 0, height = 0; };
 // The cells point into `scratch`, which the next group overwrites -- `take`
 // must COPY anything it keeps. That is what lets this run without allocating.
 //
-// `background` is the color the grid was found to sit on, read off inference,
-// not assumed. Pass -1 to exclude nothing but TRANSPARENT.
-template <class Take>
-inline void each_object(const grid& one_grid, int background,
-                                 grouping how, object_walk_scratch& scratch, Take take, tile_size tiles = {}) {
+// `includes` chooses among colored cells without changing the source grid.
+template <class Take, class Includes>
+inline void each_object(const grid& one_grid, grouping how, object_walk_scratch& scratch,
+                        Take take, tile_size tiles, Includes includes) {
     const bool any_color = (how == grouping::touching_any_color);
     // One object per color takes every cell of the color at once, wherever it
     // is; the touching kinds walk out from the seed cell only.
@@ -293,8 +292,9 @@ inline void each_object(const grid& one_grid, int background,
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
     // A group never leaves its seed's copy when boundaries are supplied.
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
-    for (int r = 0; r < MAX_GRID_DIM; ++r)
-        for (int c = 0; c < MAX_GRID_DIM; ++c) taken[r][c] = false;
+    for (int row = 0; row < one_grid.height; ++row)
+        for (int col = 0; col < one_grid.width; ++col)
+            taken[row][col] = !is_color(one_grid.data[row][col]) || !includes(row, col);
     int16_t* queue_row = scratch.queue_row;
     int16_t* queue_col = scratch.queue_col;
     int16_t* found_cells = scratch.cells;
@@ -302,11 +302,6 @@ inline void each_object(const grid& one_grid, int background,
         for (int col = 0; col < one_grid.width; ++col) {
             if (taken[row][col]) continue;
             const int color = one_grid.data[row][col];
-            // TRANSPARENT is not a color at all; `background` is the ground this
-            // grid was found to sit on, and -1 from the election means the grid
-            // is all figure and nothing is excluded.
-            if (color < 0 || color == background) { taken[row][col] = true; continue; }
-
             taken[row][col] = true;
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
             int seen = 0;
@@ -334,8 +329,7 @@ inline void each_object(const grid& one_grid, int background,
             auto claim = [&](int next_row, int next_col) {
                 if (whole_color || taken[next_row][next_col] || !in_this_copy(next_row, next_col)) return false;
                 const int there = one_grid.data[next_row][next_col];
-                if (any_color ? (there < 0 || there == background)
-                              : (there != color)) return false;
+                if (!any_color && there != color) return false;
                 taken[next_row][next_col] = true;
                 return true;
             };
@@ -348,6 +342,12 @@ inline void each_object(const grid& one_grid, int background,
                 : walk_out<8>(one_grid.height, one_grid.width, queue_row, queue_col, seeded, claim, see);
             take(summary_of(box, count), found_cells, seen);
         }
+}
+
+template <class Take>
+inline void each_object(const grid& one_grid, grouping how, object_walk_scratch& scratch,
+                        Take take, tile_size tiles = {}) {
+    each_object(one_grid, how, scratch, take, tiles, [](int, int) { return true; });
 }
 
 // SHAPES · a shape as one number, and the ways round that leave it be

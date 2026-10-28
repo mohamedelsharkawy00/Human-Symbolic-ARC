@@ -148,7 +148,8 @@ struct cut_paints {
 // the rule whose evidence each one reads, and put on the line in the order it is
 // said. Reading ahead, a paint is weighed with what the picture lets be read
 // right after it (read_figures asks both ways).
-inline void finish_the_line(inference& inf, const vector<example>& train, const tiled_pieces& boundaries,
+inline void finish_the_line(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+                            const tiled_pieces& boundaries,
                             bool read_ahead, cut_paints& paints) {
     ++inference_work.lines;
     const time_into clock{ inference_time.ms[inf.pass > 1 ? inference_times::lines_later : inference_times::lines_first] };
@@ -1795,7 +1796,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         // picks a paint is replayed for.
         auto ask = [&](size_t at, const piece_pick& pick, const vector<partner_pieces>& handed,
                        optional<vector<vector<fenced_room>>>& rooms) {
-            if (!rooms) rooms = rooms_fenced(opened, handed, inf.before_ground);
+            if (!rooms) rooms = rooms_fenced(opened, handed, whole_pairs);
             for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
                 if (lay == rule::laid_under && !down_known()) continue;
                 for (int chosen = 0; chosen < (tables ? ROOM_VALUES : ROOM_CHOICES); ++chosen) {
@@ -1831,7 +1832,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 ask(at, pick, handed_by_pick[at], rooms_by_pick[at]);
         }
         if (election.shape.holds()) {
-            if (!rooms_of_the_shape) rooms_of_the_shape = shaped_rooms(opened, election.shape, inf.before_ground);
+            if (!rooms_of_the_shape) rooms_of_the_shape = shaped_rooms(opened, election.shape, whole_pairs);
             for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
                 if (lay == rule::laid_under && !down_known()) continue;
                 const auto& seen = replayed_once(replays, 8, draw_picks.size() + 1, lay, ROOM_SHAPE, [&] {

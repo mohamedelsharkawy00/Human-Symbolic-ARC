@@ -154,7 +154,7 @@ void segment_objects(const grid& g, object_list& out, grouping how, int x0, int 
         }
     };
     if (!shape) {
-        each_object(g, TRANSPARENT, how, scratch, take);
+        each_object(g, how, scratch, take);
         return;
     }
     const int places = each_shape_piece(g, *shape, scratch, take);
@@ -2637,7 +2637,7 @@ void read_the_seeds(const grid& input, int ground, run_lists& lists) {
     object_list& pieces = lists.input_pieces;
     pieces.count = 0;
     object_walk_scratch scratch;
-    each_object(input, TRANSPARENT, grouping::touching_same_color, scratch,
+    each_object(input, grouping::touching_same_color, scratch,
         [&](const object_summary& box, const int16_t* taken, int taken_count) {
             if (pieces.count >= MAX_OBJECTS_IN_A_LIST) return;
             held_object& one = pieces.objects[pieces.count++];

@@ -282,7 +282,7 @@ inline void label_objects(const grid& one_grid, object_map& objects) {
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
     object_walk_scratch scratch;
-    each_object(one_grid, TRANSPARENT, grouping::touching_same_color, scratch,
+    each_object(one_grid, grouping::touching_same_color, scratch,
         [&](const object_summary& summary, const int16_t* cells, int count) {
             const int color = one_grid.data[cell_row(cells[0])][cell_col(cells[0])];
             if (!is_color(color)) return;

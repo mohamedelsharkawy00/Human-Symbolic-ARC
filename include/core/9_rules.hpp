@@ -33,7 +33,7 @@ struct hole_color_rule {
                 for (int c = 0; c < ex.input.width; ++c)
                     if (ex.input.data[r][c] == TRANSPARENT && ex.output.data[r][c] != TRANSPARENT)
                         return {};
-            each_object(ex.input, TRANSPARENT, grouping::touching_same_color, scratch,
+            each_object(ex.input, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int count) {
                     if (!consistent) return;
                     bool occupied[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -315,7 +315,7 @@ struct ray_extension_rule {
 
         object_walk_scratch scratch{};
         bool drew = false;
-        each_object(layer, TRANSPARENT, grouping::touching_same_color, scratch,
+        each_object(layer, grouping::touching_same_color, scratch,
                     [&](const object_summary& box, const int16_t* cells, int count) {
             grid object(box.width, box.height);
             for (int i = 0; i < count; ++i) {
@@ -1054,7 +1054,7 @@ struct marker_piece {
 inline vector<marker_piece> seeds_the_op_will_see(const grid& input, tile_size tiles = {}) {
     vector<marker_piece> pieces;
     object_walk_scratch scratch;
-    each_object(input, TRANSPARENT, grouping::touching_same_color, scratch,
+    each_object(input, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int found) {
         if (found <= 0) return;
         pieces.push_back({ box, (int8_t)input.data[cell_row(cells[0])][cell_col(cells[0])] });
@@ -1380,7 +1380,7 @@ struct interior_spread_rule {
             drawn = pair.input;
             object_walk_scratch scratch;
             int pieces = 0;
-            each_object(pair.input, TRANSPARENT, grouping::touching_any_color, scratch,
+            each_object(pair.input, grouping::touching_any_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int count) {
                     ++pieces;
                     const object piece = object::from_cells(pair.input, box, cells, count);
@@ -1414,7 +1414,7 @@ struct interior_fill_rule {
             object_walk_scratch scratch;
             bool consistent = true;
             int pieces = 0;
-            each_object(pair.input, TRANSPARENT, grouping::touching_any_color, scratch,
+            each_object(pair.input, grouping::touching_any_color, scratch,
                 [&](const object_summary& box, const int16_t* cells, int count) {
                     if (!consistent) return;
                     ++pieces;
@@ -1480,23 +1480,15 @@ struct ranked_layout_rule {
             removed[common] = true;
         }
 
-        grid remaining(pair.input.width, pair.input.height);
-        for (int row = 0; row < pair.input.height; ++row)
-            for (int col = 0; col < pair.input.width; ++col) {
-                const int color = pair.input.data[row][col];
-                if (is_color(color) && !removed[color])
-                    remaining.data[row][col] = (int8_t)color;
-            }
-
         vector<object> pieces;
         object_walk_scratch scratch;
         const grouping groups = split_mode == 0 ? grouping::touching_any_color
                                                  : grouping::touching_same_color;
-        each_object(remaining, TRANSPARENT, groups, scratch,
+        each_object(pair.input, groups, scratch,
             [&](const object_summary& box, const int16_t* cells, int count) {
                 if ((int)pieces.size() < MAX_OBJECTS_IN_A_LIST)
-                    pieces.push_back(object::from_cells(remaining, box, cells, count));
-            });
+                    pieces.push_back(object::from_cells(pair.input, box, cells, count));
+            }, {}, [&](int row, int col) { return !removed[pair.input.data[row][col]]; });
         if (pieces.empty()) return false;
 
         // Trimmed, so each piece's box is its frame and its drawing, laid out
@@ -1728,10 +1720,8 @@ struct inference {
     // Whether the cut's pieces, painted where they lie on the canvas the size
     // rule gives, draw every output: what a line with no rules claims.
     bool pieces_redraw = true;
-    // The plan for this pass, and its input before background removal.
-    // Room cuts read the colored cells that removal would discard.
+    // The background plan for this pass.
     ground_plan plan;
-    vector<grid> before_ground;
     vector<int8_t> elected_backgrounds;
     background_election ground_election;
     // EACH PLAN READ, in the order infer reads them (says_the_most): which plan,
