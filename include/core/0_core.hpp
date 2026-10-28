@@ -3,6 +3,8 @@
 // and every other file depends on it.
 // It sets the core concepts the rest of the project is written in.
 #pragma once
+#include <bitset>
+#include <cstddef>
 #include <cstdint>
 
 namespace arc {
@@ -35,6 +37,22 @@ constexpr int MAX_GRID_CELLS = MAX_GRID_DIM * MAX_GRID_DIM;
 constexpr int cell_index(int row, int col) { return row * MAX_GRID_DIM + col; }
 constexpr int cell_row(int index) { return index / MAX_GRID_DIM; }
 constexpr int cell_col(int index) { return index % MAX_GRID_DIM; }
+
+// A SET OF CELLS, one bit a cell at its cell_index. A place off the largest
+// grid is in no set, and joins none.
+struct cell_set {
+    std::bitset<MAX_GRID_CELLS> bits;
+
+    bool has(int row, int col) const { return on_largest_grid(row, col) && bits[at(row, col)]; }
+    void add(int row, int col) { if (on_largest_grid(row, col)) bits[at(row, col)] = true; }
+    bool empty() const { return bits.none(); }
+
+private:
+    static constexpr bool on_largest_grid(int row, int col) {
+        return row >= 0 && col >= 0 && row < MAX_GRID_DIM && col < MAX_GRID_DIM;
+    }
+    static constexpr std::size_t at(int row, int col) { return (std::size_t)cell_index(row, col); }
+};
 
 // A byte a cell, in reading order: its color, or TRANSPARENT where it is empty.
 struct cells {

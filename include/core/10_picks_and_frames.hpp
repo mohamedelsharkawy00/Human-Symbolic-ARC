@@ -207,7 +207,8 @@ static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::Se
               "the largest and the smallest are asked as far down the order");
 
 // WHAT EVERY REPLAY BELOW IS HANDED: the training pairs, each input's pieces as
-// the cut hands them over, cut once, and the grounds the pairs were read on.
+// the cut hands them over, cut once, and the pairs whole, as the plan read
+// them, which a replay holds each cell it lays to (comes_out).
 //
 // AND WHAT EVERY ONE ASKS OF A RULE: that it is seen at work in every pair. A
 // rule that does nothing in some pair holds there only by standing idle -- a
@@ -215,10 +216,10 @@ static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::Se
 // one that holds by standing idle is true of the pairs, not a rule of the
 // puzzle: the test lays its bands and colors out afresh (22a4bbc2's rows,
 // e3fe1151's colors). At work is the one thing every replay asks the same way:
-// at some cell the rule acts on, the output shows what its picked pieces did
-// not show there before -- a piece recolored, moved, copied, grown or cut
-// back, never only drawn again as it was. A copy laid on its own likeness is
-// at work all the same: 4938f0c2's last pair is already whole.
+// some cell the rule acts on comes out as the output, and did not before -- a
+// piece recolored, moved, copied, grown or cut back, never only drawn again as
+// it was. A copy laid on its own likeness is at work all the same: 4938f0c2's
+// last pair is already whole.
 //
 // BUT A FINISHED PAIR, whose grid read already shows its output, has nothing
 // left for any rule to do, so it asks only that a rule lays nothing wrong
@@ -227,8 +228,9 @@ static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::Se
 // the other pairs still fills its part).
 struct replay_facts {
     const vector<example>& train;
-    // Whether each pair's grid read is already its output, and how many pairs'
-    // are not (finished).
+    const vector<figure_pair>& pairs;
+    // Whether each pair's grid read already comes out as its output
+    // (redraws_the_output), and how many pairs' do not (finished).
     vector<bool> done;
     int open = 0;
     bool overlays = true;
@@ -245,34 +247,39 @@ struct replay_facts {
     bool tolerant = false;
     // The pieces a named cut hands over, rather than the elected one; the shape
     // cut's by `shape`.
-    replay_facts(const vector<example>& pairs, segmentation_methods cut,
-        const tiled_pieces& tiles, const turning_shape* shape = nullptr) : train(pairs) {
-        for (const example& pair : train) {
-            hands.push_back(pieces_as_said(pair.input, cut, tiles.of(pair), shape));
-            done.push_back(pair.input == pair.output);
-            open += !done.back();
-            overlays = overlays && pair.input.same_size(pair.output);
+    replay_facts(const vector<example>& figures, const vector<figure_pair>& whole, segmentation_methods cut,
+        const tiled_pieces& tiles, const turning_shape* shape = nullptr) : train(figures), pairs(whole) {
+        for (size_t which = 0; which < train.size(); ++which) {
+            hands.push_back(pieces_as_said(train[which].input, cut, tiles.of(train[which]), shape));
+            read_pair(which, train[which].input);
         }
         answers.resize(hands.size());
     }
-    replay_facts(const inference& inf, const vector<example>& pairs, const tiled_pieces& tiles)
-        : replay_facts(pairs, inf.correspondence.segmentation, tiles, &inf.correspondence.shape) {}
+    replay_facts(const inference& inf, const vector<example>& figures, const vector<figure_pair>& whole,
+        const tiled_pieces& tiles)
+        : replay_facts(figures, whole, inf.correspondence.segmentation, tiles, &inf.correspondence.shape) {}
     // The pieces a named cut hands over of `grids`, one a pair, rather than of
     // the inputs: the picture the line has drawn so far, cut again.
-    replay_facts(const vector<example>& pairs, const vector<grid>& grids, segmentation_methods cut,
-        const tiled_pieces& tiles, const turning_shape* shape = nullptr) : train(pairs) {
+    replay_facts(const vector<example>& figures, const vector<figure_pair>& whole, const vector<grid>& grids,
+        segmentation_methods cut, const tiled_pieces& tiles, const turning_shape* shape = nullptr)
+        : train(figures), pairs(whole) {
         for (size_t which = 0; which < train.size() && which < grids.size(); ++which) {
             hands.push_back(pieces_as_said(grids[which], cut, tiles.of(train[which]), shape));
-            done.push_back(grids[which] == train[which].output);
-            open += !done.back();
-            overlays = overlays && train[which].input.same_size(train[which].output);
+            read_pair(which, grids[which]);
         }
+        answers.resize(hands.size());
+    }
+    // The pieces a sentence hands over, a hand a pair, as given: the rooms
+    // Partition hands back, for a pick to name some of them.
+    replay_facts(const vector<example>& figures, const vector<figure_pair>& whole, vector<vector<object>> handed)
+        : train(figures), pairs(whole), hands(std::move(handed)) {
+        for (size_t which = 0; which < train.size(); ++which) read_pair(which, train[which].input);
         answers.resize(hands.size());
     }
     // The canvas pair `which`'s pieces lie on: its input's, as the ops take it.
     tile_size canvas(size_t which) const { return { train[which].input.width, train[which].input.height }; }
-    // Whether pair `which` is finished: its grid read already its output,
-    // while some pair's is not. Where every pair's is, no rule has anything to
+    // Whether pair `which` is finished: its grid read already comes out as its
+    // output, while some pair's does not. Where every pair's is, no rule has anything to
     // do anywhere, and none is let off (cd3c21df's framed pieces, each already
     // its output: a mirror that drew them again was said).
     bool finished(size_t which) const { return open > 0 && which < done.size() && done[which]; }
@@ -309,6 +316,20 @@ struct replay_facts {
     mutable int8_t sizes_seen = -1;
     // A hand changes only through change(), so nothing read off it outlives it.
     const vector<vector<object>>& cuts() const { return hands; }
+    // WHAT THE HAND SHOWS WHERE IT LIES, pair by pair: the color each cell of
+    // the input shows, a later piece over an earlier, TRANSPARENT where no piece
+    // is. Drawn the first time a replay asks, and again once the hand changes.
+    const vector<cells>& pieces_down() const {
+        if (!drawn) {
+            drawn.emplace(hands.size());
+            for (size_t which = 0; which < hands.size(); ++which)
+                for (const object& piece : hands[which])
+                    piece.each_cell([&](int row, int col, int8_t color) {
+                        if (train[which].input.contains(row, col)) (*drawn)[which][row][col] = color;
+                    });
+        }
+        return *drawn;
+    }
     hand_answers& answers_of(size_t which) const { return answers[which]; }
     vector<bool> picked(size_t which, const piece_pick& pick) const {
         return picked_pieces(hands[which], pick, canvas(which), answers[which]);
@@ -332,9 +353,18 @@ struct replay_facts {
 private:
     vector<vector<object>> hands;
     mutable vector<hand_answers> answers;
+    mutable optional<vector<cells>> drawn;
+    // Pair `which` read on `picture`, its grid so far: whether that already
+    // comes out as its output, and whether the pair lies over its output.
+    void read_pair(size_t which, const grid& picture) {
+        done.push_back(redraws_the_output(picture, pairs[which]));
+        open += !done.back();
+        overlays = overlays && train[which].input.same_size(train[which].output);
+    }
     void forget(size_t which) {
         answers[which].forget();
         sizes_seen = -1;
+        drawn.reset();
     }
 };
 
@@ -1376,7 +1406,8 @@ inline bool framed_whole(const grid& input, const piece_frame_rule& frame, const
 // frame lands on the output's size in every pair. A filled frame that reads
 // its color off a table read off the pairs makes that the puzzle's table
 // (inf.shape_color_map), the one ShapeColorMap looks up.
-inline piece_frame_rule choose_piece_frame(const vector<example>& train, inference& inf, const tiled_pieces& tiles) {
+inline piece_frame_rule choose_piece_frame(const vector<example>& train, const vector<figure_pair>& pairs,
+                                           inference& inf, const tiled_pieces& tiles) {
     if (train.empty() || inf.size.Chosen == output_dimension_rule::Identity) return {};
     // The framed grid is of figures: no ground is filled into it, so what a
     // frame leaves unpainted is empty (draw_on_canvas).
@@ -1481,7 +1512,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         }
     };
     for (const segmentation_methods cut : frame_cuts) {
-        const replay_facts facts(train, cut, tiles);
+        const replay_facts facts(train, pairs, cut, tiles);
         const vector<piece_pick> picks = picks_of(facts);
         for (const piece_pick& pick : picks) {
             piece_frame_rule frame;
@@ -1531,7 +1562,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
         for (size_t which_cut = 0; which_cut <= size(frame_cuts); ++which_cut) {
             piece_frame_rule source;
             source.cut = which_cut < size(frame_cuts) ? frame_cuts[which_cut] : segmentation_methods::unset;
-            replay_facts facts(train, source.cut, tiles);
+            replay_facts facts(train, pairs, source.cut, tiles);
             const bool whole = source.cut == segmentation_methods::unset;
             if (whole)
                 for (size_t which = 0; which < train.size(); ++which)
@@ -1580,7 +1611,7 @@ inline piece_frame_rule choose_piece_frame(const vector<example>& train, inferen
     // left out (SelectWalls): asked after every other frame, it is said only
     // where it shares more than all of them -- 1190e5a7's rooms, a cell each.
     for (const segmentation_methods cut : frame_cuts)
-        weigh_laid_out(cut, replay_facts(train, cut, tiles), { 0, piece_pick::walls, 0, -1, true });
+        weigh_laid_out(cut, replay_facts(train, pairs, cut, tiles), { 0, piece_pick::walls, 0, -1, true });
     if (best.kind == piece_frame_rule::filled && best.keyed >= 0) inf.shape_color_map = best_table;
     return best;
 }

@@ -121,7 +121,7 @@ struct figure_readings {
     }
 };
 
-inline void read_the_cut(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+inline void read_the_cut(inference& inf, const vector<example>& train, const vector<figure_pair>& pairs,
                          const tiled_pieces& tiles,
                          figure_readings& readings);
 inline void read_the_rest(inference& inf, const vector<example>& train, figure_readings& readings);
@@ -133,7 +133,8 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // no cut is asked once; what reads one is asked of each cut the rules weigh.
 // `pass` is which pass this reading is, and once its cut is chosen the rest of
 // the change is read on the picture its line draws (read_the_rest).
-inline inference prepare_figures(const vector<example>& train, const tiled_pieces& tiles, const turning_shape& shape) {
+inline inference prepare_figures(const vector<example>& train, const vector<figure_pair>& pairs,
+                                 const tiled_pieces& tiles, const turning_shape& shape) {
     const time_into clock{ inference_time.ms[inference_times::preparing] };
     const auto started = preparation_audit ? std::chrono::steady_clock::now()
                                           : std::chrono::steady_clock::time_point{};
@@ -151,23 +152,23 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
     inf.pane_split = pane_split_facts::detect(train);
     // What the panes come to, once there are panes. It reads the masks, not the
     // colors, so a combination the pairs never showed is still one it can answer.
-    inf.pane_mask = pane_mask_rule::detect(train, inf.pane_split);
+    inf.pane_mask = pane_mask_rule::detect(train, pairs, inf.pane_split);
     // And when the answer is a pane rather than something made from the panes,
     // the only question left is which one. Asked after the mask, because making
     // a drawing is the stronger claim and should get first refusal.
-    inf.pane_pick = pane_pick_rule::detect(train, inf.pane_split);
+    inf.pane_pick = pane_pick_rule::detect(train, pairs, inf.pane_split);
     // And when no one pane is the answer and nothing is made of them together,
     // every pane may be: its drawing kept, cropped, and laid where the pane was.
-    inf.pane_gather = pane_gather_rule::detect(train, inf.pane_split, inf.size);
+    inf.pane_gather = pane_gather_rule::detect(train, pairs, inf.pane_split, inf.size);
     // A noisy lattice cleaned by the vote. It reads the whole input, not the
     // pieces, and the ground the op reads off it (denoise_ground).
-    inf.periodic_denoise = periodic_denoise_rule::detect(train);
-    inf.copy_to = copy_to_rule::detect(train, inf.pane_split, tiles);
-    inf.interior_fill = interior_fill_rule::detect(train, tiles);
-    inf.interior_spread = interior_spread_rule::detect(train, tiles);
-    inf.ranked_layout = ranked_layout_rule::detect(train, inf.size);
-    inf.rarest_color = rarest_color_rule::detect(train, inf.size);
-    inf.corner_crop = corner_crop_rule::detect(train, inf.size);
+    inf.periodic_denoise = periodic_denoise_rule::detect(train, pairs);
+    inf.copy_to = copy_to_rule::detect(train, pairs, inf.pane_split, tiles);
+    inf.interior_fill = interior_fill_rule::detect(train, pairs, tiles);
+    inf.interior_spread = interior_spread_rule::detect(train, pairs, tiles);
+    inf.ranked_layout = ranked_layout_rule::detect(train, pairs, inf.size);
+    inf.rarest_color = rarest_color_rule::detect(train, pairs, inf.size);
+    inf.corner_crop = corner_crop_rule::detect(train, pairs, inf.size);
 
     // Dims is detector #0: its rule decides which questions even apply
     // (Backward Deduction step 1, applied to detectors instead of ops).
@@ -198,8 +199,8 @@ inline inference prepare_figures(const vector<example>& train, const tiled_piece
 
 // The facts and matching belong to the figures, before any rule changes them.
 // Each reading takes its own copy; its claims, frames and later pictures stay its own.
-// The complete pairs stay with the caller and remain available while rules read.
-inline inference read_figures(const vector<example>& train, const vector<example>& whole_pairs,
+// The pairs whole, with their figures, stay with the caller and remain available while rules read.
+inline inference read_figures(const vector<example>& train, const vector<figure_pair>& pairs,
                               const tiled_pieces& tiles, int8_t pass,
                               bool partners, inference inf, figure_readings& readings) {
     ++inference_work.readings;
@@ -211,14 +212,14 @@ inline inference read_figures(const vector<example>& train, const vector<example
     // rules say the most is said (says_the_most).
     const vector<correspondence_election::reading_index> ranked = inf.correspondence.ranked;
     if (ranked.empty()) {
-        read_the_cut(inf, train, whole_pairs, tiles, readings);
+        read_the_cut(inf, train, pairs, tiles, readings);
         read_the_rest(inf, train, readings);
         return inf;
     }
     said_most said = says_the_most((int)ranked.size(), [&](int rank) {
         inference read = inf;
         read.correspondence.choose((size_t)rank);
-        read_the_cut(read, train, whole_pairs, tiles, readings);
+        read_the_cut(read, train, pairs, tiles, readings);
         return read;
     });
     inference best = std::move(said.reading);
@@ -254,51 +255,50 @@ inline ground_plan plan_to_read(const vector<example>& train, const background_e
     const vector<ground_plan> plans = ground_plans(election);
     if (output_dimension_rule::infer_rule(train).Chosen != output_dimension_rule::BoundingBox) return plans.front();
     for (const ground_plan& plan : plans)
-        if (ranges::none_of(figures_only(train, plan, plan_grounds(train, plan)), [](const example& pair) {
-                bool drawn = false;
-                pair.output.for_each_colored_cell(TRANSPARENT, [&](int, int, int) { drawn = true; });
-                return !drawn;
-            }))
+        if (ranges::none_of(plan_figures(train, plan, plan_grounds(train, plan)),
+                            [](const figure_pair& pair) { return pair.output_figures.empty(); }))
             return plan;
     return plans.front();
 }
 
-// THE WALLS OF A GRID OF FIGURES: its one-color pieces, joined at sides or
-// corners as Split [1] joins them, that are walls (is_wall) -- each cell of
+// THE WALLS OF A PAIR'S INPUT: its figures' one-color pieces, joined at sides
+// or corners as Split [1] joins them, that are walls (is_wall) -- each cell of
 // each handed to `see(row, col)`.
 template <class See>
-inline void each_wall_cell(const grid& figures, See see) {
+inline void each_wall_cell(const figure_pair& pair, See see) {
+    const grid& input = pair.whole.input;
     object_walk_scratch scratch;
-    each_object(figures, grouping::touching_same_color, scratch,
+    each_object(input, grouping::touching_same_color, scratch,
                 [&](const object_summary& found, const int16_t* cells, int count) {
-        const object piece = object::from_cells(figures, found, cells, count);
-        if (is_wall(figures.width, figures.height, found.box(),
-                    [&](int row, int col) { return piece.holds(row, col); }))
+        const object piece = object::from_cells(input, found, cells, count);
+        if (is_wall(input.width, input.height, found.box(), [&](int row, int col) { return piece.holds(row, col); }))
             piece.each_cell([&](int row, int col, int8_t) { see(row, col); });
-    });
+    }, {}, [&](int row, int col) { return pair.input_figures.has(row, col); });
 }
 
 // THE FIGURES WITH THEIR WALLS SET APART (ground_plan::walls_apart): each
-// pair's input loses its walls, and its output the same cells, which show them
-// as they were, so the reading reads what lies between the walls and the
-// program lays them back last (walls_laid_back). False, the figures left as
-// they were, where some pair has no wall, or an output of another size, or one
-// that changes a wall.
-inline bool set_the_walls_apart(vector<example>& figures) {
-    vector<vector<int16_t>> walls(figures.size());
-    for (size_t which = 0; which < figures.size(); ++which) {
-        const example& pair = figures[which];
-        if (!pair.input.same_size(pair.output)) return false;
-        each_wall_cell(pair.input, [&](int row, int col) { walls[which].push_back((int16_t)cell_index(row, col)); });
-        if (walls[which].empty()) return false;
-        for (const int16_t cell : walls[which])
-            if (pair.output.data[cell_row(cell)][cell_col(cell)] != pair.input.data[cell_row(cell)][cell_col(cell)])
-                return false;
+// pair's input loses its walls from its figures, and its output the same cells,
+// which show them as they were, so the reading reads what lies between the
+// walls and the program lays them back last (walls_laid_back). False, the
+// figures left as they were, where some pair has no wall, or an output of
+// another size, or one that changes a wall.
+inline bool set_the_walls_apart(vector<figure_pair>& pairs) {
+    vector<cell_set> walls(pairs.size());
+    for (size_t which = 0; which < pairs.size(); ++which) {
+        const figure_pair& pair = pairs[which];
+        if (!pair.whole.input.same_size(pair.whole.output)) return false;
+        bool as_they_were = true;
+        each_wall_cell(pair, [&](int row, int col) {
+            walls[which].add(row, col);
+            as_they_were = as_they_were && pair.output_figures.has(row, col) &&
+                           pair.whole.output.data[row][col] == pair.whole.input.data[row][col];
+        });
+        if (walls[which].empty() || !as_they_were) return false;
     }
-    for (size_t which = 0; which < figures.size(); ++which)
-        for (const int16_t cell : walls[which])
-            figures[which].input.data[cell_row(cell)][cell_col(cell)] =
-                figures[which].output.data[cell_row(cell)][cell_col(cell)] = (int8_t)TRANSPARENT;
+    for (size_t which = 0; which < pairs.size(); ++which) {
+        pairs[which].input_figures.bits &= ~walls[which].bits;
+        pairs[which].output_figures.bits &= ~walls[which].bits;
+    }
     return true;
 }
 
@@ -337,15 +337,16 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     optional<inference> local;
     auto& facts = prepared ? *prepared : local;
     const vector<int8_t> grounds = plan_grounds(train, plan, elected);
-    vector<example> figures = figures_only(train, plan, grounds);
-    if (plan.walls_apart) set_the_walls_apart(figures);
+    vector<figure_pair> pairs = plan_figures(train, plan, grounds);
+    if (plan.walls_apart) set_the_walls_apart(pairs);
+    const vector<example> figures = figures_only(pairs);
     const tiled_pieces figure_tiles{figures.data(), tiles.originals};
     if (!facts) {
-        facts = prepare_figures(figures, figure_tiles, inherited_shape ? *inherited_shape : changed_shape(train));
+        facts = prepare_figures(figures, pairs, figure_tiles, inherited_shape ? *inherited_shape : changed_shape(train));
         facts->plan = plan;
         facts->elected_backgrounds = grounds;
     }
-    auto read = make_shared<const inference>(read_figures(figures, train, figure_tiles, pass, partners,
+    auto read = make_shared<const inference>(read_figures(figures, pairs, figure_tiles, pass, partners,
         prepared ? *facts : std::move(*facts), readings));
     readings.keep(std::move(key), read);
     return read;
@@ -388,31 +389,31 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
 // THE RULES THAT READ THE CUT, asked of the one `inf` reads on: the rules read
 // off its pieces, then -- once every rule is known -- the rivals, the rest of
 // its line, what no rule on it says, and a size change read through its frame.
-inline void read_the_cut(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+inline void read_the_cut(inference& inf, const vector<example>& train, const vector<figure_pair>& pairs,
                          const tiled_pieces& tiles,
                          figure_readings& readings) {
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
     // because a repeating box is the plainer claim and should get first refusal.
-    inf.diagonal_continuation = diagonal_continuation_rule::detect(train, inf.correspondence);
-    inf.piece_slam = piece_slam_rule::detect(train, inf.correspondence, tiles);
-    inf.overlap_corner = overlap_corner_rule::detect(train, inf.correspondence, tiles);
+    inf.diagonal_continuation = diagonal_continuation_rule::detect(train, pairs, inf.correspondence);
+    inf.piece_slam = piece_slam_rule::detect(train, pairs, inf.correspondence, tiles);
+    inf.overlap_corner = overlap_corner_rule::detect(train, pairs, inf.correspondence, tiles);
     // Pieces that slid up against the ones that stayed. Asked after the chain
     // because a layout that puts every piece somewhere new is the larger claim
     // and should get first refusal; this one leaves most of the grid alone.
-    inf.slide_to_touch = slide_to_touch_rule::detect(train, inf.correspondence, tiles);
+    inf.slide_to_touch = slide_to_touch_rule::detect(train, pairs, inf.correspondence, tiles);
     // Pieces that slide to the canvas edge, over whatever is in the way. It reads
     // its own cut when the elected one joins the slider to what it passes over.
-    inf.edge_slide = edge_slide_rule::detect(train, inf.correspondence.segmentation, inf.size, tiles);
-    inf.project_on_seeds = project_on_seeds_rule::detect(train, inf.correspondence, tiles);
-    inf.snap_to_anchors = snap_to_anchors_rule::detect(train, inf.correspondence, inf.size, tiles);
+    inf.edge_slide = edge_slide_rule::detect(train, pairs, inf.correspondence.segmentation, inf.size, tiles);
+    inf.project_on_seeds = project_on_seeds_rule::detect(train, pairs, inf.correspondence, tiles);
+    inf.snap_to_anchors = snap_to_anchors_rule::detect(train, pairs, inf.correspondence, inf.size, tiles);
     // Gaps between pieces of one colour, filled. It reads its own cut when the
     // elected one cannot say it, so it does not wait on the election's verdict.
-    inf.bridge = bridge_rule::detect(train, inf.correspondence, tiles);
+    inf.bridge = bridge_rule::detect(train, pairs, inf.correspondence, tiles);
     // Marks laid as lines that take turns down the grid. Like the bridge, it
     // falls back on a cut of its own when the elected one cannot say it.
-    inf.mark_lattice = mark_lattice_rule::detect(train, inf.correspondence, tiles);
-    inf.input_blocks = input_blocks_rule::detect(train, inf.correspondence);
+    inf.mark_lattice = mark_lattice_rule::detect(train, pairs, inf.correspondence, tiles);
+    inf.input_blocks = input_blocks_rule::detect(train, pairs, inf.correspondence);
     // THE PUZZLE HAS ONE TABLE, the first pass's: the program carries that one
     // (environment::draw), so a pass after it reads none (e760a62e's third pass
     // named its pieces' colors by a symmetry table the program never had).
@@ -432,7 +433,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
     // figure matched whole while the output is its corner, cce03e0d's copies
     // matched where half of them are gone -- so a line with no rules is held to
     // what it would draw. Asked of the cut alone, before the line is chosen.
-    inf.pieces_redraw = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+    inf.pieces_redraw = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
         const auto pieces = pieces_as_said(pair.input, inf.correspondence.segmentation, tiles.of(pair),
                                            &inf.correspondence.shape);
         return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
@@ -480,7 +481,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
         if (ahead && !recolor_unsaid(plain[(size_t)opening])) return plain[(size_t)opening];
         inference read = inf;
         if (opening == 1) leave_the_acts_unsaid(read);
-        finish_the_line(read, train, whole_pairs, tiles, ahead, paints);
+        finish_the_line(read, train, pairs, tiles, ahead, paints);
         if (!ahead) plain[(size_t)opening] = read;
         return read;
     }).reading;
@@ -491,7 +492,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
     // rule a same-size puzzle has -- from each framed input to its output. A
     // pass after the first reads a picture its output's size.
     if (inf.pass > 1) return;
-    inf.frame = choose_piece_frame(train, inf, tiles);
+    inf.frame = choose_piece_frame(train, pairs, inf, tiles);
     if (inf.frame.holds()) {
         using kind = piece_frame_rule::kind_of;
         // The frames that take the pieces a pick takes off a cut of their own;
@@ -547,8 +548,8 @@ inline inference infer(const vector<example>& train) {
     const background_election election = elect_background(train);
     const ground_plan elected = plan_to_read(train, election);
     vector<ground_plan> plans{ elected };
-    if (vector<example> figures = figures_only(train, elected, plan_grounds(train, elected));
-        !elected.keeps() && set_the_walls_apart(figures)) {
+    if (vector<figure_pair> pairs = plan_figures(train, elected, plan_grounds(train, elected));
+        !elected.keeps() && set_the_walls_apart(pairs)) {
         plans.push_back(elected);
         plans.back().walls_apart = true;
     }

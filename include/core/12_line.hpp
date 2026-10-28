@@ -148,7 +148,7 @@ struct cut_paints {
 // the rule whose evidence each one reads, and put on the line in the order it is
 // said. Reading ahead, a paint is weighed with what the picture lets be read
 // right after it (read_figures asks both ways).
-inline void finish_the_line(inference& inf, const vector<example>& train, const vector<example>& whole_pairs,
+inline void finish_the_line(inference& inf, const vector<example>& train, const vector<figure_pair>& pairs,
                             const tiled_pieces& boundaries,
                             bool read_ahead, cut_paints& paints) {
     ++inference_work.lines;
@@ -193,7 +193,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // THE HAND AS THE LINE LEAVES IT: the cut's pieces carried through every rule
     // already on the line, the hand the rules asked below are replayed on, laid
     // under what is down where a piece sits on another, as the line is said.
-    replay_facts facts(inf, train, boundaries);
+    replay_facts facts(inf, train, pairs, boundaries);
     picks_on_hand hand_picks;
     facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
     // THE MATCHING'S ACTS, REPLAYED BEFORE THEY ARE SAID: carried on a copy of
@@ -468,7 +468,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // once for every line read on the cut (cut_paints). It lays cells wrong where
     // the rules may (replay_facts::tolerant).
     const bool cut_opened = paints.opened.has_value();
-    if (!cut_opened) paints.opened.emplace(inf, train, boundaries);
+    if (!cut_opened) paints.opened.emplace(inf, train, pairs, boundaries);
     replay_facts& opened = *paints.opened;
     opened.tolerant = false;
     // THE CELLS A RULE SAID LAID WRONG, every rule's: where the picture the line
@@ -1050,12 +1050,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
 
     // WHAT A PAINT SAID AFTER THE LINE READS: it opens the cut again, so it reads
     // the pieces as the cut hands them over, as its replay does, and paints only
-    // what it draws. Laid over what is down -- rays, trails, copies, repeats -- it needs
-    // nothing of the line at all. Laid under it -- bars, filled hollows, filled
-    // boxes -- it needs to know what the line covers: the cut's pieces, where
-    // nothing on the line moves, reshapes or removes one, or else the hand the
-    // line leaves, where it was carried. Each accounts for the cells it draws, and
-    // is asked for every pick that accounts for any.
+    // what it draws, on what the line has down (the canvas): laid over it --
+    // rays, trails, copies, repeats -- to know what it changes there; laid under
+    // it -- bars, filled hollows, filled boxes -- to know where it lands too, so
+    // only where what the line covers is known: the cut's pieces, where nothing
+    // on the line moves, reshapes or removes one, or else the hand the line
+    // leaves, where it was carried. Each accounts for the cells it draws, and is
+    // asked for every pick that accounts for any.
     auto drawn_claims = [](const cells_by_pair& drawn) -> claim {
         return [drawn = cell_marks(drawn)](size_t which, const left_over_cell& cell) {
             return !cell.from_input && on_cells(drawn, which, cell.row, cell.col);
@@ -1085,23 +1086,23 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // them where they lie, or the hand the rules carried.
     auto down_known = [&] { return still() || facts.hand_known; };
     // WHAT IS DOWN WHERE A PAINT LANDS: the pieces as the line leaves them so far
-    // -- the cut's, where the line is still, else the hand the rules carried
+    // -- the line's own drawing of its hand, where it draws its picture; else the
+    // cut's pieces, where the line is still, or the hand the rules carried
     // (18286ef8's 5s paint, laid under, the hollow their 9 stepped off) -- and
-    // every paint said before it, each cell in the color it shows: in the colors
-    // the line draws, where it draws its picture, and what each paint laid
-    // there. Laid under it or only onto it, a paint reads it, so those ways are
-    // asked only where it is known; laid over it, a paint needs nothing of it.
-    // Laid again before every rule is asked, and counted each time it changes.
+    // what every paint said before it laid there. Every paint reads it, for what
+    // each cell showed before the paint; laid under it or only onto it, for
+    // where it lands too, so those ways are asked only where it is known. Laid
+    // again before every rule is asked, and counted each time it changes.
     vector<cells> canvas(opened.cuts().size());
-    // How often it changed, and how often where something is; and its number
-    // among every canvas a line on the cut laid (cut_paints).
-    int canvases = 0, occupancies = 0, canvas_number = 0;
+    // How often it changed, and its number among every canvas a line on the cut
+    // laid (cut_paints).
+    int canvases = 0, canvas_number = 0;
     // WHAT THE LINE DRAWS SO FAR, CELL BY CELL: the hand as the rules leave it,
     // laid as its sentence lays it -- over what is down, or under it where a
     // piece sits on another (draw_the_hand) -- pair by pair, where the rules
-    // carried the hand, on pairs that lie over their outputs; and whether it
-    // shows a cell's place as the output shows it, which the line then says
-    // itself, however the matching paired the pieces.
+    // carried the hand, on pairs that lie over their outputs; and whether a
+    // cell's place comes out there as the output (comes_out), which the line
+    // then says itself, however the matching paired the pieces.
     vector<grid> line_drawn;
     auto draw_the_line = [&] {
         line_drawn.clear();
@@ -1116,29 +1117,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
     auto line_shows = [&](size_t which, const left_over_cell& cell) {
         return which < line_drawn.size() && line_drawn[which].contains(cell.row, cell.col) &&
-               line_drawn[which].data[cell.row][cell.col] == facts.train[which].output.data[cell.row][cell.col];
+               comes_out(pairs[which], cell.row, cell.col, line_drawn[which].data[cell.row][cell.col]);
     };
     auto lay_the_canvas = [&] {
         draw_the_line();
-        vector<cells> now = pieces_down(still() ? opened : facts);
+        vector<cells> now = (still() ? opened : facts).pieces_down();
         for (size_t which = 0; which < now.size() && which < line_drawn.size(); ++which)
             for (int row = 0; row < line_drawn[which].height; ++row)
                 for (int col = 0; col < line_drawn[which].width; ++col)
-                    if (now[which][row][col] != (int8_t)TRANSPARENT &&
-                        line_drawn[which].data[row][col] != TRANSPARENT)
-                        now[which][row][col] = (int8_t)line_drawn[which].data[row][col];
+                    now[which][row][col] = (int8_t)line_drawn[which].data[row][col];
         for (size_t which = 0; which < painted.size() && which < now.size(); ++which)
             for (const cell_color& cell : painted[which]) now[which][cell.row][cell.col] = cell.color;
         if (now.size() != canvas.size() || memcmp(now.data(), canvas.data(), now.size() * sizeof(cells)) != 0) {
-            // Laid under or onto anything, a paint reads only where something
-            // is, so it is read again only where that changed.
-            bool moved = now.size() != canvas.size();
-            for (size_t which = 0; which < now.size() && !moved; ++which)
-                for (int row = 0; row < MAX_GRID_DIM && !moved; ++row)
-                    for (int col = 0; col < MAX_GRID_DIM && !moved; ++col)
-                        moved = (now[which][row][col] != (int8_t)TRANSPARENT) !=
-                                (canvas[which][row][col] != (int8_t)TRANSPARENT);
-            occupancies += moved;
             canvas = std::move(now);
             ++canvases;
             canvas_number = ++paints.canvases;
@@ -1150,7 +1140,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         colors_by_pair laid(seen.drawn.size());
         for (size_t which = 0; which < seen.drawn.size(); ++which) {
             for (const auto& [row, col] : seen.drawn[which])
-                laid[which].push_back({ (int8_t)row, (int8_t)col, (int8_t)facts.train[which].output.data[row][col] });
+                laid[which].push_back({ (int8_t)row, (int8_t)col, (int8_t)pairs[which].whole.output.data[row][col] });
             if (which < seen.wrong.size())
                 laid[which].insert(laid[which].end(), seen.wrong[which].begin(), seen.wrong[which].end());
         }
@@ -1181,17 +1171,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 ways.insert(ways.end(), { (int8_t)(rule::laid_onto_color + color), (int8_t)(rule::laid_off_color + color) });
         return ways;
     };
-    // EACH PAINT REPLAYED ONCE: it reads only the cut opened again and, laid under
-    // or onto what is down, the canvas, so one way of asking it -- the kind, the
-    // pick, the lay, the value -- is replayed once laid over, and once for each
-    // canvas otherwise -- where something is, laid under or onto anything, and
-    // in what colors, laid onto or off one -- however often the rules around it
-    // are asked; and again once it may no longer lay a cell wrong.
+    // EACH PAINT REPLAYED ONCE: it reads only the cut opened again and the
+    // canvas, so one way of asking it -- the kind, the pick, the lay, the value
+    // -- is replayed once for each canvas, however often the rules around it are
+    // asked; and again once it may no longer lay a cell wrong.
     using replay_key = std::tuple<int, size_t, int, int, int, bool>;
     auto replay_key_of = [&](int kind, size_t pick, int8_t lay, int value) -> replay_key {
-        const int read_on = lay == rule::laid_over ? 0
-                          : lay == rule::laid_under || lay == rule::laid_onto ? occupancies : canvases;
-        return { kind, pick, (int)lay, value, read_on, opened.tolerant };
+        return { kind, pick, (int)lay, value, canvases, opened.tolerant };
     };
     std::map<replay_key, optional<replayed>> replays;
     std::map<replay_key, optional<marked_paint>> marked_replays;
@@ -1253,15 +1239,22 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // each repeated along its rows only onto what is down, redrew the pieces
     // the line leaves where they lie -- and the bars beside them -- and did
     // nothing else, true of the pairs and wrong on its test.
+    // NOR FOR A CELL THE OUTPUT LEAVES TO THE PLAN, where no figure of the
+    // output is: a paint in the plan's own color comes out there (comes_out),
+    // but the piece that stood there went, and what takes a piece away says so
+    // -- a removal, a move, a change of shape. 31aa019c's ray in the ground's
+    // color, laid only onto what is down, was said for cells of the pieces
+    // that go, ahead of their removal; once it was said, no act could follow.
     auto weigh_paint = [&](heard& best, int value, const piece_pick& pick, const auto& seen, claim claims) {
-        claim unshown = [&line_shows, claims = std::move(claims)](size_t which, const left_over_cell& cell) {
-            return claims(which, cell) && !line_shows(which, cell);
+        claim paint_says = [&line_shows, &pairs, claims = std::move(claims)](size_t which, const left_over_cell& cell) {
+            return pairs[which].output_figures.has(cell.row, cell.col) && claims(which, cell) &&
+                   !line_shows(which, cell);
         };
         for (size_t which = 0; which < read.pairs.size(); ++which)
             if (!opened.finished(which) && ranges::none_of(read.pairs[which].left_over, [&](const left_over_cell& cell) {
-                    return cell.claimed_by < 0 && unshown(which, cell); }))
+                    return cell.claimed_by < 0 && paint_says(which, cell); }))
                 return;
-        weigh(best, value, pick, seen, std::move(unshown));
+        weigh(best, value, pick, seen, std::move(paint_says));
     };
 
     // Own-color paints cannot claim a target color absent from their sources.
@@ -1556,7 +1549,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         heard best;
         for (const auto& [pose, name] : turns) {
             if (const auto& seen = replayed_once(replays, 4, 0, rule::laid_over, pose, [&] {
-                    return turned_holds(opened, figure_handed, pose); }))
+                    return turned_holds(opened, figure_handed, pose, canvas); }))
                 weigh_paint(best, pose, figure, *seen, covered_claims(seen->drawn));
         }
         if (best.value < 0) return {};
@@ -1663,7 +1656,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             return group_of(read.fired[which].as) == rule_group::paints; });
         const uint16_t from = starts_from(missing::a_recolor);
         if (!painted_yet || !from || line_drawn.size() != facts.train.size()) return best;
-        const replay_facts picture(facts.train, the_picture(also), election.segmentation, boundaries, &election.shape);
+        const replay_facts picture(facts.train, pairs, the_picture(also), election.segmentation, boundaries,
+                                   &election.shape);
         for (const piece_pick& pick : picks_to_ask(picture, from)) {
             const vector<partner_pieces> handed = handed_pieces(picture, pick);
             if (!whole(handed)) continue;
@@ -1741,7 +1735,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     return fill_holds(opened, handed_by_pick[at], canvas); }))
                 weigh_paint(best, 0, draw_picks[at], *seen, drawn_claims(seen->drawn));
             if (const auto& seen = replayed_once(replays, 6, at, rule::laid_over, 1, [&] {
-                    return inside_holds(opened, handed_by_pick[at]); }))
+                    return inside_holds(opened, handed_by_pick[at], canvas); }))
                 weigh_paint(best, 1, draw_picks[at], *seen, covered_claims(seen->drawn));
         }
         if (best.value < 0) return {};
@@ -1786,17 +1780,34 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // holds one (shape_rule), and said, it is the table the program carries.
     // AND THE GROUND'S PLACES SHAPED LIKE THE SHAPE THE CHANGES TAKE, every one
     // at once (shaped_rooms), where the pairs learned one: no walls fence them.
+    // AND THE TABLE OVER THE ROOMS THE OUTPUTS REPAINT, where a pick read off the
+    // pairs names them (rooms_a_pick_names): the rest stay as they are.
     optional<vector<vector<fenced_room>>> rooms_of_every_piece, rooms_of_the_shape;
     auto room_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
         shape_color_map_rule best_table;
+        piece_pick best_rooms = piece_pick::all();
         const bool tables = inf.pass == 1 && !inf.shape_color_map.holds();
+        // One way of filling rooms weighed, kept with how it lies, its table and
+        // the rooms it takes where it says the most so far.
+        auto weigh_rooms = [&](int chosen, const piece_pick& walls, const replayed& seen, int8_t lay,
+                               const shape_color_map_rule& table, const piece_pick& taken) {
+            const int before = best.said;
+            weigh_paint(best, chosen, walls, seen,
+                        lay == rule::laid_over ? covered_claims(seen.drawn) : drawn_claims(seen.drawn));
+            if (best.said > before) {
+                best_lay = lay;
+                best_table = table;
+                best_rooms = taken;
+            }
+        };
         // The rooms the walls `pick` takes fence off, `at` its place among the
         // picks a paint is replayed for.
         auto ask = [&](size_t at, const piece_pick& pick, const vector<partner_pieces>& handed,
                        optional<vector<vector<fenced_room>>>& rooms) {
-            if (!rooms) rooms = rooms_fenced(opened, handed, whole_pairs);
+            if (!rooms) rooms = rooms_fenced(opened, handed);
+            const optional<named_rooms> named = tables ? rooms_a_pick_names(opened, *rooms) : nullopt;
             for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
                 if (lay == rule::laid_under && !down_known()) continue;
                 for (int chosen = 0; chosen < (tables ? ROOM_VALUES : ROOM_CHOICES); ++chosen) {
@@ -1811,14 +1822,14 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                         return chosen >= ROOM_TABLE
                             ? room_table_holds(opened, handed, *rooms, canvas, table, chosen - ROOM_TABLE, lay)
                             : room_holds(opened, handed, *rooms, canvas, chosen, lay); });
-                    if (!seen) continue;
-                    const int before = best.said;
-                    weigh_paint(best, chosen, pick, *seen,
-                                lay == rule::laid_over ? covered_claims(seen->drawn) : drawn_claims(seen->drawn));
-                    if (best.said > before) {
-                        best_lay = lay;
-                        best_table = table;
-                    }
+                    if (seen) weigh_rooms(chosen, pick, *seen, lay, table, piece_pick::all());
+                }
+                for (int kind = 0; named && kind < (int)shape_key::count; ++kind) {
+                    const shape_color_map_rule table = rooms_table(opened, named->rooms, kind);
+                    if (!table.holds()) continue;
+                    const auto& seen = replayed_once(replays, 8, at, lay, ROOM_NAMED + kind, [&] {
+                        return room_table_holds(opened, handed, named->rooms, canvas, table, kind, lay); });
+                    if (seen) weigh_rooms(ROOM_NAMED + kind, pick, *seen, lay, table, named->pick);
                 }
             }
         };
@@ -1832,33 +1843,29 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 ask(at, pick, handed_by_pick[at], rooms_by_pick[at]);
         }
         if (election.shape.holds()) {
-            if (!rooms_of_the_shape) rooms_of_the_shape = shaped_rooms(opened, election.shape, whole_pairs);
+            if (!rooms_of_the_shape) rooms_of_the_shape = shaped_rooms(election.shape, pairs);
             for (const int8_t lay : { rule::laid_over, rule::laid_under }) {
                 if (lay == rule::laid_under && !down_known()) continue;
                 const auto& seen = replayed_once(replays, 8, draw_picks.size() + 1, lay, ROOM_SHAPE, [&] {
                     return room_holds(opened, every_piece_handed, *rooms_of_the_shape, canvas, ROOM_EVERY, lay); });
-                if (!seen) continue;
-                const int before = best.said;
-                weigh_paint(best, ROOM_SHAPE, piece_pick::all(), *seen,
-                            lay == rule::laid_over ? covered_claims(seen->drawn) : drawn_claims(seen->drawn));
-                if (best.said > before) {
-                    best_lay = lay;
-                    best_table = {};
-                }
+                if (seen) weigh_rooms(ROOM_SHAPE, piece_pick::all(), *seen, lay, {}, piece_pick::all());
             }
         }
         if (best.value < 0) return {};
-        return { best.said, [&, best, best_lay, best_table] {
-            const bool by_table = best.value >= ROOM_TABLE && best.value < ROOM_SHAPE;
+        return { best.said, [&, best, best_lay, best_table, best_rooms] {
+            const bool by_name = best.value >= ROOM_NAMED;
+            const bool by_table = by_name || (best.value >= ROOM_TABLE && best.value < ROOM_SHAPE);
             if (by_table) inf.shape_color_map = best_table;
             const string paint = ", filled in color " + to_string(best.seen.paint);
             const int8_t said = say_paint(best, rule::filled_room,
-                (by_table ? "fences off its rooms, each taking the color its " +
-                                string(keys_named[best.value - ROOM_TABLE]) + " names"
+                (by_table ? "fences off its rooms, " + string(by_name ? "the ones the outputs repaint, " : "") +
+                                "each taking the color its " +
+                                keys_named[best.value - (by_name ? ROOM_NAMED : ROOM_TABLE)] + " names"
                  : best.value == ROOM_SHAPE ? "cuts the changed shape's places off the ground" + paint
                                             : "fences off " + room_named(best.value) + paint) +
                     laid_words(best_lay));
             read.fired[said].lay = best_lay;
+            read.fired[said].rooms = best_rooms;
         }, laid_by(best.seen) };
     };
 
@@ -2022,16 +2029,16 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         // paint laid over it in the order said.
         const vector<grid> pictures = the_picture({});
         auto shows_right = [&](size_t which, int row, int col) {
-            return pictures[which].data[row][col] == facts.train[which].output.data[row][col];
+            return comes_out(pairs[which], row, col, pictures[which].data[row][col]);
         };
         // WHAT THE ACTS CLAIMED, HELD TO WHAT THE LINE DRAWS. Each act claimed
         // its cells on the hand as it was said, and an act said after it can undo
         // them: 50c07299's diagonal, slid its own size and then a step more,
         // leaves the cell the first slide landed on. A cell an act on the line
-        // claimed stays its own only where the picture bears it out -- on the
-        // output, the picture shows the cell's color; on the input, the picture
-        // shows what the output shows there, or nothing, which a paint may say.
-        // So does a cell a paint claimed, where a rule laid that cell wrong.
+        // claimed stays its own only where the picture bears it out -- the cell
+        // comes out there (comes_out), or, on the input, the picture shows
+        // nothing there, which a paint may say. So does a cell a paint claimed,
+        // where a rule laid that cell wrong.
         for (size_t which = 0; which < read.pairs.size() && which < pictures.size(); ++which)
             for (auto& cell : read.pairs[which].left_over) {
                 if (cell.claimed_by < 0 || ranges::find(read.line, cell.claimed_by) == read.line.end()) continue;
@@ -2040,8 +2047,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     !(which < laid_wrong_at.size() && laid_wrong_at[which][cell.row][cell.col]))
                     continue;
                 const int8_t there = (int8_t)pictures[which].data[cell.row][cell.col];
-                if (there == (int8_t)facts.train[which].output.data[cell.row][cell.col] ||
-                    (cell.from_input && there == (int8_t)TRANSPARENT))
+                if (shows_right(which, cell.row, cell.col) || (cell.from_input && there == (int8_t)TRANSPARENT))
                     continue;
                 --read.fired[cell.claimed_by].cells;
                 cell.claimed_by = -1;

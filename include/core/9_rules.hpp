@@ -175,15 +175,16 @@ struct diagonal_continuation_rule {
     // output exactly. Nothing about the colors is kept: which color sits on
     // which diagonal is read off the grid in hand, differently in every pair,
     // and that is what makes this a rule rather than a table.
-    static diagonal_continuation_rule detect(const vector<example>& train,
+    static diagonal_continuation_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                              const correspondence_election& correspondence) {
         // The cycle is read off the cells where they sit, so the pieces have to
         // be the input's own cells in the input's own frame.
         if (train.empty() || !boxed_by_its_cells(correspondence.segmentation)) return {};
-        auto redraws_every_output = [&](int8_t lean) {
+        auto redraws_with = [&](int8_t lean) {
             const tile_value tile = tile_of(lean);
             bool carried_something = false;
-            for (const auto& pair : train) {
+            for (size_t which = 0; which < train.size(); ++which) {
+                const example& pair = train[which];
                 // The input's own cells in reading order, each laid again where
                 // the Tile lays it, a later cell's copies over an earlier one's.
                 struct cell_at { int row, col, color; };
@@ -201,7 +202,7 @@ struct diagonal_continuation_rule {
                         drawn.data[cell.row + down][cell.col + across] = (int8_t)cell.color;
                         return true;
                     });
-                if (drawn != pair.output) return false;
+                if (!redraws_the_output(drawn, pairs[which])) return false;
                 for (int row = 0; row < pair.output.height; ++row)
                     for (int col = 0; col < pair.output.width; ++col)
                         carried_something = carried_something ||
@@ -211,7 +212,7 @@ struct diagonal_continuation_rule {
             return carried_something;
         };
         for (const int8_t lean : {(int8_t)0, (int8_t)1})
-            if (redraws_every_output(lean)) return {true, lean};
+            if (redraws_with(lean)) return {true, lean};
         return {};
     }
 };
@@ -232,10 +233,10 @@ struct periodic_denoise_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static periodic_denoise_rule detect(const vector<example>& train) {
+    static periodic_denoise_rule detect(const vector<example>& train, const vector<figure_pair>& pairs) {
         if (train.empty()) return {};
         bool cleaned_something = false;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             const grid& input = pair.input;
             if (!input.same_size(pair.output)) return false;
             drawn = input;
@@ -478,7 +479,7 @@ struct input_blocks_rule {
     // asked whether it is the input, turned and recolored: the block cut's own
     // best reading, elected or not. What is asked here is only what places the
     // copies and what they wear -- never, a second time, whether they are copies.
-    static input_blocks_rule detect(const vector<example>& train,
+    static input_blocks_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                     const correspondence_election& correspondence) {
         if (train.empty()) return {};
         for (const auto& pair : train)
@@ -584,7 +585,7 @@ struct input_blocks_rule {
         // REPLAYED: every output drawn again from its input, each copy posed as
         // the op poses it (pose_source) and worn as the table or the negative
         // says, the rest empty; held only where every drawing comes out exactly.
-        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        rule.held = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             const layout& at = rule.pairs[(size_t)(&pair - train.data())];
             const int width = pair.input.width, height = pair.input.height;
             const int8_t figure = rule.negative ? the_figure_color(pair.input, ground) : (int8_t)TRANSPARENT;
@@ -621,7 +622,7 @@ struct piece_slam_rule {
     bool holds() const { return step != 0; }
 
     // Tries all four slide directions and keeps the one that redraws every output.
-    static piece_slam_rule detect(const vector<example>& train,
+    static piece_slam_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                   const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The slide happens in each piece's own box, and the cells it leaves are ground.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
@@ -629,7 +630,7 @@ struct piece_slam_rule {
         // Draws each output from its input's pieces slid that way, noting whether any
         // cell moved at all.
         auto draws_every_output = [&](bool rows, int step, bool& moved) {
-            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            return redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                 const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
                 drawn = grid(pair.output.width, pair.output.height);
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -671,11 +672,12 @@ struct snap_to_anchors_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static snap_to_anchors_rule detect(const vector<example>& train, const correspondence_election& correspondence,
+    static snap_to_anchors_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                       const correspondence_election& correspondence,
                                        const output_dimension_rule& size, const tiled_pieces& tiles) {
         if (train.empty()) return {};
         bool at_work = false;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             // The pieces laid into one grid as large as a grid gets, a later one over an earlier.
             int8_t cells[MAX_GRID_DIM][MAX_GRID_DIM];
             for (auto& row : cells)
@@ -723,7 +725,7 @@ struct overlap_corner_rule {
 
     // Lays every input's pieces into the chain and keeps the claim only if that
     // drew each output on the nose.
-    static overlap_corner_rule detect(const vector<example>& train,
+    static overlap_corner_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                       const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // Each piece is hung off the last one's box, so the pieces have to be
         // measured in their own, and the cells no piece reaches are ground.
@@ -733,7 +735,7 @@ struct overlap_corner_rule {
         // detector verified past that point is one the op would not draw.
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
         bool laid_any_piece_somewhere_new = false;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
             // One piece put in the corner says nothing about chaining.
             if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
@@ -780,7 +782,7 @@ struct slide_to_touch_rule {
     int8_t slides = -1;   // the colour that closes the gap until they touch
     bool holds() const { return is_color(stays) && is_color(slides); }
 
-    static slide_to_touch_rule detect(const vector<example>& train,
+    static slide_to_touch_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                       const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The pieces slide in grid coordinates and the cells they leave behind
         // are ground, so the two grids have to lie over one another; and the
@@ -814,7 +816,7 @@ struct slide_to_touch_rule {
         // and the other sliding up against it, noting whether anything moved at
         // all.
         auto draws_every_output = [&](int8_t stays, int8_t slides, bool& moved) {
-            return redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            return redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                 vector<object_segmentation::object_info> info;
                 vector<object> pieces;
                 object_segmentation::segment_for_correspondence(pair.input,
@@ -911,8 +913,9 @@ struct edge_slide_rule {
         });
     }
 
-    static edge_slide_rule detect(const vector<example>& train, segmentation_methods elected,
-                                  const output_dimension_rule& size, const tiled_pieces& tiles) {
+    static edge_slide_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                  segmentation_methods elected, const output_dimension_rule& size,
+                                  const tiled_pieces& tiles) {
         if (train.empty()) return {};
         vector<segmentation_methods> cuts{ elected };
         for (const auto cut : { segmentation_methods::connected_monochrome,
@@ -935,7 +938,7 @@ struct edge_slide_rule {
                     for (const object& piece : pieces[i])
                         if (!paint_piece(canvas, piece, piece.summary.row, piece.summary.col)) return false;
                     return true;
-                }) && drawn == train[i].output;
+                }) && redraws_the_output(drawn, pairs[i]);
             }
             if (as_they_lie) continue;
             for (int color = -1; color < COLOR_COUNT; ++color) {
@@ -949,7 +952,7 @@ struct edge_slide_rule {
                         for (size_t i = 0; i < train.size() && every; ++i) {
                             grid drawn;
                             every = trying.draw(train[i].input, pieces[i], size, drawn) &&
-                                    drawn == train[i].output;
+                                    redraws_the_output(drawn, pairs[i]);
                         }
                         if (every) return trying;
                     }
@@ -1010,7 +1013,7 @@ struct copy_to_rule {
         return drawn;
     }
 
-    static copy_to_rule detect(const vector<example>& train,
+    static copy_to_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                const pane_split_facts& split, const tiled_pieces& tiles) {
         if (train.empty()) return {};
         bool changed = false;
@@ -1033,7 +1036,7 @@ struct copy_to_rule {
             for (int anchor = 0; anchor < 9; ++anchor) {
                 bool every = true;
                 for (size_t i = 0; i < train.size() && every; ++i)
-                    every = draw(train[i].input, cut[i], sources[i], anchor) == train[i].output;
+                    every = redraws_the_output(draw(train[i].input, cut[i], sources[i], anchor), pairs[i]);
                 if (every) return { true, use_panes, (int8_t)anchor };
             }
         }
@@ -1121,7 +1124,7 @@ struct project_on_seeds_rule {
         return stamped;
     }
 
-    static project_on_seeds_rule detect(const vector<example>& train,
+    static project_on_seeds_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                         const correspondence_election& correspondence,
                                         const tiled_pieces& tiles) {
         // The template is handed over in the frame its cells make, which is
@@ -1132,7 +1135,7 @@ struct project_on_seeds_rule {
         if (!boxed_by_its_cells(cut) || !pairs_overlay(train)) return {};
         // Nothing stamped is the input handed straight back, which every other
         // reading already says without a rule this long.
-        const bool in_the_markers_colors = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool in_the_markers_colors = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             drawn = pair.input;
             return stamp(pair, cut, [&](int row, int col, int8_t color) {
                 drawn.data[row][col] = color;
@@ -1145,7 +1148,7 @@ struct project_on_seeds_rule {
         // where a plan deleted the ground, nothing does until the plan's fill.
         int8_t worn = TRANSPARENT;
         bool one_color = true;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             drawn = grid(pair.input.width, pair.input.height);
             pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
                 drawn.data[row][col] = (int8_t)color;
@@ -1193,7 +1196,7 @@ struct bridge_rule {
     int8_t way = 0;
     bool holds() const { return held; }
 
-    static bridge_rule detect(const vector<example>& train,
+    static bridge_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                               const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // The bars fill cells that were ground, and the rest of the grid stays
         // where it was, so the two grids lie over one another.
@@ -1209,7 +1212,7 @@ struct bridge_rule {
                 cut != segmentation_methods::connected_multicolor) continue;
             for (const int way : bridge_ways_narrowest_first) {
                 bool bridged = false;
-                const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                     // The pieces as Split hands them over: the one walk, in its order.
                     const vector<object> pieces = pieces_as_said(pair.input, cut, tiles.of(pair));
                     // One list is all the op is handed, and the bars take one place
@@ -1340,7 +1343,7 @@ struct mark_lattice_rule {
         return true;
     }
 
-    static mark_lattice_rule detect(const vector<example>& train,
+    static mark_lattice_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                     const correspondence_election& correspondence, const tiled_pieces& tiles) {
         // Lines go down on an empty canvas the size of the input, and whatever
         // they miss stays empty, for the plan to fill.
@@ -1354,7 +1357,7 @@ struct mark_lattice_rule {
             if (!boxed_by_its_cells(cut)) continue;
             for (const bool portrait : { false, true }) {
                 bool laid = false;
-                const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                     if (!draw(pair.input, cut, portrait, drawn, tiles.of(pair)))
                         return false;
                     laid = laid || drawn != pair.input;
@@ -1373,10 +1376,11 @@ struct interior_spread_rule {
     bool held = false;
     bool holds() const { return held; }
 
-    static interior_spread_rule detect(const vector<example>& train, const tiled_pieces& tiles) {
+    static interior_spread_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                       const tiled_pieces& tiles) {
         if (train.empty() || !pairs_overlay(train)) return {};
         bool changed = false;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             drawn = pair.input;
             object_walk_scratch scratch;
             int pieces = 0;
@@ -1405,11 +1409,12 @@ struct interior_fill_rule {
     int8_t color = -1;
     bool holds() const { return is_color(color); }
 
-    static interior_fill_rule detect(const vector<example>& train, const tiled_pieces& tiles) {
+    static interior_fill_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                     const tiled_pieces& tiles) {
         if (train.empty() || !pairs_overlay(train)) return {};
         interior_fill_rule rule;
         bool changed = false;
-        const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             drawn = grid(pair.input.width, pair.input.height);
             object_walk_scratch scratch;
             bool consistent = true;
@@ -1527,7 +1532,8 @@ struct ranked_layout_rule {
         return true;
     }
 
-    static ranked_layout_rule detect(const vector<example>& train, const output_dimension_rule& size) {
+    static ranked_layout_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                     const output_dimension_rule& size) {
         if (train.empty() || size.Chosen != output_dimension_rule::BoundingBox) return {};
         for (int discarded = 0; discarded <= COLOR_COUNT; ++discarded)
             for (int mode = 0; mode <= 1; ++mode)
@@ -1537,7 +1543,7 @@ struct ranked_layout_rule {
                     candidate.discarded_colors = (int8_t)discarded;
                     candidate.split_mode = (int8_t)mode;
                     candidate.cell_size = (int8_t)factor;
-                    const bool redraws = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                    const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                         return candidate.draw(pair, drawn);
                     });
                     if (redraws) return candidate;
@@ -1573,10 +1579,11 @@ struct rarest_color_rule {
         return true;
     }
 
-    static rarest_color_rule detect(const vector<example>& train, const output_dimension_rule& size) {
+    static rarest_color_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                    const output_dimension_rule& size) {
         if (train.empty() || size.Chosen != output_dimension_rule::BoundingBox) return {};
         rarest_color_rule rule;
-        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        rule.held = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             return draw(pair.input, drawn);
         });
         return rule;
@@ -1610,13 +1617,13 @@ struct corner_crop_rule {
         });
     }
 
-    static corner_crop_rule detect(const vector<example>& train,
+    static corner_crop_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                    const output_dimension_rule& size) {
         if (train.empty()) return {};
         for (bool down : { false, true })
             for (bool right : { false, true }) {
                 const corner_crop_rule trying{ true, down, right };
-                if (redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                if (redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                         return trying.draw(pair.input, size, drawn);
                     })) return trying;
             }

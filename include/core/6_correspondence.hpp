@@ -302,7 +302,8 @@ struct correspondence_election {
         // moved their own size or grown a trail the direction `value` names,
         // their boxes filled in `paint`, or every room they fence off, or the
         // one `value` names by size or by part, filled in `paint`, or every
-        // room in the color its key names (filled_room, ROOM_PARTS),
+        // room, or the `rooms` a pick names, in the color its key names
+        // (filled_room, ROOM_PARTS),
         // copied onto the pieces not picked, lined up CopyTo's way `value`, or
         // repeated as the Tile in `tile` says (tiled_along), or folded into one
         // figure, moved its own size the direction `value` names and repeated
@@ -332,6 +333,9 @@ struct correspondence_election {
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;
         piece_pick pick = piece_pick::all();
+        // The rooms a room paint takes once Partition hands them back (filled_room):
+        // every room, or the ones a pick read off the pairs names.
+        piece_pick rooms = piece_pick::all();
         // The color it paints what it draws in, when it draws in one of its own.
         int8_t paint = -1;
         // HOW A PAINT SAID AFTER THE LINE LIES on what is down: over it, under it

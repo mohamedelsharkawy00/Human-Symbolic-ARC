@@ -523,12 +523,13 @@ struct pane_mask_rule {
 
     // Reads off the table how its operators say it, each way in the order a tie
     // goes, and keeps the first whose operators redraw every output.
-    void read_how_said(const vector<example>& train, const pane_split_facts& split) {
+    void read_how_said(const vector<example>& train, const vector<figure_pair>& pairs,
+                       const pane_split_facts& split) {
         auto holds_as = [&](said_as shape, int paint, int under) {
             as = shape;
             lit = (int8_t)paint;
             ground = (int8_t)under;
-            if (redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            if (redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                     return draw_said(pair.input, split, drawn); }))
                 return true;
             as = said_as::unsaid;
@@ -610,15 +611,15 @@ struct pane_mask_rule {
     // is comes first, so a pose is only ever worn when it is doing work.
     // With no ground color, "nothing here" is an empty cell: what is left
     // where a plan deleted the ground.
-    static pane_mask_rule detect(const vector<example>& train,
+    static pane_mask_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                  const pane_split_facts& split) {
         if (!split.holds()) return {};
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
             pane_mask_rule rule = read_with(train, split, pose);
-            if (rule.holds() && redraws_every_output(train, [&](const example& pair, grid& drawn) {
+            if (rule.holds() && redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                     return rule.draw(pair.input, split, drawn);
                 })) {
-                rule.read_how_said(train, split);
+                rule.read_how_said(train, pairs, split);
                 return rule;
             }
         }
@@ -784,14 +785,14 @@ struct pane_pick_rule {
 
     // Walks the ways in order and keeps the first that names the right pane in
     // every pair. Order is the whole tiebreak: a reason before a place.
-    static pane_pick_rule detect(const vector<example>& train,
+    static pane_pick_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
                                  const pane_split_facts& split) {
         if (!split.holds() || train.empty()) return {};
         // Preserve direct picks before considering the enlarged reading.
         for (bool fitted : { false, true }) {
             auto names_it = [&](int8_t way, int8_t which) {
                 const pane_pick_rule trying{ way, which, true, fitted };
-                return redraws_every_output(train, [&](const example& pair, grid& drawn) {
+                return redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
                     return trying.draw(pair.input, split, drawn);
                 });
             };
@@ -858,11 +859,11 @@ struct pane_gather_rule {
     }
 
     // With no ground color, what a pane holds is what is not empty.
-    static pane_gather_rule detect(const vector<example>& train, const pane_split_facts& split,
-                                   const output_dimension_rule& size) {
+    static pane_gather_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
+                                   const pane_split_facts& split, const output_dimension_rule& size) {
         if (!split.holds()) return {};
         pane_gather_rule rule;
-        rule.held = redraws_every_output(train, [&](const example& pair, grid& drawn) {
+        rule.held = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
             return draw(pair.input, split, size, drawn);
         });
         return rule;

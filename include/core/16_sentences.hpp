@@ -1003,9 +1003,11 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             else if (rule.value == ROOM_EVERY)
                 act += rooms + " " + spell("Recolor", rule.paint);
             else if (rule.value >= ROOM_TABLE)
-                // Every room, each in the color the puzzle's table names for its key.
+                // Every room, or the ones a pick read off the pairs names, each in
+                // the color the puzzle's table names for its key.
                 act += rooms + " InvertSelection DeleteSelection SelectAll Trim " +
-                       spell("ShapeColorMap", rule.value - ROOM_TABLE);
+                       (rule.rooms.every() ? string() : pick_operators(rule.rooms) + " ") +
+                       spell("ShapeColorMap", rule.value - (rule.value >= ROOM_NAMED ? ROOM_NAMED : ROOM_TABLE));
             else if (room_by_size(rule.value))
                 act += rooms + " InvertSelection DeleteSelection " +
                        spell(room_largest(rule.value) ? "SelectLargestObject" : "SelectSmallestObject",

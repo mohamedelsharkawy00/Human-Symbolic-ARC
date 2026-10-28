@@ -721,35 +721,66 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
     return plans;
 }
 
-// The puzzle a plan leaves to read: each input without the ground it deletes,
-// and without what the fill lays under where that is ground on it too; each
-// output without what its fill lays under. Those cells are empty, and an empty
-// cell is nothing to every reader. Both colors come from the input as given,
-// since that is all a program has.
-inline vector<example> figures_only(const vector<example>& train, const ground_plan& plan,
-                                    const vector<int8_t>& elected = {}) {
-    vector<example> figures = train;
-    auto empty = [](grid& one, int8_t color) {
-        if (!is_color(color)) return;
-        for (int row = 0; row < one.height; ++row)
-            for (int col = 0; col < one.width; ++col)
-                if (one.data[row][col] == color) one.data[row][col] = TRANSPARENT;
-    };
-    for (size_t which = 0; which < figures.size(); ++which) {
-        example& pair = figures[which];
+// A PAIR AS A PLAN READS IT: whole, every cell in its own color, and which
+// cells of each grid are figures. The rest -- the ground the plan deletes or
+// fills, the walls it sets apart -- is still there, in no figure.
+struct figure_pair {
+    example whole;
+    cell_set input_figures, output_figures;
+};
+
+// WHETHER A CELL COMES OUT AS THE PAIR'S OUTPUT once the plan has laid its own
+// cells, the ones no figure of the output holds (plan_figures): one showing a
+// color, where the output shows that color; one left empty, where no figure of
+// the output is, since the plan lays there what the output shows. So a cell
+// painted in the color the plan lays there comes out as one left empty does
+// (94133066's block, its body the color the plan fills with).
+inline bool comes_out(const figure_pair& pair, int row, int col, int8_t shown) {
+    return is_color(shown) ? pair.whole.output.data[row][col] == shown : !pair.output_figures.has(row, col);
+}
+
+// THE FIGURES A PLAN LEAVES TO READ: on each input every colored cell but the
+// ground it deletes, and what the fill lays under where that is ground on the
+// input too; on each output every colored cell but what its fill lays under.
+// Both colors come from the input as given, since that is all a program has.
+inline vector<figure_pair> plan_figures(const vector<example>& train, const ground_plan& plan,
+                                        const vector<int8_t>& elected = {}) {
+    vector<figure_pair> pairs;
+    for (size_t which = 0; which < train.size(); ++which) {
+        figure_pair& pair = pairs.emplace_back(figure_pair{ train[which] });
         auto color_of = [&](background_source source) {
-            return source.per_grid && which < elected.size() ? elected[which] : source.on(pair.input);
+            return source.per_grid && which < elected.size() ? elected[which] : source.on(pair.whole.input);
         };
-        // Each elected on the input as given, before any is taken off it: elected
-        // again on what is left, the ground lost, a figure's color won (4364c1c4's
-        // third input lost its 8s, which its program keeps).
         const int8_t deleted = color_of(plan.deleted), filled = color_of(plan.filled),
                      filled_here = color_of(plan.filled_on_input());
-        empty(pair.input, deleted);
-        empty(pair.input, filled_here);
-        empty(pair.output, filled);
+        pair.whole.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
+            if (color != deleted && color != filled_here) pair.input_figures.add(row, col);
+        });
+        pair.whole.output.for_each_colored_cell(filled, [&](int row, int col, int) { pair.output_figures.add(row, col); });
     }
-    return figures;
+    return pairs;
+}
+
+// THE PAIRS WITH NOTHING BUT THEIR FIGURES, every other cell emptied: each
+// input as the program holds it once the plan's opening sentence has run, each
+// output as its sentences must draw it before the fill, so a rule replayed on
+// them reads what its operator reads. Not every rule the language says can be
+// read off them: a fill in a figure's own color empties that figure on the
+// outputs (94133066's 1s), and the ground's own shapes are no pieces
+// (868de0fa's hollows).
+inline vector<example> figures_only(const vector<figure_pair>& pairs) {
+    auto empty_the_rest = [](grid& one, const cell_set& figures) {
+        for (int row = 0; row < one.height; ++row)
+            for (int col = 0; col < one.width; ++col)
+                if (!figures.has(row, col)) one.data[row][col] = TRANSPARENT;
+    };
+    vector<example> only;
+    for (const figure_pair& pair : pairs) {
+        example& kept = only.emplace_back(pair.whole);
+        empty_the_rest(kept.input, pair.input_figures);
+        empty_the_rest(kept.output, pair.output_figures);
+    }
+    return only;
 }
 
 }  // namespace arc

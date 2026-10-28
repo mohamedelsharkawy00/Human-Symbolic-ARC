@@ -415,23 +415,6 @@ struct partner_pieces {
     // The pieces of a cut, the ones `pick` takes picked (picked_pieces, below),
     // on a canvas the size of `canvas`, where a pick reads the parts walls fence.
     partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas, hand_answers& kept);
-    // WHAT THE PICKED PIECES SHOW where they lie on their grid, `width` by
-    // `height`, cell by cell, TRANSPARENT where none does: a cell a paint lays
-    // again as it was is no work (paint_holds). Drawn the first time a replay
-    // asks and kept, for every length and lay a rule is asked with: neither the
-    // pieces, the pick nor their grid change under it.
-    const cells& shown(int width, int height) const {
-        if (!shown_once) {
-            auto made = std::make_shared<cells>();
-            for (size_t i = 0; i < pieces.size(); ++i)
-                if (picked[i])
-                    pieces[i].each_cell([&](int row, int col, int8_t color) {
-                        if (row >= 0 && col >= 0 && row < height && col < width) (*made)[row][col] = color;
-                    });
-            shown_once = std::move(made);
-        }
-        return *shown_once;
-    }
     // The blocks piece i's shape is drawn in (blocks_of), its colors aside:
     // read the first time a partner way at another size asks, and kept.
     shape_blocks blocks(int i) const {
@@ -538,10 +521,9 @@ struct partner_pieces {
         }
         return *seeds_once;
     }
-    // What shown, ray_seeds and key_piece keep, shared by a copy of the cut.
+    // What ray_seeds and key_piece keep, shared by a copy of the cut.
     struct key_drawing { int16_t at[MAX_GRID_DIM][MAX_GRID_DIM]; };
     static constexpr int16_t NOT_ASKED = -2;
-    mutable std::shared_ptr<const cells> shown_once;
     mutable std::shared_ptr<const vector<ray_seed>> seeds_once;
     mutable std::shared_ptr<key_drawing> keys_once;
 };
@@ -787,14 +769,29 @@ struct shape_color_map_rule : shape_table {
 static_assert(row_of(node_type::ShapeColorMap).high + 1 == (int)shape_key::count,
               "ShapeColorMap takes one value for each key a learned table knows a piece by");
 
+// WHETHER A DRAWING COMES OUT AS A PAIR'S OUTPUT once the plan has laid its own
+// cells: its fill under the drawing, in the color the fill sentence lays, and
+// its walls back over it. So at the output's size -- the drawing closed as the
+// program closes its canvas (draw_on_canvas) -- every cell comes out
+// (comes_out).
+inline bool redraws_the_output(const grid& drawn, const figure_pair& pair) {
+    const grid& output = pair.whole.output;
+    if (!drawn.same_size(output)) return false;
+    for (int row = 0; row < output.height; ++row)
+        for (int col = 0; col < output.width; ++col)
+            if (!comes_out(pair, row, col, drawn.data[row][col])) return false;
+    return true;
+}
+
 // HOW A RULE HERE IS CHECKED RATHER THAN GUESSED: replayed. `draw` draws one
 // pair's output from its input, or says false when it cannot, and the claim
-// holds only when every drawing comes out exactly.
+// holds only when every drawing comes out as its output (redraws_the_output).
 template <class Draw>
-bool redraws_every_output(const vector<example>& train, Draw draw) {
-    for (const example& pair : train) {
+bool redraws_every_output(const vector<example>& train, const vector<figure_pair>& pairs, Draw draw) {
+    for (size_t which = 0; which < train.size(); ++which) {
         grid drawn;
-        if (!draw(pair, drawn) || drawn != pair.output) return false;
+        if (which >= pairs.size() || !draw(train[which], drawn) || !redraws_the_output(drawn, pairs[which]))
+            return false;
     }
     return true;
 }

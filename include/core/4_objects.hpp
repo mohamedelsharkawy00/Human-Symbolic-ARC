@@ -102,12 +102,14 @@ inline void repeat_periods(const grid& g, int& width, int& height) {
     height = smallest_period(g.height, false);
 }
 
-// EVERY PLACE A SHAPE FITS ON ONE COLOR of `one_grid`: each top-left where every
-// cell of `shape`, an object at its own box's corner, lands on a cell of one
-// color, within one copy where `tiles` bounds the copies -- handed to
+// EVERY PLACE A SHAPE FITS ON ONE COLOR of `one_grid`, among the colored cells
+// `includes(row, col)` takes: each top-left where every cell of `shape`, an
+// object at its own box's corner, lands on a cell it takes, all of one color,
+// within one copy where `tiles` bounds the copies -- handed to
 // `see(row, col, color)` in reading order.
-template <class See>
-inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_size tiles, See see) {
+template <class See, class Includes>
+inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_size tiles, See see,
+                               Includes includes) {
     for (int row = 0; row + shape.summary.height <= one_grid.height; ++row)
         for (int col = 0; col + shape.summary.width <= one_grid.width; ++col) {
             int color = TRANSPARENT;
@@ -115,7 +117,8 @@ inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_s
             shape.each_cell([&](int down, int across, int8_t) {
                 const int at_row = row + down, at_col = col + across;
                 const int there = one_grid.data[at_row][at_col];
-                fits = fits && is_color(there) && (color == TRANSPARENT || there == color) &&
+                fits = fits && is_color(there) && includes(at_row, at_col) &&
+                       (color == TRANSPARENT || there == color) &&
                        (tiles.height <= 0 || at_row / tiles.height == row / tiles.height) &&
                        (tiles.width <= 0 || at_col / tiles.width == col / tiles.width);
                 color = there;
@@ -133,21 +136,32 @@ struct turning_shape {
     bool holds() const { return cells.summary.count > 0; }
 };
 
-// THE PIECES THE SHAPE CUT CUTS (shape_fits): every place the shape fits on the
-// color it turns from or into, a piece each, in reading order, places sharing
-// the cells where they overlap; then the cells no place took, joined as the
-// connected one-color cut joins them. As many as a list holds, one for each
-// cell of the largest grid, the rest dropped as Tile drops copies past the
-// list's room. Handed to `take(box, cells, count)` as each_object hands its
-// groups; hands back how many places came first.
+// THE PLACES THE SHAPE CUT TAKES: every place the shape fits on the color it
+// turns from or into, among the cells `includes(row, col)` takes -- each
+// top-left handed to `see(row, col)` in reading order.
+template <class See, class Includes>
+inline void each_shape_place(const grid& one_grid, const turning_shape& shape, tile_size tiles, See see,
+                             Includes includes) {
+    each_place_it_fits(one_grid, shape.cells, tiles, [&](int row, int col, int color) {
+        if (color == shape.from || color == shape.into) see(row, col);
+    }, includes);
+}
+
+// THE PIECES THE SHAPE CUT CUTS (shape_fits): its places (each_shape_place), a
+// piece each, in reading order, places sharing the cells where they overlap;
+// then the cells no place took, joined as the connected one-color cut joins
+// them. As many as a list holds, one for each cell of the largest grid, the
+// rest dropped as Tile drops copies past the list's room. Handed to
+// `take(box, cells, count)` as each_object hands its groups; hands back how
+// many places came first.
 template <class Take>
 inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, object_walk_scratch& scratch,
                             Take take, tile_size tiles = {}) {
     bool in_shape[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     int pieces = 0;
     int16_t cells[MAX_GRID_CELLS];
-    each_place_it_fits(one_grid, shape.cells, tiles, [&](int row, int col, int color) {
-        if ((color != shape.from && color != shape.into) || pieces >= MAX_GRID_CELLS) return;
+    each_shape_place(one_grid, shape, tiles, [&](int row, int col) {
+        if (pieces >= MAX_GRID_CELLS) return;
         int count = 0;
         cell_box box;
         shape.cells.each_cell([&](int down, int across, int8_t) {
@@ -157,7 +171,7 @@ inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, ob
         });
         take(summary_of(box, count), cells, count);
         ++pieces;
-    });
+    }, [](int, int) { return true; });
     const int places = pieces;
     each_object(one_grid, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* found, int count) {
@@ -214,7 +228,7 @@ inline turning_shape changed_shape(const vector<example>& train) {
                     shape.each_cell([&](int down, int across, int8_t) {
                         covered.data[row + down][col + across] = (int8_t)now;
                     });
-                });
+                }, [](int, int) { return true; });
                 held = covered == turned[which];
             }
             if (held) return { shape, (int8_t)was, (int8_t)now };
