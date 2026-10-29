@@ -46,7 +46,7 @@ struct inference_times {
     static constexpr const char* names[] = { "plain", "partners", "preparing",
         "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
         "recolor", "shape", "key", "removal", "socket", "shape_from", "ray", "trail", "copy", "repeat",
-        "turned", "bar", "fill", "box", "room", "symmetry", "picture" };
+        "turned", "bar", "fill", "box", "room", "symmetry", "crossing", "moved_copy", "picture" };
     enum at { plain, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
     double ms[size(names)] = {};
 };

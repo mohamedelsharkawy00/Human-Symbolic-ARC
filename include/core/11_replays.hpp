@@ -738,32 +738,72 @@ inline optional<replayed> slides_hold(const replay_facts& facts, const vector<pa
     return seen;
 }
 
-// A PIECE THAT MOVES LEVEL WITH ANOTHER, replayed. AlignTo slides every picked
-// piece, down or across alone, until its box starts on the row -- or with
-// `columns`, the column -- its one partner's box starts on (goes_level).
-inline optional<replayed> align_holds(const replay_facts& facts, const vector<partner_pieces>& handed, bool columns,
-                                      partner_by how) {
-    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, direction_step& by) {
-        return cut.goes_level(i, columns, how, by);
-    });
+// WHERE A MOVE TAKES PICKED PIECE i of pair `which`, the move `kind` said with
+// its op's own `value`, as the op slides it: down or across alone until its box
+// starts on the row its one partner's box starts on -- or, for a value past the
+// partner ways, the column (AlignTo, goes_level); toward its one partner of the
+// kind `value` % PARTNER_KINDS names -- each way partner_by finds one, then each
+// color -- one step, its own size, or until it touches it (MoveToward,
+// goes_toward, move_toward in 15_op_math.hpp); that way until its box meets
+// the grid's edge (MoveToEdge, steps_to_edge); or its own size that way
+// (Shift, shift_by). How far down and across in `by`, or false for a piece with
+// no one partner, which its op leaves where it is.
+inline bool goes_by(const replay_facts& facts, size_t which, const partner_pieces& cut, int i, move_by kind,
+                    int value, direction_step& by) {
+    constexpr int ways = (int)partner_by::count;
+    const grid& output = facts.train[which].output;
+    switch (kind) {
+    case move_by::align_to: return cut.goes_level(i, value >= ways, (partner_by)(value % ways), by);
+    case move_by::toward: return cut.goes_toward(i, value, output.width, output.height, by);
+    case move_by::to_edge: {
+        const direction_step step = step_of(value);
+        const int steps = steps_to_edge(cut.boxes[i], output.width, output.height, value);
+        by = { steps * step.down, steps * step.across };
+        return true;
+    }
+    case move_by::shift: by = shift_by(value, cut.boxes[i].width(), cut.boxes[i].height()); return true;
+    case move_by::count: break;
+    }
+    return false;
 }
 static_assert(row_of(node_type::AlignTo).high + 1 == 2 * (int)partner_by::count,
               "AlignTo takes rows then columns, each by every way partner_by finds a partner");
-
-
-// A PIECE THAT MOVES TOWARD ANOTHER, replayed. MoveToward moves every picked
-// piece toward its one partner of the kind `value` % PARTNER_KINDS names -- each
-// way partner_by finds one, then each color -- by what `value` / PARTNER_KINDS
-// names: one step, its own size, or until it touches it (goes_toward,
-// move_toward in 15_op_math.hpp, the move the op makes).
-inline optional<replayed> toward_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int value) {
-    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
-        const grid& output = facts.train[which].output;
-        return cut.goes_toward(i, value, output.width, output.height, by);
-    });
-}
 static_assert(row_of(node_type::MoveToward).high + 1 == (int)toward_by::count * PARTNER_KINDS,
               "MoveToward takes each way of going toward each kind of partner");
+
+// THE VALUES A MOVE IS ASKED WITH, each handed to `visit(value)`, in the order a
+// tie goes: AlignTo's rows, then its columns, of each partner way the pairs ask
+// (asks_way); MoveToward's each way of going toward each kind of partner the
+// pairs ask (asks_kind); MoveToEdge's and Shift's eight directions, the sides
+// before the corners (direction_asked).
+template <class Visit>
+inline void each_move_value(const replay_facts& facts, move_by kind, Visit visit) {
+    constexpr int ways = (int)partner_by::count;
+    switch (kind) {
+    case move_by::align_to:
+        for (int value = 0; value < 2 * ways; ++value)
+            if (facts.asks_way((partner_by)(value % ways))) visit(value);
+        break;
+    case move_by::toward:
+        for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value)
+            if (facts.asks_kind(value % PARTNER_KINDS)) visit(value);
+        break;
+    case move_by::to_edge:
+    case move_by::shift:
+        for (int at = 0; at < direction::count; ++at) visit(direction_asked(at));
+        break;
+    case move_by::count: break;
+    }
+}
+
+// A PIECE THAT MOVES, replayed: every picked piece slid where the move `kind`
+// with `value` takes it (goes_by).
+inline optional<replayed> moves_hold(const replay_facts& facts, const vector<partner_pieces>& handed, move_by kind,
+                                     int value) {
+    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
+        return goes_by(facts, which, cut, i, kind, value, by);
+    });
+}
 
 // A PICKED PIECE SLID THE SAME WAY IN EVERY PAIR, replayed: `down` and `across`,
 // the MoveColumn and MoveRow a pick by holes or by size is said with.
@@ -771,27 +811,6 @@ inline optional<replayed> move_holds(const replay_facts& facts, const vector<par
                                      int across) {
     return slides_hold(facts, handed, [&](size_t, const partner_pieces&, int, direction_step& by) {
         by = { down, across };
-        return true;
-    });
-}
-
-// A PICKED PIECE SLID TO THE EDGE OF THE GRID, replayed: that way, until its box
-// meets the edge (steps_to_edge, 15_op_math.hpp, the walk MoveToEdge takes).
-inline optional<replayed> to_edge_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int move_direction) {
-    const direction_step step = step_of(move_direction);
-    return slides_hold(facts, handed, [&](size_t which, const partner_pieces& cut, int i, direction_step& by) {
-        const grid& output = facts.train[which].output;
-        const int steps = steps_to_edge(cut.boxes[i], output.width, output.height, move_direction);
-        by = { steps * step.down, steps * step.across };
-        return true;
-    });
-}
-
-// A PICKED PIECE MOVED ITS OWN SIZE, replayed: the direction `move_direction` names
-// (shift_by, 15_op_math.hpp, the step the op takes).
-inline optional<replayed> shift_holds(const replay_facts& facts, const vector<partner_pieces>& handed, int move_direction) {
-    return slides_hold(facts, handed, [&](size_t, const partner_pieces& cut, int i, direction_step& by) {
-        by = shift_by(move_direction, cut.boxes[i].width(), cut.boxes[i].height());
         return true;
     });
 }
@@ -1362,6 +1381,27 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
     });
 }
 
+// THE PICKED PIECES COPIED WHERE A MOVE WOULD SLIDE THEM, walked: each drawn
+// again where the move `kind` with `value` takes it (goes_by), in its own
+// colors, each cell that lands on the grid (walk_paint) -- its op's sentence
+// laying the moved pieces over what is down, the pieces themselves down
+// already. Nothing where a piece has no one partner.
+inline optional<paint_walk> moved_copy_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                            move_by kind, int value) {
+    return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
+        const grid& output = facts.train[which].output;
+        for (int i = 0; i < cut.count(); ++i) {
+            direction_step by{ 0, 0 };
+            if (!cut.picked[i]) continue;
+            if (!goes_by(facts, which, cut, i, kind, value, by)) return false;
+            cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
+                if (output.contains(row + by.down, col + by.across)) put(row + by.down, col + by.across, color);
+            });
+        }
+        return true;
+    });
+}
+
 // ONE FIGURE LAID AGAIN WHERE A Tile LAYS IT (each_tile_offset, 15_op_math.hpp,
 // the arithmetic the op runs): `height` by `width`, color_at(row, col) its
 // cells from its box's corner, the corner at (top, left), each step measured
@@ -1453,8 +1493,9 @@ inline optional<paint_walk> past_walk(const replay_facts& facts, const vector<pa
 // EACH CELL THE RAYS OF A PAIR'S PICKED PIECES REACH on its output, `radius`
 // cells long, from the middle of each piece's box -- up, down and to the
 // sides, or along the diagonals (ray_seed_of and each_extended_ray,
-// 15_op_math.hpp, the walk the op takes) -- handed to `visit(row, col, along)`,
-// `along` steps out along its ray, in the order the op draws them.
+// 15_op_math.hpp, the walk the op takes) -- handed to `visit(i, row, col,
+// along)`, i the piece whose ray it is, `along` steps out along its ray, in the
+// order the op draws them.
 template <class Visit>
 inline void each_ray_cell(const replay_facts& facts, size_t which, const partner_pieces& cut, bool diagonal,
                           int radius, Visit visit) {
@@ -1466,7 +1507,7 @@ inline void each_ray_cell(const replay_facts& facts, size_t which, const partner
         const ray_seed seed = seeds[(size_t)i];
         each_extended_ray(seed, radius, diagonal, [&](int down, int across, int along) {
             const int row = box.row + seed.row + down, col = box.col + seed.col + across;
-            if (output.contains(row, col)) visit(row, col, along);
+            if (output.contains(row, col)) visit(i, row, col, along);
         });
     }
 }
@@ -1479,7 +1520,39 @@ inline void each_ray_cell(const replay_facts& facts, size_t which, const partner
 inline optional<paint_walk> rays_walk(const replay_facts& facts, const vector<partner_pieces>& handed, bool diagonal,
                                       int radius) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
-        each_ray_cell(facts, which, cut, diagonal, radius, [&](int row, int col, int) { put(row, col, (int8_t)TRANSPARENT); });
+        each_ray_cell(facts, which, cut, diagonal, radius, [&](int, int row, int col, int) { put(row, col, (int8_t)TRANSPARENT); });
+        return true;
+    });
+}
+
+// WHERE THE RAYS OF THE PICKED PIECES ALL CROSS, walked: Extend grows each
+// picked piece's rays to the grid's edge (each_ray_cell), and IntersectionList
+// keeps the cells every piece that grew rays reaches (intersected_cell,
+// 15_op_math.hpp, what the op keeps). Rays that long each fill the largest
+// grid's frame, so the op, which folds the pieces at their frames' corners,
+// keeps each crossing where it lies. Laid in one color, the line's Recolor
+// after it (lay_paint). A crossing is two pieces' rays at least: one piece's
+// alone are rays (rays_walk), and a pair where the pick grows one is not drawn.
+inline optional<paint_walk> crossing_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
+                                          bool diagonal) {
+    return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
+        const vector<ray_seed>& seeds = cut.ray_seeds();
+        vector<int> grown;
+        for (int i = 0; i < cut.count(); ++i)
+            if (cut.picked[i] && seeds[(size_t)i].row >= 0) grown.push_back(i);
+        if (grown.size() == 1) return false;
+        vector<cell_set> reached((size_t)cut.count());
+        each_ray_cell(facts, which, cut, diagonal, row_of(node_type::ExtendOrthogonal).high,
+                      [&](int i, int row, int col, int) { reached[(size_t)i].add(row, col); });
+        const grid& output = facts.train[which].output;
+        for (int row = 0; row < output.height; ++row)
+            for (int col = 0; col < output.width; ++col) {
+                const int8_t kept = intersected_cell((int)grown.size(), [&](int k) {
+                    const int i = grown[(size_t)k];
+                    return reached[(size_t)i].has(row, col) ? seeds[(size_t)i].color : (int8_t)TRANSPARENT;
+                });
+                if (is_color(kept)) put(row, col, kept);
+            }
         return true;
     });
 }
@@ -1510,7 +1583,7 @@ inline optional<ray_fan> rays_fan(const replay_facts& facts, const vector<partne
         fan.every_piece = fan.every_piece && cut.every_piece_picked();
         // How far along the nearest ray reaches each cell, 0 where none does.
         int8_t nearest[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-        each_ray_cell(facts, which, cut, diagonal, reach, [&](int row, int col, int along) {
+        each_ray_cell(facts, which, cut, diagonal, reach, [&](int, int row, int col, int along) {
             int8_t& at = nearest[row][col];
             if (at == 0 || along < at) at = (int8_t)along;
         });

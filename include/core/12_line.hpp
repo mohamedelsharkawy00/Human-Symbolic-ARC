@@ -62,7 +62,8 @@ inline constexpr rule_group group_of(correspondence_election::fired_rule::said_a
         // Paints: the hand on the line is left alone.
         case rule::extend_rays: case rule::bridged: case rule::filled: case rule::trailed:
         case rule::boxed: case rule::filled_room: case rule::copied_onto: case rule::tiled_along:
-        case rule::repeated_past: case rule::turned_copy: case rule::symmetric:
+        case rule::repeated_past: case rule::turned_copy: case rule::symmetric: case rule::crossing:
+        case rule::moved_copy:
             return rule_group::paints;
         // These rules redraw the whole output and spell their own programs.
         case rule::diagonal_tile: case rule::piece_slam: case rule::corner_chain:
@@ -570,6 +571,20 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                    (cell.from_input && on_cells(left, which, cell.row, cell.col));
         };
     };
+    // A move in words: level with a partner's rows or columns, toward a partner,
+    // to the grid's edge, or its own size.
+    auto moved_words = [&](move_by kind, int value) -> string {
+        switch (kind) {
+        case move_by::align_to:
+            return string("moves level with the ") + (value >= ways ? "columns" : "rows") + " of " + partners(value % ways);
+        case move_by::toward:
+            return string("moves ") + toward_names[value / PARTNER_KINDS] + " toward " + partner_named(value % PARTNER_KINDS);
+        case move_by::to_edge: return string("slides ") + direction_names[value] + " to the edge";
+        case move_by::shift: return string("moves its own size ") + direction_names[value];
+        case move_by::count: break;
+        }
+        return {};
+    };
     // Claims for a recolor: the cells it repainted that wait on one.
     auto recolor_claims = [](const replayed& seen) -> claim {
         return [recolored = cell_marks(seen.drawn)](size_t which, const left_over_cell& cell) {
@@ -690,19 +705,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         for (const piece_pick& pick : hand_picks.get(facts, from)) {
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             if (!asked.before(handed)) {
-                for (int value = 0; value < 2 * ways; ++value)
-                    if (!facts.asks_way((partner_by)(value % ways))) continue;
-                    else if (const auto seen = align_holds(facts, handed, value >= ways, (partner_by)(value % ways)))
-                        weigh(aligned, value, pick, *seen, move_claims(*seen));
-                for (int value = 0; value <= row_of(node_type::MoveToward).high; ++value)
-                    if (!facts.asks_kind(value % PARTNER_KINDS)) continue;
-                    else if (const auto seen = toward_holds(facts, handed, value))
-                        weigh(toward, value, pick, *seen, move_claims(*seen));
-                for (int at = 0; at < direction::count; ++at) {
-                    const int move_direction = direction_asked(at);
-                    if (const auto seen = to_edge_holds(facts, handed, move_direction)) weigh(edged, move_direction, pick, *seen, move_claims(*seen));
-                    if (const auto seen = shift_holds(facts, handed, move_direction)) weigh(sized, move_direction, pick, *seen, move_claims(*seen));
-                }
+                heard* const best_of[] = { &aligned, &toward, &edged, &sized };
+                static_assert(size(best_of) == (size_t)move_by::count);
+                for (int kind = 0; kind < (int)move_by::count; ++kind)
+                    each_move_value(facts, (move_by)kind, [&](int value) {
+                        if (const auto seen = moves_hold(facts, handed, (move_by)kind, value))
+                            weigh(*best_of[kind], value, pick, *seen, move_claims(*seen));
+                    });
             }
             if (pick.by_color()) continue;
             const bool axis_before = axis_steps.before(handed);
@@ -724,19 +733,14 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (most == 0) return {};
         return { most, [&, aligned, edged, sized, stepped, toward, best_down, best_across, most]() mutable {
             if (aligned.said == most)
-                carry(say(aligned, rule::align_to,
-                          string("moves level with the ") + (aligned.value >= ways ? "columns" : "rows") + " of " +
-                              partners(aligned.value % ways), moves));
+                carry(say(aligned, rule::align_to, moved_words(move_by::align_to, aligned.value), moves));
             else if (edged.said == most)
-                carry(say(edged, rule::to_edge, string("slides ") + direction_names[edged.value] + " to the edge", moves));
+                carry(say(edged, rule::to_edge, moved_words(move_by::to_edge, edged.value), moves));
             else if (sized.said == most)
-                carry(say(sized, rule::shifted, string("moves its own size ") + direction_names[sized.value], moves));
-            else if (stepped.said < most) {
-                const int kind = toward.value % PARTNER_KINDS;
-                carry(say(toward, rule::move_toward,
-                          string("moves ") + toward_names[toward.value / PARTNER_KINDS] + " toward " + partner_named(kind),
-                          moves));
-            } else {
+                carry(say(sized, rule::shifted, moved_words(move_by::shift, sized.value), moves));
+            else if (stepped.said < most)
+                carry(say(toward, rule::move_toward, moved_words(move_by::toward, toward.value), moves));
+            else {
                 // Said as the acts a pick by color says: down, then across, each only
                 // when it moves at all -- the pick by holes or size is not changed by
                 // a move, so the second finds what the first moved.
@@ -1712,6 +1716,87 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         }, laid_by(best.seen) };
     };
 
+    // WHERE THE PICKED PIECES' RAYS ALL CROSS, in one color: each piece's rays
+    // run to the grid's edge, up, down and to the sides or along the diagonals,
+    // and only the cells every piece's rays reach are laid (crossing_walk) --
+    // 11e1fe23's 5, where three corners' diagonals meet at the square's middle.
+    auto crossing_paint = [&]() -> offer {
+        heard best;
+        int8_t best_lay = rule::laid_over;
+        for (const size_t at : asked_now)
+            for (const int8_t lay : lays())
+                for (const bool diagonal : { false, true }) {
+                    const auto& seen = laid_once(10, at, lay, diagonal, laying::in_one, [&] {
+                        return crossing_walk(opened, handed_by_pick[at], diagonal); });
+                    if (!seen) continue;
+                    const int before = best.said;
+                    weigh_paint(best, diagonal, draw_picks[at], *seen, covered_claims(seen->drawn));
+                    if (best.said > before) best_lay = lay;
+                }
+        if (!best.materialize(opened)) return {};
+        return { best.said, [&, best, best_lay] {
+            const int8_t said = say_paint(best, rule::crossing,
+                string("grows rays ") + (best.value ? "along the diagonals" : "up, down and to the sides") +
+                    " to the edge, kept only where they all cross, in color " + to_string(best.seen.paint) +
+                    laid_words(best_lay));
+            read.fired[said].lay = best_lay;
+        }, laid_by(best.seen) };
+    };
+
+    // THE PICKED PIECES COPIED WHERE A MOVE WOULD SLIDE THEM, the pieces kept
+    // where they lie: each move a move rule says, asked as it asks it
+    // (each_move_value, moved_copy_walk) -- 11e1fe23's dots, each copied toward
+    // the 5 until it touches it, once a pass has drawn the 5. Asked where the
+    // matching saw a copy, it accounts for the cells its copies land on that
+    // wait on one: cells drawn on the ground are no copy (1bfc4729's edges,
+    // a dot slid to each, where the edge grows whole). A COPY KEEPS ITS
+    // PIECE, so a pick is asked only where what is down shows every piece it
+    // takes where it lies: a piece the line took away and copied has moved, the
+    // move rules' to say (a48eeaf7's 5s, removed and copied, where one move says it).
+    auto kept_down = [&](size_t at) {
+        bool down = true;
+        for (size_t which = 0; which < handed_by_pick[at].size() && which < canvas.size(); ++which) {
+            const partner_pieces& cut = handed_by_pick[at][which];
+            for (int i = 0; i < cut.count(); ++i)
+                if (cut.picked[i])
+                    cut.pieces[i].each_cell([&](int row, int col, int8_t) {
+                        down = down && canvas[which][row][col] != (int8_t)TRANSPARENT; });
+        }
+        return down;
+    };
+    auto moved_copy_paint = [&]() -> offer {
+        if (!down_known() || !starts_from(missing::where_it_was_copied)) return {};
+        heard best;
+        int8_t best_lay = rule::laid_over;
+        move_by best_move = move_by::count;
+        for (const size_t at : own_color_picks) {
+            if (!kept_down(at)) continue;
+            for (const int8_t lay : lays())
+                for (int kind = 0; kind < (int)move_by::count; ++kind)
+                    each_move_value(opened, (move_by)kind, [&](int value) {
+                        const auto& seen = laid_once(11 + kind, at, lay, value, laying::as_drawn, [&] {
+                            return moved_copy_walk(opened, handed_by_pick[at], (move_by)kind, value); });
+                        if (!seen) return;
+                        const int before = best.said;
+                        weigh_paint(best, value, draw_picks[at], *seen,
+                                    [&landed = seen->drawn](size_t which, const left_over_cell& cell) {
+                            return cell.waits_for(missing::where_it_was_copied) &&
+                                   on_cells(landed, which, cell.row, cell.col); });
+                        if (best.said > before) {
+                            best_lay = lay;
+                            best_move = (move_by)kind;
+                        }
+                    });
+        }
+        if (!best.materialize(opened)) return {};
+        return { best.said, [&, best, best_lay, best_move] {
+            const int8_t said = say_paint(best, rule::moved_copy,
+                "is copied, and the copy " + moved_words(best_move, best.value) + laid_words(best_lay));
+            read.fired[said].lay = best_lay;
+            read.fired[said].moved_by = best_move;
+        }, laid_by(best.seen) };
+    };
+
     // THE HOLLOWS OF THE PICKED PIECES, FILLED, in their own color or one of the
     // line's -- or, with value 1, THEIR INSIDE: hollowed to the edge first, the
     // core and the hollows in one color, laid over (inside_holds).
@@ -1884,7 +1969,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                             { trail_paint, true, false }, { copy_paint, true, false },
                             { repeat_paint, true, false }, { turned_paint, true, false },
                             { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },
-                            { room_paint, true, false }, { symmetry_paint, true, false }, { picture_rule, true, false } };
+                            { room_paint, true, false }, { symmetry_paint, true, false },
+                            { crossing_paint, true, false }, { moved_copy_paint, true, false },
+                            { picture_rule, true, false } };
     static_assert(size(kinds) == size(inference_times::names) - inference_times::first_kind);
     // Whether a paint said reads what is down: laid under it or onto it, or the
     // whole figure where it lies.

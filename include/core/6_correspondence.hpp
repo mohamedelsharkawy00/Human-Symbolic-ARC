@@ -288,7 +288,9 @@ struct correspondence_election {
         // level with that partner's rows or columns, or drawn again mirrored around its
         // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
         // diagonals for `value` past 32 and otherwise up, down and to the sides,
-        // `value` % 32 long, painted `paint` (paint_value); the bars bridged between
+        // `value` % 32 long, painted `paint` (paint_value), or grown to the edge
+        // and kept only where they all cross, along the diagonals for `value` 1,
+        // painted `paint` (crossing); the bars bridged between
         // pieces of one color or the hollows filled, in `paint` or their own for -1;
         // or hollowed to the outline; or the pieces a pick by holes or by size takes,
         // recolored to `value`; or the picked pieces removed, slid to the edge,
@@ -302,7 +304,9 @@ struct correspondence_election {
         // figure, moved its own size the direction `value` names and repeated
         // from there as the Tile in `tile` says (repeated_past), or folded into one figure and
         // drawn again turned in its box by pose `value`, or moved toward their
-        // partner as MoveToward's `value` says (move_toward), or recolored to
+        // partner as MoveToward's `value` says (move_toward), or copied where the
+        // move `moved_by` with its op's `value` would slide them, kept where they
+        // lie (moved_copy), or recolored to
         // the color its own shape names (shape_recolor), or the picture so far
         // made symmetric the way symmetry `value` names (symmetric), or their
         // colors traded as a key drawn in the grid pairs them, the pieces not
@@ -321,10 +325,13 @@ struct correspondence_election {
                                 piece_slam,
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
-                                empty_swap, own_sentences, fit_into, shape_from, kind_count } as = unsaid;
+                                empty_swap, own_sentences, fit_into, shape_from, crossing, moved_copy,
+                                kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;
+        // The move its copies are laid by, where it lays them (moved_copy).
+        move_by moved_by = move_by::count;
         piece_pick pick = piece_pick::all();
         // The rooms a room paint takes once Partition hands them back (filled_room):
         // every room, or the ones a pick read off the pairs names.

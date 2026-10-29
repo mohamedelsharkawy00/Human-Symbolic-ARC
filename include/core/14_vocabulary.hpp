@@ -27,7 +27,8 @@
 //   rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy and
 //   MaskOut are said only after a paint -- rays, trails, copies, repeats --
 //   laid only onto what is down (MaskBy[10]), or onto or off one color of it.
-// IntersectionList: folds the picked pieces into one; only the pane rules say it.
+// IntersectionList: folds the picked pieces into one; said by the pane rules, and
+//   after rays grown to the edge, where they all cross (crossing_walk).
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
 //   (grid_parts, the parts SelectPartition picks by); cut before the ground
@@ -412,6 +413,14 @@ inline constexpr const char* const bridge_reach_names[BRIDGE_WAYS] = {
 static_assert(std::size(direction_names) + 1 == PARTNER_SIDES && std::size(mirror_names) == MIRRORS &&
               std::size(toward_names) == TOWARD_FARS);
 
+// THE MOVES, each by the op that makes it: every picked piece slid level with
+// its partner, toward it, to the grid's edge, or its own size, by its op's own
+// value. A move rule says one, and a copy is laid where one would slide its
+// piece (moved_copy).
+enum class move_by : int8_t { align_to, toward, to_edge, shift, count };
+inline constexpr std::string_view move_operators[] = { "AlignTo", "MoveToward", "MoveToEdge", "Shift" };
+static_assert(std::size(move_operators) == (size_t)move_by::count);
+
 }  // namespace arc
 
 // What an op does to the layer, in pipeline-authoring order (a single solution
@@ -743,6 +752,11 @@ inline constexpr node_type operation_named(std::string_view text) {
 #undef X
     return node_type::type_count;
 }
+static_assert(operation_named(arc::move_operators[(int)arc::move_by::align_to]) == node_type::AlignTo &&
+              operation_named(arc::move_operators[(int)arc::move_by::toward]) == node_type::MoveToward &&
+              operation_named(arc::move_operators[(int)arc::move_by::to_edge]) == node_type::MoveToEdge &&
+              operation_named(arc::move_operators[(int)arc::move_by::shift]) == node_type::Shift,
+              "each move is named as its op is");
 
 // Where the operator `text` opens with ends: at the first space outside
 // its brackets, unless that space only parts its name from them, Recolor [3],

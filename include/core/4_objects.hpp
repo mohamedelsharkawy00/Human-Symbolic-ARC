@@ -78,6 +78,12 @@ inline constexpr grouping grouping_of(segmentation_methods segmentation) {
                                                                              grouping::touching_same_color;
 }
 
+// Whether every piece a segmentation cuts wears one color, so a pick by a color
+// takes pieces of that color alone.
+inline constexpr bool one_color_a_piece(segmentation_methods segmentation) {
+    return boxed_by_its_cells(segmentation) && grouping_of(segmentation) != grouping::touching_any_color;
+}
+
 // The unit Pattern cuts: the smallest repeating width and height, or the grid's
 // own. Every cell counts, an empty one too; one copy and a matching fragment do.
 inline void repeat_periods(const grid& g, int& width, int& height) {

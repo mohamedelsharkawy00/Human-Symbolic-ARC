@@ -958,20 +958,37 @@ inline const char* laid_paint(const correspondence_election::fired_rule& rule) {
 // what it draws goes over what is already down or under it. False for a rule
 // that draws nothing after the line.
 inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& drawn, const char*& paint,
-                        const ground_plan& plan) {
+                        const inference& inf) {
     using said_as = correspondence_election::fired_rule::said_as;
     if (group_of(rule.as) != rule_group::paints) return false;
     const string pick = pick_operators(rule.pick);
     switch (rule.as) {
         case said_as::extend_rays: {
-            // Rays only, the pieces are already down; painted over in the rule's
-            // own color unless it is the one color picked.
+            // Rays only, the pieces are already down, each in the color of its
+            // piece's cell nearest the middle; painted over in the rule's own
+            // color unless every piece picked is that one color -- that color
+            // picked, on a cut whose pieces each wear one.
             string act = spell(paint_value::second(rule.value) ? "ExtendDiagonal" : "ExtendOrthogonal", paint_value::number(rule.value));
-            if (rule.pick != piece_pick::of_color(rule.paint)) act += " " + spell("Recolor", rule.paint);
+            if (rule.pick != piece_pick::of_color(rule.paint) || !one_color_a_piece(inf.correspondence.segmentation))
+                act += " " + spell("Recolor", rule.paint);
             drawn = { pick, act + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;
         }
+        case said_as::moved_copy:
+            // The picked pieces slid by the move's own op, and only they laid:
+            // the pieces themselves are down already.
+            drawn = { pick, spell(string(move_operators[(int)rule.moved_by]), rule.value) + onto_operators(rule) };
+            paint = laid_paint(rule);
+            return true;
+        case said_as::crossing:
+            // Rays to the edge, folded where they all cross (crossing_walk), in
+            // the rule's one color.
+            drawn ={ pick, spell(rule.value ? "ExtendDiagonal" : "ExtendOrthogonal",
+                                  row_of(node_type::ExtendOrthogonal).high) +
+                                " IntersectionList " + spell("Recolor", rule.paint) + onto_operators(rule) };
+            paint = laid_paint(rule);
+            return true;
         case said_as::bridged: {
             // Bridge joins the picked pieces and hands back its bars alone
             // marked, so what follows paints the bars and nothing else.
@@ -993,7 +1010,7 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             return true;
         case said_as::boxed:       drawn = { pick, spell("AddColor", rule.paint) };      paint = "Underlay"; return true;
         case said_as::filled_room: {
-            const string rooms = background_marks(plan);
+            const string rooms = background_marks(inf.plan);
             const string walls = rule.pick.every() ? rooms + " InvertSelection" : pick;
             string act = "Partition ";
             if (rule.value == ROOM_SHAPE)
@@ -1309,7 +1326,7 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
             }
         else if (rule.on_the_picture)
             for (const beat& one : beats_of(rule, inf)) afterwards.push_back({ one, "Union", "Output" });
-        else if (drawn_after(rule, drawn, paint, inf.plan)) {
+        else if (drawn_after(rule, drawn, paint, inf)) {
             if (rule.as == said_as::filled_room) {
                 afterwards.push_back({ drawn, paint, "Input", false });
             } else afterwards.push_back({ drawn, paint, "Input" });

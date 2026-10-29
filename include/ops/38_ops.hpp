@@ -2420,9 +2420,13 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
 // the op marked NOTHING itself -- an op that has an opinion about which of its
 // objects are picked keeps it. Selectors are excluded by role (marking IS
 // their work), the ops that clear do so for reasons of their own, and Fit
-// carries marks itself, even when an empty target drops every picked object.
+// carries marks itself, even when an empty target drops every picked object --
+// as UnionList and IntersectionList do, the mark their folds' identity, even
+// when the picked fold keeps no cell and only the unpicked one is handed on.
 void carry_the_marks(node_type type, const object_list* last, object_list& made) {
-    if (!last || !is_act_op(type) || type == node_type::Fit || clears_the_marks(type)) return;
+    if (!last || !is_act_op(type) || type == node_type::Fit || type == node_type::UnionList ||
+        type == node_type::IntersectionList || clears_the_marks(type))
+        return;
     bool came_in_picked = false, went_out_picked = false;
     for (int i = 0; i < last->count; ++i) came_in_picked |= last->objects[i].selected;
     for (int i = 0; i < made.count; ++i) went_out_picked |= made.objects[i].selected;
