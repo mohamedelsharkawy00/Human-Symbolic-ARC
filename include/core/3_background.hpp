@@ -538,12 +538,14 @@ inline bool vetoes(const vector<background_election::hypothesis>& local,
 // Priority among directions is decided by consumers, later.
 inline background_election elect_background(const vector<example>& train) {
     background_election out;
-    // Persistence: a color surviving into some output — the background stays,
-    // content is consumed. Feeds the input election's tiebreak.
-    bool persists[COLOR_COUNT] = {};
+    // The outputs' cells, color by color. Persistence: a color surviving into
+    // some output — the background stays, content is consumed. Feeds the input
+    // election's tiebreak.
+    color_tally output_area;
     for (const auto& ex : train)
-        ex.output.for_each_colored_cell(TRANSPARENT,
-                                        [&](int, int, int color) { persists[color] = true; });
+        ex.output.for_each_colored_cell(TRANSPARENT, [&](int, int, int color) { output_area.add(color); });
+    bool persists[COLOR_COUNT];
+    for (int color = 0; color < COLOR_COUNT; ++color) persists[color] = output_area.has(color);
 
     vector<const grid*> inputs, outputs, both;
     for (const auto& ex : train) {
@@ -571,11 +573,13 @@ inline background_election elect_background(const vector<example>& train) {
     }
 
     // A single pair's area flip cannot stand against CROSS-SIDE agreement: when
-    // the output side independently elects the very color the veto targeted, the
-    // flip was a color, not the background.
-    if (out.input_vetoed &&
-        background_election::top(out.across_inputs) ==
-        background_election::top(out.across_outputs))
+    // the outputs elect the very color the veto targeted, and it covers the most
+    // of them, the flip was a color, not the background (007bbfb7's outputs are
+    // mostly black). An agreement the color preference decides is none: two
+    // colors, each one pair's ground, tie on area, and the outputs elect
+    // whichever ranks first (7ed72f31's 1 over 8).
+    const int8_t vetoed = background_election::top(out.across_inputs);
+    if (out.input_vetoed && vetoed == background_election::top(out.across_outputs) && vetoed == output_area.most())
         out.input_vetoed = false;
     return out;
 }

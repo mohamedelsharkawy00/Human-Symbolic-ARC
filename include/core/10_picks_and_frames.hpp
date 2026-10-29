@@ -13,6 +13,14 @@
 
 namespace arc {
 
+// The color most of the pieces' cells wear, the lowest on a tie -- the count
+// SelectMostCommonColor makes. TRANSPARENT where they wear none.
+inline int8_t most_worn(const vector<object>& pieces) {
+    color_tally worn;
+    for (const object& piece : pieces) piece.each_cell([&](int, int, int8_t color) { worn.add(color); });
+    return worn.most();
+}
+
 // THE PIECES A PICK BY HOLES OR BY SIZE TAKES, as the op takes them from the
 // pieces as the cut hands them over: every one with `value` holes
 // (grid_parts::hollows, the count SelectObjectsWithHoles makes), or the one `value`
@@ -74,11 +82,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         return picked;
     }
     if (how == piece_pick::most_common) {
-        // The color most of the pieces' cells wear, the lowest on a tie, and every
-        // piece wearing it -- the count SelectMostCommonColor makes.
-        color_tally worn;
-        for (const object& piece : pieces) piece.each_cell([&](int, int, int8_t color) { worn.add(color); });
-        const int most = worn.most();
+        // Every piece wearing the color most of the pieces' cells wear (most_worn).
+        const int most = most_worn(pieces);
         if (most >= 0)
             for (size_t i = 0; i < pieces.size(); ++i)
                 pieces[i].each_cell([&](int, int, int8_t color) { picked[i] = picked[i] || color == most; });
@@ -449,7 +454,6 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     };
     vector<int> sizes, holes, runs;
     map<int, group> colors;
-    color_tally worn;
     for (size_t index = 0; index < count; ++index) {
         const auto& piece = pieces[index];
         sizes.push_back(piece.cell_count());
@@ -458,7 +462,6 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
         runs.push_back((int)way_it_runs(piece.height, piece.width,
             [&](int row, int col) { return piece.data[row][col] != TRANSPARENT; }));
         piece.each_cell([&](int, int, int8_t color) {
-            worn.add(color);
             colors.try_emplace(color, count, false).first->second[index] = true;
         });
     }
@@ -506,7 +509,7 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
                 }
         }
     }
-    if (const auto most = colors.find(worn.most()); most != colors.end())
+    if (const auto most = colors.find(most_worn(pieces)); most != colors.end())
         both({0, piece_pick::most_common}, most->second);
     for (int boundary = 1; boundary <= AT_LEAST_STEPS; ++boundary) {
         group larger(count, false);
@@ -927,7 +930,16 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (int value = 0; value < bands && value <= row_of(node_type::SelectRow).high; ++value)
             picks.push_back({ 0, how, (int8_t)value });
     }
-    for (const bool but_those : { false, true }) picks.push_back({ 0, piece_pick::most_common, 0, -1, but_those });
+    // The color most cells wear, and every piece but those -- by that color
+    // where it is one color in every pair: a part that keeps its color keeps it
+    // on a test whose counts differ (7ed72f31's mirror lines are 2, the most
+    // common color in both pairs, 3 on its first test).
+    const int8_t most = facts.cuts().empty() ? (int8_t)TRANSPARENT : most_worn(facts.cuts().front());
+    const bool one_color = is_color(most) && ranges::all_of(facts.cuts(), [&](const vector<object>& cut) {
+        return most_worn(cut) == most; });
+    for (const bool but_those : { false, true })
+        picks.push_back(one_color ? piece_pick{ piece_pick::of_color(most).colors, -1, 0, -1, but_those }
+                                  : piece_pick{ 0, piece_pick::most_common, 0, -1, but_those });
     // AT LEAST SO MANY OF A MEASURE, or fewer, each count asked only where it
     // splits some pair's pieces: one at least taken there and one left. Cells
     // here; the newer measures with the newest picks, below.

@@ -1056,31 +1056,6 @@ inline optional<replayed> outline_holds(const replay_facts& facts, const vector<
     });
 }
 
-// The object turned or flipped to `pose` in its own box, its top-left
-// corner where it was: each cell read through pose_source, as the ops read it.
-inline object posed(const object& piece, int pose) {
-    object turned = piece;
-    const auto [width, height] = posed_size(pose, piece.width, piece.height);
-    turned.width = (int16_t)width;
-    turned.height = (int16_t)height;
-    turned.data.clear();
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            const auto [from_row, from_col] = pose_source(pose, piece.width, piece.height, row, col);
-            turned.data[row][col] = piece.data[from_row][from_col];
-        }
-    return turned;
-}
-
-// One copy of a piece, mirrored so.
-inline object mirrored(const object& piece, int row2, int col2, bool down, bool across) {
-    object copy = posed(piece, mirror_pose(down, across));
-    const cell_box to = mirrored_box(piece.box(), row2, col2, down, across);
-    copy.row = (int16_t)to.row0;
-    copy.col = (int16_t)to.col0;
-    return copy;
-}
-
 // THE HAND, POURED, as FitInto [poured] pours its objects: every pour each_pour
 // finds on `hand` with `picked` marked -- that color's cells gone from the
 // picked pieces, a piece left with none gone with them, and each gap one piece
@@ -1241,7 +1216,7 @@ inline optional<replayed> shape_from_holds(const replay_facts& facts, const vect
 // A PIECE DRAWN AGAIN MIRRORED AROUND ANOTHER'S MIDDLE, replayed. MirrorAround
 // draws every picked piece again mirrored around the middle of its one partner
 // among the rest -- or, for the last of MIRROR_PARTNERS, around the middle of the
-// grid itself (mirror_middle) -- laid over what is down (paint_holds); a copy
+// grid itself (each_mirror) -- laid over what is down (paint_holds); a copy
 // that falls off the grid cannot be drawn, and a row mirrored end to end onto
 // itself is no work. Sees the cells the picked pieces sit on (left) and the
 // cells their copies landed on, and how many copies it drew.
@@ -1253,18 +1228,17 @@ inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<p
         const grid& input = facts.train[which].input;
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
-            int row2 = 0, col2 = 0;
-            if (!mirror_middle(how, i, cut, input.width, input.height, row2, col2)) return false;
-            cut.pieces[i].each_cell([&](int row, int col, int8_t) { kept[which].push_back({ row, col }); });
             bool on_grid = true;
-            each_mirror(mirror, [&](bool down, bool across) {
-                mirrored(cut.pieces[i], row2, col2, down, across).each_cell([&](int row, int col, int8_t color) {
+            const bool drawn = each_mirror(mirror, how, i, cut, input.width, input.height,
+                                           [&](int pose, int row2, int col2) {
+                mirrored(cut.pieces[i], pose, row2, col2).each_cell([&](int row, int col, int8_t color) {
                     if (!input.contains(row, col)) on_grid = false;
                     else put(row, col, color);
                 });
+                ++copies;
             });
-            if (!on_grid) return false;
-            copies += mirror == mirror_by::four_ways ? 3 : 1;
+            if (!drawn || !on_grid) return false;
+            cut.pieces[i].each_cell([&](int row, int col, int8_t) { kept[which].push_back({ row, col }); });
         }
         return true;
     });
@@ -2373,14 +2347,11 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
             const auto mirror = (mirror_by)(rule.value / MIRROR_PARTNERS);
             const int how = rule.value % MIRROR_PARTNERS;
             vector<object> copies;
-            for (int i = 0; i < cut.count(); ++i) {
-                if (!cut.picked[i]) continue;
-                int row2 = 0, col2 = 0;
-                if (!mirror_middle(how, i, cut, pair.input.width, pair.input.height, row2, col2)) continue;
-                each_mirror(mirror, [&](bool down, bool across) {
-                    copies.push_back(mirrored(hand[i], row2, col2, down, across));
-                });
-            }
+            for (int i = 0; i < cut.count(); ++i)
+                if (cut.picked[i])
+                    each_mirror(mirror, how, i, cut, pair.input.width, pair.input.height, [&](int pose, int row2, int col2) {
+                        copies.push_back(mirrored(hand[i], pose, row2, col2));
+                    });
             for (const object& copy : copies)
                 if (hand.size() < (size_t)MAX_OBJECTS_IN_A_LIST) hand.push_back(copy);
             break;

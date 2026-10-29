@@ -386,7 +386,7 @@ inline constexpr std::string_view fit_into_ways[] = {
 // never shows (value_written spells them by name): ColorFrom's partner ways,
 // then the key's color at its place, the key's one color, then each likeness
 // cell by cell; SelectPartner's way on any side or wholly on each of the eight
-// directions from up clockwise; MirrorAround's three mirrors around each way's
+// directions from up clockwise; MirrorAround's four mirrors by each way's
 // partner or the grid; MoveToward's three ways of going toward each kind of
 // partner, each way and then the one piece holding each color; Bridge's nine
 // reaches, then an L to each kind.
@@ -397,14 +397,17 @@ constexpr int PARTNER_SIDES = 9, SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)pa
 constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
 // The direction a SelectPartner value names: -1 for any direction.
 constexpr int partner_direction_of(int value) { return value / (int)partner_by::count - 1; }
-constexpr int MIRRORS = 3, MIRROR_PARTNERS = (int)partner_by::count + 1;
+constexpr int MIRRORS = 4, MIRROR_PARTNERS = (int)partner_by::count + 1;
 constexpr int TOWARD_FARS = 3;
 constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
 
-// The names those choices are written in, each list in its choices' order.
+// The names those choices are written in, each list in its choices' order; a
+// mirror's name runs on into its partner's (left to right around the nearest
+// piece, across the piece it touches).
 inline constexpr const char* const direction_names[] = { "up", "up-right", "right", "down-right",
                                                          "down", "down-left", "left", "up-left" };
-inline constexpr const char* const mirror_names[] = { "left to right", "top to bottom", "all four ways" };
+inline constexpr const char* const mirror_names[] = { "left to right around", "top to bottom around",
+                                                      "all four ways around", "across" };
 inline constexpr const char* const toward_names[] = { "one step", "its own size", "until it touches" };
 inline constexpr const char* const bridge_reach_names[BRIDGE_WAYS] = {
     "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
@@ -569,7 +572,8 @@ enum class inferred_amount { none, some, all };
   /* each by every way partner_by finds one.                                   */ \
   X(AlignTo                     , 0                 , 2 * (int)arc::partner_by::count - 1, translate, none, false) \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
-  /* grid's: left to right, top to bottom, all four ways, by mirror_by.        */ \
+  /* grid's: left to right, top to bottom, all four ways, or across the        */ \
+  /* partner, the one way it runs, by mirror_by.                               */ \
   X(MirrorAround                , 0                 , arc::MIRRORS * arc::MIRROR_PARTNERS - 1, generate, none, false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
   X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
@@ -722,7 +726,7 @@ inline std::string value_written(node_type t, int value) {
     case node_type::SelectLikeKey: return way((int)partner_by::same_shape + value);
     case node_type::AlignTo: return (value < ways ? "the rows of " : "the columns of ") + way(value % ways);
     case node_type::MirrorAround:
-        return std::string(mirror_names[value / MIRROR_PARTNERS]) + " around " +
+        return std::string(mirror_names[value / MIRROR_PARTNERS]) + " " +
                (value % MIRROR_PARTNERS < ways ? way(value % MIRROR_PARTNERS) : std::string("the grid"));
     case node_type::SelectPartner: {
         const int side = partner_direction_of(value);

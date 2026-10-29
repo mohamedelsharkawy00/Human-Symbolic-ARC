@@ -765,15 +765,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
 
     // A COPY ANOTHER PIECE DECIDES: every picked piece is drawn again mirrored
     // around its partner's middle, or the grid's -- left to right, top to bottom,
-    // or all four ways. The copies are drawn turned, so it accounts for the copies
-    // and the turns of the pieces it mirrors, and for the cells no match covered
-    // that the copies land on. All four ways is asked first, so it takes a tie:
-    // it holds only where both its halves hold, every copy borne out, and one way
-    // alone that accounts for as much says only as much as the pairs' own gaps
-    // needed -- as the longer ray takes a tie (b8825c91's test hides a patch on
-    // its middle column, which only the copy top to bottom restores).
+    // all four ways, or across the partner, the one way it runs. The copies are
+    // drawn turned, so it accounts for the copies and the turns of the pieces it
+    // mirrors, and for the cells no match covered that the copies land on. All
+    // four ways is asked first, so it takes a tie: it holds only where both its
+    // halves hold, every copy borne out, and one way alone that accounts for as
+    // much says only as much as the pairs' own gaps needed -- as the longer ray
+    // takes a tie (b8825c91's test hides a patch on its middle column, which only
+    // the copy top to bottom restores). Across is asked last, so where it draws
+    // what another mirror draws -- every partner standing, or every one lying --
+    // that mirror is said.
     static constexpr mirror_by mirrors_asked[] = { mirror_by::four_ways, mirror_by::left_right,
-                                                   mirror_by::top_bottom };
+                                                   mirror_by::top_bottom, mirror_by::across };
     static_assert(size(mirrors_asked) == (size_t)mirror_by::count);
     // Claims for a copy: the cells waiting on a copy or a turn where what it
     // copies lies (`kept`) or its copies land, and the cells no match covered
@@ -807,7 +810,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             const int how = best.value % MIRROR_PARTNERS;
             carry(say(best, rule::mirror_around,
-                      string("drawn again mirrored ") + mirror_names[best.value / MIRROR_PARTNERS] + " around the middle of " +
+                      string("drawn again mirrored ") + mirror_names[best.value / MIRROR_PARTNERS] + " the middle of " +
                           (how < ways ? partners(how) : string("the grid")), moves)); } };
     };
 

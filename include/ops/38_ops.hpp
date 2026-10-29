@@ -901,12 +901,14 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
 
 // MirrorAround[value]: each picked object is drawn again mirrored around the
 // middle of its one partner among the objects not picked -- left to right, top
-// to bottom, or all four ways at once, value / MIRROR_PARTNERS -- or, for the
-// last partner, around the middle of the grid itself. partner_of (15_op_math.hpp)
-// finds the partner, the walk inference replays. The picked object stays; its
-// copies join the list after every object there was, picked as it is, as
-// CopyTo's are -- a sentence that picked every piece paints what it holds
-// without picking again. An object with no partner, or several, gets no copy.
+// to bottom, all four ways at once, or across it the one way it runs, value /
+// MIRROR_PARTNERS -- or, for the last partner, around the middle of the grid
+// itself, which nothing is mirrored across. partner_of (15_op_math.hpp) finds
+// the partner, the walk inference
+// replays. The picked object stays; its copies join the list after every
+// object there was, picked as it is, as CopyTo's are -- a sentence that picked
+// every piece paints what it holds without picking again. An object with no
+// partner, or several, gets no copy.
 object_list& op_mirror_around(program_run& run, const object_list& from, int8_t value) {
     object_list& res = run.fresh();
     copy_list(res, from);
@@ -918,24 +920,12 @@ object_list& op_mirror_around(program_run& run, const object_list& from, int8_t 
     for (int i = 0; i < from.count; ++i) {
         const held_object& piece = from.objects[i];
         if (!piece.selected || piece.width <= 0 || piece.height <= 0) continue;
-        // The middle, the copies and where each lies are the reading's
-        // arithmetic (mirror_middle, each_mirror, mirrored_box).
-        int middle_row = 0, middle_col = 0;
-        if (!mirror_middle(how, i, view, run.input.width, run.input.height, middle_row, middle_col)) continue;
-        const cell_box box{ piece.row, piece.col, piece.row + piece.height - 1, piece.col + piece.width - 1 };
+        // The copies and where each lies are the reading's arithmetic
+        // (each_mirror, mirrored).
         bool full = false;
-        each_mirror(mirror, [&](bool down, bool across) {
+        each_mirror(mirror, how, i, view, run.input.width, run.input.height, [&](int pose, int row2, int col2) {
             if (full || res.count >= MAX_OBJECTS_IN_A_LIST) { full = true; return; }
-            held_object& copy = res.objects[res.count++];
-            copy = piece;
-            const int pose = mirror_pose(down, across);
-            for (int row = 0; row < piece.height; ++row)
-                for (int col = 0; col < piece.width; ++col) {
-                    const auto [from_row, from_col] = pose_source(pose, piece.width, piece.height, row, col);
-                    copy.data[row][col] = (int8_t)piece.data[from_row][from_col];
-                }
-            const cell_box to = mirrored_box(box, middle_row, middle_col, down, across);
-            copy.row = (int16_t)to.row0; copy.col = (int16_t)to.col0;
+            res.objects[res.count++] = { mirrored(piece, pose, row2, col2), piece.selected };
         });
         if (full) return res;
     }

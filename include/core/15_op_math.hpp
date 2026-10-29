@@ -2289,44 +2289,100 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
 }
 
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
-// or all four ways at once. The middle is a partner's, one of the partner_by
-// ways, or past those the grid's own -- so MIRROR_PARTNERS counts one more.
-enum class mirror_by : int8_t { left_right, top_bottom, four_ways, count };
+// or all four ways at once; or across, the one way the middle's own piece runs
+// (pose_across). The middle is a partner's, one of the partner_by ways, or past
+// those the grid's own -- so MIRROR_PARTNERS counts one more.
+enum class mirror_by : int8_t { left_right, top_bottom, four_ways, across, count };
 static_assert((int)mirror_by::count == MIRRORS, "MirrorAround names each mirror (mirror_names)");
 
+// THE POSE A COPY MIRRORED ACROSS A PIECE TAKES, pose_source's bits, by the way
+// the piece runs (way_it_runs): lying, top to bottom; standing, left to right;
+// along a diagonal, across that diagonal, rows and columns trading places; no
+// one way -- a dot, a square -- through its middle, both flips.
+constexpr int pose_across(runs_along way) {
+    switch (way) {
+    case runs_along::rows: return 2;
+    case runs_along::columns: return 4;
+    case runs_along::diagonals_down_right: return 1;
+    case runs_along::diagonals_up_right: return 7;
+    default: return 6;
+    }
+}
+
 // WHERE MirrorAround DRAWS, said once for the op and for the reading that
-// replays it. The middle a picked piece is mirrored around, twice its row and
-// column so a middle between two cells is whole: its one partner's by `how`
-// among the pieces not picked (partner_of), or past those the grid's own --
-// false for a piece with no one partner, which gets no copy.
-inline bool mirror_middle(int how, int mine, const partner_pieces& pieces, int width, int height,
-                          int& row2, int& col2) {
-    row2 = height - 1;
-    col2 = width - 1;
-    if (how >= (int)partner_by::count) return true;
-    const int partner = partner_of((partner_by)how, mine, pieces);
+// replays it: each copy of picked piece `mine`, handed to copy(pose, row2,
+// col2) -- the pose its cells are read through (pose_source), and the middle it
+// is mirrored around, twice its row and column so a middle between two cells is
+// whole: its one partner's by `how` among the pieces not picked (partner_of),
+// or past those the grid's own. All four ways draws left to right, top to
+// bottom, then both. False, and no copy, for a piece with no one partner, or
+// mirrored across a diagonal that runs between cells, or across the grid,
+// which is no piece and runs no way of its own.
+template <class Copy>
+inline bool each_mirror(mirror_by mirror, int how, int mine, const partner_pieces& pieces, int width, int height,
+                        Copy copy) {
+    cell_box middle{ 0, 0, height - 1, width - 1 };
+    int partner = -1;
+    if (how < (int)partner_by::count) {
+        partner = partner_of((partner_by)how, mine, pieces);
+        if (partner < 0) return false;
+        middle = pieces.box(partner);
+    }
+    const int row2 = middle.row0 + middle.row1, col2 = middle.col0 + middle.col1;
+    if (mirror != mirror_by::across) {
+        constexpr int flips[] = { 4, 2, 6 };
+        for (int flip = 0; flip < 3; ++flip)
+            if (mirror == mirror_by::four_ways || flip == (int)mirror) copy(flips[flip], row2, col2);
+        return true;
+    }
     if (partner < 0) return false;
-    const cell_box there = pieces.box(partner);
-    row2 = there.row0 + there.row1;
-    col2 = there.col0 + there.col1;
+    const int pose = pose_across(way_it_runs(middle.height(), middle.width(), [&](int row, int col) {
+        return pieces.painted(partner, middle.row0 + row, middle.col0 + col);
+    }));
+    if ((pose & 1) && (row2 + col2) % 2 != 0) return false;
+    copy(pose, row2, col2);
     return true;
 }
-// Each copy the mirror draws, handed to `copy(down, across)`, the ways it flips:
-// across for left to right, down for top to bottom, and all four ways each
-// alone and then both.
-template <class Copy>
-inline void each_mirror(mirror_by mirror, Copy copy) {
-    for (int way = 0; way < 3; ++way)
-        if (mirror == mirror_by::four_ways || way == (int)mirror) copy(way != 0, way != 1);
+// Where a copy lies: each cell's offset from the middle, doubled, turned as
+// `pose` turns it -- rows and columns trading places across a diagonal, then
+// flipped -- so the copy's far side lies where the piece's near side was.
+inline cell_box mirrored_box(const cell_box& box, int pose, int row2, int col2) {
+    auto place = [&](int row, int col) {
+        int down = 2 * row - row2, across = 2 * col - col2;
+        if (pose & 1) swap(down, across);
+        if (pose & 2) down = -down;
+        if (pose & 4) across = -across;
+        return pair{ (row2 + down) / 2, (col2 + across) / 2 };
+    };
+    const auto [first_row, first_col] = place(box.row0, box.col0);
+    const auto [last_row, last_col] = place(box.row1, box.col1);
+    return { min(first_row, last_row), min(first_col, last_col), max(first_row, last_row), max(first_col, last_col) };
 }
-// Where a copy lies, its far side where the piece's near side was, and the pose
-// its cells are read through (pose_source): flipped top to bottom where it is
-// mirrored down, left to right where across.
-inline cell_box mirrored_box(const cell_box& box, int row2, int col2, bool down, bool across) {
-    return { down ? row2 - box.row1 : box.row0, across ? col2 - box.col1 : box.col0,
-             down ? row2 - box.row0 : box.row1, across ? col2 - box.col0 : box.col1 };
+
+// The object turned or flipped to `pose` in its own box, its top-left
+// corner where it was: each cell read through pose_source, as the ops read it.
+inline object posed(const object& piece, int pose) {
+    object turned = piece;
+    const auto [width, height] = posed_size(pose, piece.width, piece.height);
+    turned.width = (int16_t)width;
+    turned.height = (int16_t)height;
+    turned.data.clear();
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col) {
+            const auto [from_row, from_col] = pose_source(pose, piece.width, piece.height, row, col);
+            turned.data[row][col] = piece.data[from_row][from_col];
+        }
+    return turned;
 }
-constexpr int mirror_pose(bool down, bool across) { return (down ? 2 : 0) | (across ? 4 : 0); }
+
+// One copy of a piece, mirrored so: posed, and laid where mirrored_box puts it.
+inline object mirrored(const object& piece, int pose, int row2, int col2) {
+    object copy = posed(piece, pose);
+    const cell_box to = mirrored_box(piece.box(), pose, row2, col2);
+    copy.row = (int16_t)to.row0;
+    copy.col = (int16_t)to.col0;
+    return copy;
+}
 
 // WHAT THE PARTNER HELPERS ANSWER, for the pieces they are handed
 // (partner_pieces), once the helpers are all said.
