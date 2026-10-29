@@ -594,7 +594,7 @@ inline bool say_panes(const inference& inf, said_reading& said) {
         say_closed(said, head + " UnionList" + recolor, "Union");
         return true;
     case shape::one_pane:
-        // Everything the panes cover, less what they all agree on.
+        // Everything the panes cover, less what two or more of them cover.
         say_closed(said, head + " UnionList" + recolor, "Union");
         say_closed(said, head + " IntersectionList", "Difference");
         return true;
@@ -982,10 +982,12 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
             paint = laid_paint(rule);
             return true;
         case said_as::crossing:
-            // Rays to the edge, folded where they all cross (crossing_walk), in
-            // the rule's one color.
-            drawn ={ pick, spell(rule.value ? "ExtendDiagonal" : "ExtendOrthogonal",
-                                  row_of(node_type::ExtendOrthogonal).high) +
+            // Rays to the edge, or growths overrun, folded where they meet
+            // (crossing_walk), in the rule's one color.
+            drawn = { pick, (rule.value < CROSSING_RAYS
+                                 ? spell(rule.value ? "ExtendDiagonal" : "ExtendOrthogonal",
+                                         row_of(node_type::ExtendOrthogonal).high)
+                                 : spell("ExtendTo", OVERRUN_GROWTHS + rule.value - CROSSING_RAYS)) +
                                 " IntersectionList " + spell("Recolor", rule.paint) + onto_operators(rule) };
             paint = laid_paint(rule);
             return true;

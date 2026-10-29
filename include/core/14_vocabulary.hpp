@@ -27,8 +27,9 @@
 //   rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy and
 //   MaskOut are said only after a paint -- rays, trails, copies, repeats --
 //   laid only onto what is down (MaskBy[10]), or onto or off one color of it.
-// IntersectionList: folds the picked pieces into one; said by the pane rules, and
-//   after rays grown to the edge, where they all cross (crossing_walk).
+// IntersectionList: the cells two or more picked pieces hold, where they lie;
+//   said by the pane rules, and after rays grown to the edge, or growths
+//   overrun, where they meet (crossing_walk).
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
 //   (grid_parts, the parts SelectPartition picks by); cut before the ground
@@ -526,8 +527,10 @@ enum class inferred_amount { none, some, all };
   /* grown in step with the others until they meet: along its rows, along    */ \
   /* its columns, to every side, along the canvas's edge [8-11]; along its   */ \
   /* diagonals one way or the other, both, its rows and columns, every way,  */ \
-  /* to every side and corner [12-17] (grown_along).                        */ \
-  X(ExtendTo                    , 0                 , 17                       , generate , none, false)        \
+  /* to every side and corner [12-17] (grown_along); past those, the same    */ \
+  /* growths overrun, each piece keeping the cells it reaches in one turn    */ \
+  /* with another [18-27].                                                   */ \
+  X(ExtendTo                    , 0                 , 27                       , generate , none, false)        \
   /* Each picked piece wears its partner's color, each way partner_by finds */ \
   /* one; past those, the color a key drawn in the grid shows at its place, */ \
   /* then the key's one color; past that, its colors cell by cell from the  */ \

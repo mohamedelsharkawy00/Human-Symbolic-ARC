@@ -1372,7 +1372,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // grown in step with the others along its track until they meet, the eight
     // ways asked first and taking a tie -- asked again, like the rays, while a
     // trail accounts for any cell, laid each way a paint may be.
-    static_assert(direction::count + (int)grown_along::count == row_of(node_type::ExtendTo).high + 1);
+    static_assert(OVERRUN_GROWTHS + (int)grown_along::count == row_of(node_type::ExtendTo).high + 1);
     static constexpr const char* grown_names[] = { "along its rows", "along its columns", "to every side",
                                                    "along the grid's edge", "along its diagonals down to the right",
                                                    "along its diagonals up to the right", "along both its diagonals",
@@ -1384,7 +1384,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         int8_t best_lay = rule::laid_over;
         for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
-                for (int asked = 0; asked <= row_of(node_type::ExtendTo).high; ++asked) {
+                for (int asked = 0; asked < OVERRUN_GROWTHS; ++asked) {
                     const int grow_direction = asked < direction::count ? direction_asked(asked) : asked;
                     const auto& seen = laid_once(1, at, lay, grow_direction, laying::as_drawn, [&] {
                         return trail_walk(opened, handed_by_pick[at], grow_direction); });
@@ -1716,29 +1716,34 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         }, laid_by(best.seen) };
     };
 
-    // WHERE THE PICKED PIECES' RAYS ALL CROSS, in one color: each piece's rays
-    // run to the grid's edge, up, down and to the sides or along the diagonals,
-    // and only the cells every piece's rays reach are laid (crossing_walk) --
-    // 11e1fe23's 5, where three corners' diagonals meet at the square's middle.
+    // WHERE THE PICKED PIECES MEET, in one color: each piece's rays run to the
+    // grid's edge, up, down and to the sides or along the diagonals, or it grows
+    // in step with the others along a track, each keeping the cells it reaches
+    // in one turn with another, and only the cells two or more reach are laid
+    // (crossing_walk) -- 11e1fe23's 5, where three corners' diagonals meet at
+    // the square's middle; 29c11459's 5s, where each row's two dots meet.
     auto crossing_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
         for (const size_t at : asked_now)
             for (const int8_t lay : lays())
-                for (const bool diagonal : { false, true }) {
-                    const auto& seen = laid_once(10, at, lay, diagonal, laying::in_one, [&] {
-                        return crossing_walk(opened, handed_by_pick[at], diagonal); });
+                for (int reach = 0; reach < CROSSING_REACHES; ++reach) {
+                    const auto& seen = laid_once(10, at, lay, reach, laying::in_one, [&] {
+                        return crossing_walk(opened, handed_by_pick[at], reach); });
                     if (!seen) continue;
                     const int before = best.said;
-                    weigh_paint(best, diagonal, draw_picks[at], *seen, covered_claims(seen->drawn));
+                    weigh_paint(best, reach, draw_picks[at], *seen, covered_claims(seen->drawn));
                     if (best.said > before) best_lay = lay;
                 }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
+            const string reaches = best.value < CROSSING_RAYS
+                ? string("grows rays ") + (best.value ? "along the diagonals" : "up, down and to the sides") +
+                      " to the edge, kept only where they cross"
+                : string("grows ") + grown_names[best.value - CROSSING_RAYS] +
+                      " in step with the others, kept only where they meet";
             const int8_t said = say_paint(best, rule::crossing,
-                string("grows rays ") + (best.value ? "along the diagonals" : "up, down and to the sides") +
-                    " to the edge, kept only where they all cross, in color " + to_string(best.seen.paint) +
-                    laid_words(best_lay));
+                reaches + ", in color " + to_string(best.seen.paint) + laid_words(best_lay));
             read.fired[said].lay = best_lay;
         }, laid_by(best.seen) };
     };

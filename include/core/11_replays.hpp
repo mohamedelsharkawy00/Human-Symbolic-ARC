@@ -1297,7 +1297,9 @@ inline optional<paint_walk> grown_walk(const replay_facts& facts, const vector<p
             });
         vector<array<int16_t, 3>> meetings;
         grow_in_step(width, height, track, [&](int piece) { return cut.is_picked(piece); }, owner, turn, queue, cell_directions,
-                     [&](int at, int grow_direction, int piece) { meetings.push_back({ (int16_t)at, (int16_t)grow_direction, (int16_t)piece }); });
+                     [&](int at, int grow_direction, int piece, bool) {
+                         if (!grown_spreads(track)) meetings.push_back({ (int16_t)at, (int16_t)grow_direction, (int16_t)piece });
+                     });
         for (const auto& [at, grow_direction, piece] : meetings) {
             const direction_step step = step_of(grow_direction);
             const int row = at / width + step.down, col = at % width + step.across;
@@ -1525,34 +1527,58 @@ inline optional<paint_walk> rays_walk(const replay_facts& facts, const vector<pa
     });
 }
 
-// WHERE THE RAYS OF THE PICKED PIECES ALL CROSS, walked: Extend grows each
-// picked piece's rays to the grid's edge (each_ray_cell), and IntersectionList
-// keeps the cells every piece that grew rays reaches (intersected_cell,
-// 15_op_math.hpp, what the op keeps). Rays that long each fill the largest
-// grid's frame, so the op, which folds the pieces at their frames' corners,
-// keeps each crossing where it lies. Laid in one color, the line's Recolor
-// after it (lay_paint). A crossing is two pieces' rays at least: one piece's
-// alone are rays (rays_walk), and a pair where the pick grows one is not drawn.
-inline optional<paint_walk> crossing_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                          bool diagonal) {
+// THE REACHES A CROSSING IS ASKED WITH: rays to the grid's edge, up, down and
+// to the sides [0] or along the diagonals [1]; then each track grown in step,
+// overrun [CROSSING_RAYS + the track].
+constexpr int CROSSING_RAYS = 2, CROSSING_REACHES = CROSSING_RAYS + (int)grown_along::count;
+
+// WHERE THE PICKED PIECES MEET, walked: each picked piece's reach as its op
+// hands it back -- its rays to the grid's edge (each_ray_cell), or its body and
+// its growth in step with the others, overrun: the cells it took and the cells
+// it reached in the turn another did (grow_in_step) -- and IntersectionList
+// keeps the cells two or more of them reach (intersected_cell, 15_op_math.hpp,
+// what the op keeps): 11e1fe23's three corners, grown along their diagonals to
+// the square's middle, and 29c11459's dots, two to a row, grown along their
+// rows to its middle. Laid in one color, the line's Recolor after it
+// (lay_paint).
+inline optional<paint_walk> crossing_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int reach) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
-        const vector<ray_seed>& seeds = cut.ray_seeds();
-        vector<int> grown;
-        for (int i = 0; i < cut.count(); ++i)
-            if (cut.picked[i] && seeds[(size_t)i].row >= 0) grown.push_back(i);
-        if (grown.size() == 1) return false;
-        vector<cell_set> reached((size_t)cut.count());
-        each_ray_cell(facts, which, cut, diagonal, row_of(node_type::ExtendOrthogonal).high,
-                      [&](int i, int row, int col, int) { reached[(size_t)i].add(row, col); });
         const grid& output = facts.train[which].output;
-        for (int row = 0; row < output.height; ++row)
-            for (int col = 0; col < output.width; ++col) {
-                const int8_t kept = intersected_cell((int)grown.size(), [&](int k) {
-                    const int i = grown[(size_t)k];
-                    return reached[(size_t)i].has(row, col) ? seeds[(size_t)i].color : (int8_t)TRANSPARENT;
+        const int width = output.width, height = output.height;
+        // What each piece the op hands back holds, cell by cell.
+        vector<cells> held((size_t)cut.count());
+        vector<int> grown;
+        if (reach < CROSSING_RAYS) {
+            const vector<ray_seed>& seeds = cut.ray_seeds();
+            for (int i = 0; i < cut.count(); ++i)
+                if (cut.picked[i] && seeds[(size_t)i].row >= 0) grown.push_back(i);
+            each_ray_cell(facts, which, cut, reach == 1, row_of(node_type::ExtendOrthogonal).high,
+                          [&](int i, int row, int col, int) { held[(size_t)i][row][col] = seeds[(size_t)i].color; });
+        } else {
+            int16_t owner[MAX_GRID_CELLS], turn[MAX_GRID_CELLS], queue[MAX_GRID_CELLS];
+            uint8_t cell_directions[MAX_GRID_CELLS];
+            std::fill_n(owner, width * height, (int16_t)-1);
+            for (int i = 0; i < cut.count(); ++i)
+                cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
+                    if (!output.contains(row, col)) return;
+                    if (owner[row * width + col] < 0) owner[row * width + col] = (int16_t)i;
+                    if (cut.picked[i]) held[(size_t)i][row][col] = color;
                 });
-                if (is_color(kept)) put(row, col, kept);
-            }
+            grow_in_step(width, height, (grown_along)(reach - CROSSING_RAYS), [&](int piece) { return cut.is_picked(piece); },
+                         owner, turn, queue, cell_directions, [&](int at, int, int piece, bool in_one_turn) {
+                             if (in_one_turn) held[(size_t)piece][at / width][at % width] = (int8_t)cut.color(piece);
+                         });
+            for (int at = 0; at < width * height; ++at)
+                if (turn[at] > 0) held[(size_t)owner[at]][at / width][at % width] = (int8_t)cut.color(owner[at]);
+            for (int i = 0; i < cut.count(); ++i)
+                if (cut.picked[i]) grown.push_back(i);
+        }
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col)
+                if (const int8_t kept = intersected_cell((int)grown.size(),
+                                                         [&](int k) { return held[(size_t)grown[(size_t)k]][row][col]; });
+                    is_color(kept))
+                    put(row, col, kept);
         return true;
     });
 }

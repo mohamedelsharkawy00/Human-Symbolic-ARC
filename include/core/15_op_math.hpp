@@ -475,15 +475,20 @@ inline int fit_source_cell(int target_cell, int source_size, int target_size) {
     return target_cell * source_size / target_size;
 }
 
-// WHAT IntersectionList KEEPS OF A CELL, for the op and the reading that
-// replays it: where every one of `count` pieces paints it, the first one's
-// color -- color_of(i) is piece i's there, TRANSPARENT where it paints none --
-// and nothing elsewhere.
+// WHAT IntersectionList KEEPS OF A CELL, for the op and the readings that
+// replay it: where two or more of `count` pieces paint it -- where they cross,
+// meet or overlap -- the first of them's color, color_of(i) being piece i's
+// there, TRANSPARENT where it paints none; nothing elsewhere.
 template <class ColorOf>
 inline int8_t intersected_cell(int count, ColorOf color_of) {
-    for (int i = 0; i < count; ++i)
-        if (color_of(i) == TRANSPARENT) return (int8_t)TRANSPARENT;
-    return count > 0 ? (int8_t)color_of(0) : (int8_t)TRANSPARENT;
+    int8_t first = TRANSPARENT;
+    for (int i = 0; i < count; ++i) {
+        const int8_t color = (int8_t)color_of(i);
+        if (color == TRANSPARENT) continue;
+        if (first != TRANSPARENT) return first;
+        first = color;
+    }
+    return (int8_t)TRANSPARENT;
 }
 
 // SELECT · SelectLargestObject and SelectSmallestObject, SelectUnique,
@@ -1912,6 +1917,10 @@ enum class grown_along : int8_t {
     diagonals_down_right, diagonals_up_right, diagonals, rows_and_columns, every_direction, sides_and_corners,
     count
 };
+// WHERE ExtendTo'S OVERRUN GROWTHS START, past its eight ways and its growths:
+// each track again, every piece keeping the cells it reaches in one turn with
+// another (op_grow_in_step).
+constexpr int OVERRUN_GROWTHS = direction::count + (int)grown_along::count;
 
 // The directions a track grows, one bit for each direction (1_readings.hpp): a line
 // both ways along it, or the sides, the corners, or both, of every cell.
@@ -1958,7 +1967,9 @@ constexpr bool grown_spreads(grown_along track) {
 // ray along its own line took before it, head-on or behind; a ray of another
 // line taken before it is crossed, as a line drawn across another goes on
 // (21f83797's lines cross; 1190bc91's rays meet in one turn and stop). `met(cell,
-// grow_direction, piece)` hears of each ray stopped by meeting another.
+// grow_direction, piece, in_one_turn)` hears of each ray stopped by meeting
+// another, and of each piece a cell it reached in the turn another did went to
+// -- spreading too -- `in_one_turn` saying it reached the cell then.
 template <class Grows, class Met>
 inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                          int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* cell_directions, Met met) {
@@ -1997,8 +2008,9 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                     turn[next] = (int16_t)(turn[at] + 1);
                     owner[next] = owner[at];
                     queue[tail++] = (int16_t)next;
-                } else if (turn[next] == turn[at] + 1 && owner[at] < owner[next]) {
-                    owner[next] = owner[at];
+                } else if (turn[next] == turn[at] + 1 && owner[at] != owner[next]) {
+                    met(next, grow_direction, max(owner[at], owner[next]), true);
+                    owner[next] = min(owner[at], owner[next]);
                 }
             }
         }
@@ -2031,7 +2043,7 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                         const direction_step back = step_of(arrival_direction);
                         const int start = (row - back.down * step_number) * width + col - back.across * step_number;
                         cell_directions[start] = (uint8_t)(cell_directions[start] & ~(1u << arrival_direction));
-                        met(at, arrival_direction, owner[at]);
+                        met(at, arrival_direction, owner[at], true);
                     }
                     owner[at] = owner[from];
                     cell_directions[at] = ray;
@@ -2041,7 +2053,7 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                     // A body, a later piece's ray met in this turn, or a ray
                     // along its own line before it; another line's is crossed.
                     stops = turn[at] == 0 || turn[at] == step_number || (cell_directions[at] & own_line) != 0;
-                    if (stops && turn[at] > 0) met(at, grow_direction, owner[from]);
+                    if (stops && turn[at] > 0) met(at, grow_direction, owner[from], turn[at] == step_number);
                 }
                 if (stops) cell_directions[from] = (uint8_t)(cell_directions[from] & ~ray);
                 else going = true;

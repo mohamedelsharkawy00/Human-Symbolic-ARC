@@ -288,9 +288,10 @@ struct correspondence_election {
         // level with that partner's rows or columns, or drawn again mirrored around its
         // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
         // diagonals for `value` past 32 and otherwise up, down and to the sides,
-        // `value` % 32 long, painted `paint` (paint_value), or grown to the edge
-        // and kept only where they all cross, along the diagonals for `value` 1,
-        // painted `paint` (crossing); the bars bridged between
+        // `value` % 32 long, painted `paint` (paint_value), or each piece's reach
+        // kept only where two or more meet -- rays to the edge, along the
+        // diagonals for `value` 1, or grown in step, overrun, along the track
+        // `value` - CROSSING_RAYS names -- painted `paint` (crossing); the bars bridged between
         // pieces of one color or the hollows filled, in `paint` or their own for -1;
         // or hollowed to the outline; or the pieces a pick by holes or by size takes,
         // recolored to `value`; or the picked pieces removed, slid to the edge,

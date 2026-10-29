@@ -1270,38 +1270,42 @@ object_list& op_origin(program_run& run, const object_list& from) {
 
 // --- Reduce, folding a list ---
 
-// Intersect the objects whose `selected` equals `want` into ONE object, each
-// cell as intersected_cell keeps it, on the shared smallest box at the origin.
-// Appends it to res carrying the shared flag if anything survives.
+// Intersect the objects whose `selected` equals `want` into ONE object, where
+// they lie: each cell of the grid they span as intersected_cell keeps it, as
+// union_group lays them. Appends it to res carrying the shared flag if anything
+// survives.
 void intersect_group(const object_list& from, bool want, object_list& res) {
-    int members[MAX_OBJECTS_IN_A_LIST], count = 0, least_width = 0, least_height = 0;
+    int members[MAX_OBJECTS_IN_A_LIST], count = 0;
+    cell_box span;
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (one.selected != want) continue;
-        least_width = count ? min(least_width, (int)one.width) : one.width;
-        least_height = count ? min(least_height, (int)one.height) : one.height;
+        span.include(one.box());
         members[count++] = i;
     }
-    if (count == 0 || least_width <= 0 || least_height <= 0 || res.count >= MAX_OBJECTS_IN_A_LIST) return;
+    span = { max(span.row0, 0), max(span.col0, 0), min(span.row1, MAX_GRID_DIM - 1), min(span.col1, MAX_GRID_DIM - 1) };
+    if (count == 0 || span.empty() || res.count >= MAX_OBJECTS_IN_A_LIST) return;
     held_object one;
-    one.width = (int16_t)least_width; one.height = (int16_t)least_height;
+    one.row = (int16_t)span.row0; one.col = (int16_t)span.col0;
+    one.width = (int16_t)span.width(); one.height = (int16_t)span.height();
     one.selected = want;
     int kept = 0;
-    for (int row = 0; row < least_height; ++row)
-        for (int col = 0; col < least_width; ++col) {
-            const int8_t color = intersected_cell(count, [&](int k) { return from.objects[members[k]].data[row][col]; });
+    for (int row = span.row0; row <= span.row1; ++row)
+        for (int col = span.col0; col <= span.col1; ++col) {
+            const int8_t color = intersected_cell(count, [&](int k) { return from.objects[members[k]].color_at(row, col); });
             if (color == TRANSPARENT) continue;
-            one.data[row][col] = color;
+            one.data[row - span.row0][col - span.col0] = color;
             ++kept;
         }
     if (kept == 0) return;
     res.objects[res.count++] = one;
 }
 
-// IntersectionList: intersect to one object PER selection group — the selected
-// objects AND into one selected object, the unselected into one unselected
-// object. The mark survives the fold as object identity, never dropped. No
-// selection => one unselected object (plain "intersect all").
+// IntersectionList: intersect to one object PER selection group, where the
+// objects lie — the cells two or more selected objects hold into one selected
+// object, those of the unselected into one unselected object. The mark
+// survives the fold as object identity, never dropped. No selection => one
+// unselected object.
 object_list& op_intersection_list(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     if (from.count <= 0) return res;
@@ -1894,8 +1898,9 @@ object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t m
 // others along its track, lines or the open cells, until they meet --
 // grow_in_step, 15_op_math.hpp, the growth the reading replays -- and hands
 // back its body and every cell it took, in its first color, as a trail hands
-// back its body and its trail.
-object_list& op_grow_in_step(program_run& run, const object_list& from, grown_along track) {
+// back its body and its trail. OVERRUN, each keeps too the cells it reached in
+// the turn another did, so IntersectionList keeps where they meet.
+object_list& op_grow_in_step(program_run& run, const object_list& from, grown_along track, bool overrun) {
     object_list& res = run.fresh();
     int width = run.canvas.width > 0 ? run.canvas.width : run.input.width;
     int height = run.canvas.height > 0 ? run.canvas.height : run.input.height;
@@ -1916,8 +1921,12 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
                 owner[y * width + x] = (int16_t)i;
         });
     }
+    // The cells each object reached in the turn another took them, (cell, object).
+    vector<std::pair<int, int>> reached_together;
     grow_in_step(width, height, track, [&](int piece) { return from.objects[piece].selected; },
-                 owner, turn, queue, cell_directions, [](int, int, int) {});
+                 owner, turn, queue, cell_directions, [&](int at, int, int piece, bool in_one_turn) {
+                     if (overrun && in_one_turn) reached_together.push_back({ at, piece });
+                 });
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
@@ -1926,6 +1935,8 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
         each_painted(one, [&](int row, int col, int8_t) { reach.include_cell(one.row + row, one.col + col); });
         for (int at = 0; at < width * height; ++at)
             if (turn[at] > 0 && owner[at] == i) reach.include_cell(at / width, at % width);
+        for (const auto& [at, piece] : reached_together)
+            if (piece == i) reach.include_cell(at / width, at % width);
         if (reach.empty()) continue;
         const int grown_width = min(reach.width(), MAX_GRID_DIM);
         const int grown_height = min(reach.height(), MAX_GRID_DIM);
@@ -1946,6 +1957,8 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
             const int across = at % width - reach.col0, down = at / width - reach.row0;
             if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.data[down][across] = color;
         }
+        for (const auto& [at, piece] : reached_together)
+            if (piece == i) grown.data[at / width - reach.row0][at % width - reach.col0] = color;
         ++res.count;
     }
     return res;
@@ -1956,9 +1969,12 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
 // before the first FOREIGN occupied cell (a wall / another object) or the grid
 // edge, and passes through the object's own body (march_trail, the walk the
 // reading replays). Hands back each object's body and trail, which compose via
-// Union. Past the eight ways, the objects grow in step (op_grow_in_step).
+// Union. Past the eight ways, the objects grow in step (op_grow_in_step), and
+// past those, the same growths overrun.
 object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow_direction) {
-    if (grow_direction >= direction::count) return op_grow_in_step(run, from, (grown_along)(grow_direction - direction::count));
+    if (grow_direction >= direction::count)
+        return op_grow_in_step(run, from, (grown_along)((grow_direction - direction::count) % (int)grown_along::count),
+                               grow_direction >= OVERRUN_GROWTHS);
     object_list& res = run.fresh();
     const direction_step step = step_of(grow_direction);
     int width = run.canvas.width > 0 ? run.canvas.width : run.input.width;
