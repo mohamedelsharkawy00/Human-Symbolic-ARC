@@ -11,7 +11,7 @@
 //   N train_solved test_solved          the reading is done
 //   B solved test_solved | program      the best program and its verdicts
 //   V hash examples, then per example:  what a program paints (a hover preview)
-//     w h cells...  objects, then per object: x0 y0 width height w h cells...
+//     w h cells...  objects, then per object: col row width height w h cells...
 // Each B is followed by a V of what its program paints, under the hash the
 // watcher's own reading of the program gives it.
 //
@@ -32,7 +32,7 @@ using namespace std;
 // the GUI shows when a program in the footer is hovered, and the best
 // program's in the BEST column.
 struct preview_payload {
-  struct bbox { int x0, y0, width, height, canvas_w, canvas_h; };
+  struct bbox { int col, row, width, height, canvas_w, canvas_h; };
   vector<grid> accumulators;          // size = #examples
   vector<vector<grid>> object_lists;  // [example][object]
   vector<vector<bbox>> object_bboxes; // [example][object] world bbox + tile canvas dims
@@ -60,14 +60,14 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
       // Each object on a canvas as big as what was drawn -- which a turn
       // (NormalizeOrientation) leaves on its side, so the background turns with
       // the objects -- else as the example, and grown to hold every object's
-      // painted extent: Fractal hands back output-sized masks, and a Tile's
+      // painted extent: Fractal hands back output-sized objects, and a Tile's
       // copies can hang off the edge.
       int canvas_w = out.width > 0 ? out.width : max(ex.input.width, ex.output.width);
       int canvas_h = out.height > 0 ? out.height : max(ex.input.height, ex.output.height);
       for (int k = 0; k < ol.count; ++k) {
         const auto &o = ol.objects[k];
-        canvas_w = max(canvas_w, o.x0 + o.width);
-        canvas_h = max(canvas_h, o.y0 + o.height);
+        canvas_w = max(canvas_w, o.col + o.width);
+        canvas_h = max(canvas_h, o.row + o.height);
       }
       canvas_w = min(canvas_w, MAX_GRID_DIM);
       canvas_h = min(canvas_h, MAX_GRID_DIM);
@@ -79,19 +79,19 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
         int mh = min((int)o.height, MAX_GRID_DIM);
         int mw = min((int)o.width, MAX_GRID_DIM);
         for (int r = 0; r < mh; ++r) {
-          int dst_r = o.y0 + r;
+          int dst_r = o.row + r;
           if (dst_r < 0 || dst_r >= canvas_h) continue;
           for (int c = 0; c < mw; ++c) {
-            int dst_c = o.x0 + c;
+            int dst_c = o.col + c;
             if (dst_c < 0 || dst_c >= canvas_w) continue;
-            int8_t v = o.mask[r][c];
+            int8_t v = o.data[r][c];
             if (v != TRANSPARENT)
               g.data[dst_r][dst_c] = v;
           }
         }
         payload.object_lists[slot].push_back(std::move(g));
         payload.object_bboxes[slot].push_back({
-          (int)o.x0, (int)o.y0, (int)o.width, (int)o.height, canvas_w, canvas_h});
+          (int)o.col, (int)o.row, (int)o.width, (int)o.height, canvas_w, canvas_h});
       }
       ++slot;
     }
@@ -143,7 +143,7 @@ public:
       text += to_text(" %zu", p.object_lists[i].size());
       for (size_t k = 0; k < p.object_lists[i].size(); ++k) {
         const auto &b = p.object_bboxes[i][k];
-        text += to_text(" %d %d %d %d", b.x0, b.y0, b.width, b.height);
+        text += to_text(" %d %d %d %d", b.col, b.row, b.width, b.height);
         write_grid(text, p.object_lists[i][k]);
       }
     }
@@ -233,7 +233,7 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
       objects = min(objects, (size_t)MAX_OBJECTS_IN_A_LIST);
       for (size_t k = 0; k < objects; ++k) {
         preview_payload::bbox b{};
-        in >> b.x0 >> b.y0 >> b.width >> b.height;
+        in >> b.col >> b.row >> b.width >> b.height;
         grid g;
         read_grid(in, g);
         b.canvas_w = g.width;

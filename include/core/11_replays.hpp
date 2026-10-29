@@ -523,9 +523,9 @@ inline optional<replayed> empty_swap_holds(const replay_facts& facts, const vect
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
-            for (int row = 0; row < piece.summary.height; ++row)
-                for (int col = 0; col < piece.summary.width; ++col)
-                    put(piece.summary.row + row, piece.summary.col + col,
+            for (int row = 0; row < piece.height; ++row)
+                for (int col = 0; col < piece.width; ++col)
+                    put(piece.row + row, piece.col + col,
                         traded_with_empty((int8_t)piece.data[row][col], color));
         }
         return true;
@@ -619,7 +619,7 @@ inline vector<object> ranked_by_size(const vector<object>& hand, const grid& inp
     else
         for (const object& piece : hand) {
             grid layer(input.width, input.height);
-            paint_piece(layer, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
+            paint_piece(layer, piece, piece.row, piece.col, true, /*clip=*/true);
             object_walk_scratch scratch;
             each_object(layer, grouping::touching_any_color, scratch,
                         [&](const object_summary& box, const int16_t* cells, int count) {
@@ -627,7 +627,7 @@ inline vector<object> ranked_by_size(const vector<object>& hand, const grid& inp
             });
         }
     vector<int> order(ranked.size());
-    size_order((int)ranked.size(), true, [&](int i) { return (int)ranked[(size_t)i].summary.count; }, order.data());
+    size_order((int)ranked.size(), true, [&](int i) { return (int)ranked[(size_t)i].cell_count(); }, order.data());
     vector<object> sorted;
     for (const int i : order) sorted.push_back(ranked[(size_t)i]);
     return sorted;
@@ -835,11 +835,11 @@ inline grid hand_after_drops(const replay_facts& facts, size_t which, Keeps keep
     const auto& pieces = facts.cuts()[which];
     for (size_t index = 0; index < pieces.size(); ++index) {
         object piece = pieces[index];
-        for (int row = 0; row < piece.summary.height; ++row)
-            for (int col = 0; col < piece.summary.width; ++col)
-                if (!keeps(index, row + piece.summary.row, col + piece.summary.col))
+        for (int row = 0; row < piece.height; ++row)
+            for (int col = 0; col < piece.width; ++col)
+                if (!keeps(index, row + piece.row, col + piece.col))
                     piece.data[row][col] = (int8_t)TRANSPARENT;
-        paint_piece(drawn, piece, piece.summary.row, piece.summary.col, !facts.laid_under, true);
+        paint_piece(drawn, piece, piece.row, piece.col, !facts.laid_under, true);
     }
     return drawn;
 }
@@ -1013,15 +1013,13 @@ inline optional<replayed> removal_holds(const replay_facts& facts, const vector<
 inline object outlined(const object& piece) {
     object rim = piece;
     auto occupied = [&](int row, int col) {
-        return row >= 0 && col >= 0 && row < piece.summary.height && col < piece.summary.width &&
+        return row >= 0 && col >= 0 && row < piece.height && col < piece.width &&
                piece.data[row][col] != (int8_t)TRANSPARENT;
     };
-    rim.summary.count = 0;
-    for (int row = 0; row < piece.summary.height; ++row)
-        for (int col = 0; col < piece.summary.width; ++col) {
+    for (int row = 0; row < piece.height; ++row)
+        for (int col = 0; col < piece.width; ++col) {
             if (!occupied(row, col)) continue;
-            if (on_object_edge(row, col, occupied)) ++rim.summary.count;
-            else rim.data[row][col] = (int8_t)TRANSPARENT;
+            if (!on_object_edge(row, col, occupied)) rim.data[row][col] = (int8_t)TRANSPARENT;
         }
     return rim;
 }
@@ -1032,8 +1030,8 @@ inline object outlined(const object& piece) {
 inline optional<replayed> outline_holds(const replay_facts& facts, const vector<partner_pieces>& handed) {
     return drops_hold(facts, handed, [](const partner_pieces& cut, int i, int row, int col) {
         const object& piece = cut.pieces[i];
-        return on_object_edge(row - piece.summary.row, col - piece.summary.col, [&](int down, int across) {
-            return down >= 0 && across >= 0 && down < piece.summary.height && across < piece.summary.width &&
+        return on_object_edge(row - piece.row, col - piece.col, [&](int down, int across) {
+            return down >= 0 && across >= 0 && down < piece.height && across < piece.width &&
                    piece.data[down][across] != (int8_t)TRANSPARENT;
         });
     });
@@ -1043,13 +1041,13 @@ inline optional<replayed> outline_holds(const replay_facts& facts, const vector<
 // corner where it was: each cell read through pose_source, as the ops read it.
 inline object posed(const object& piece, int pose) {
     object turned = piece;
-    const auto [width, height] = posed_size(pose, piece.summary.width, piece.summary.height);
-    turned.summary.width = (int8_t)width;
-    turned.summary.height = (int8_t)height;
+    const auto [width, height] = posed_size(pose, piece.width, piece.height);
+    turned.width = (int16_t)width;
+    turned.height = (int16_t)height;
     turned.data.clear();
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col) {
-            const auto [from_row, from_col] = pose_source(pose, piece.summary.width, piece.summary.height, row, col);
+            const auto [from_row, from_col] = pose_source(pose, piece.width, piece.height, row, col);
             turned.data[row][col] = piece.data[from_row][from_col];
         }
     return turned;
@@ -1058,9 +1056,9 @@ inline object posed(const object& piece, int pose) {
 // One copy of a piece, mirrored so.
 inline object mirrored(const object& piece, int row2, int col2, bool down, bool across) {
     object copy = posed(piece, mirror_pose(down, across));
-    const cell_box to = mirrored_box(piece.summary.box(), row2, col2, down, across);
-    copy.summary.row = (int8_t)to.row0;
-    copy.summary.col = (int8_t)to.col0;
+    const cell_box to = mirrored_box(piece.box(), row2, col2, down, across);
+    copy.row = (int16_t)to.row0;
+    copy.col = (int16_t)to.col0;
     return copy;
 }
 
@@ -1074,8 +1072,7 @@ inline bool pour_the_hand(vector<object>& hand, const vector<bool>& picked, hand
     each_pour(partner_pieces(hand, picked, answers), [&](int color, const int16_t* rows, const int16_t* cols, int count) {
         cell_box box;
         for (int k = 0; k < count; ++k) box.include_cell(rows[k], cols[k]);
-        object& gap = gaps.emplace_back();
-        gap.summary = summary_of(box, count);
+        object& gap = gaps.emplace_back(object{ (int16_t)box.col0, (int16_t)box.row0, (int16_t)box.width(), (int16_t)box.height() });
         for (int k = 0; k < count; ++k) gap.data[rows[k] - box.row0][cols[k] - box.col0] = (int8_t)color;
         poured = (uint16_t)(poured | 1u << color);
     });
@@ -1085,14 +1082,13 @@ inline bool pour_the_hand(vector<object>& hand, const vector<bool>& picked, hand
         object piece = hand[i];
         int lost = 0;
         if (picked[i])
-            for (int row = 0; row < piece.summary.height; ++row)
-                for (int col = 0; col < piece.summary.width; ++col)
+            for (int row = 0; row < piece.height; ++row)
+                for (int col = 0; col < piece.width; ++col)
                     if (int8_t& cell = piece.data[row][col]; is_color(cell) && (poured >> cell & 1)) {
                         cell = (int8_t)TRANSPARENT;
                         ++lost;
                     }
-        piece.summary.count = (int16_t)(piece.summary.count - lost);
-        if (!lost || piece.summary.count > 0) kept.push_back(piece);
+        if (!lost || piece.cell_count() > 0) kept.push_back(piece);
     }
     for (const object& gap : gaps)
         if (kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST) kept.push_back(gap);
@@ -1111,14 +1107,13 @@ inline bool move_the_hand_in(vector<object>& hand, const vector<bool>& picked, h
     for (const auto& [i, pose, row, col] : moves) {
         object& piece = hand[(size_t)i];
         const cell_box paint = piece.painted_box();
-        object tight;
-        tight.summary = summary_of(paint, piece.summary.count);
+        object tight{ (int16_t)paint.col0, (int16_t)paint.row0, (int16_t)paint.width(), (int16_t)paint.height() };
         piece.each_cell([&](int at_row, int at_col, int8_t color) {
             tight.data[at_row - paint.row0][at_col - paint.col0] = color;
         });
         piece = posed(tight, pose);
-        piece.summary.row = (int8_t)row;
-        piece.summary.col = (int8_t)col;
+        piece.row = (int16_t)row;
+        piece.col = (int16_t)col;
     }
     return !moves.empty();
 }
@@ -1351,10 +1346,10 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
             return false;
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
-            const auto& pattern = cut.pieces[i].summary;
+            const object& pattern = cut.pieces[i];
             for (int j = 0; j < cut.count(); ++j) {
                 if (cut.picked[j]) continue;
-                const auto& target = cut.pieces[j].summary;
+                const object& target = cut.pieces[j];
                 const int row0 = aligned_copy_start(pattern.height, target.row, target.height, anchor / 3);
                 const int col0 = aligned_copy_start(pattern.width, target.col, target.width, anchor % 3);
                 cut.pieces[i].each_cell([&](int row, int col, int8_t color) {
@@ -1420,9 +1415,8 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
         for (int i = 0; i < cut.count(); ++i) {
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
-            const auto& box = piece.summary;
-            if (!lay_tiled(tile, box.height, box.width, [&](int row, int col) { return (int8_t)piece.data[row][col]; },
-                           box.row, box.col, colors, key, facts.train[which].output,
+            if (!lay_tiled(tile, piece.height, piece.width, [&](int row, int col) { return (int8_t)piece.data[row][col]; },
+                           piece.row, piece.col, colors, key, facts.train[which].output,
                            [&] { return ++slots <= MAX_OBJECTS_IN_A_LIST; }, put))
                 return false;
         }
@@ -1468,7 +1462,7 @@ inline void each_ray_cell(const replay_facts& facts, size_t which, const partner
     const vector<ray_seed>& seeds = cut.ray_seeds();
     for (int i = 0; i < cut.count(); ++i) {
         if (!cut.picked[i]) continue;
-        const auto& box = cut.pieces[i].summary;
+        const object& box = cut.pieces[i];
         const ray_seed seed = seeds[(size_t)i];
         each_extended_ray(seed, radius, diagonal, [&](int down, int across, int along) {
             const int row = box.row + seed.row + down, col = box.col + seed.col + across;
@@ -1992,9 +1986,9 @@ inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<p
 // where it lies.
 template <class See>
 inline void each_hollow(const object& piece, See see) {
-    grid_parts(piece.summary.width, piece.summary.height, [&](int row, int col) {
+    grid_parts(piece.width, piece.height, [&](int row, int col) {
         return piece.data[row][col] != (int8_t)TRANSPARENT;
-    }).each_hollow([&](int row, int col) { see(piece.summary.row + row, piece.summary.col + col); });
+    }).each_hollow([&](int row, int col) { see(piece.row + row, piece.col + col); });
 }
 
 // THE HOLLOWS OF A PIECE, FILLED, replayed. InteriorColor fills each picked
@@ -2125,8 +2119,8 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
     const piece_pick& pick = rule.pick;
     auto recolored = [](object& piece, int color) { piece.repaint([&](int8_t) { return color; }); };
     auto moved = [](object& piece, int down, int across) {
-        piece.summary.row = (int8_t)(piece.summary.row + down);
-        piece.summary.col = (int8_t)(piece.summary.col + across);
+        piece.row = (int16_t)(piece.row + down);
+        piece.col = (int16_t)(piece.col + across);
     };
     for (size_t which = 0; which < facts.cuts().size(); ++which) {
         const auto changing = facts.change(which);
@@ -2165,14 +2159,9 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
             for (size_t i = 0; i < hand.size(); ++i) {
                 if (!picked[i]) continue;
                 object& piece = hand[i];
-                int count = 0;
-                for (int row = 0; row < piece.summary.height; ++row)
-                    for (int col = 0; col < piece.summary.width; ++col) {
-                        int8_t& cell = piece.data[row][col];
-                        cell = traded_with_empty(cell, rule.value - EMPTY_PAIRS);
-                        count += cell != (int8_t)TRANSPARENT;
-                    }
-                piece.summary.count = (int16_t)count;
+                for (int row = 0; row < piece.height; ++row)
+                    for (int col = 0; col < piece.width; ++col)
+                        piece.data[row][col] = traded_with_empty(piece.data[row][col], rule.value - EMPTY_PAIRS);
             }
             break;
         case said::color_from:
@@ -2189,7 +2178,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
                     if (cut.picked[i])
                         colors_from_its_shape(rule.value - COLORS_FROM_ITS_SHAPE, i, cut, [&](int row, int col, int color) {
                             object& piece = laid[(size_t)i];
-                            if (is_color(color)) piece.data[row - piece.summary.row][col - piece.summary.col] = (int8_t)color;
+                            if (is_color(color)) piece.data[row - piece.row][col - piece.col] = (int8_t)color;
                         });
                 hand = std::move(laid);
                 break;
@@ -2267,8 +2256,7 @@ inline bool carry_the_hand(const correspondence_election::fired_rule& rule, cons
                 vector<std::pair<int, int>> hollows;
                 each_hollow(piece, [&](int row, int col) { hollows.push_back({ row, col }); });
                 for (const auto& [row, col] : hollows)
-                    piece.data[row - piece.summary.row][col - piece.summary.col] = (int8_t)fill;
-                piece.summary.count = (int16_t)(piece.summary.count + (int)hollows.size());
+                    piece.data[row - piece.row][col - piece.col] = (int8_t)fill;
             }
             break;
         case said::size_rank: {

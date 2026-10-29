@@ -110,8 +110,8 @@ inline void repeat_periods(const grid& g, int& width, int& height) {
 template <class See, class Includes>
 inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_size tiles, See see,
                                Includes includes) {
-    for (int row = 0; row + shape.summary.height <= one_grid.height; ++row)
-        for (int col = 0; col + shape.summary.width <= one_grid.width; ++col) {
+    for (int row = 0; row + shape.height <= one_grid.height; ++row)
+        for (int col = 0; col + shape.width <= one_grid.width; ++col) {
             int color = TRANSPARENT;
             bool fits = true;
             shape.each_cell([&](int down, int across, int8_t) {
@@ -133,7 +133,7 @@ inline void each_place_it_fits(const grid& one_grid, const object& shape, tile_s
 struct turning_shape {
     object cells;
     int8_t from = TRANSPARENT, into = TRANSPARENT;
-    bool holds() const { return cells.summary.count > 0; }
+    bool holds() const { return cells.cell_count() > 0; }
 };
 
 // THE PLACES THE SHAPE CUT TAKES: every place the shape fits on the color it
@@ -215,11 +215,11 @@ inline turning_shape changed_shape(const vector<example>& train) {
             for (const grid& turning : turned)
                 each_object(turning, grouping::touching_same_color, scratch,
                             [&](const object_summary& box, const int16_t* found, int count) {
-                    if (count >= 2 && (shape.summary.count == 0 || count < shape.summary.count))
+                    if (count >= 2 && (shape.cell_count() == 0 || count < shape.cell_count()))
                         shape = object::from_cells(turning, box, found, count);
                 });
-            if (shape.summary.count == 0) continue;
-            shape.summary.row = shape.summary.col = 0;
+            if (shape.cell_count() == 0) continue;
+            shape.row = shape.col = 0;
             bool held = true;
             for (size_t which = 0; which < train.size() && held; ++which) {
                 grid covered(train[which].input.width, train[which].input.height);
@@ -410,7 +410,7 @@ private:
         static constexpr int MAX_OBJECTS = MAX_GRID_CELLS;
         // One object found: its record always, its cells when the caller keeps them.
         auto keep = [&](const object& found, int8_t color) {
-            info.push_back({ .color = color, .summary = found.summary, .shape = shape_of(found),
+            info.push_back({ .color = color, .summary = summary_of(found.box(), found.cell_count()), .shape = shape_of(found),
                              .scaled_shape = scaled_shape_of(found) });
             if (objects) objects->push_back(found);
         };
@@ -427,7 +427,7 @@ private:
                 // edge; it is still a block, and dropping it would lose real cells.
                 const int block_width  = min(step_width,  one_grid.width  - block_left);
                 const int block_height = min(step_height, one_grid.height - block_top);
-                object piece;
+                object piece{ (int16_t)block_left, (int16_t)block_top, (int16_t)block_width, (int16_t)block_height };
                 int lit = 0;
                 for (int row = 0; row < block_height; ++row)
                     for (int col = 0; col < block_width; ++col) {
@@ -437,8 +437,6 @@ private:
                         lit += is_colored;
                     }
                 if (!lit) continue;
-                piece.summary = { (int8_t)block_left, (int8_t)block_top,
-                                  (int8_t)block_width, (int8_t)block_height, (int16_t)lit };
                 keep(piece, -1);
             }
             // Repeating-block segmentation needs at least two nonempty blocks.
@@ -467,23 +465,23 @@ private:
     // number whichever way round it sits.
     // Its shape at any size, any way round.
     static uint32_t scaled_shape_of(const object& one) {
-        return key_of_shape(one.summary.width, one.summary.height,
+        return key_of_shape(one.width, one.height,
                             [&](int row, int col) { return (int)one.data[row][col]; }, { true, true });
     }
     static uint32_t shape_of(const object& one) {
-        return key_of_shape(one.summary.width, one.summary.height,
+        return key_of_shape(one.width, one.height,
                             [&](int row, int col) { return (int)one.data[row][col]; }, ANY_WAY_ROUND);
     }
 
     // Counts differing cells when two objects are aligned at their top-left corners.
     static int count_differing_cells(const object& left, const object& right) {
-        const int width = max(left.summary.width, right.summary.width);
-        const int height = max(left.summary.height, right.summary.height);
+        const int width = max(left.width, right.width);
+        const int height = max(left.height, right.height);
         int apart = 0;
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col) {
-                const int here = left.color_at(left.summary.row + row, left.summary.col + col);
-                const int there = right.color_at(right.summary.row + row, right.summary.col + col);
+                const int here = left.color_at(left.row + row, left.col + col);
+                const int there = right.color_at(right.row + row, right.col + col);
                 apart += (here != there);
             }
         return apart;

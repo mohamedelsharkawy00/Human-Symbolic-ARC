@@ -629,11 +629,11 @@ struct piece_slam_rule {
                 bool painted[MAX_GRID_DIM][MAX_GRID_DIM] = {};
                 for (const object& piece : pieces) {
                     bool collision = false;
-                    moved |= slam_cells(piece.summary.width, piece.summary.height, rows, step,
+                    moved |= slam_cells(piece.width, piece.height, rows, step,
                         [&](int row, int col) { return (int)piece.data[row][col]; },
                         [&](int row, int col, int color) {
-                            row += piece.summary.row;
-                            col += piece.summary.col;
+                            row += piece.row;
+                            col += piece.col;
                             // Two pieces landing on one cell would leave paint order to decide.
                             collision = collision || painted[row][col];
                             painted[row][col] = true;
@@ -735,17 +735,17 @@ struct overlap_corner_rule {
             // Tied corners leave the order to the op's list, which we can't see.
             for (size_t i = 0; i < pieces.size(); ++i)
                 for (size_t j = i + 1; j < pieces.size(); ++j)
-                    if (same_corner(pieces[i].summary, pieces[j].summary)) return false;
+                    if (same_corner(pieces[i], pieces[j])) return false;
             // The chain as the op lays it (each_corner_link), each piece painted
             // over the last, which is the paint order the closing Union gives them.
             drawn = grid(pair.output.width, pair.output.height);
             bool laid = true;
-            each_corner_link((int)pieces.size(), [&](int i) { return pieces[(size_t)i].summary.box(); },
+            each_corner_link((int)pieces.size(), [&](int i) { return pieces[(size_t)i].box(); },
                              [&](int i, int row, int col) {
                 const object& piece = pieces[(size_t)i];
                 laid = paint_piece(drawn, piece, row, col);
                 laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
-                    col != piece.summary.col || row != piece.summary.row;
+                    col != piece.col || row != piece.row;
                 return laid;
             });
             return laid;
@@ -823,8 +823,8 @@ struct slide_to_touch_rule {
                 cell_box target;
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != stays) continue;
-                    if (!paint_piece(drawn, pieces[i], pieces[i].summary.row, pieces[i].summary.col)) return false;
-                    target.include(pieces[i].summary.box());
+                    if (!paint_piece(drawn, pieces[i], pieces[i].row, pieces[i].col)) return false;
+                    target.include(pieces[i].box());
                 }
                 // An empty canvas is nothing to touch, and the op answers that
                 // by leaving every piece exactly where it stood.
@@ -833,9 +833,9 @@ struct slide_to_touch_rule {
                 for (size_t i = 0; i < pieces.size(); ++i) {
                     if (info[i].color != slides) continue;
                     anything_slid = true;
-                    const auto [down, across] = shift_to_touch(pieces[i].summary.box(), target);
-                    if (!paint_piece(drawn, pieces[i], pieces[i].summary.row + down,
-                                     pieces[i].summary.col + across)) return false;
+                    const auto [down, across] = shift_to_touch(pieces[i].box(), target);
+                    if (!paint_piece(drawn, pieces[i], pieces[i].row + down,
+                                     pieces[i].col + across)) return false;
                     moved = moved || down != 0 || across != 0;
                 }
                 return anything_slid;
@@ -893,14 +893,14 @@ struct edge_slide_rule {
               grid& drawn) const {
         return draw_on_canvas(input, size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
-                if (!slides(piece) && !paint_piece(canvas, piece, piece.summary.row, piece.summary.col))
+                if (!slides(piece) && !paint_piece(canvas, piece, piece.row, piece.col))
                     return false;
             const direction_step step = step_of(slide_direction);
             for (const object& piece : pieces) {
                 if (!slides(piece)) continue;
-                const int steps = steps_to_edge(piece.summary.box(), canvas.width, canvas.height, slide_direction);
-                if (!paint_piece(canvas, piece, piece.summary.row + steps * step.down,
-                                 piece.summary.col + steps * step.across, over)) return false;
+                const int steps = steps_to_edge(piece.box(), canvas.width, canvas.height, slide_direction);
+                if (!paint_piece(canvas, piece, piece.row + steps * step.down,
+                                 piece.col + steps * step.across, over)) return false;
             }
             return true;
         });
@@ -929,7 +929,7 @@ struct edge_slide_rule {
                 grid drawn;
                 as_they_lie = draw_on_canvas(train[i].input, size, drawn, [&](grid& canvas) {
                     for (const object& piece : pieces[i])
-                        if (!paint_piece(canvas, piece, piece.summary.row, piece.summary.col)) return false;
+                        if (!paint_piece(canvas, piece, piece.row, piece.col)) return false;
                     return true;
                 }) && redraws_the_output(drawn, pairs[i]);
             }
@@ -987,9 +987,9 @@ struct copy_to_rule {
         if (objects.size() < 2 || objects.size() > MAX_OBJECTS_IN_A_LIST) return -1;
         int largest = 0;
         for (int i = 1; i < (int)objects.size(); ++i)
-            if (objects[i].summary.count > objects[largest].summary.count) largest = i;
+            if (objects[i].cell_count() > objects[largest].cell_count()) largest = i;
         for (int i = 0; i < (int)objects.size(); ++i)
-            if (i != largest && objects[i].summary.count == objects[largest].summary.count) return -1;
+            if (i != largest && objects[i].cell_count() == objects[largest].cell_count()) return -1;
         return largest;
     }
 
@@ -998,9 +998,9 @@ struct copy_to_rule {
         const auto& pattern = objects[source];
         for (int i = 0; i < (int)objects.size(); ++i) {
             if (i == source) continue;
-            const auto& target = objects[i].summary;
-            const int row = aligned_copy_start(pattern.summary.height, target.row, target.height, anchor / 3);
-            const int col = aligned_copy_start(pattern.summary.width, target.col, target.width, anchor % 3);
+            const object& target = objects[i];
+            const int row = aligned_copy_start(pattern.height, target.row, target.height, anchor / 3);
+            const int col = aligned_copy_start(pattern.width, target.col, target.width, anchor % 3);
             paint_piece(drawn, pattern, row, col, /*over=*/true, /*clip=*/true);
         }
         return drawn;
@@ -1094,19 +1094,19 @@ struct project_on_seeds_rule {
         // op reads the two off different lists, so this has to as well.
         // Tied for most cells: the op's list order picks, which we can't see.
         const object& tpl = pieces[0];
-        if (pieces.size() > 1 && pieces[1].summary.count == tpl.summary.count) return 0;
+        if (pieces.size() > 1 && pieces[1].cell_count() == tpl.cell_count()) return 0;
         // ProjectOnSeeds hands back the copy of the input it draws on plus one
         // object per stamp, and they share one list, so the drawing runs out one
         // stamp before the list does.
         constexpr int most_the_op_stamps = MAX_OBJECTS_IN_A_LIST - 1;
         int stamped = 0;
         for (const marker_piece& marker : seeds_the_op_will_see(pair.input, tiles))
-            project_along(tpl.summary.box(), marker.summary.box(),
+            project_along(tpl.box(), marker.summary.box(),
                           pair.input.width, pair.input.height, [&](int at_row, int at_col) {
                 if (stamped >= most_the_op_stamps) return false;
                 // A stamp hanging over the edge is drawn as far as it fits.
-                for (int r = 0; r < tpl.summary.height; ++r)
-                    for (int c = 0; c < tpl.summary.width; ++c) {
+                for (int r = 0; r < tpl.height; ++r)
+                    for (int c = 0; c < tpl.width; ++c) {
                         const int row = at_row + r, col = at_col + c;
                         if (tpl.data[r][c] != TRANSPARENT && pair.input.contains(row, col))
                             land(row, col, marker.color);
@@ -1289,10 +1289,10 @@ struct mark_lattice_rule {
         const vector<object> marks = pieces_as_said(input, cut, tiles);
         // Read turned, the marks' rows are their columns, and the other way round.
         const bool turned = portrait && lies_on_its_side(input.width, input.height);
-        auto top = [&](const object& mark) { return (int)(turned ? mark.summary.col : mark.summary.row); };
-        auto left = [&](const object& mark) { return (int)(turned ? mark.summary.row : mark.summary.col); };
-        auto tall = [&](const object& mark) { return (int)(turned ? mark.summary.width : mark.summary.height); };
-        auto wide = [&](const object& mark) { return (int)(turned ? mark.summary.height : mark.summary.width); };
+        auto top = [&](const object& mark) { return (int)(turned ? mark.col : mark.row); };
+        auto left = [&](const object& mark) { return (int)(turned ? mark.row : mark.col); };
+        auto tall = [&](const object& mark) { return (int)(turned ? mark.width : mark.height); };
+        auto wide = [&](const object& mark) { return (int)(turned ? mark.height : mark.width); };
         const int rows = turned ? input.width : input.height;
         const int across = turned ? input.height : input.width;
         // The lines, as the one drawing UnionList makes of them, and the rows it spans.
@@ -1491,10 +1491,9 @@ struct ranked_layout_rule {
         // as Layout lays them (lay_out).
         grid arranged(MAX_GRID_DIM, MAX_GRID_DIM);
         const layout_paper paper = lay_out((int)pieces.size(), cell_size,
-            [&](int i) { return pieces[(size_t)i].summary.box(); },
+            [&](int i) { return pieces[(size_t)i].box(); },
             [&](int i) {
-                const object_summary& box = pieces[(size_t)i].summary;
-                return cell_box{ 0, 0, box.height - 1, box.width - 1 };
+                return cell_box{ 0, 0, pieces[(size_t)i].height - 1, pieces[(size_t)i].width - 1 };
             },
             [&](int i, int row, int col) { return (int)pieces[(size_t)i].data[row][col]; },
             [&](int row, int col, int color) { arranged.data[row][col] = (int8_t)color; });
@@ -1645,17 +1644,10 @@ struct piece_frame_rule {
     // the color the puzzle's table names for its key of this kind (shape_key).
     int8_t keyed = -1;
     bool holds() const { return held; }
-    // No cut means Input's whole box, including its empty margins.
+    // No cut means the whole input as one object, as Input reads it.
     vector<object> pieces(const grid& input, tile_size tiles = {}) const {
-        if (cut != segmentation_methods::unset) return pieces_as_said(input, cut, tiles);
-        object whole;
-        whole.summary = { 0, 0, (int8_t)input.width, (int8_t)input.height, 0 };
-        for (int row = 0; row < input.height; ++row)
-            for (int col = 0; col < input.width; ++col) {
-                whole.data[row][col] = (int8_t)input.data[row][col];
-                whole.summary.count += input.data[row][col] != TRANSPARENT;
-            }
-        return { whole };
+        return cut != segmentation_methods::unset ? pieces_as_said(input, cut, tiles)
+                                                  : objects_of(input, grouping::whole_grid);
     }
 };
 

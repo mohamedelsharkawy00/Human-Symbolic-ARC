@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 namespace arc {
 using namespace std;
@@ -103,45 +104,47 @@ inline object_summary summary_of(const cell_box& box, int count) {
              (int16_t)count };
 }
 
+// AN OBJECT: its frame on the grid -- the column and row of its top-left cell,
+// its width and height, which an operator may move past the grid's edges -- and
+// its cells in that frame, TRANSPARENT where it paints none.
 struct object {
-    object_summary summary;
-    // Stored relative to the box's top-left.
+    int16_t col = 0, row = 0, width = 0, height = 0;
     cells data;
 
     // Build from the grid-cell indices returned by each_object.
     // Cells outside the group stay transparent, including holes in its box.
     static object from_cells(const grid& source, const object_summary& box,
                              const int16_t* indices, int count) {
-        object made;
-        made.summary = box;
+        object made{ box.col, box.row, box.width, box.height };
         for (int i = 0; i < count; ++i) {
-            const int row = cell_row(indices[i]), col = cell_col(indices[i]);
-            made.data[row - box.row][col - box.col] = (int8_t)source.data[row][col];
+            const int at_row = cell_row(indices[i]), at_col = cell_col(indices[i]);
+            made.data[at_row - box.row][at_col - box.col] = (int8_t)source.data[at_row][at_col];
         }
         return made;
     }
 
+    // Its frame, as a box on the grid.
+    cell_box box() const { return { row, col, row + height - 1, col + width - 1 }; }
+
     // Object cell accessors here take grid coordinates, not box-local coordinates; they do the shift.
     // Gaps or holes within the box read as TRANSPARENT, and so does anything outside it.
-    int8_t color_at(int row, int col) const {
-        const int local_row = row - summary.row;
-        const int local_col = col - summary.col;
-        if (local_row < 0 || local_row >= summary.height ||
-            local_col < 0 || local_col >= summary.width) return (int8_t)TRANSPARENT;
-        return data[local_row][local_col];
+    int8_t color_at(int at_row, int at_col) const {
+        const int down = at_row - row, across = at_col - col;
+        if (down < 0 || down >= height || across < 0 || across >= width) return (int8_t)TRANSPARENT;
+        return data[down][across];
     }
 
-    bool holds(int row, int col) const {
-        return color_at(row, col) != (int8_t)TRANSPARENT;
+    bool holds(int at_row, int at_col) const {
+        return color_at(at_row, at_col) != (int8_t)TRANSPARENT;
     }
 
     // The color of its first cell in reading order, which is the cell the walk
     // started from and the one an op reads a piece's color off. TRANSPARENT
     // when it has no cells.
     int8_t first_color() const {
-        for (int row = 0; row < summary.height; ++row)
-            for (int col = 0; col < summary.width; ++col)
-                if (data[row][col] != (int8_t)TRANSPARENT) return data[row][col];
+        for (int down = 0; down < height; ++down)
+            for (int across = 0; across < width; ++across)
+                if (data[down][across] != (int8_t)TRANSPARENT) return data[down][across];
         return (int8_t)TRANSPARENT;
     }
 
@@ -149,39 +152,54 @@ struct object {
     // grid coordinates.
     template <class See>
     void each_cell(See see) const {
-        for (int row = 0; row < summary.height; ++row)
-            for (int col = 0; col < summary.width; ++col) {
-                const int8_t color = data[row][col];
-                if (color != TRANSPARENT) see(summary.row + row, summary.col + col, color);
+        for (int down = 0; down < height; ++down)
+            for (int across = 0; across < width; ++across) {
+                const int8_t color = data[down][across];
+                if (color != TRANSPARENT) see(row + down, col + across, color);
             }
     }
 
-    // The box its cells fill -- which the summary's box need not be: a block
-    // keeps its whole box, empty cells and all.
+    // How many cells it fills.
+    int cell_count() const {
+        int count = 0;
+        each_cell([&](int, int, int8_t) { ++count; });
+        return count;
+    }
+
+    // The box its cells fill -- which its frame need not be: a block keeps its
+    // whole box, empty cells and all.
     cell_box painted_box() const {
-        cell_box box;
-        each_cell([&](int row, int col, int8_t) { box.include_cell(row, col); });
-        return box;
+        cell_box painted;
+        each_cell([&](int at_row, int at_col, int8_t) { painted.include_cell(at_row, at_col); });
+        return painted;
     }
 
     // Every cell it fills repainted in the color `color_of(was)` names.
     template <class ColorOf>
     void repaint(ColorOf color_of) {
-        for (int row = 0; row < summary.height; ++row)
-            for (int col = 0; col < summary.width; ++col)
-                if (data[row][col] != (int8_t)TRANSPARENT) data[row][col] = (int8_t)color_of((int8_t)data[row][col]);
+        for (int down = 0; down < height; ++down)
+            for (int across = 0; across < width; ++across)
+                if (data[down][across] != (int8_t)TRANSPARENT)
+                    data[down][across] = (int8_t)color_of((int8_t)data[down][across]);
     }
 
     // The object on its own, as a grid just big enough to hold it: its own
     // colors where it reaches, TRANSPARENT in the gaps and nowhere else's cells.
     grid drawn() const {
-        grid out(summary.width, summary.height);
-        for (int row = 0; row < summary.height; ++row)
-            for (int col = 0; col < summary.width; ++col)
-                out.data[row][col] = data[row][col];
+        grid out(width, height);
+        for (int down = 0; down < height; ++down)
+            for (int across = 0; across < width; ++across)
+                out.data[down][across] = data[down][across];
         return out;
     }
 };
+
+// The colors a piece wears, a bit each: what a pick by color reads off it.
+inline uint16_t palette(const object& piece) {
+    uint16_t colors = 0;
+    piece.each_cell([&](int, int, int8_t color) { colors = (uint16_t)(colors | 1u << color); });
+    return colors;
+}
 
 // THE EIGHT DIRECTIONS, the one numbering of directions in the project: the cells
 // around a cell, and the directions a piece can go, numbered as a compass is,
@@ -262,6 +280,9 @@ enum class grouping : int8_t {
     // Cells that share a side, all of them the same color: the usual object cut
     // finer, a corner joining nothing (aedd82e4's lone cells).
     touching_sides_same_color,
+    // Every cell at once, in a frame the size of the grid: the whole grid as one
+    // object, its empty cells kept, even where none is colored.
+    whole_grid,
 };
 
 // Caller-owned so a caller can lend memory it already holds.
@@ -291,6 +312,16 @@ inline void each_object(const grid& one_grid, grouping how, object_walk_scratch&
     // is; the touching kinds walk out from the seed cell only.
     const bool whole_color = (how == grouping::all_of_one_color);
     if (one_grid.width <= 0 || one_grid.height <= 0) return;
+    if (how == grouping::whole_grid) {
+        int count = 0;
+        for (int row = 0; row < one_grid.height; ++row)
+            for (int col = 0; col < one_grid.width; ++col)
+                if (is_color(one_grid.data[row][col]) && includes(row, col))
+                    scratch.cells[count++] = (int16_t)cell_index(row, col);
+        take(object_summary{ 0, 0, (int8_t)one_grid.width, (int8_t)one_grid.height, (int16_t)count }, scratch.cells,
+             count);
+        return;
+    }
     // A group never leaves its seed's copy when boundaries are supplied.
     bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
     for (int row = 0; row < one_grid.height; ++row)
@@ -349,6 +380,17 @@ template <class Take>
 inline void each_object(const grid& one_grid, grouping how, object_walk_scratch& scratch,
                         Take take, tile_size tiles = {}) {
     each_object(one_grid, how, scratch, take, tiles, [](int, int) { return true; });
+}
+
+// THE GRID READ AS OBJECTS, as `how` groups its cells (each_object), in the
+// order the walk meets them.
+inline vector<object> objects_of(const grid& one_grid, grouping how, tile_size tiles = {}) {
+    vector<object> found;
+    object_walk_scratch scratch;
+    each_object(one_grid, how, scratch, [&](const object_summary& box, const int16_t* cells, int count) {
+        found.push_back(object::from_cells(one_grid, box, cells, count));
+    }, tiles);
+    return found;
 }
 
 // PARTS · a grid cut into its pieces, or its space into what walls fence off

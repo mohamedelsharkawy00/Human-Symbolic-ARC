@@ -76,13 +76,6 @@ struct piece_pick {
     }
 };
 
-// The colors a piece wears, a bit each: what a pick by color reads off it.
-inline uint16_t palette(const object& piece) {
-    uint16_t colors = 0;
-    piece.each_cell([&](int, int, int8_t color) { colors = (uint16_t)(colors | 1u << color); });
-    return colors;
-}
-
 // Correspondences match objects from input to output and from output to input.
 
 // This structure collects the correspondences and summaries of the readings tried.
@@ -586,9 +579,8 @@ struct correspondence_election {
             const auto corners = prepared_by(segmentation_methods::connected_monochrome);
             auto same_pieces = [](const vector<object>& one, const vector<object>& other) {
                 return ranges::equal(one, other, [](const object& a, const object& b) {
-                    return a.summary.col == b.summary.col && a.summary.row == b.summary.row &&
-                           a.summary.width == b.summary.width && a.summary.height == b.summary.height &&
-                           a.summary.count == b.summary.count; });
+                    return a.col == b.col && a.row == b.row && a.width == b.width && a.height == b.height &&
+                           a.cell_count() == b.cell_count(); });
             };
             bool cuts_the_same = true, held = true;
             for (size_t i = 0; i < sides->pairs.size(); ++i) {
@@ -1060,10 +1052,10 @@ private:
                     for (int i = 0; i < (int)info.size(); ++i) {
                         if (i == rep || info[i].has_partner) continue;
                         const auto& part = objects[i];
-                        if (part.summary.width > whole.summary.width || part.summary.height > whole.summary.height) continue;
+                        if (part.width > whole.width || part.height > whole.height) continue;
                         bool equal = true;
-                        for (int r = 0; r < part.summary.height; ++r)
-                            for (int c = 0; c < part.summary.width; ++c)
+                        for (int r = 0; r < part.height; ++r)
+                            for (int c = 0; c < part.width; ++c)
                                 if (part.data[r][c] != whole.data[r][c]) equal = false;
                         if (equal) info[i].instance_of = (int16_t)rep;
                     }
@@ -1229,8 +1221,8 @@ private:
         if (!link.same_shape || link.outside != 0) return;
         piece.each_cell([&](int row, int col, int8_t color) {
             if (link.hidden) {
-                const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
-                                                        row - piece.summary.row, col - piece.summary.col);
+                const auto [down, across] = posed_place(link.pose, piece.width, piece.height,
+                                                        row - piece.row, col - piece.col);
                 if (!landing.contains(link.row + down, link.col + across) ||
                     landing.data[link.row + down][link.col + across] != color) return;
             }

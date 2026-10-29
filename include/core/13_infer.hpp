@@ -327,10 +327,10 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
         const object& cells = inherited_shape->cells;
         key.push_back((char)inherited_shape->from);
         key.push_back((char)inherited_shape->into);
-        key.push_back((char)cells.summary.width);
-        key.push_back((char)cells.summary.height);
-        for (int row = 0; row < cells.summary.height; ++row)
-            for (int col = 0; col < cells.summary.width; ++col) key.push_back((char)cells.data[row][col]);
+        key.push_back((char)cells.width);
+        key.push_back((char)cells.height);
+        for (int row = 0; row < cells.height; ++row)
+            for (int col = 0; col < cells.width; ++col) key.push_back((char)cells.data[row][col]);
     }
     if (const auto found = readings.completed.find(key); found != readings.completed.end())
         return found->second;
@@ -438,7 +438,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
                                            &inf.correspondence.shape);
         return !pieces.empty() && draw_on_canvas(pair.input, inf.size, drawn, [&](grid& canvas) {
             for (const object& piece : pieces)
-                paint_piece(canvas, piece, piece.summary.row, piece.summary.col, true, /*clip=*/true);
+                paint_piece(canvas, piece, piece.row, piece.col, true, /*clip=*/true);
             return true;
         });
     });

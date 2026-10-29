@@ -610,7 +610,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             int cells = 0;
             for (size_t which = 0; which < group.size(); ++which)
                 for (size_t index = 0; index < group[which].size(); ++index)
-                    cells += group[which][index] ? (int)facts.cuts()[which][index].summary.count : 0;
+                    cells += group[which][index] ? facts.cuts()[which][index].cell_count() : 0;
             return cells;
         };
         int found = -1, most = 0;
@@ -1637,9 +1637,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 if (!handed[which].is_picked(i)) continue;
                 const object& piece = handed[which].pieces[i];
                 const bool known = ranges::any_of(facts.cuts()[which], [&](const object& other) {
-                    const object_summary& one = piece.summary, & two = other.summary;
-                    if (one.row != two.row || one.col != two.col || one.width != two.width ||
-                        one.height != two.height || one.count != two.count) return false;
+                    if (piece.row != other.row || piece.col != other.col || piece.width != other.width ||
+                        piece.height != other.height || piece.cell_count() != other.cell_count()) return false;
                     bool same = true;
                     piece.each_cell([&](int row, int col, int8_t) { same = same && other.holds(row, col); });
                     return same;
@@ -1695,19 +1694,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (!read.line.empty() || line_drawn.size() != facts.train.size()) return {};
         replay_facts as_one = facts;
         const vector<grid> pictures = the_picture({});
-        for (size_t which = 0; which < as_one.cuts().size(); ++which) {
-            const grid& picture = pictures[which];
-            object piece;
-            int count = 0;
-            for (int row = 0; row < picture.height; ++row)
-                for (int col = 0; col < picture.width; ++col)
-                    if (picture.data[row][col] != (int8_t)TRANSPARENT) {
-                        piece.data[row][col] = (int8_t)picture.data[row][col];
-                        ++count;
-                    }
-            piece.summary = { 0, 0, (int8_t)picture.width, (int8_t)picture.height, (int16_t)count };
-            as_one.change(which).hand = { piece };
-        }
+        for (size_t which = 0; which < as_one.cuts().size(); ++which)
+            as_one.change(which).hand = objects_of(pictures[which], grouping::whole_grid);
         const vector<partner_pieces> handed = handed_pieces(as_one, piece_pick::all());
         cells_by_pair copied(as_one.cuts().size());
         for (size_t which = 0; which < as_one.cuts().size(); ++which)

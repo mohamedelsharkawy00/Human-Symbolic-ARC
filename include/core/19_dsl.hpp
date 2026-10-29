@@ -17,8 +17,7 @@
 
 namespace arc {
 
-// One object a program holds: the frame it sits in on the grid, and its cells
-// in that frame.
+// One object a program holds: an object, and whether the sentence picked it.
 //
 // `selected` is the SELECT slot at object depth: one flag per object, not per
 // cell. Selection works like Excel: nothing is selected at birth, selectors
@@ -26,11 +25,8 @@ namespace arc {
 // Acts touch ONLY selected objects — no selection means acts do nothing, never
 // "everything". Sub-object reach comes from carving the piece into its own
 // object first (Split/Colors), then selecting it — not from marking cells.
-struct held_object {
-    int16_t x0 = 0, y0 = 0;
-    int16_t width = 0, height = 0;
+struct held_object : object {
     bool selected = false;
-    cells mask;
 };
 
 // The list an op reads and the list it hands on: as long as a grid has cells,

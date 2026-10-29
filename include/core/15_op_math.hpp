@@ -8,14 +8,143 @@
 #include "1_readings.hpp"
 #include "14_vocabulary.hpp"  // color_pair, BidiColorMap's key values
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace arc {
 using namespace std;
+
+// SHARED · the pieces the partner helpers ask
+
+struct piece_pick;
+struct ray_seed;
+
+// What two pieces of a hand answer, worked out once: touching [0], touching at a
+// side [1], then each likeness of shape; and what one piece counts, for the
+// partner ways by count (counted_by).
+struct hand_answers {
+    static constexpr int QUESTIONS = 2 + SHAPE_LIKENESSES;
+    // Per question, piece by piece: -1 not asked yet.
+    array<vector<int8_t>, QUESTIONS> kept;
+    // Per count (count_kind, up to holes), piece by piece: -1 not counted yet.
+    array<vector<int16_t>, (size_t)count_kind::holes + 1> counts;
+    int pieces = 0;
+    template <class Work> bool answer(int question, int mine, int other, int count, Work work) {
+        if (count != pieces) forget(count);
+        vector<int8_t>& asked = kept[(size_t)question];
+        if (asked.empty()) asked.assign((size_t)count * (size_t)count, -1);
+        int8_t& known = asked[(size_t)mine * (size_t)count + (size_t)other];
+        if (known < 0) known = work() ? 1 : 0;
+        return known != 0;
+    }
+    template <class Work> int counted(int kind, int mine, int count, Work work) {
+        if (count != pieces) forget(count);
+        vector<int16_t>& asked = counts[(size_t)kind];
+        if (asked.empty()) asked.assign((size_t)count, -1);
+        int16_t& known = asked[(size_t)mine];
+        if (known < 0) known = (int16_t)work();
+        return known;
+    }
+    void forget(int count = 0) {
+        for (vector<int8_t>& asked : kept) asked.clear();
+        for (vector<int16_t>& asked : counts) asked.clear();
+        pieces = count;
+    }
+};
+
+// THE PIECES A PARTNER HELPER IS HANDED: where each lies, and whether the pick
+// takes it -- what each helper below asks. A rule's replay hands it the pieces
+// the cut's operator hands over, cut once per pair; an operator hands it its
+// list (listed_pieces, 38_ops.hpp). One kind of hand for both, so a replay and
+// the operator it replays cannot find different partners or fits. The answers
+// the helpers give are worked out once a hand (hand_answers), and defined after
+// the helpers, at the end of this file.
+struct partner_pieces {
+    const vector<object>& pieces;
+    vector<cell_box> boxes;
+    vector<bool> picked;
+    // The hand's, shared by every pick.
+    hand_answers& answers;
+    // The pieces of a cut, the ones `marks` names picked.
+    partner_pieces(const vector<object>& cut, vector<bool> marks, hand_answers& kept)
+        : pieces(cut), boxes(cut.size()), picked(std::move(marks)), answers(kept) {
+        for (size_t i = 0; i < pieces.size(); ++i) boxes[i] = pieces[i].painted_box();
+    }
+    // The pieces of a cut, the ones `pick` takes picked (picked_pieces,
+    // 10_picks_and_frames.hpp), on a canvas the size of `canvas`, where a pick
+    // reads the parts walls fence.
+    partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas, hand_answers& kept);
+    // The blocks piece i's shape is drawn in (blocks_of), its colors aside:
+    // read the first time a partner way at another size asks, and kept.
+    shape_blocks blocks(int i) const {
+        if (blocks_read.empty()) blocks_read.assign(pieces.size(), shape_blocks{ 0, 0 });
+        shape_blocks& kept = blocks_read[(size_t)i];
+        if (kept.down == 0) {
+            const cell_box own = boxes[(size_t)i];
+            kept = blocks_of(own.width(), own.height(),
+                             [&](int row, int col) { return pieces[(size_t)i].color_at(own.row0 + row, own.col0 + col); },
+                             AS_IT_LIES);
+        }
+        return kept;
+    }
+    mutable vector<shape_blocks> blocks_read;
+    // What the partner helpers ask.
+    int count() const { return (int)pieces.size(); }
+    cell_box box(int i) const { return boxes[i]; }
+    bool painted(int i, int row, int col) const { return pieces[i].holds(row, col); }
+    int color_at(int i, int row, int col) const { return pieces[i].color_at(row, col); }
+    bool is_picked(int i) const { return picked[i]; }
+    int color(int i) const { return pieces[i].first_color(); }
+    // Whether piece i holds a cell of `color`.
+    bool holds(int i, int color) const { return (palette(pieces[i]) >> color & 1) != 0; }
+    // What each_partner asks, worked out once a hand.
+    bool touching(int mine, int other, bool sides_only) const;
+    bool alike(int mine, int other, int like) const;
+    int counted(int i, int kind) const;
+    // key_piece_at, worked out once a cell.
+    int key_piece(int row, int col) const;
+    bool every_piece_picked() const { return ranges::all_of(picked, [](bool one) { return one; }); }
+    // Piece i's one partner by `how` among the pieces not picked, or -1.
+    int partner(partner_by how, int i) const;
+    // Whether piece i has any partner by `how` among them, one or several.
+    bool partnered(partner_by how, int i) const;
+    // Whether piece i would fit into a gap of its one partner by `how`.
+    bool fits(partner_by how, int i) const;
+    // Piece i's one partner of `kind` (partner_of_kind) among the pieces not picked, or -1.
+    int partner_of_kind(int kind, int i) const;
+    // HOW FAR PIECE i GOES, as the partner moves take it (the ops AlignTo and
+    // MoveToward, through the same helpers), or false when it has no one partner.
+    // Level with its partner's rows -- or, with `columns`, columns:
+    bool goes_level(int i, bool columns, partner_by how, direction_step& by) const {
+        const int other = partner(how, i);
+        if (other < 0) return false;
+        by = columns ? direction_step{ 0, boxes[other].col0 - boxes[i].col0 }
+                     : direction_step{ boxes[other].row0 - boxes[i].row0, 0 };
+        return true;
+    }
+    // Toward its partner of the kind `value` % PARTNER_KINDS names, by what
+    // `value` / PARTNER_KINDS names (move_toward), on a canvas `width` by `height`:
+    bool goes_toward(int i, int value, int width, int height, direction_step& by) const;
+    // The color piece i takes from its partners by `how`, or -1.
+    int color_from(partner_by how, int i) const;
+    // The color a key drawn in the grid gives each picked piece by its place, -1
+    // for none -- every one where the key does not say (key_place_colors).
+    vector<int8_t> key_places() const;
+    // WHERE EACH PIECE GROWS ITS RAYS, in its own box (ray_seed_of, where the
+    // op grows them): found the first time a replay asks and kept, for every
+    // length and lay the rays are asked with.
+    const vector<ray_seed>& ray_seeds() const;
+    // What ray_seeds and key_piece keep, shared by a copy of the cut.
+    struct key_drawing { int16_t at[MAX_GRID_DIM][MAX_GRID_DIM]; };
+    static constexpr int16_t NOT_ASKED = -2;
+    mutable std::shared_ptr<const vector<ray_seed>> seeds_once;
+    mutable std::shared_ptr<key_drawing> keys_once;
+};
 
 // SHARED · partners (ColorFrom, ShapeFrom, AlignTo, MoveToward,
 // MirrorAround, WouldFit, SelectLikeKey) and bands (Layout, SelectRow,
@@ -68,8 +197,7 @@ inline bool lies_toward(const cell_box& from, const cell_box& to, int partner_di
 // WHETHER THE PIECE `mine`, MOVED `by`, TOUCHES THE PIECE `other`: a cell of it
 // on a cell of the other, or beside one at a side -- or, unless `sides_only`,
 // at a corner. The pieces are asked as each_partner asks them, below.
-template <class Pieces>
-inline bool touches(const Pieces& pieces, int mine, int other, direction_step by, bool sides_only) {
+inline bool touches(const partner_pieces& pieces, int mine, int other, direction_step by, bool sides_only) {
     const cell_box own = pieces.box(mine);
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) {
@@ -83,8 +211,7 @@ inline bool touches(const Pieces& pieces, int mine, int other, direction_step by
 }
 
 // Whether pieces mine and other are one shape, as the likeness `like` lets them differ.
-template <class Pieces>
-inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
+inline bool shapes_alike(const partner_pieces& pieces, int mine, int other, int like) {
     const cell_box own = pieces.box(mine), box = pieces.box(other);
     const bool sized = sized_likeness(like);
     return same_shape_in_blocks(
@@ -167,8 +294,8 @@ constexpr int counted_by(partner_by how) {
 // which a reading may keep; and, for the color questions below, `color(i)`, the
 // color an op reads off its first cell, and `holds(i, color)`, whether it holds
 // a cell of that color.
-template <class Pieces, class Visit>
-inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit visit,
+template <class Visit>
+inline void each_partner(partner_by how, int mine, const partner_pieces& pieces, Visit visit,
                          bool among_all = false) {
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
@@ -222,8 +349,7 @@ inline void each_partner(partner_by how, int mine, const Pieces& pieces, Visit v
 
 // The color the piece `mine` takes from its partners: the one color every
 // partner wears, or -1 when it has none or they disagree.
-template <class Pieces>
-inline int partner_color(partner_by how, int mine, const Pieces& pieces) {
+inline int partner_color(partner_by how, int mine, const partner_pieces& pieces) {
     int color = -1;
     bool clash = false;
     each_partner(how, mine, pieces, [&](int other) {
@@ -236,8 +362,7 @@ inline int partner_color(partner_by how, int mine, const Pieces& pieces) {
 
 // The piece `mine`'s one partner, or -1 when it has none or several: a place
 // is read off one piece, never agreed among many.
-template <class Pieces>
-inline int partner_of(partner_by how, int mine, const Pieces& pieces) {
+inline int partner_of(partner_by how, int mine, const partner_pieces& pieces) {
     int found = -1, partners = 0;
     each_partner(how, mine, pieces, [&](int other) {
         found = other;
@@ -249,8 +374,7 @@ inline int partner_of(partner_by how, int mine, const Pieces& pieces) {
 // Whether the piece `mine` has a partner by `how` at all, one or several, among
 // the pieces not picked: what a piece like another asks (like_the_key), where
 // partner_of asks for the one.
-template <class Pieces>
-inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
+inline bool any_partner(partner_by how, int mine, const partner_pieces& pieces) {
     bool any = false;
     each_partner(how, mine, pieces, [&](int) { any = true; });
     return any;
@@ -261,8 +385,7 @@ inline bool any_partner(partner_by how, int mine, const Pieces& pieces) {
 // partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
 // Asked among the pieces not picked, as partner_of asks. -1 when there is
 // none, or several.
-template <class Pieces>
-inline int partner_of_kind(int kind, int mine, const Pieces& pieces) {
+inline int partner_of_kind(int kind, int mine, const partner_pieces& pieces) {
     if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, pieces);
     int found = -1;
     for (int other = 0; other < pieces.count(); ++other) {
@@ -547,8 +670,8 @@ inline int line_from_middle(int lo, int hi, int from) {
 // order, then where it lands: the pose it is set in, where the corner of its
 // box, so posed, lands, and how many cells the gap holds; see answers true to
 // stop, and so does this. The pieces are asked as each_partner asks them.
-template <class Pieces, class See>
-inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t opening, See see) {
+template <class See>
+inline bool each_fit(int mine, int partner, const partner_pieces& pieces, uint8_t opening, See see) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
     auto painted = [&](int i, int row, int col) { return pieces.painted(i, row, col); };
@@ -606,8 +729,7 @@ inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t openin
 // opening to a side the piece lies past. Nothing moves: this is the question
 // WouldFit asks; FitInto [moved] answers it with the place. The pieces are
 // asked as each_partner asks them.
-template <class Pieces>
-inline bool would_fit(int mine, int partner, const Pieces& pieces) {
+inline bool would_fit(int mine, int partner, const partner_pieces& pieces) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
     if (own.empty() || box.empty()) return false;
     const uint8_t past = (uint8_t)((own.row1 < box.row0 ? side_top : 0) | (own.row0 > box.row1 ? side_bottom : 0) |
@@ -623,8 +745,8 @@ inline bool would_fit(int mine, int partner, const Pieces& pieces) {
 // whole, not the other cup's one-cell gap by its tip). Each move handed to
 // move(i, pose, row, col), as each_fit names the place. The pieces are asked
 // as each_partner asks them.
-template <class Pieces, class Move>
-inline void each_fit_move(const Pieces& pieces, Move move) {
+template <class Move>
+inline void each_fit_move(const partner_pieces& pieces, Move move) {
     constexpr uint8_t any_side = side_top | side_bottom | side_left | side_right;
     vector<bool> filled((size_t)pieces.count(), false);
     for (int i = 0; i < pieces.count(); ++i) {
@@ -657,8 +779,8 @@ inline void each_fit_move(const Pieces& pieces, Move move) {
 // color the cups and the dots wear). Each pour, color by color, lowest first,
 // handed to pour(color, gap_row, gap_col, count), the gap's cells on the grid.
 // The pieces are asked as each_partner asks them.
-template <class Pieces, class Pour>
-inline void each_pour(const Pieces& pieces, Pour pour) {
+template <class Pour>
+inline void each_pour(const partner_pieces& pieces, Pour pour) {
     int cells_of[COLOR_COUNT] = {};
     for (int i = 0; i < pieces.count(); ++i) {
         if (!pieces.is_picked(i)) continue;
@@ -692,8 +814,7 @@ inline void each_pour(const Pieces& pieces, Pour pour) {
 // THE PARTS A PICK FENCES OFF (grid_parts) on a canvas `width` by `height`:
 // its walls are every cell a picked piece paints, as Partition and
 // SelectPartition read them. The pieces are asked as each_partner asks them.
-template <class Pieces>
-inline grid_parts parts_the_pick_fences(const Pieces& pieces, int width, int height) {
+inline grid_parts parts_the_pick_fences(const partner_pieces& pieces, int width, int height) {
     bool wall[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     for (int i = 0; i < pieces.count(); ++i) {
         if (!pieces.is_picked(i)) continue;
@@ -708,8 +829,8 @@ inline grid_parts parts_the_pick_fences(const Pieces& pieces, int width, int hei
 
 // Each part fenced by the picked pieces, in reading order. Both Partition
 // and its replay clip the source's colored cells to these same parts.
-template <class Pieces, class Part>
-inline void each_fenced_part(const Pieces& pieces, int width, int height, Part see) {
+template <class Part>
+inline void each_fenced_part(const partner_pieces& pieces, int width, int height, Part see) {
     const grid_parts parts = parts_the_pick_fences(pieces, width, height);
     for (int which = 0; which < parts.count; ++which)
         see(which, parts.box_of(which), [&](int row, int col) { return parts.part[row][col] == which; });
@@ -718,8 +839,7 @@ inline void each_fenced_part(const Pieces& pieces, int width, int height, Part s
 // WHETHER THE PIECE `mine` LIES IN PART `which` (parts_the_pick_fences): it
 // paints a cell, and every cell it paints is in that part. A piece over a wall,
 // or across two parts, lies in none. SelectPartition[which] picks these.
-template <class Pieces>
-inline bool lies_in_part(const Pieces& pieces, int mine, int which, const grid_parts& parts) {
+inline bool lies_in_part(const partner_pieces& pieces, int mine, int which, const grid_parts& parts) {
     const cell_box box = pieces.box(mine);
     if (box.empty()) return false;
     for (int row = box.row0; row <= box.row1; ++row)
@@ -753,8 +873,7 @@ inline bool is_wall(int width, int height, const cell_box& box, Painted painted)
 // with as many holes, cells or colors), as each_partner finds such a piece
 // (63613498: the piece shaped as the key in the grey corner lies turns grey, not
 // the ones turned). The pieces are asked as each_partner asks them.
-template <class Pieces>
-inline bool like_the_key(int how, int mine, const Pieces& pieces) {
+inline bool like_the_key(int how, int mine, const partner_pieces& pieces) {
     return how >= 0 && how < KEY_LIKENESSES &&
            any_partner((partner_by)((int)partner_by::same_shape + how), mine, pieces);
 }
@@ -768,8 +887,8 @@ inline bool like_the_key(int how, int mine, const Pieces& pieces) {
 // partner comes out unpicked (4364c1c4: of every piece, the partners above
 // each, the upper piece of each stack). The pieces are asked as each_partner
 // asks them.
-template <class Pieces, class Mark>
-inline void each_partner_picked(int value, const Pieces& pieces, Mark mark) {
+template <class Mark>
+inline void each_partner_picked(int value, const partner_pieces& pieces, Mark mark) {
     if (value < 0 || value >= SELECT_PARTNER_VALUES) return;
     const partner_by how = partner_way_of(value);
     const int partner_direction = partner_direction_of(value);
@@ -896,8 +1015,7 @@ static_assert((int)toward_by::count == TOWARD_FARS, "MoveToward names each way o
 // `height`. A piece that touches already, or that would leave the canvas first,
 // stays. Hands back how far down and across; the op and the reading's replay
 // both take the move from here. The pieces are asked as each_partner asks them.
-template <class Pieces>
-inline direction_step move_toward(toward_by far, int mine, int partner, const Pieces& pieces,
+inline direction_step move_toward(toward_by far, int mine, int partner, const partner_pieces& pieces,
                                                 int width, int height) {
     const cell_box own = pieces.box(mine);
     const int partner_direction = direction_toward(own, pieces.box(partner));
@@ -1075,23 +1193,20 @@ struct shape_table {
 // reading may keep).
 // The piece that shows a cell of the key's drawing, the last not picked to
 // paint it, or -1 where none does.
-template <class Pieces>
-inline int key_piece_at(const Pieces& pieces, int row, int col) {
+inline int key_piece_at(const partner_pieces& pieces, int row, int col) {
     int found = -1;
     for (int i = 0; i < pieces.count(); ++i)
         if (!pieces.is_picked(i) && pieces.painted(i, row, col)) found = i;
     return found;
 }
 // The color the key's drawing shows at a cell, TRANSPARENT where it shows none.
-template <class Pieces>
-inline int key_color_at(const Pieces& pieces, int row, int col) {
+inline int key_color_at(const partner_pieces& pieces, int row, int col) {
     const int i = pieces.key_piece(row, col);
     return i < 0 ? (int)TRANSPARENT : (int)pieces.color_at(i, row, col);
 }
 // The box of the key's drawing: the rows and columns its pieces paint, empty
 // where every piece is picked.
-template <class Pieces>
-inline cell_box key_box(const Pieces& pieces) {
+inline cell_box key_box(const partner_pieces& pieces) {
     cell_box box;
     for (int i = 0; i < pieces.count(); ++i)
         if (!pieces.is_picked(i)) box.include(pieces.box(i));
@@ -1101,8 +1216,8 @@ inline cell_box key_box(const Pieces& pieces) {
 // READ BY COLOR: two cells of two colors side by side, alone together along a
 // row -- or, `along_rows` false, a column -- are an entry, handed to
 // `visit(first, second)`, the first cell's color and the second's.
-template <class Pieces, class Visit>
-inline void each_key_entry(const Pieces& pieces, bool along_rows, Visit visit) {
+template <class Visit>
+inline void each_key_entry(const partner_pieces& pieces, bool along_rows, Visit visit) {
     auto key_at = [&](int row, int col) { return key_color_at(pieces, row, col); };
     const int down = along_rows ? 0 : 1, across = along_rows ? 1 : 0;
     for (int i = 0; i < pieces.count(); ++i) {
@@ -1124,8 +1239,7 @@ inline void each_key_entry(const Pieces& pieces, bool along_rows, Visit visit) {
 // entry trade places, `to[color]` the color each comes out in, -1 for a color no
 // entry names. False, and no color traded, where the key names no entry, or
 // names a color with two partners: a table that is no swap.
-template <class Pieces>
-inline bool key_swaps(const Pieces& pieces, bool along_rows, int8_t* to) {
+inline bool key_swaps(const partner_pieces& pieces, bool along_rows, int8_t* to) {
     for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
     bool any = false, swaps = true;
     each_key_entry(pieces, along_rows, [&](int first, int second) {
@@ -1151,8 +1265,7 @@ constexpr int8_t traded_with_empty(int8_t cell, int color) {
 // it was: the fixed pair `value` numbers (color_pair), or past those, the pairs
 // a key drawn in the grid names (key_swaps), read along its rows or its
 // columns. False where it trades nothing, or trades with empty.
-template <class Pieces>
-inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
+inline bool swaps_of(int value, const partner_pieces& pieces, int8_t* to) {
     if (value == KEY_PAIRS_ALONG_ROWS || value == KEY_PAIRS_ALONG_COLUMNS)
         return key_swaps(pieces, value == KEY_PAIRS_ALONG_ROWS, to);
     for (int color = 0; color < COLOR_COUNT; ++color) to[color] = -1;
@@ -1168,8 +1281,8 @@ inline bool swaps_of(int value, const Pieces& pieces, int8_t* to) {
 // left to right, each handed to `visit(color)` -- every one, or, `grounded`,
 // every one but those of its ground, the color most of its cells wear
 // (color_tally), as a grid's ground is: the panel the entries are drawn on.
-template <class Pieces, class Visit>
-inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
+template <class Visit>
+inline void each_key_cell(const partner_pieces& pieces, bool grounded, Visit visit) {
     const cell_box box = key_box(pieces);
     if (box.empty()) return;
     int ground = TRANSPARENT;
@@ -1193,8 +1306,7 @@ inline void each_key_cell(const Pieces& pieces, bool grounded, Visit visit) {
 
 // THE KEY'S ONE COLOR: the color every cell the key's pieces paint wears, -1
 // where they wear several or paint none.
-template <class Pieces>
-inline int key_color(const Pieces& pieces) {
+inline int key_color(const partner_pieces& pieces) {
     int color = -1;
     for (int i = 0; i < pieces.count(); ++i) {
         if (pieces.is_picked(i)) continue;
@@ -1219,8 +1331,8 @@ inline int key_color(const Pieces& pieces) {
 // on (fit_place: 103eff5b's azure shape takes the key's colors, the key turned
 // and grown to it). False where it has no one partner. Colors never decide
 // the fit: they are what it carries over.
-template <class Pieces, class Paint>
-inline bool colors_from_its_shape(int like, int mine, const Pieces& pieces, Paint paint) {
+template <class Paint>
+inline bool colors_from_its_shape(int like, int mine, const partner_pieces& pieces, Paint paint) {
     if (like < 0 || like >= SHAPE_LIKENESSES) return false;
     const int partner = partner_of((partner_by)((int)partner_by::same_shape + like), mine, pieces);
     if (partner < 0) return false;
@@ -1253,8 +1365,7 @@ inline bool colors_from_its_shape(int like, int mine, const Pieces& pieces, Pain
 // i's, -1 for a piece not picked. False, and no color given, where the picked
 // pieces and the entries are still not as many. `lows`, `highs`, `band` and
 // `order` are scratch, as many as the pieces.
-template <class Pieces>
-inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows, int16_t* highs,
+inline bool key_place_colors(const partner_pieces& pieces, int8_t* color, int16_t* lows, int16_t* highs,
                              int8_t* band, int* order) {
     // Past every row, a piece not picked bands after every picked one, apart.
     constexpr int16_t past = 2 * MAX_GRID_DIM;
@@ -1308,8 +1419,8 @@ inline bool key_place_colors(const Pieces& pieces, int8_t* color, int16_t* lows,
 // cell(i, row, col, color), a piece's cells together, none off the largest
 // grid; a piece with no one partner, or one not wholly past a side, gets none.
 // The pieces are asked as each_partner asks them.
-template <class Pieces, class Cell>
-inline void each_shape_taken(int how, const Pieces& pieces, Cell cell) {
+template <class Cell>
+inline void each_shape_taken(int how, const partner_pieces& pieces, Cell cell) {
     if (how < 0 || how >= (int)partner_by::count) return;
     for (int i = 0; i < pieces.count(); ++i) {
         if (!pieces.is_picked(i)) continue;
@@ -1658,8 +1769,8 @@ constexpr int aligned_copy_start(int source_size, int target_start,
 // drawing of every bar, and may say false to stop. The op calls it, so
 // a reading and the op cannot draw different bars. Answers whether an L it
 // drew turned: both its legs had cells to fill.
-template <class Pieces, class Land>
-inline bool bridge_bars(int way, int width, int height, const Pieces& pieces, Land land) {
+template <class Land>
+inline bool bridge_bars(int way, int width, int height, const partner_pieces& pieces, Land land) {
     if (way < 0 || way >= BRIDGE_VALUES) return false;
     const int count = pieces.count();
     auto box_of_piece = [&](int i) { return pieces.box(i); };
@@ -2176,8 +2287,7 @@ static_assert((int)mirror_by::count == MIRRORS, "MirrorAround names each mirror 
 // column so a middle between two cells is whole: its one partner's by `how`
 // among the pieces not picked (partner_of), or past those the grid's own --
 // false for a piece with no one partner, which gets no copy.
-template <class Pieces>
-inline bool mirror_middle(int how, int mine, const Pieces& pieces, int width, int height,
+inline bool mirror_middle(int how, int mine, const partner_pieces& pieces, int width, int height,
                           int& row2, int& col2) {
     row2 = height - 1;
     col2 = width - 1;
@@ -2205,5 +2315,66 @@ inline cell_box mirrored_box(const cell_box& box, int row2, int col2, bool down,
              down ? row2 - box.row0 : box.row1, across ? col2 - box.col0 : box.col1 };
 }
 constexpr int mirror_pose(bool down, bool across) { return (down ? 2 : 0) | (across ? 4 : 0); }
+
+// WHAT THE PARTNER HELPERS ANSWER, for the pieces they are handed
+// (partner_pieces), once the helpers are all said.
+inline bool partner_pieces::touching(int mine, int other, bool sides_only) const {
+    return answers.answer(sides_only ? 1 : 0, mine, other, count(),
+                          [&] { return touches(*this, mine, other, { 0, 0 }, sides_only); });
+}
+inline bool partner_pieces::alike(int mine, int other, int like) const {
+    return answers.answer(2 + like, mine, other, count(), [&] { return shapes_alike(*this, mine, other, like); });
+}
+inline int partner_pieces::counted(int i, int kind) const {
+    return answers.counted(kind, i, count(), [&] {
+        const cell_box own = boxes[(size_t)i];
+        return count_of(kind, own.height(), own.width(),
+                        [&](int row, int col) { return pieces[(size_t)i].color_at(own.row0 + row, own.col0 + col); });
+    });
+}
+inline int partner_pieces::key_piece(int row, int col) const {
+    if (row < 0 || col < 0 || row >= MAX_GRID_DIM || col >= MAX_GRID_DIM) return key_piece_at(*this, row, col);
+    if (!keys_once) {
+        keys_once = std::make_shared<key_drawing>();
+        for (auto& line : keys_once->at) ranges::fill(line, NOT_ASKED);
+    }
+    int16_t& known = keys_once->at[row][col];
+    if (known == NOT_ASKED) known = (int16_t)key_piece_at(*this, row, col);
+    return known;
+}
+inline int partner_pieces::partner(partner_by how, int i) const { return partner_of(how, i, *this); }
+inline bool partner_pieces::partnered(partner_by how, int i) const { return any_partner(how, i, *this); }
+inline bool partner_pieces::fits(partner_by how, int i) const {
+    const int other = partner(how, i);
+    return other >= 0 && would_fit(i, other, *this);
+}
+inline int partner_pieces::partner_of_kind(int kind, int i) const { return arc::partner_of_kind(kind, i, *this); }
+inline bool partner_pieces::goes_toward(int i, int value, int width, int height, direction_step& by) const {
+    const int other = partner_of_kind(value % PARTNER_KINDS, i);
+    if (other < 0) return false;
+    by = move_toward((toward_by)(value / PARTNER_KINDS), i, other, *this, width, height);
+    return true;
+}
+inline int partner_pieces::color_from(partner_by how, int i) const { return partner_color(how, i, *this); }
+inline vector<int8_t> partner_pieces::key_places() const {
+    const size_t count = pieces.size();
+    vector<int8_t> color(count, -1), band(count);
+    vector<int16_t> lows(count), highs(count);
+    vector<int> order(count);
+    if (count) key_place_colors(*this, color.data(), lows.data(), highs.data(), band.data(), order.data());
+    return color;
+}
+inline const vector<ray_seed>& partner_pieces::ray_seeds() const {
+    if (!seeds_once) {
+        auto made = std::make_shared<vector<ray_seed>>(pieces.size());
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            const object& piece = pieces[i];
+            (*made)[i] = ray_seed_of(piece.height, piece.width,
+                                     [&](int row, int col) { return piece.data[row][col]; });
+        }
+        seeds_once = std::move(made);
+    }
+    return *seeds_once;
+}
 
 }  // namespace arc

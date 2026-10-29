@@ -2242,8 +2242,8 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
                 if (cache_it != state.preview_cache.end()
                     && bi < cache_it->second.object_bboxes[i].size()) {
                   const auto &bb = cache_it->second.object_bboxes[i][bi];
-                  int bx = x_cur + bb.x0 * cell_scale;
-                  int by = y_used + bb.y0 * cell_scale;
+                  int bx = x_cur + bb.col * cell_scale;
+                  int by = y_used + bb.row * cell_scale;
                   int bw = bb.width * cell_scale;
                   int bh = bb.height * cell_scale;
                   int t = min(line_th, min(bw, bh));

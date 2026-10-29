@@ -49,7 +49,8 @@ struct recoloring {
 };
 
 // Whether two boxes share their top-left corner: for two objects, the same place.
-inline bool same_corner(const object_summary& one, const object_summary& other) {
+template <class Framed>
+inline bool same_corner(const Framed& one, const Framed& other) {
     return one.col == other.col && one.row == other.row;
 }
 
@@ -202,8 +203,8 @@ struct object_matching {
         if (!link.same_shape) return;
         const int scale = link.scale;
         piece.each_cell([&](int row, int col, int8_t color) {
-            const auto [down, across] = posed_place(link.pose, piece.summary.width, piece.summary.height,
-                                                    row - piece.summary.row, col - piece.summary.col);
+            const auto [down, across] = posed_place(link.pose, piece.width, piece.height,
+                                                    row - piece.row, col - piece.col);
             for (int block_row = 0; block_row < scale; ++block_row)
                 for (int block_col = 0; block_col < scale; ++block_col) {
                     const int at_row = link.row + down * scale + block_row;
@@ -960,7 +961,7 @@ private:
     // which is where the order the pieces were listed in used to decide which
     // copy a landing names -- 06df4c85 credited a block between two reds to a
     // red in another row entirely, for being listed first.
-    static int travel_of(const edge& edge, const object_summary& source) {
+    static int travel_of(const edge& edge, const object& source) {
         const int down = edge.row - source.row, across = edge.col - source.col;
         return (down != 0 && across != 0 ? MAX_GRID_DIM * 2 : 0) + abs(down) + abs(across);
     }
@@ -988,7 +989,7 @@ private:
         laid_out.travel.resize(found.size());
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             laid_out.travel[found_index] =
-                travel_of(found[found_index], from_objects[found[found_index].from].summary);
+                travel_of(found[found_index], from_objects[found[found_index].from]);
         bool held[MAX_GRID_DIM][MAX_GRID_DIM] = {};
         for (const object& piece : from_objects)
             piece.each_cell([&](int row, int col, int8_t) {

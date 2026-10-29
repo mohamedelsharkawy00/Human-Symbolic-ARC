@@ -43,7 +43,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     auto keys_of = [&](auto key) {
         vector<int> keys;
         for (const object& piece : pieces)
-            keys.push_back(key(piece.summary.height, piece.summary.width,
+            keys.push_back(key(piece.height, piece.width,
                                [&](int row, int col) { return (int)piece.data[row][col]; }));
         return keys;
     };
@@ -58,8 +58,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
             found = lone_one((int)keys.size(), [&](int i, int j) { return keys[(size_t)i] == keys[(size_t)j]; });
         } else
             found = unique_piece(value, (int)pieces.size(),
-                [&](int i) { return (int)pieces[(size_t)i].summary.width; },
-                [&](int i) { return (int)pieces[(size_t)i].summary.height; },
+                [&](int i) { return (int)pieces[(size_t)i].width; },
+                [&](int i) { return (int)pieces[(size_t)i].height; },
                 [&](int i, int row, int col) { return (int)pieces[(size_t)i].data[row][col]; });
         if (found >= 0) picked[(size_t)found] = true;
         return picked;
@@ -89,7 +89,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         // count SelectAtLeast makes).
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
-            picked[i] = counts_at_least(value, piece.summary.height, piece.summary.width,
+            picked[i] = counts_at_least(value, piece.height, piece.width,
                                         [&](int row, int col) { return (int)piece.data[row][col]; });
         }
         return picked;
@@ -100,7 +100,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
         const int count = (int)pieces.size();
         if (count == 0) return picked;
         vector<int8_t> band(count);
-        bands_of(count, how == piece_pick::row_band, [&](int i) { return pieces[(size_t)i].summary.box(); },
+        bands_of(count, how == piece_pick::row_band, [&](int i) { return pieces[(size_t)i].box(); },
                  band.data());
         for (int i = 0; i < count; ++i) picked[i] = band[i] == value;
         return picked;
@@ -108,7 +108,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     if (how == piece_pick::by_holes) {
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
-            picked[i] = grid_parts(piece.summary.width, piece.summary.height, [&](int row, int col) {
+            picked[i] = grid_parts(piece.width, piece.height, [&](int row, int col) {
                 return piece.data[row][col] != (int8_t)TRANSPARENT; }).hollows() == value;
         }
         return picked;
@@ -116,11 +116,11 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     if (how == piece_pick::running_along) {
         auto runs = [&](int i) {
             const object& piece = pieces[(size_t)i];
-            return way_it_runs(piece.summary.height, piece.summary.width, [&](int row, int col) {
+            return way_it_runs(piece.height, piece.width, [&](int row, int col) {
                 return piece.data[row][col] != (int8_t)TRANSPARENT; });
         };
         const runs_along wanted = value == WAY_MOST_CELLS_RUN
-            ? the_way_most_cells_run((int)pieces.size(), runs, [&](int i) { return (int)pieces[(size_t)i].summary.count; })
+            ? the_way_most_cells_run((int)pieces.size(), runs, [&](int i) { return (int)pieces[(size_t)i].cell_count(); })
             : (runs_along)value;
         if (value == WAY_MOST_CELLS_RUN && wanted == runs_along::no_way) return picked;
         for (size_t i = 0; i < pieces.size(); ++i) picked[i] = runs((int)i) == wanted;
@@ -128,7 +128,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     }
     vector<int> order(pieces.size());
     const bool largest = how == piece_pick::largest || how == piece_pick::largest_ranks;
-    size_order((int)pieces.size(), largest, [&](int i) { return (int)pieces[(size_t)i].summary.count; }, order.data());
+    size_order((int)pieces.size(), largest, [&](int i) { return (int)pieces[(size_t)i].cell_count(); }, order.data());
     if (how == piece_pick::largest || how == piece_pick::smallest) {
         if (value >= 0 && value < (int)order.size()) picked[order[value]] = true;
         return picked;
@@ -157,7 +157,7 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick
     vector<bool> picked(pieces.size(), false);
     if (pick.how == piece_pick::walls)
         for (size_t i = 0; i < pieces.size(); ++i)
-            picked[i] = is_wall(canvas.width, canvas.height, pieces[i].summary.box(),
+            picked[i] = is_wall(canvas.width, canvas.height, pieces[i].box(),
                                 [&](int row, int col) { return pieces[i].holds(row, col); });
     else if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
     else
@@ -296,12 +296,12 @@ struct replay_facts {
                 for (const shape_freedom free : { shape_freedom{ true, true }, shape_freedom{ true, false, true } }) {
                     vector<uint32_t> keys;
                     for (const object& piece : cut)
-                        keys.push_back(key_of_shape(piece.summary.width, piece.summary.height,
+                        keys.push_back(key_of_shape(piece.width, piece.height,
                                                     [&](int row, int col) { return (int)piece.data[row][col]; }, free));
                     for (size_t i = 0; i < cut.size(); ++i)
                         for (size_t j = i + 1; j < cut.size(); ++j)
-                            if (keys[i] == keys[j] && (cut[i].summary.width != cut[j].summary.width ||
-                                                       cut[i].summary.height != cut[j].summary.height))
+                            if (keys[i] == keys[j] && (cut[i].width != cut[j].width ||
+                                                       cut[i].height != cut[j].height))
                                 sizes_seen |= (int8_t)(free.stretch ? 2 : 1);
                 }
         }
@@ -452,10 +452,10 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     color_tally worn;
     for (size_t index = 0; index < count; ++index) {
         const auto& piece = pieces[index];
-        sizes.push_back(piece.summary.count);
-        holes.push_back(count_of((int)count_kind::holes, piece.summary.height, piece.summary.width,
+        sizes.push_back(piece.cell_count());
+        holes.push_back(count_of((int)count_kind::holes, piece.height, piece.width,
             [&](int row, int col) { return (int)piece.data[row][col]; }));
-        runs.push_back((int)way_it_runs(piece.summary.height, piece.summary.width,
+        runs.push_back((int)way_it_runs(piece.height, piece.width,
             [&](int row, int col) { return piece.data[row][col] != TRANSPARENT; }));
         piece.each_cell([&](int, int, int8_t color) {
             worn.add(color);
@@ -487,7 +487,7 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     }
     for (const bool rows : {true, false}) {
         vector<int8_t> bands(count);
-        bands_of((int)count, rows, [&](int index) { return pieces[(size_t)index].summary.box(); }, bands.data());
+        bands_of((int)count, rows, [&](int index) { return pieces[(size_t)index].box(); }, bands.data());
         classes(rows ? piece_pick::row_band : piece_pick::column_band,
                 vector<int>(bands.begin(), bands.end()), 0, MAX_GRID_DIM - 1);
         map<int, group> lines;
@@ -545,7 +545,7 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     vector<vector<int>> counts((size_t)count_kind::count);
     for (int kind = 0; kind < (int)count_kind::count; ++kind) {
         for (const auto& piece : pieces)
-            counts[(size_t)kind].push_back(count_of(kind, piece.summary.height, piece.summary.width,
+            counts[(size_t)kind].push_back(count_of(kind, piece.height, piece.width,
                 [&](int row, int col) { return (int)piece.data[row][col]; }));
         for (const bool most : {true, false}) {
             group members(count, false);
@@ -646,7 +646,7 @@ inline optional<piece_pick> pick_for_group(const replay_facts& facts, const vect
         uint16_t group_colors = 0, kept_colors = 0;
         bool some_in = false, some_kept = false;
         for (size_t index = 0; index < pieces.size(); ++index) {
-            const int count = pieces[index].summary.count;
+            const int count = pieces[index].cell_count();
             if (group[which][index]) {
                 some_in = true;
                 group_colors = (uint16_t)(group_colors | palette(pieces[index]));
@@ -701,10 +701,10 @@ inline vector<correspondence_election::fired_rule> size_changes_from_matches(
         grid drawn(output.width, output.height);
         for (size_t piece_index = 0; piece_index < pieces.size(); ++piece_index) {
             const auto& piece = pieces[piece_index];
-            const auto& box = piece.summary;
+            const int cells = piece.cell_count();
             const auto& matched = pair.input_info[piece_index].summary;
-            if (box.row != matched.row || box.col != matched.col || box.count != matched.count ||
-                box.width != matched.width || box.height != matched.height) return {};
+            if (piece.row != matched.row || piece.col != matched.col || cells != matched.count ||
+                piece.width != matched.width || piece.height != matched.height) return {};
             int target = COLOR_COUNT;
             bool uniform = true, changed = false;
             piece.each_cell([&](int row, int col, int8_t color) {
@@ -720,7 +720,7 @@ inline vector<correspondence_election::fired_rule> size_changes_from_matches(
                 if (!is_color(target)) return {};
                 if (!link.from_input) continue;
                 if (!link.same_shape || link.scale != 1 || link.pose != 0 ||
-                    link.row != box.row || link.col != box.col) return {};
+                    link.row != piece.row || link.col != piece.col) return {};
                 carried = true;
             }
             if (!is_color(target)) {
@@ -735,10 +735,10 @@ inline vector<correspondence_election::fired_rule> size_changes_from_matches(
             ranks position{0, 0};
             for (size_t other = 0; other < pieces.size(); ++other) {
                 if (other == piece_index) continue;
-                const int count = pieces[other].summary.count;
-                if (count == box.count) return {};
-                position.larger += count > box.count;
-                position.smaller += count < box.count;
+                const int count = pieces[other].cell_count();
+                if (count == cells) return {};
+                position.larger += count > cells;
+                position.smaller += count < cells;
             }
             here.emplace(target, position);
         }
@@ -888,7 +888,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
     vector<vector<int>> sizes;
     for (const auto& cut : facts.cuts()) {
         vector<int> counts;
-        for (const object& piece : cut) counts.push_back(piece.summary.count);
+        for (const object& piece : cut) counts.push_back(piece.cell_count());
         ranges::sort(counts);
         sizes.push_back(std::move(counts));
     }
@@ -937,7 +937,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         for (const auto& cut : facts.cuts()) {
             vector<int>& one = counts.emplace_back();
             for (const object& piece : cut)
-                one.push_back(count_of(kind, piece.summary.height, piece.summary.width,
+                one.push_back(count_of(kind, piece.height, piece.width,
                                        [&](int row, int col) { return (int)piece.data[row][col]; }));
         }
         for (int many = 1; many <= AT_LEAST_STEPS; ++many) {
@@ -1155,8 +1155,8 @@ struct picks_on_hand {
 // Whether two pieces draw the same thing: the same cells in the same colors,
 // wherever each lies.
 inline bool same_drawing(const object& one, const object& other) {
-    return same_shape(one.summary.width, one.summary.height, [&](int row, int col) { return (int)one.data[row][col]; },
-                      other.summary.width, other.summary.height,
+    return same_shape(one.width, one.height, [&](int row, int col) { return (int)one.data[row][col]; },
+                      other.width, other.height,
                       [&](int row, int col) { return (int)other.data[row][col]; }, DRAWING);
 }
 
@@ -1200,7 +1200,7 @@ inline bool shows_what_it_frames(const grid& drawing, int height, int width) {
 inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick, int one) {
     if ((pick.how != piece_pick::largest && pick.how != piece_pick::smallest) || pick.value >= SIZE_RANKS) return false;
     for (size_t i = 0; i < pieces.size(); ++i)
-        if ((int)i != one && pieces[i].summary.count == pieces[one].summary.count &&
+        if ((int)i != one && pieces[i].cell_count() == pieces[one].cell_count() &&
             !same_drawing(pieces[i], pieces[one]))
             return true;
     return false;
@@ -1224,7 +1224,7 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
         if (!picked[i]) continue;
         ++taken;
         one = (int)i;
-        box.include(pieces[i].summary.box());
+        box.include(pieces[i].box());
     }
     several = taken > 1;
     if (taken == 0 || size_pick_ties(pieces, pick, one)) return false;
@@ -1257,10 +1257,9 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
     for (size_t i = 0; i < pieces.size() && kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST; ++i)
         if (picked[i]) kept.push_back(&pieces[i]);
     grid paper(MAX_GRID_DIM, MAX_GRID_DIM);
-    const layout_paper laid = lay_out((int)kept.size(), cell, [&](int i) { return kept[(size_t)i]->summary.box(); },
+    const layout_paper laid = lay_out((int)kept.size(), cell, [&](int i) { return kept[(size_t)i]->box(); },
         [&](int i) {
-            const object_summary& box = kept[(size_t)i]->summary;
-            return cell_box{ 0, 0, box.height - 1, box.width - 1 };
+            return cell_box{ 0, 0, kept[(size_t)i]->height - 1, kept[(size_t)i]->width - 1 };
         },
         [&](int i, int row, int col) { return (int)kept[(size_t)i]->data[row][col]; },
         [&](int row, int col, int color) { paper.data[row][col] = (int8_t)color; });
@@ -1268,9 +1267,9 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
     paper.width = laid.width;
     paper.height = laid.height;
     for (const object* piece : kept) {
-        grid drawing(piece->summary.width, piece->summary.height);
-        for (int row = 0; row < piece->summary.height; ++row)
-            for (int col = 0; col < piece->summary.width; ++col) drawing.data[row][col] = piece->data[row][col];
+        grid drawing(piece->width, piece->height);
+        for (int row = 0; row < piece->height; ++row)
+            for (int col = 0; col < piece->width; ++col) drawing.data[row][col] = piece->data[row][col];
         if (!shows_what_it_frames(drawing, laid.cell_height, laid.cell_width)) return false;
     }
     return draw_on_canvas(input, size, framed, [&](grid& canvas) {

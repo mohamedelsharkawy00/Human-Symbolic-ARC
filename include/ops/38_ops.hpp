@@ -66,19 +66,12 @@ template <class See>
 void each_painted(const held_object& one, See see) {
     for (int row = 0; row < one.height; ++row)
         for (int col = 0; col < one.width; ++col)
-            if (const int8_t color = one.mask[row][col]; color != TRANSPARENT) see(row, col, color);
+            if (const int8_t color = one.data[row][col]; color != TRANSPARENT) see(row, col, color);
 }
 
-int painted_count(const held_object& one) {
-    int count = 0;
-    each_painted(one, [&](int, int, int8_t) { ++count; });
-    return count;
-}
-
-// The box the paint actually fills, in the object's own frame, which is not
-// always the box the object declares -- Colors hands back layers carrying the
-// whole source box.
-cell_box painted_box(const held_object& one) {
+// The box the paint fills in the object's own frame, which is not always its
+// frame -- Colors hands back layers carrying the whole source box.
+cell_box paint_in_frame(const held_object& one) {
     cell_box box;
     each_painted(one, [&](int row, int col, int8_t) { box.include_cell(row, col); });
     return box;
@@ -89,39 +82,27 @@ cell_box painted_box(const held_object& one) {
 held_object cut_to(const held_object& source, const cell_box& box) {
     held_object one;
     one.selected = source.selected;
-    one.x0 = (int16_t)(source.x0 + box.col0); one.y0 = (int16_t)(source.y0 + box.row0);
+    one.col = (int16_t)(source.col + box.col0); one.row = (int16_t)(source.row + box.row0);
     one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
     for (int row = 0; row < one.height; ++row)
-        for (int col = 0; col < one.width; ++col) one.mask[row][col] = source.mask[box.row0 + row][box.col0 + col];
+        for (int col = 0; col < one.width; ++col) one.data[row][col] = source.data[box.row0 + row][box.col0 + col];
     return one;
 }
-
-// The box an object declares on the grid, its frame: what Layout and the band
-// picks read.
-cell_box frame_of(const held_object& one) { return { one.y0, one.x0, one.y0 + one.height - 1, one.x0 + one.width - 1 }; }
 
 // Every cell an object paints, in its own frame, painted `color`.
 void recolor(held_object& one, int8_t color) {
     for (int row = 0; row < one.height; ++row)
         for (int col = 0; col < one.width; ++col)
-            if (one.mask[row][col] != TRANSPARENT) one.mask[row][col] = color;
-}
-
-// An object's first painted color in reading order, TRANSPARENT when it has none.
-int8_t first_color(const held_object& one) {
-    for (int row = 0; row < one.height; ++row)
-        for (int col = 0; col < one.width; ++col)
-            if (one.mask[row][col] != TRANSPARENT) return one.mask[row][col];
-    return (int8_t)TRANSPARENT;
+            if (one.data[row][col] != TRANSPARENT) one.data[row][col] = color;
 }
 
 // Shared color-source rule for painting ops: resolve an annotation value to a
 // per-object color. 0..9 = that literal; 10 = the object's rarest color;
 // 11 = its most common. Frequency ties break toward the lower color number.
-// TRANSPARENT if the mask is empty.
+// TRANSPARENT if it paints no cell.
 int8_t paint_color(const held_object& one, int8_t value) {
     return object_paint_color(one.height, one.width, value,
-        [&](int row, int col) { return (int8_t)one.mask[row][col]; });
+        [&](int row, int col) { return (int8_t)one.data[row][col]; });
 }
 
 // The first `count` objects of `from`, as they are, into `to`.
@@ -143,34 +124,37 @@ void paint_objects(const object_list& from, int width, int height, grid& out) {
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         each_painted(one, [&](int row, int col, int8_t color) {
-            const int at_row = one.y0 + row, at_col = one.x0 + col;
+            const int at_row = one.row + row, at_col = one.col + col;
             if (at_row >= 0 && at_row < MAX_GRID_DIM && at_col >= 0 && at_col < MAX_GRID_DIM)
                 out.data[at_row][at_col] = color;
         });
     }
 }
 
-// The pieces of `g`, each in the frame of what they were cut from (x0, y0,
+// The pieces of `g`, each in the frame of what they were cut from (col, row,
 // width, height, which holds every painted cell of g). What counts as one
 // object is arc::each_object's to say, or cut by a shape each_shape_piece's,
 // as the reading's is, so the two cannot come to different answers;
 // segmentation never tightens a frame (Trim is the only shrinker). Cut by a
 // shape, its places come back picked and the rest not, as Bridge hands back
 // its bars, so an operator after it acts on the places.
-void segment_objects(const grid& g, object_list& out, grouping how, int x0, int y0, int width, int height,
-                     const turning_shape* shape = nullptr) {
+void segment_objects(const grid& g, object_list& out, grouping how, int x0 = 0, int y0 = 0, int width = -1,
+                     int height = -1, const turning_shape* shape = nullptr) {
+    // No frame given: the grid's own.
+    if (width < 0) width = g.width;
+    if (height < 0) height = g.height;
     out.count = 0;
     if (g.width <= 0 || g.height <= 0 || width <= 0 || height <= 0) return;
     object_walk_scratch scratch;
     auto take = [&](const object_summary&, const int16_t* taken, int taken_count) {
         if (out.count >= MAX_OBJECTS_IN_A_LIST) return;
         held_object& one = out.objects[out.count++];
-        one.x0 = (int16_t)x0; one.y0 = (int16_t)y0;
+        one.col = (int16_t)x0; one.row = (int16_t)y0;
         one.width = (int16_t)width; one.height = (int16_t)height;
-        one.mask.clear();
+        one.data.clear();
         for (int i = 0; i < taken_count; ++i) {
             const int row = cell_row(taken[i]), col = cell_col(taken[i]);
-            one.mask[row - y0][col - x0] = g.data[row][col];
+            one.data[row - y0][col - x0] = g.data[row][col];
         }
     };
     if (!shape) {
@@ -190,7 +174,7 @@ void each_picked_cell(const program_run& run, const object_list& from, int count
         const held_object& one = from.objects[i];
         if (!one.selected) continue;
         each_painted(one, [&](int row, int col, int8_t color) {
-            const int at_row = one.y0 + row, at_col = one.x0 + col;
+            const int at_row = one.row + row, at_col = one.col + col;
             if (at_row >= 0 && at_row < run.canvas.height && at_col >= 0 && at_col < run.canvas.width)
                 cell(at_row, at_col, color);
         });
@@ -211,7 +195,7 @@ void remap_picked(const object_list& from, object_list& res, Size size, Pixel pi
         size(source, width, height);
         for (int at = 0; at < MAX_GRID_CELLS; ++at) {
             const int row = cell_row(at), col = cell_col(at);
-            one.mask.values[at] = row < height && col < width ? pixel(source, row, col) : (int8_t)TRANSPARENT;
+            one.data.values[at] = row < height && col < width ? pixel(source, row, col) : (int8_t)TRANSPARENT;
         }
         one.width = (int16_t)width;
         one.height = (int16_t)height;
@@ -219,101 +203,33 @@ void remap_picked(const object_list& from, object_list& res, Size size, Pixel pi
     res.count = count;
 }
 
-// THE OBJECTS A PARTNER OPERATOR READS, as the op holds them: the box each one's
-// paint fills on the canvas, whether it paints a cell there, whether it is
-// picked, its color and the colors it holds -- the questions the partner
-// helpers ask (each_partner and kin, 15_op_math.hpp), asked as inference's
-// partner_pieces asks them of the pieces it replays.
-struct partner_view {
-    const object_list& list;
-    int count() const { return list.count; }
-    bool is_picked(int i) const { return list.objects[i].selected; }
-    int color(int i) const { return first_color(list.objects[i]); }
-    cell_box box(int i) const {
-        const held_object& one = list.objects[i];
-        const cell_box paint = painted_box(one);
-        cell_box found;
-        if (!paint.empty()) {
-            found.include_cell(one.y0 + paint.row0, one.x0 + paint.col0);
-            found.include_cell(one.y0 + paint.row1, one.x0 + paint.col1);
-        }
-        return found;
-    }
-    bool painted(int i, int row, int col) const { return color_at(i, row, col) != TRANSPARENT; }
-    // The blocks object i's shape is drawn in (blocks_of), its colors aside.
-    shape_blocks blocks(int i) const {
-        const cell_box own = box(i);
-        return blocks_of(own.width(), own.height(),
-                         [&](int row, int col) { return color_at(i, own.row0 + row, own.col0 + col); }, AS_IT_LIES);
-    }
-    // The color object i paints at that cell of the canvas, transparent off it.
-    int color_at(int i, int row, int col) const {
-        const held_object& one = list.objects[i];
-        const int down = row - one.y0, across = col - one.x0;
-        return down >= 0 && across >= 0 && down < one.height && across < one.width ? (int)one.mask[down][across]
-                                                                                    : TRANSPARENT;
-    }
-    // Whether object i holds a cell of `color`.
-    bool holds(int i, int color) const {
-        const held_object& one = list.objects[i];
-        for (int row = 0; row < one.height; ++row)
-            for (int col = 0; col < one.width; ++col)
-                if (one.mask[row][col] != TRANSPARENT && one.mask[row][col] == color) return true;
-        return false;
-    }
-    // What each_partner asks (touches, shapes_alike, count_of).
-    bool touching(int mine, int other, bool sides_only) const { return touches(*this, mine, other, { 0, 0 }, sides_only); }
-    bool alike(int mine, int other, int like) const { return shapes_alike(*this, mine, other, like); }
-    int counted(int i, int kind) const {
-        const cell_box own = box(i);
-        return count_of(kind, own.height(), own.width(),
-                        [&](int row, int col) { return color_at(i, own.row0 + row, own.col0 + col); });
-    }
-    // The object that shows a cell of the key's drawing (key_piece_at).
-    int key_piece(int row, int col) const { return key_piece_at(*this, row, col); }
-    // Object i's one partner by `how` among the objects not picked, or -1.
-    int partner(partner_by how, int i) const { return partner_of(how, i, *this); }
-    // Object i's one partner of `kind` (partner_of_kind) among the objects not picked, or -1.
-    int partner_of_kind(int kind, int i) const { return arc::partner_of_kind(kind, i, *this); }
-    // The color object i takes from its partners by `how`, or -1.
-    int color_from(partner_by how, int i) const { return partner_color(how, i, *this); }
-};
-
-// Read the key in the piece's current box, as inference does. Only Trim
-// removes empty margins before the key is read.
-uint32_t shape_key_of_piece(const held_object& one, int kind) {
-    return shape_key_of(kind, one.width, one.height, [&](int row, int col) {
-        return one.mask[row][col];
-    });
+// Which objects of a list are picked.
+vector<bool> picks_of(const object_list& list) {
+    vector<bool> picked((size_t)list.count);
+    for (int i = 0; i < list.count; ++i) picked[(size_t)i] = list.objects[i].selected;
+    return picked;
 }
+
+// THE LIST AS THE PARTNER HELPERS ASK IT (partner_pieces, 15_op_math.hpp): a
+// copy of its objects and which are picked, asked as a rule's replay asks the
+// pieces it replays.
+struct listed_objects {
+    vector<object> objects;
+    hand_answers answered;
+};
+struct listed_pieces : private listed_objects, partner_pieces {
+    explicit listed_pieces(const object_list& list)
+        : listed_objects{ vector<object>(list.objects, list.objects + list.count), {} },
+          partner_pieces(objects, picks_of(list), answered) {}
+};
 
 // --- Sources ---
 
-// A source has no frame to inherit, so it takes the one its own content makes:
-// the box around every cell that is not transparent. This is not the tightening
-// the frame law reserves for Trim — there is no earlier box being discarded,
-// only a box being chosen for the first time. A grid with nothing on it makes no
-// object at all, because nothing painted is nothing to hand on.
-void frame_to_content(object_list& res, const grid& g) {
-    cell_box content;
-    for (int row = 0; row < g.height; ++row)
-        for (int col = 0; col < g.width; ++col)
-            if (g.data[row][col] != TRANSPARENT) content.include_cell(row, col);
-    if (content.empty()) { res.count = 0; return; }
-    held_object& one = res.objects[0];
-    one.x0 = (int16_t)content.col0; one.y0 = (int16_t)content.row0;
-    one.width = (int16_t)content.width();
-    one.height = (int16_t)content.height();
-    one.mask.clear();
-    for (int row = content.row0; row <= content.row1; ++row)
-        for (int col = content.col0; col <= content.col1; ++col)
-            one.mask[row - content.row0][col - content.col0] = g.data[row][col];
-    res.count = 1;
-}
-
+// Input: the input, read whole. Every cell of an input is colored, so its frame
+// is its content's too.
 object_list& op_input(program_run& run) {
     object_list& res = run.fresh();
-    frame_to_content(res, run.input);
+    segment_objects(run.input, res, grouping::whole_grid);
     return res;
 }
 
@@ -323,13 +239,7 @@ object_list& op_input(program_run& run) {
 // painted bounds.
 object_list& op_output(program_run& run) {
     object_list& res = run.fresh();
-    if (run.canvas.width <= 0 || run.canvas.height <= 0) return res;
-    held_object& one = res.objects[0];
-    one.x0 = one.y0 = 0;
-    one.width = (int16_t)run.canvas.width;
-    one.height = (int16_t)run.canvas.height;
-    one.mask = run.canvas.data;
-    res.count = 1;
+    segment_objects(run.canvas, res, grouping::whole_grid);
     return res;
 }
 
@@ -355,11 +265,11 @@ object_list& op_split(program_run& run, const object_list& from, int8_t depth) {
                 const int8_t color = drawn.data[row][col];
                 if (color == TRANSPARENT) continue;
                 held_object& one = res.objects[res.count++];
-                one.x0 = (int16_t)col;
-                one.y0 = (int16_t)row;
+                one.col = (int16_t)col;
+                one.row = (int16_t)row;
                 one.width = one.height = 1;
-                one.mask.clear();
-                one.mask[0][0] = color;
+                one.data.clear();
+                one.data[0][0] = color;
             }
         return res;
     }
@@ -372,8 +282,8 @@ object_list& op_split(program_run& run, const object_list& from, int8_t depth) {
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
-        x0 = min(x0, (int)one.x0); y0 = min(y0, (int)one.y0);
-        x1 = max(x1, one.x0 + one.width - 1); y1 = max(y1, one.y0 + one.height - 1);
+        x0 = min(x0, (int)one.col); y0 = min(y0, (int)one.row);
+        x1 = max(x1, one.col + one.width - 1); y1 = max(y1, one.row + one.height - 1);
     }
     x0 = max(x0, 0); y0 = max(y0, 0);
     x1 = min(x1, MAX_GRID_DIM - 1); y1 = min(y1, MAX_GRID_DIM - 1);
@@ -397,11 +307,11 @@ object_list& op_colors(program_run& run, const object_list& from) {
             bool found = false;
             for (int row = 0; row < height && !found; ++row)
                 for (int col = 0; col < width; ++col)
-                    if (source.mask[row][col] == color) { found = true; break; }
+                    if (source.data[row][col] == color) { found = true; break; }
             if (!found) continue;
             if (res.count >= MAX_OBJECTS_IN_A_LIST) return res;
             held_object& layer = res.objects[res.count];
-            layer.x0 = source.x0; layer.y0 = source.y0;
+            layer.col = source.col; layer.row = source.row;
             layer.width = source.width; layer.height = source.height;
             // A carve CLEARS, and that is what makes a carve useful: the pick
             // that follows it is how a sentence narrows to one layer. Handing
@@ -409,10 +319,10 @@ object_list& op_colors(program_run& run, const object_list& from) {
             // selectors only ever ADD, the next pick can no longer say "just
             // this one" -- measured on 05a7bcf2, where it recoloured all three.
             layer.selected = false;
-            layer.mask.clear();
+            layer.data.clear();
             for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col)
-                    if (source.mask[row][col] == color) layer.mask[row][col] = (int8_t)color;
+                    if (source.data[row][col] == color) layer.data[row][col] = (int8_t)color;
             res.count++;
         }
     }
@@ -432,7 +342,7 @@ object_list& op_select_most_common_color(program_run& run, const object_list& fr
     for (int i = 0; i < res.count; ++i) {
         const held_object& one = res.objects[i];
         for (int row = 0; row < one.height; ++row)
-            for (int col = 0; col < one.width; ++col) freq.add((int8_t)one.mask[row][col]);
+            for (int col = 0; col < one.width; ++col) freq.add((int8_t)one.data[row][col]);
     }
     const int top = freq.most();
     if (top < 0) return res;
@@ -440,7 +350,7 @@ object_list& op_select_most_common_color(program_run& run, const object_list& fr
         held_object& one = res.objects[i];
         for (int row = 0; row < one.height && !one.selected; ++row)
             for (int col = 0; col < one.width; ++col)
-                if (one.mask[row][col] == top) { one.selected = true; break; }
+                if (one.data[row][col] == top) { one.selected = true; break; }
     }
     return res;
 }
@@ -459,7 +369,7 @@ object_list& op_sort_by_size(program_run& run, const object_list& from, bool big
     int picked = 0;
     for (int i = 0; i < count; ++i)
         if (from.objects[i].selected) slots[picked++] = i;
-    size_order(picked, biggest_first, [&](int k) { return painted_count(from.objects[slots[k]]); }, order);
+    size_order(picked, biggest_first, [&](int k) { return from.objects[slots[k]].cell_count(); }, order);
     // The k-th picked slot receives the k-th picked object in size order.
     for (int k = 0; k < picked; ++k) res.objects[slots[k]] = from.objects[slots[order[k]]];
     return res;
@@ -484,7 +394,7 @@ object_list& op_select_unique(program_run& run, const object_list& from, int8_t 
     const int found = unique_piece(how, from.count,
         [&](int i) { return from.objects[i].width; },
         [&](int i) { return from.objects[i].height; },
-        [&](int i, int row, int col) { return (int8_t)from.objects[i].mask[row][col]; });
+        [&](int i, int row, int col) { return (int8_t)from.objects[i].data[row][col]; });
     if (found >= 0) res.objects[found].selected = true;
     return res;
 }
@@ -500,13 +410,13 @@ object_list& op_select_object_by_size(program_run& run, const object_list& from,
         each_extreme(res.count, largest, [&](int i) {
             const held_object& one = res.objects[i];
             return count_of(kind, min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
-                            [&](int row, int col) { return (int)one.mask[row][col]; });
+                            [&](int row, int col) { return (int)one.data[row][col]; });
         }, [&](int i) { res.objects[i].selected = true; });
         return res;
     }
     if (rank < 0 || rank >= res.count) return res;
     int order[MAX_OBJECTS_IN_A_LIST];
-    size_order(res.count, largest, [&](int i) { return painted_count(res.objects[i]); }, order);
+    size_order(res.count, largest, [&](int i) { return res.objects[i].cell_count(); }, order);
     res.objects[order[rank]].selected = true;
     return res;
 }
@@ -515,15 +425,15 @@ object_list& op_select_object_by_size(program_run& run, const object_list& from,
 // the cells `keep(row, col)` holds, in that frame; false when nothing is left.
 template <class Keep>
 bool clip_to(const held_object& source, int row0, int col0, int row1, int col1, Keep keep, held_object& one) {
-    one.x0 = (int16_t)col0; one.y0 = (int16_t)row0;
+    one.col = (int16_t)col0; one.row = (int16_t)row0;
     one.width = (int16_t)(col1 - col0); one.height = (int16_t)(row1 - row0);
     one.selected = false;
-    one.mask.clear();
+    one.data.clear();
     bool any = false;
     each_painted(source, [&](int row, int col, int8_t color) {
-        const int at_row = source.y0 + row, at_col = source.x0 + col;
+        const int at_row = source.row + row, at_col = source.col + col;
         if (at_row < row0 || at_row >= row1 || at_col < col0 || at_col >= col1 || !keep(at_row, at_col)) return;
-        one.mask[at_row - row0][at_col - col0] = color;
+        one.data[at_row - row0][at_col - col0] = color;
         any = true;
     });
     return any;
@@ -621,8 +531,8 @@ object_list& op_difference(program_run& run, const object_list& from) {
 // edge (grid_parts' hollows) painted `fill`.
 void paint_interior(const held_object& from, held_object& out, int8_t fill) {
     out = from;
-    grid_parts(from.width, from.height, [&](int row, int col) { return from.mask[row][col] != TRANSPARENT; })
-        .each_hollow([&](int row, int col) { out.mask[row][col] = fill; });
+    grid_parts(from.width, from.height, [&](int row, int col) { return from.data[row][col] != TRANSPARENT; })
+        .each_hollow([&](int row, int col) { out.data[row][col] = fill; });
 }
 
 // Fills the interior of each picked, non-empty object with fill(object); a
@@ -646,7 +556,7 @@ object_list& fill_interiors(program_run& run, const object_list& from, Fill fill
 
 object_list& op_interior_color(program_run& run, const object_list& from, int8_t color) {
     return fill_interiors(run, from, [&](const held_object& one) {
-        return color < 0 ? (int)first_color(one) : (int)color;
+        return color < 0 ? (int)one.first_color() : (int)color;
     });
 }
 
@@ -684,17 +594,17 @@ object_list& op_bridge(program_run& run, const object_list& from, int8_t way) {
     if (res.count >= MAX_OBJECTS_IN_A_LIST) return res;
     // A list slot keeps whatever it last held, so every field is said.
     held_object& bars = res.objects[res.count];
-    bars.x0 = 0; bars.y0 = 0;
+    bars.col = 0; bars.row = 0;
     bars.width = bars.height = (int16_t)MAX_GRID_DIM;
     bars.selected = true;
-    bars.mask.clear();
+    bars.data.clear();
     bool drew = false;
-    bridge_bars(way, run.canvas.width, run.canvas.height, partner_view{ from },
+    bridge_bars(way, run.canvas.width, run.canvas.height, listed_pieces(from),
         [&](const cell_box& bar, int8_t color) {
             for (int row = max(bar.row0, 0); row <= min(bar.row1, MAX_GRID_DIM - 1); ++row)
                 for (int col = max(bar.col0, 0); col <= min(bar.col1, MAX_GRID_DIM - 1); ++col)
-                    if (bars.mask[row][col] == TRANSPARENT) {
-                        bars.mask[row][col] = color;
+                    if (bars.data[row][col] == TRANSPARENT) {
+                        bars.data[row][col] = color;
                         drew = true;
                     }
             return true;
@@ -725,20 +635,20 @@ object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t
             if (!one.selected) continue;
             for (int row = 0; row < one.height; ++row)
                 for (int col = 0; col < one.width; ++col)
-                    one.mask[row][col] = traded_with_empty(one.mask[row][col], value - EMPTY_PAIRS);
+                    one.data[row][col] = traded_with_empty(one.data[row][col], value - EMPTY_PAIRS);
         }
         return res;
     }
     int8_t to[COLOR_COUNT];
-    if (!swaps_of(value, partner_view{ from }, to)) return res;
+    if (!swaps_of(value, listed_pieces(from), to)) return res;
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         // Only what was picked swaps colors; the rest ride through as they are.
         if (!one.selected) continue;
         for (int row = 0; row < one.height; ++row)
             for (int col = 0; col < one.width; ++col) {
-                const int8_t color = one.mask[row][col];
-                if (is_color(color) && to[color] >= 0) one.mask[row][col] = to[color];
+                const int8_t color = one.data[row][col];
+                if (is_color(color) && to[color] >= 0) one.data[row][col] = to[color];
             }
     }
     return res;
@@ -752,7 +662,7 @@ void paint_key_places(const object_list& from, object_list& res) {
     int8_t color[MAX_OBJECTS_IN_A_LIST], band[MAX_OBJECTS_IN_A_LIST];
     int16_t lows[MAX_OBJECTS_IN_A_LIST], highs[MAX_OBJECTS_IN_A_LIST];
     int order[MAX_OBJECTS_IN_A_LIST];
-    if (!key_place_colors(partner_view{ from }, color, lows, highs, band, order)) return;
+    if (!key_place_colors(listed_pieces(from), color, lows, highs, band, order)) return;
     for (int i = 0; i < res.count; ++i)
         if (color[i] >= 0) recolor(res.objects[i], color[i]);
 }
@@ -771,7 +681,7 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
         paint_key_places(from, res);
         return res;
     }
-    const partner_view view{ from };
+    const listed_pieces view(from);
     if (how == KEY_COLOR) {
         const int color = key_color(view);
         for (int i = 0; i < res.count && color >= 0; ++i)
@@ -784,9 +694,9 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
             if (!from.objects[i].selected) continue;
             held_object& one = res.objects[i];
             colors_from_its_shape(how - COLORS_FROM_ITS_SHAPE, i, view, [&](int row, int col, int color) {
-                const int down = row - one.y0, across = col - one.x0;
+                const int down = row - one.row, across = col - one.col;
                 if (down >= 0 && across >= 0 && down < one.height && across < one.width && is_color(color))
-                    one.mask[down][across] = (int8_t)color;
+                    one.data[down][across] = (int8_t)color;
             });
         }
         return res;
@@ -809,20 +719,20 @@ object_list& op_shape_from(program_run& run, const object_list& from, int8_t how
     object_list& res = run.fresh();
     copy_list(res, from);
     // Each new drawing gathered whole on a grid of its own, then laid as its
-    // object's mask; every partner is read off the list as it came.
+    // object's cells; every partner is read off the list as it came.
     int taking = -1;
     cells drawn;
     cell_box box;
     auto set_drawing = [&] {
         if (taking < 0) return;
         held_object& one = res.objects[taking];
-        one.mask.clear();
+        one.data.clear();
         for (int row = box.row0; row <= box.row1; ++row)
-            for (int col = box.col0; col <= box.col1; ++col) one.mask[row - box.row0][col - box.col0] = drawn[row][col];
-        one.x0 = (int16_t)box.col0; one.y0 = (int16_t)box.row0;
+            for (int col = box.col0; col <= box.col1; ++col) one.data[row - box.row0][col - box.col0] = drawn[row][col];
+        one.col = (int16_t)box.col0; one.row = (int16_t)box.row0;
         one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
     };
-    each_shape_taken(how, partner_view{ from }, [&](int i, int row, int col, int color) {
+    each_shape_taken(how, listed_pieces(from), [&](int i, int row, int col, int color) {
         if (i != taking) {
             set_drawing();
             taking = i;
@@ -846,7 +756,7 @@ object_list& op_would_fit(program_run& run, const object_list& from, int8_t how)
     object_list& res = run.fresh();
     copy_list(res, from);
     if (how < 0 || how >= (int8_t)partner_by::count) return res;
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner((partner_by)how, i);
@@ -861,7 +771,7 @@ object_list& op_would_fit(program_run& run, const object_list& from, int8_t how)
 object_list& op_select_like_key(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < from.count; ++i)
         if (from.objects[i].selected) res.objects[i].selected = like_the_key(how, i, view);
     return res;
@@ -876,7 +786,7 @@ object_list& op_select_partner(program_run& run, const object_list& from, int va
     object_list& res = run.fresh();
     copy_list(res, from);
     for (int i = 0; i < res.count; ++i) res.objects[i].selected = false;
-    each_partner_picked(value, partner_view{ from }, [&](int other) { res.objects[other].selected = true; });
+    each_partner_picked(value, listed_pieces(from), [&](int other) { res.objects[other].selected = true; });
     return res;
 }
 
@@ -888,7 +798,7 @@ object_list& op_select_partner(program_run& run, const object_list& from, int va
 object_list& op_select_partition(program_run& run, const object_list& from, int which) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const partner_view view{ from };
+    const listed_pieces view(from);
     const grid_parts parts = parts_the_pick_fences(view, run.input.width, run.input.height);
     for (int i = 0; i < from.count; ++i) res.objects[i].selected = lies_in_part(view, i, which, parts);
     return res;
@@ -905,7 +815,7 @@ object_list& op_select_partition(program_run& run, const object_list& from, int 
 // is deleted, the ground comes back a part at a time: each part's room. A
 // part's cells no object holds stay empty. Walls across the whole grid fence
 // the tiles of a lattice, row by row. No merge: distinct source layers stay
-// distinct; want parts as single masks? place a UnionList yourself.
+// distinct; want each part as one object? place a UnionList yourself.
 object_list& op_partition(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     const int grid_width = run.input.width, grid_height = run.input.height;
@@ -915,7 +825,7 @@ object_list& op_partition(program_run& run, const object_list& from) {
             res.objects[res.count] = from.objects[i];
             res.objects[res.count++].selected = false;
         }
-    each_fenced_part(partner_view{ from }, grid_width, grid_height,
+    each_fenced_part(listed_pieces(from), grid_width, grid_height,
         [&](int, const cell_box& box, auto in_part) {
             for (int index = 0; index < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++index) {
                 if (from.objects[index].selected) continue;
@@ -943,7 +853,7 @@ object_list& op_align_to(program_run& run, const object_list& from, int8_t value
     if (value < 0 || value >= 2 * ways) return res;
     const bool columns = value >= ways;
     const auto how = (partner_by)(value % ways);
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner(how, i);
@@ -952,10 +862,10 @@ object_list& op_align_to(program_run& run, const object_list& from, int8_t value
         held_object& one = res.objects[i];
         if (columns) {
             const int16_t by = (int16_t)(there.col0 - own.col0);
-            one.x0 += by;
+            one.col += by;
         } else {
             const int16_t by = (int16_t)(there.row0 - own.row0);
-            one.y0 += by;
+            one.row += by;
         }
     }
     return res;
@@ -974,15 +884,15 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
     if (value < 0 || value >= (int)toward_by::count * PARTNER_KINDS) return res;
     const auto far = (toward_by)(value / PARTNER_KINDS);
     const int kind = value % PARTNER_KINDS;
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner_of_kind(kind, i);
         if (partner < 0) continue;
         const direction_step by = move_toward(far, i, partner, view, run.canvas.width, run.canvas.height);
         held_object& one = res.objects[i];
-        one.x0 += (int16_t)by.across;
-        one.y0 += (int16_t)by.down;
+        one.col += (int16_t)by.across;
+        one.row += (int16_t)by.down;
     }
     return res;
 }
@@ -1004,7 +914,7 @@ object_list& op_mirror_around(program_run& run, const object_list& from, int8_t 
     if (value < 0 || value >= (int)mirror_by::count * partners) return res;
     const auto mirror = (mirror_by)(value / partners);
     const int how = value % partners;
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < from.count; ++i) {
         const held_object& piece = from.objects[i];
         if (!piece.selected || piece.width <= 0 || piece.height <= 0) continue;
@@ -1012,7 +922,7 @@ object_list& op_mirror_around(program_run& run, const object_list& from, int8_t 
         // arithmetic (mirror_middle, each_mirror, mirrored_box).
         int middle_row = 0, middle_col = 0;
         if (!mirror_middle(how, i, view, run.input.width, run.input.height, middle_row, middle_col)) continue;
-        const cell_box box{ piece.y0, piece.x0, piece.y0 + piece.height - 1, piece.x0 + piece.width - 1 };
+        const cell_box box{ piece.row, piece.col, piece.row + piece.height - 1, piece.col + piece.width - 1 };
         bool full = false;
         each_mirror(mirror, [&](bool down, bool across) {
             if (full || res.count >= MAX_OBJECTS_IN_A_LIST) { full = true; return; }
@@ -1022,10 +932,10 @@ object_list& op_mirror_around(program_run& run, const object_list& from, int8_t 
             for (int row = 0; row < piece.height; ++row)
                 for (int col = 0; col < piece.width; ++col) {
                     const auto [from_row, from_col] = pose_source(pose, piece.width, piece.height, row, col);
-                    copy.mask[row][col] = (int8_t)piece.mask[from_row][from_col];
+                    copy.data[row][col] = (int8_t)piece.data[from_row][from_col];
                 }
             const cell_box to = mirrored_box(box, middle_row, middle_col, down, across);
-            copy.y0 = (int16_t)to.row0; copy.x0 = (int16_t)to.col0;
+            copy.row = (int16_t)to.row0; copy.col = (int16_t)to.col0;
         });
         if (full) return res;
     }
@@ -1044,7 +954,7 @@ object_list& op_select_objects_with_holes(program_run& run, const object_list& f
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         const int found = grid_parts(one.width, one.height,
-            [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; }).hollows();
+            [&](int row, int col) { return one.data[row][col] != TRANSPARENT; }).hollows();
         if (found == (int)holes) one.selected = true;
     }
     return res;
@@ -1059,7 +969,7 @@ object_list& op_select_at_least(program_run& run, const object_list& from, int v
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         if (counts_at_least(value, min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
-                            [&](int row, int col) { return (int)one.mask[row][col]; }))
+                            [&](int row, int col) { return (int)one.data[row][col]; }))
             one.selected = true;
     }
     return res;
@@ -1074,7 +984,7 @@ object_list& op_select_running_along(program_run& run, const object_list& from, 
     auto runs = [&](int i) {
         const held_object& one = res.objects[i];
         return way_it_runs(min((int)one.height, MAX_GRID_DIM), min((int)one.width, MAX_GRID_DIM),
-                           [&](int row, int col) { return one.mask[row][col] != TRANSPARENT; });
+                           [&](int row, int col) { return one.data[row][col] != TRANSPARENT; });
     };
     runs_along wanted = (runs_along)way;
     if (way == WAY_MOST_CELLS_RUN) {
@@ -1082,7 +992,7 @@ object_list& op_select_running_along(program_run& run, const object_list& from, 
             const held_object& one = res.objects[i];
             int cells = 0;
             for (int row = 0; row < min((int)one.height, MAX_GRID_DIM); ++row)
-                for (int col = 0; col < min((int)one.width, MAX_GRID_DIM); ++col) cells += one.mask[row][col] != TRANSPARENT;
+                for (int col = 0; col < min((int)one.width, MAX_GRID_DIM); ++col) cells += one.data[row][col] != TRANSPARENT;
             return cells;
         });
         if (wanted == runs_along::no_way) return res;
@@ -1096,18 +1006,18 @@ object_list& op_select_running_along(program_run& run, const object_list& from, 
 // (each_fit_move, which the reading replays), its painted cells turned as the
 // place names and laid with their corner there, the rest where they were.
 void fit_moved(object_list& res, const object_list& from) {
-    each_fit_move(partner_view{ from }, [&](int i, int pose, int row, int col) {
+    each_fit_move(listed_pieces(from), [&](int i, int pose, int row, int col) {
         const held_object& source = from.objects[i];
-        const cell_box paint = painted_box(source);
+        const cell_box paint = paint_in_frame(source);
         const auto [broad, high] = posed_size(pose, paint.width(), paint.height());
         held_object& one = res.objects[i];
-        one.mask.clear();
+        one.data.clear();
         for (int down = 0; down < high; ++down)
             for (int across = 0; across < broad; ++across) {
                 const auto [from_row, from_col] = pose_source(pose, paint.width(), paint.height(), down, across);
-                one.mask[down][across] = source.mask[paint.row0 + from_row][paint.col0 + from_col];
+                one.data[down][across] = source.data[paint.row0 + from_row][paint.col0 + from_col];
             }
-        one.x0 = (int16_t)col; one.y0 = (int16_t)row;
+        one.col = (int16_t)col; one.row = (int16_t)row;
         one.width = (int16_t)broad; one.height = (int16_t)high;
     });
 }
@@ -1126,14 +1036,14 @@ object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) 
     }
     vector<held_object> gaps;
     vector<int8_t> poured;
-    each_pour(partner_view{ from }, [&](int color, const int16_t* rows, const int16_t* cols, int count) {
+    each_pour(listed_pieces(from), [&](int color, const int16_t* rows, const int16_t* cols, int count) {
         cell_box box;
         for (int k = 0; k < count; ++k) box.include_cell(rows[k], cols[k]);
         held_object& one = gaps.emplace_back();
-        one.x0 = (int16_t)box.col0; one.y0 = (int16_t)box.row0;
+        one.col = (int16_t)box.col0; one.row = (int16_t)box.row0;
         one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
-        one.mask.clear();
-        for (int k = 0; k < count; ++k) one.mask[rows[k] - box.row0][cols[k] - box.col0] = (int8_t)color;
+        one.data.clear();
+        for (int k = 0; k < count; ++k) one.data[rows[k] - box.row0][cols[k] - box.col0] = (int8_t)color;
         one.selected = true;
         poured.push_back((int8_t)color);
     });
@@ -1144,7 +1054,7 @@ object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) 
         bool lost = false, left = false;
         for (int row = 0; row < min((int)one.height, MAX_GRID_DIM); ++row)
             for (int col = 0; col < min((int)one.width, MAX_GRID_DIM); ++col) {
-                int8_t& cell = one.mask[row][col];
+                int8_t& cell = one.data[row][col];
                 if (one.selected && ranges::find(poured, cell) != poured.end()) {
                     cell = (int8_t)TRANSPARENT;
                     lost = true;
@@ -1164,7 +1074,7 @@ object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) 
 object_list& op_select_walls(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const partner_view view{ from };
+    const listed_pieces view(from);
     for (int i = 0; i < res.count; ++i)
         if (is_wall(run.input.width, run.input.height, view.box(i),
                     [&](int row, int col) { return view.painted(i, row, col); }))
@@ -1182,7 +1092,7 @@ object_list& op_select_color(program_run& run, const object_list& from, int8_t c
         held_object& one = res.objects[i];
         for (int row = 0; row < one.height && !one.selected; ++row)
             for (int col = 0; col < one.width; ++col)
-                if (one.mask[row][col] == color) { one.selected = true; break; }
+                if (one.data[row][col] == color) { one.selected = true; break; }
     }
     return res;
 }
@@ -1198,11 +1108,11 @@ object_list& op_select_elected_background(program_run& run, const object_list& f
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
         if (!has_frame) {
-            x0 = x1 = one.x0; y0 = y1 = one.y0;
+            x0 = x1 = one.col; y0 = y1 = one.row;
             has_frame = true;
         }
-        x0 = min(x0, (int)one.x0); y0 = min(y0, (int)one.y0);
-        x1 = max(x1, one.x0 + one.width); y1 = max(y1, one.y0 + one.height);
+        x0 = min(x0, (int)one.col); y0 = min(y0, (int)one.row);
+        x1 = max(x1, one.col + one.width); y1 = max(y1, one.row + one.height);
     }
     grid laid;
     laid.width = max(0, min(MAX_GRID_DIM, x1 - x0));
@@ -1210,7 +1120,7 @@ object_list& op_select_elected_background(program_run& run, const object_list& f
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         each_painted(one, [&](int row, int col, int8_t color) {
-            const int at_row = one.y0 + row - y0, at_col = one.x0 + col - x0;
+            const int at_row = one.row + row - y0, at_col = one.col + col - x0;
             if (at_row >= 0 && at_row < laid.height && at_col >= 0 && at_col < laid.width)
                 laid.data[at_row][at_col] = color;
         });
@@ -1244,11 +1154,11 @@ object_list& op_invert_selection(program_run& run, const object_list& from) {
 }
 
 // The color the puzzle-level table names for a piece's key of `kind` (its
-// key, shape_key_of_piece), as the reading looks it up
+// key, read in its current box as the reading reads it), as the reading looks it up
 // (shape_table::color_of): -1 where it names none. The one lookup both shape
 // ops make.
 int shape_color(const program_run& run, const held_object& one, int kind) {
-    return run.shape_colors.color_of(shape_key_of_piece(one, kind));
+    return run.shape_colors.color_of(shape_color_map_rule::key_of((shape_key)kind, one));
 }
 
 // ShapeColorMap[kind]: every picked piece takes the color its own key names in
@@ -1286,10 +1196,10 @@ object_list& op_shape_to_interior_color_map(program_run& run, const object_list&
 // --- Map, by where pieces sit ---
 
 // OverlapCorner: lay the objects out as a diagonal corner-chain. Objects are
-// ordered left-to-right (by box x0, ties by y0); the first is placed with its
+// ordered left-to-right (by column, ties by row); the first is placed with its
 // top-left at the canvas origin (0,0); each later object's top-left cell is
 // set to the previous object's bottom-right cell -- a 1-pixel corner overlap.
-// Only positions change (masks/colors untouched); the trailing Union resolves
+// Only positions change (cells and colors untouched); the trailing Union resolves
 // the shared corner -- the later (further-down-chain) object wins, as Union
 // lays a later object over an earlier.
 //
@@ -1313,11 +1223,11 @@ object_list& op_overlap_corner(program_run& run, const object_list& from) {
     // The chain as each_corner_link lays it, the reading's replay the same.
     each_corner_link(count, [&](int i) {
         const held_object& one = from.objects[i];
-        return cell_box{ one.y0, one.x0, one.y0 + one.height - 1, one.x0 + one.width - 1 };
+        return cell_box{ one.row, one.col, one.row + one.height - 1, one.col + one.width - 1 };
     }, [&](int i, int row, int col) {
         const held_object& source = from.objects[i];
         held_object& one = res.objects[res.count++] = source;
-        one.x0 = (int16_t)col;                       one.y0 = (int16_t)row;
+        one.col = (int16_t)col;                       one.row = (int16_t)row;
         return true;
     });
     return res;
@@ -1339,9 +1249,9 @@ object_list& op_align_to_canvas(program_run& run, const object_list& from) {
         // Only what was picked moves; the rest ride through where they are.
         // Nothing picked means this op does nothing -- acts never fall back to all.
         if (!one.selected || target.empty()) continue;
-        const auto [down, across] = shift_to_touch(frame_of(one), target);
-        one.x0 = (int16_t)(one.x0 + across);
-        one.y0 = (int16_t)(one.y0 + down);
+        const auto [down, across] = shift_to_touch(one.box(), target);
+        one.col = (int16_t)(one.col + across);
+        one.row = (int16_t)(one.row + down);
     }
     return res;
 }
@@ -1353,7 +1263,7 @@ object_list& op_origin(program_run& run, const object_list& from) {
         held_object& one = res.objects[res.count++] = from.objects[i];
         // Only what was picked moves; the rest ride through where they are.
         if (!one.selected) continue;
-        one.x0 = 0; one.y0 = 0;
+        one.col = 0; one.row = 0;
     }
     return res;
 }
@@ -1379,9 +1289,9 @@ void intersect_group(const object_list& from, bool want, object_list& res) {
     int kept = 0;
     for (int row = 0; row < least_height; ++row)
         for (int col = 0; col < least_width; ++col) {
-            const int8_t color = intersected_cell(count, [&](int k) { return from.objects[members[k]].mask[row][col]; });
+            const int8_t color = intersected_cell(count, [&](int k) { return from.objects[members[k]].data[row][col]; });
             if (color == TRANSPARENT) continue;
-            one.mask[row][col] = color;
+            one.data[row][col] = color;
             ++kept;
         }
     if (kept == 0) return;
@@ -1408,21 +1318,21 @@ void union_group(const object_list& from, bool want, object_list& res) {
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (one.selected != want) continue;
-        x0 = min(x0, (int)one.x0); y0 = min(y0, (int)one.y0);
-        x1 = max(x1, one.x0 + one.width - 1); y1 = max(y1, one.y0 + one.height - 1);
+        x0 = min(x0, (int)one.col); y0 = min(y0, (int)one.row);
+        x1 = max(x1, one.col + one.width - 1); y1 = max(y1, one.row + one.height - 1);
     }
     if (x1 < 0 || y1 < 0 || res.count >= MAX_OBJECTS_IN_A_LIST) return;
     held_object& merged = res.objects[res.count];
-    merged.x0 = (int16_t)x0; merged.y0 = (int16_t)y0;
+    merged.col = (int16_t)x0; merged.row = (int16_t)y0;
     merged.width = (int16_t)(x1 - x0 + 1); merged.height = (int16_t)(y1 - y0 + 1);
     merged.selected = want;
-    merged.mask.clear();
+    merged.data.clear();
     bool any = false;
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         if (one.selected != want) continue;
         each_painted(one, [&](int row, int col, int8_t color) {
-            merged.mask[one.y0 + row - y0][one.x0 + col - x0] = color;
+            merged.data[one.row + row - y0][one.col + col - x0] = color;
             any = true;
         });
     }
@@ -1457,7 +1367,7 @@ object_list& op_select_band(program_run& run, const object_list& from, int8_t wh
     const int count = min(res.count, MAX_OBJECTS_IN_A_LIST);
     if (count <= 0) return res;
     int8_t band_of[MAX_OBJECTS_IN_A_LIST];
-    bands_of(count, rows, [&](int i) { return frame_of(res.objects[i]); }, band_of);
+    bands_of(count, rows, [&](int i) { return res.objects[i].box(); }, band_of);
     for (int i = 0; i < count; ++i)
         if (band_of[i] == which) res.objects[i].selected = true;
     return res;
@@ -1476,7 +1386,7 @@ object_list& op_select_from_middle(program_run& run, const object_list& from, in
     for (int i = 0; i < count; ++i) {
         const held_object& one = res.objects[i];
         each_painted(one, [&](int row, int col, int8_t) {
-            const int line = rows ? one.y0 + row : one.x0 + col;
+            const int line = rows ? one.row + row : one.col + col;
             low = min(low, line);
             high = max(high, line);
         });
@@ -1488,7 +1398,7 @@ object_list& op_select_from_middle(program_run& run, const object_list& from, in
         bool on = false;
         for (int row = 0; row < one.height && !on; ++row)
             for (int col = 0; col < one.width && !on; ++col)
-                on = one.mask[row][col] != TRANSPARENT && (rows ? one.y0 + row : one.x0 + col) == line;
+                on = one.data[row][col] != TRANSPARENT && (rows ? one.row + row : one.col + col) == line;
         if (on) one.selected = true;
     }
     return res;
@@ -1512,17 +1422,17 @@ object_list& op_select_from_middle(program_run& run, const object_list& from, in
 object_list& op_layout(program_run& run, const object_list& from, int cell) {
     object_list& res = run.fresh();
     held_object& laid = res.objects[0];
-    laid.mask.clear();
+    laid.data.clear();
     const layout_paper paper = lay_out(min(from.count, MAX_OBJECTS_IN_A_LIST), cell,
-        [&](int i) { return frame_of(from.objects[i]); },
-        [&](int i) { return painted_box(from.objects[i]); },
-        // Shift/Union can grow the box beyond what the mask holds.
+        [&](int i) { return from.objects[i].box(); },
+        [&](int i) { return paint_in_frame(from.objects[i]); },
+        // Shift/Union can grow the box beyond the cells it can hold.
         [&](int i, int row, int col) {
-            return row < MAX_GRID_DIM && col < MAX_GRID_DIM ? (int)from.objects[i].mask[row][col] : TRANSPARENT;
+            return row < MAX_GRID_DIM && col < MAX_GRID_DIM ? (int)from.objects[i].data[row][col] : TRANSPARENT;
         },
-        [&](int row, int col, int color) { laid.mask[row][col] = (int8_t)color; });
+        [&](int row, int col, int color) { laid.data[row][col] = (int8_t)color; });
     if (paper.width <= 0) return res;
-    laid.x0 = 0; laid.y0 = 0;
+    laid.col = 0; laid.row = 0;
     laid.width = (int16_t)paper.width; laid.height = (int16_t)paper.height;
     res.count = 1;
     return res;
@@ -1555,7 +1465,7 @@ object_list& op_shift(program_run& run, const object_list& from, int8_t move_dir
         held_object& one = res.objects[res.count++] = from.objects[i];
         if (!one.selected) continue;
         const direction_step by = shift_by(move_direction, one.width, one.height);
-        one.x0 += (int16_t)by.across; one.y0 += (int16_t)by.down;
+        one.col += (int16_t)by.across; one.row += (int16_t)by.down;
     }
     return res;
 }
@@ -1572,7 +1482,7 @@ object_list& op_turn(program_run& run, const object_list& from, node_type type) 
         },
         [&](const held_object& source, int row, int col) {
             const auto [from_row, from_col] = pose_source(pose_of(type), source.width, source.height, row, col);
-            return (int8_t)source.mask[from_row][from_col];
+            return (int8_t)source.data[from_row][from_col];
         });
     return res;
 }
@@ -1585,8 +1495,8 @@ object_list& op_move(program_run& run, const object_list& from, int16_t delta, b
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         if (!one.selected) continue;
-        if (across) one.x0 += delta;
-        else one.y0 += delta;
+        if (across) one.col += delta;
+        else one.row += delta;
     }
     return res;
 }
@@ -1598,14 +1508,14 @@ object_list& op_slam(program_run& run, const object_list& from, bool rows, int16
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         held_object& one = res.objects[res.count++] = from.objects[i];
         if (!one.selected || step == 0) continue;
-        // Shift/Union can grow the box beyond what the mask holds.
+        // Shift/Union can grow the box beyond the cells it can hold.
         const int width = min((int)one.width, MAX_GRID_DIM);
         const int height = min((int)one.height, MAX_GRID_DIM);
         cells drawn;
         slam_cells(width, height, rows, step,
-            [&](int row, int col) { return (int)one.mask[row][col]; },
+            [&](int row, int col) { return (int)one.data[row][col]; },
             [&](int row, int col, int color) { drawn[row][col] = (int8_t)color; });
-        one.mask = drawn;
+        one.data = drawn;
     }
     return res;
 }
@@ -1625,7 +1535,7 @@ object_list& op_scale_up(program_run& run, const object_list& from, int8_t facto
         },
         [&](const held_object& source, int row, int col) {
             const int from_row = row / factor, from_col = col / factor;
-            return from_row < source.height && from_col < source.width ? (int8_t)source.mask[from_row][from_col]
+            return from_row < source.height && from_col < source.width ? (int8_t)source.data[from_row][from_col]
                                                                        : (int8_t)TRANSPARENT;
         });
     return res;
@@ -1645,7 +1555,7 @@ object_list& op_scale_down(program_run& run, const object_list& from, int8_t fac
             height = max((source.height + factor - 1) / factor, 1);
         },
         [&](const held_object& source, int row, int col) {
-            return majority_vote(source.mask, row, col, factor, source.height, source.width);
+            return majority_vote(source.data, row, col, factor, source.height, source.width);
         });
     return res;
 }
@@ -1664,7 +1574,7 @@ object_list& op_add_color(program_run& run, const object_list& from, int8_t valu
         if (!is_color(fill)) continue;
         for (int row = 0; row < one.height; ++row)
             for (int col = 0; col < one.width; ++col)
-                if (one.mask[row][col] == TRANSPARENT) one.mask[row][col] = fill;
+                if (one.data[row][col] == TRANSPARENT) one.data[row][col] = fill;
     }
     return res;
 }
@@ -1672,7 +1582,7 @@ object_list& op_add_color(program_run& run, const object_list& from, int8_t valu
 // Outline: keep each picked object's edge cells, drop the core to transparent.
 // A cell is edge when any of its 8 neighbours is not part of the object
 // (on_object_edge; outside the frame counts as outside). Reads the source
-// mask, writes the copy, so the erosion never sees its own output.
+// cells, writes the copy's, so the erosion never sees its own output.
 object_list& op_outline(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
@@ -1681,12 +1591,12 @@ object_list& op_outline(program_run& run, const object_list& from) {
         if (!one.selected) continue;
         for (int row = 0; row < source.height; ++row)
             for (int col = 0; col < source.width; ++col) {
-                if (source.mask[row][col] == TRANSPARENT) continue;
+                if (source.data[row][col] == TRANSPARENT) continue;
                 const bool edge = on_object_edge(row, col, [&](int at_row, int at_col) {
                     return at_row >= 0 && at_col >= 0 && at_row < source.height && at_col < source.width &&
-                           source.mask[at_row][at_col] != TRANSPARENT;
+                           source.data[at_row][at_col] != TRANSPARENT;
                 });
-                if (!edge) one.mask[row][col] = TRANSPARENT;
+                if (!edge) one.data[row][col] = TRANSPARENT;
             }
     }
     return res;
@@ -1708,11 +1618,11 @@ object_list& op_fit(program_run& run, const object_list& from, int to) {
         held_object one;
         // Same object, same mark -- a fresh one would start unmarked.
         one.selected = source.selected;
-        one.x0 = (int16_t)target.col0; one.y0 = (int16_t)target.row0;
+        one.col = (int16_t)target.col0; one.row = (int16_t)target.row0;
         one.width = (int16_t)width; one.height = (int16_t)height;
         for (int row = 0; row < height; ++row)
             for (int col = 0; col < width; ++col)
-                one.mask[row][col] = source.mask[fit_source_cell(row, source.height, height)]
+                one.data[row][col] = source.data[fit_source_cell(row, source.height, height)]
                                                 [fit_source_cell(col, source.width, width)];
         res.objects[res.count++] = one;
     }
@@ -1720,7 +1630,7 @@ object_list& op_fit(program_run& run, const object_list& from, int to) {
 }
 
 // Skew slope table: variant -> {num, den}; the line slope is num/den (Δcol per
-// Δrow), applied as a Bresenham shift floor((y0+r)*num/den). Stern-Brocot /
+// Δrow), applied as a Bresenham shift floor((row+r)*num/den). Stern-Brocot /
 // complexity order (simplest slopes first). Counts: reduced |num|,|den| <= 6
 // gives 23 distinct magnitudes; with both signs + the identity (0/1) that is
 // 23*2 + 1 = 47 entries. Index 0 = identity and index 1 = +45 deg.
@@ -1751,7 +1661,7 @@ object_list& op_skew(program_run& run, const object_list& from, int8_t variant) 
         held_object& one = res.objects[res.count] = from.objects[i];
         // Only what was picked moves; the rest ride through where they are.
         if (!one.selected) { res.count++; continue; }
-        const int top = one.y0;
+        const int top = one.row;
         int least_col = 1000, most_col = -1000, least_row = 1000, most_row = -1000;
         each_painted(one, [&](int row, int col, int8_t) {
             const int to_col = col + skew_shift(top + row, numerator, denominator);
@@ -1766,9 +1676,9 @@ object_list& op_skew(program_run& run, const object_list& from, int8_t variant) 
             const int to_row = row - least_row, to_col = col + skew_shift(top + row, numerator, denominator) - least_col;
             if (to_row >= 0 && to_row < height && to_col >= 0 && to_col < width) leaned[to_row][to_col] = color;
         });
-        one.mask = leaned;
+        one.data = leaned;
         one.width = (int16_t)width; one.height = (int16_t)height;
-        one.x0 = (int16_t)(one.x0 + least_col); one.y0 = (int16_t)(top + least_row);
+        one.col = (int16_t)(one.col + least_col); one.row = (int16_t)(top + least_row);
         res.count++;
     }
     return res;
@@ -1783,7 +1693,7 @@ object_list& op_pattern(program_run& run, const object_list& from) {
         if (source.width <= 0 || source.height <= 0) continue;
         if (!source.selected) { res.objects[res.count++] = source; continue; }
         int unit_width = 0, unit_height = 0;
-        repeat_periods(grid(source.width, source.height, source.mask), unit_width, unit_height);
+        repeat_periods(grid(source.width, source.height, source.data), unit_width, unit_height);
         // Every copy agrees with the top-left one, so the unit is that copy.
         res.objects[res.count++] = cut_to(source, { 0, 0, unit_height - 1, unit_width - 1 });
     }
@@ -1804,15 +1714,15 @@ object_list& op_vote_denoise(program_run& run, const object_list& from) {
         // The ground is read off this piece alone (denoise_ground, shared with
         // the reading): empty where a deletion upstream left it empty, else the
         // color most of the piece wears. No puzzle-level background is read.
-        const int8_t ground = denoise_ground(width, height, [&](int row, int col) { return (int8_t)source.mask[row][col]; });
+        const int8_t ground = denoise_ground(width, height, [&](int row, int col) { return (int8_t)source.data[row][col]; });
         // A cell emptied by a background removal upstream is still the ground:
         // read it as the ground, which is itself empty when the ground was deleted.
         const auto ground_at = [&](int row, int col) -> int8_t {
-            const int8_t color = source.mask[row][col];
+            const int8_t color = source.data[row][col];
             return color == TRANSPARENT ? ground : color;
         };
         vote_denoise_cells(width, height, ground, ground_at,
-                           [&](int row, int col, int8_t color) { one.mask[row][col] = color; });
+                           [&](int row, int col, int8_t color) { one.data[row][col] = color; });
         res.objects[res.count++] = one;
     }
     return res;
@@ -1826,7 +1736,7 @@ object_list& op_trim(program_run& run, const object_list& from) {
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
         if (!source.selected) { res.objects[res.count++] = source; continue; }
-        const cell_box paint = painted_box(source);
+        const cell_box paint = paint_in_frame(source);
         if (paint.empty()) continue;
         res.objects[res.count++] = cut_to(source, paint);
     }
@@ -1851,28 +1761,28 @@ object_list& op_tile(program_run& run, const object_list& from, const tile_value
         each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) held |= 1u << color; });
         return held;
     });
-    const cell_box key = key_box(partner_view{ from });
+    const cell_box key = key_box(listed_pieces(from));
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
         const tile_moves moves = !source.selected ? tile_moves{}
             : moves_of(tile, measures_of(tile, source.height, source.width,
-                                         [&](int row, int col) { return source.mask[row][col] != TRANSPARENT; }, colors,
+                                         [&](int row, int col) { return source.data[row][col] != TRANSPARENT; }, colors,
                                          key));
         if (moves.count == 0 || source.width <= 0 || source.height <= 0) {
             res.objects[res.count++] = source;
             continue;
         }
         const auto [rows, columns] = copy_size(moves, source.height, source.width);
-        each_tile_offset(tile, moves, source.y0, source.x0, rows, columns, run.canvas.width, run.canvas.height,
+        each_tile_offset(tile, moves, source.row, source.col, rows, columns, run.canvas.width, run.canvas.height,
             [&](int down, int across) {
                 if (res.count >= MAX_OBJECTS_IN_A_LIST) return false;
                 held_object& copy = res.objects[res.count++] = source;
-                copy.y0 = (int16_t)(source.y0 + down);
-                copy.x0 = (int16_t)(source.x0 + across);
+                copy.row = (int16_t)(source.row + down);
+                copy.col = (int16_t)(source.col + across);
                 copy.height = (int16_t)rows;
                 copy.width = (int16_t)columns;
                 for (int at = 0; at < MAX_GRID_CELLS; ++at)
-                    if (cell_row(at) >= rows || cell_col(at) >= columns) copy.mask.values[at] = TRANSPARENT;
+                    if (cell_row(at) >= rows || cell_col(at) >= columns) copy.data.values[at] = TRANSPARENT;
                 return true;
             });
     }
@@ -1892,17 +1802,17 @@ object_list& op_fractal(program_run& run, const object_list& from) {
         held_object& stamped = res.objects[res.count];
         // Same object grown, so it keeps its mark.
         stamped.selected = source.selected;
-        stamped.x0 = 0; stamped.y0 = 0;
+        stamped.col = 0; stamped.row = 0;
         stamped.width = (int16_t)width; stamped.height = (int16_t)height;
-        stamped.mask.clear();
+        stamped.data.clear();
         bool any = false;
         for (int row = 0; row < height; ++row) {
             const int big_row = row * source.height / height, own_row = row % source.height;
             for (int col = 0; col < width; ++col) {
                 const int big_col = col * source.width / width, own_col = col % source.width;
-                if (source.mask[big_row][big_col] == TRANSPARENT) continue;
-                const int8_t color = source.mask[own_row][own_col];
-                if (color != TRANSPARENT) { stamped.mask[row][col] = color; any = true; }
+                if (source.data[big_row][big_col] == TRANSPARENT) continue;
+                const int8_t color = source.data[own_row][own_col];
+                if (color != TRANSPARENT) { stamped.data[row][col] = color; any = true; }
             }
         }
         if (any) ++res.count;
@@ -1920,30 +1830,30 @@ object_list& op_extend_rays(program_run& run, const object_list& from, int8_t ra
         const held_object& one = from.objects[i];
         if (one.width <= 0 || one.height <= 0) continue;
         if (!one.selected) { res.objects[res.count++] = one; continue; }
-        const auto seed = ray_seed_of(one.height, one.width, [&](int row, int col) { return one.mask[row][col]; });
+        const auto seed = ray_seed_of(one.height, one.width, [&](int row, int col) { return one.data[row][col]; });
         if (seed.row < 0) continue;
         // The object's box grown by radius on every side, clipped to the canvas:
         // a ray that runs past the edge would never be painted there anyway, and
         // a frame no wider than the canvas holds every ray that shows -- one
         // anchored off the object's corner cut the long ones short on its far
         // sides.
-        const int x0 = max(one.x0 - radius, 0), y0 = max(one.y0 - radius, 0);
-        const int x1 = min(one.x0 + one.width - 1 + radius, MAX_GRID_DIM - 1),
-                  y1 = min(one.y0 + one.height - 1 + radius, MAX_GRID_DIM - 1);
+        const int x0 = max(one.col - radius, 0), y0 = max(one.row - radius, 0);
+        const int x1 = min(one.col + one.width - 1 + radius, MAX_GRID_DIM - 1),
+                  y1 = min(one.row + one.height - 1 + radius, MAX_GRID_DIM - 1);
         if (x1 < x0 || y1 < y0) continue;
         held_object& rays = res.objects[res.count++];
         // The rays belong to the object that grew them, so they carry its mark.
         rays.selected = one.selected;
-        rays.x0 = (int16_t)x0; rays.y0 = (int16_t)y0;
+        rays.col = (int16_t)x0; rays.row = (int16_t)y0;
         rays.width = (int16_t)(x1 - x0 + 1); rays.height = (int16_t)(y1 - y0 + 1);
-        rays.mask.clear();
+        rays.data.clear();
         // RAYS ONLY: the piece's own cells are not copied, so a caller that
         // wants them re-stamps them (a Union). A one-cell piece gives only its
         // arms, and radius 0 gives nothing.
-        const int seed_row = one.y0 + seed.row - y0, seed_col = one.x0 + seed.col - x0;
+        const int seed_row = one.row + seed.row - y0, seed_col = one.col + seed.col - x0;
         each_extended_ray(seed, radius, diagonal, [&](int down, int across, int) {
             const int row = seed_row + down, col = seed_col + across;
-            if (row >= 0 && row < rays.height && col >= 0 && col < rays.width) rays.mask[row][col] = seed.color;
+            if (row >= 0 && row < rays.height && col >= 0 && col < rays.width) rays.data[row][col] = seed.color;
         });
     }
     return res;
@@ -1951,8 +1861,8 @@ object_list& op_extend_rays(program_run& run, const object_list& from, int8_t ra
 
 // Whether the object paints the grid cell (x, y).
 bool paints_at(const held_object& one, int x, int y) {
-    const int across = x - one.x0, down = y - one.y0;
-    return across >= 0 && across < one.width && down >= 0 && down < one.height && one.mask[down][across] != TRANSPARENT;
+    const int across = x - one.col, down = y - one.row;
+    return across >= 0 && across < one.width && down >= 0 && down < one.height && one.data[down][across] != TRANSPARENT;
 }
 
 // MoveToEdge[move_direction]: each picked object slides along move_direction until its painted cells
@@ -1971,11 +1881,11 @@ object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t m
         held_object& one = res.objects[i];
         if (!one.selected) continue;
         cell_box painted;
-        each_painted(one, [&](int row, int col, int8_t) { painted.include_cell(one.y0 + row, one.x0 + col); });
+        each_painted(one, [&](int row, int col, int8_t) { painted.include_cell(one.row + row, one.col + col); });
         if (painted.empty()) continue;
         const int steps = steps_to_edge(painted, run.canvas.width, run.canvas.height, move_direction);
-        one.x0 = (int16_t)(one.x0 + steps * step.across);
-        one.y0 = (int16_t)(one.y0 + steps * step.down);
+        one.col = (int16_t)(one.col + steps * step.across);
+        one.row = (int16_t)(one.row + steps * step.down);
     }
     return res;
 }
@@ -2001,7 +1911,7 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
     for (int i = 0; i < count; ++i) {
         const held_object& one = from.objects[i];
         each_painted(one, [&](int row, int col, int8_t) {
-            const int x = one.x0 + col, y = one.y0 + row;
+            const int x = one.col + col, y = one.row + row;
             if (x >= 0 && x < width && y >= 0 && y < height && owner[y * width + x] < 0)
                 owner[y * width + x] = (int16_t)i;
         });
@@ -2013,7 +1923,7 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
         if (one.width <= 0 || one.height <= 0) continue;
         if (!one.selected) { res.objects[res.count++] = one; continue; }
         cell_box reach;
-        each_painted(one, [&](int row, int col, int8_t) { reach.include_cell(one.y0 + row, one.x0 + col); });
+        each_painted(one, [&](int row, int col, int8_t) { reach.include_cell(one.row + row, one.col + col); });
         for (int at = 0; at < width * height; ++at)
             if (turn[at] > 0 && owner[at] == i) reach.include_cell(at / width, at % width);
         if (reach.empty()) continue;
@@ -2023,18 +1933,18 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
         // The grown object is the SAME object, so it keeps the mark it was
         // picked by, as a trail's does.
         grown.selected = one.selected;
-        grown.x0 = (int16_t)reach.col0; grown.y0 = (int16_t)reach.row0;
+        grown.col = (int16_t)reach.col0; grown.row = (int16_t)reach.row0;
         grown.width = (int16_t)grown_width; grown.height = (int16_t)grown_height;
-        grown.mask.clear();
+        grown.data.clear();
         each_painted(one, [&](int row, int col, int8_t color) {
-            const int across = one.x0 + col - reach.col0, down = one.y0 + row - reach.row0;
-            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.mask[down][across] = color;
+            const int across = one.col + col - reach.col0, down = one.row + row - reach.row0;
+            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.data[down][across] = color;
         });
-        const int8_t color = first_color(one);
+        const int8_t color = one.first_color();
         for (int at = 0; at < width * height; ++at) {
             if (turn[at] <= 0 || owner[at] != i) continue;
             const int across = at % width - reach.col0, down = at / width - reach.row0;
-            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.mask[down][across] = color;
+            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.data[down][across] = color;
         }
         ++res.count;
     }
@@ -2061,7 +1971,7 @@ object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow
     for (int i = 0; i < from.count; ++i) {
         const held_object& one = from.objects[i];
         each_painted(one, [&](int row, int col, int8_t) {
-            const int x = one.x0 + col, y = one.y0 + row;
+            const int x = one.col + col, y = one.row + row;
             if (x >= 0 && x < MAX_GRID_DIM && y >= 0 && y < MAX_GRID_DIM) occupied[y][x] = true;
         });
     }
@@ -2070,14 +1980,14 @@ object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow
         if (one.width <= 0 || one.height <= 0) continue;
         // Only what was picked is touched; the rest ride through as they are.
         if (!one.selected) { res.objects[res.count++] = one; continue; }
-        const int8_t color = first_color(one);
+        const int8_t color = one.first_color();
         const auto own = [&](int y, int x) { return paints_at(one, x, y); };
         const auto taken = [&](int y, int x) { return occupied[y][x]; };
         cell_box reach;
         const auto reached = [&](int y, int x) { reach.include_cell(y, x); };
         each_painted(one, [&](int row, int col, int8_t) {
-            reached(one.y0 + row, one.x0 + col);
-            march_trail(one.y0 + row, one.x0 + col, step, width, height, own, taken, reached);
+            reached(one.row + row, one.col + col);
+            march_trail(one.row + row, one.col + col, step, width, height, own, taken, reached);
         });
         if (reach.empty()) continue;
         const int grown_width = min(reach.width(), MAX_GRID_DIM);
@@ -2086,18 +1996,18 @@ object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow
         // The grown object is the SAME object, longer, so the mark it was picked
         // by rides along with it.
         grown.selected = one.selected;
-        grown.x0 = (int16_t)reach.col0; grown.y0 = (int16_t)reach.row0;
+        grown.col = (int16_t)reach.col0; grown.row = (int16_t)reach.row0;
         grown.width = (int16_t)grown_width; grown.height = (int16_t)grown_height;
-        grown.mask.clear();
+        grown.data.clear();
         each_painted(one, [&](int row, int col, int8_t body) {
-            const int at_row = one.y0 + row, at_col = one.x0 + col;
+            const int at_row = one.row + row, at_col = one.col + col;
             const int down = at_row - reach.row0, across = at_col - reach.col0;
             // The body keeps its colors.
-            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.mask[down][across] = body;
+            if (across >= 0 && across < grown_width && down >= 0 && down < grown_height) grown.data[down][across] = body;
             march_trail(at_row, at_col, step, width, height, own, taken, [&](int y, int x) {
                 const int trail_across = x - reach.col0, trail_down = y - reach.row0;
                 if (trail_across >= 0 && trail_across < grown_width && trail_down >= 0 && trail_down < grown_height)
-                    grown.mask[trail_down][trail_across] = color;
+                    grown.data[trail_down][trail_across] = color;
             });
         });
         ++res.count;
@@ -2120,13 +2030,13 @@ object_list& repaint_over_canvas(program_run& run, const object_list& from, Pain
         bool any = false;
         for (int row = 0; row < source.height; ++row)
             for (int col = 0; col < source.width; ++col) {
-                const int8_t color = one.mask[row][col];
+                const int8_t color = one.data[row][col];
                 if (color == TRANSPARENT) continue;
-                const int x = source.x0 + col, y = source.y0 + row;
+                const int x = source.col + col, y = source.row + row;
                 const int8_t under = x >= 0 && x < width && y >= 0 && y < height ? (int8_t)run.canvas.data[y][x]
                                                                                  : (int8_t)TRANSPARENT;
                 const int8_t painted = paint(color, under);
-                one.mask[row][col] = painted;
+                one.data[row][col] = painted;
                 any = any || painted != TRANSPARENT;
             }
         if (any) res.objects[res.count++] = one;
@@ -2211,25 +2121,25 @@ object_list& op_canonical(program_run& run, const object_list& from, bool normal
     for (int i = 0; i < res.count; ++i) {
         const held_object& source = from.objects[i];
         held_object& posed = res.objects[i] = source;
-        const auto [first_row, first_col] = placed(source.y0, source.x0);
-        const auto [last_row, last_col] = placed(source.y0 + source.height - 1, source.x0 + source.width - 1);
-        posed.y0 = (int16_t)min(first_row, last_row);
-        posed.x0 = (int16_t)min(first_col, last_col);
+        const auto [first_row, first_col] = placed(source.row, source.col);
+        const auto [last_row, last_col] = placed(source.row + source.height - 1, source.col + source.width - 1);
+        posed.row = (int16_t)min(first_row, last_row);
+        posed.col = (int16_t)min(first_col, last_col);
         posed.width = (pose & 1) ? source.height : source.width;
         posed.height = (pose & 1) ? source.width : source.height;
         const int posed_height = min((int)posed.height, MAX_GRID_DIM), posed_width = min((int)posed.width, MAX_GRID_DIM);
         for (int row = 0; row < posed_height; ++row)
-            for (int col = 0; col < posed_width; ++col) posed.mask[row][col] = TRANSPARENT;
+            for (int col = 0; col < posed_width; ++col) posed.data[row][col] = TRANSPARENT;
         const int source_height = min((int)source.height, MAX_GRID_DIM), source_width = min((int)source.width, MAX_GRID_DIM);
         for (int row = 0; row < source_height; ++row)
             for (int col = 0; col < source_width; ++col) {
-                const int8_t color = source.mask[row][col];
+                const int8_t color = source.data[row][col];
                 if (color == TRANSPARENT) continue;
-                auto [to_row, to_col] = placed(source.y0 + row, source.x0 + col);
-                to_row -= posed.y0;
-                to_col -= posed.x0;
+                auto [to_row, to_col] = placed(source.row + row, source.col + col);
+                to_row -= posed.row;
+                to_col -= posed.col;
                 if (to_row >= 0 && to_row < MAX_GRID_DIM && to_col >= 0 && to_col < MAX_GRID_DIM)
-                    posed.mask[to_row][to_col] = color;
+                    posed.data[to_row][to_col] = color;
             }
     }
     if (normalize) {
@@ -2272,9 +2182,9 @@ object_list& op_rotate(program_run& run, const object_list& from, bool normalize
             held_object& turned = res.objects[i] = source;
             for (int at = 0; at < MAX_GRID_CELLS; ++at) {
                 const int row = cell_row(at), col = cell_col(at);
-                turned.mask.values[at] = row < height && col < width ? (int8_t)source.mask[col][row] : (int8_t)TRANSPARENT;
+                turned.data.values[at] = row < height && col < width ? (int8_t)source.data[col][row] : (int8_t)TRANSPARENT;
             }
-            turned.x0 = source.y0; turned.y0 = source.x0;
+            turned.col = source.row; turned.row = source.col;
             turned.width = (int16_t)width; turned.height = (int16_t)height;
             res.count = i + 1;
         }
@@ -2311,8 +2221,8 @@ object_list& op_copy_to(program_run& run, const object_list& from, int anchor) {
             const held_object& target = from.objects[j];
             if (target.selected || target.width <= 0 || target.height <= 0) continue;
             held_object& copy = res.objects[res.count++] = pattern;
-            copy.x0 = (int16_t)aligned_copy_start(pattern.width, target.x0, target.width, anchor % 3);
-            copy.y0 = (int16_t)aligned_copy_start(pattern.height, target.y0, target.height, anchor / 3);
+            copy.col = (int16_t)aligned_copy_start(pattern.width, target.col, target.width, anchor % 3);
+            copy.row = (int16_t)aligned_copy_start(pattern.height, target.row, target.height, anchor / 3);
         }
     }
     return res;
@@ -2329,24 +2239,20 @@ object_list& op_project_on_seeds(program_run& run, const object_list& from) {
     if (from.count <= 0 || seeds.count <= 0) return res;
     const held_object& stencil = from.objects[0];
     if (stencil.width <= 0 || stencil.height <= 0) return res;
-    held_object& base = res.objects[res.count++];
-    base.x0 = 0; base.y0 = 0;
-    base.width = (int16_t)run.input.width;
-    base.height = (int16_t)run.input.height;
-    base.mask = run.input.data;
-    const cell_box stencil_box = frame_of(stencil);
+    segment_objects(run.input, res, grouping::whole_grid);
+    const cell_box stencil_box = stencil.box();
     for (int s = 0; s < seeds.count; ++s) {
         const held_object& seed = seeds.objects[s];
-        const int8_t seed_color = first_color(seed);
-        const int8_t paint = seed_color >= 0 ? seed_color : first_color(stencil);
-        project_along(stencil_box, frame_of(seed),
+        const int8_t seed_color = seed.first_color();
+        const int8_t paint = seed_color >= 0 ? seed_color : stencil.first_color();
+        project_along(stencil_box, seed.box(),
                       run.canvas.width, run.canvas.height, [&](int row, int col) {
             if (res.count >= MAX_OBJECTS_IN_A_LIST) return false;
             held_object& stamp = res.objects[res.count++];
-            stamp.x0 = (int16_t)col; stamp.y0 = (int16_t)row;
+            stamp.col = (int16_t)col; stamp.row = (int16_t)row;
             stamp.width = stencil.width; stamp.height = stencil.height;
-            stamp.mask.clear();
-            each_painted(stencil, [&](int at_row, int at_col, int8_t) { stamp.mask[at_row][at_col] = paint; });
+            stamp.data.clear();
+            each_painted(stencil, [&](int at_row, int at_col, int8_t) { stamp.data[at_row][at_col] = paint; });
             return true;
         });
     }
@@ -2388,14 +2294,14 @@ object_list& op_snap_to_anchors(program_run& run, const object_list& from) {
                 }
             if (landed.empty()) return false;
             held_object& stamped = res.objects[res.count];
-            stamped.x0 = (int16_t)landed.col0; stamped.y0 = (int16_t)landed.row0;
+            stamped.col = (int16_t)landed.col0; stamped.row = (int16_t)landed.row0;
             stamped.width = (int16_t)landed.width(); stamped.height = (int16_t)landed.height();
-            stamped.mask.clear();
+            stamped.data.clear();
             for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col) {
                     int at_row = 0, at_col = 0;
                     if (label[row][col] == body && landing(row, col, at_row, at_col))
-                        stamped.mask[at_row - landed.row0][at_col - landed.col0] = drawn.data[row][col];
+                        stamped.data[at_row - landed.row0][at_col - landed.col0] = drawn.data[row][col];
                 }
             res.count++;
             return true;
@@ -2561,19 +2467,19 @@ void read_the_seeds(const grid& input, int ground, run_lists& lists) {
         [&](const object_summary& box, const int16_t* taken, int taken_count) {
             if (pieces.count >= MAX_OBJECTS_IN_A_LIST) return;
             held_object& one = pieces.objects[pieces.count++];
-            one.x0 = box.col; one.y0 = box.row;
+            one.col = box.col; one.row = box.row;
             one.width = box.width; one.height = box.height;
             one.selected = false;
-            one.mask.clear();
+            one.data.clear();
             for (int i = 0; i < taken_count; ++i) {
                 const int row = cell_row(taken[i]), col = cell_col(taken[i]);
-                one.mask[row - one.y0][col - one.x0] = input.data[row][col];
+                one.data[row - one.row][col - one.col] = input.data[row][col];
             }
         });
     if (ground >= 0) {
         int kept = 0;
         for (int i = 0; i < pieces.count; ++i)
-            if (first_color(pieces.objects[i]) != ground) pieces.objects[kept++] = pieces.objects[i];
+            if (pieces.objects[i].first_color() != ground) pieces.objects[kept++] = pieces.objects[i];
         pieces.count = kept;
     }
     object_list& seeds = lists.seeds;
