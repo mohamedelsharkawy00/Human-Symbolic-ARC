@@ -287,7 +287,6 @@ enum class grouping : int8_t {
 
 // Caller-owned so a caller can lend memory it already holds.
 struct object_walk_scratch {
-    bool taken[MAX_GRID_DIM][MAX_GRID_DIM];
     int16_t queue_row[MAX_GRID_CELLS];
     int16_t queue_col[MAX_GRID_CELLS];
     int16_t cells[MAX_GRID_CELLS];
@@ -323,18 +322,18 @@ inline void each_object(const grid& one_grid, grouping how, object_walk_scratch&
         return;
     }
     // A group never leaves its seed's copy when boundaries are supplied.
-    bool (&taken)[MAX_GRID_DIM][MAX_GRID_DIM] = scratch.taken;
+    cell_set taken;
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col)
-            taken[row][col] = !is_color(one_grid.data[row][col]) || !includes(row, col);
+            if (!is_color(one_grid.data[row][col]) || !includes(row, col)) taken.add(row, col);
     int16_t* queue_row = scratch.queue_row;
     int16_t* queue_col = scratch.queue_col;
     int16_t* found_cells = scratch.cells;
     for (int row = 0; row < one_grid.height; ++row)
         for (int col = 0; col < one_grid.width; ++col) {
-            if (taken[row][col]) continue;
+            if (taken.has(row, col)) continue;
             const int color = one_grid.data[row][col];
-            taken[row][col] = true;
+            taken.add(row, col);
             queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
             int seen = 0;
             int seeded = 1;
@@ -348,9 +347,9 @@ inline void each_object(const grid& one_grid, grouping how, object_walk_scratch&
             if (whole_color)
                 for (int other_row = 0; other_row < one_grid.height; ++other_row)
                     for (int other_col = 0; other_col < one_grid.width; ++other_col) {
-                        if (taken[other_row][other_col] || !in_this_copy(other_row, other_col) ||
+                        if (taken.has(other_row, other_col) || !in_this_copy(other_row, other_col) ||
                             one_grid.data[other_row][other_col] != color) continue;
-                        taken[other_row][other_col] = true;
+                        taken.add(other_row, other_col);
                         queue_row[seeded] = (int16_t)other_row;
                         queue_col[seeded] = (int16_t)other_col;
                         ++seeded;
@@ -359,10 +358,10 @@ inline void each_object(const grid& one_grid, grouping how, object_walk_scratch&
             // disagree about which cells belong to one group: eight directions,
             // or four where only a side joins.
             auto claim = [&](int next_row, int next_col) {
-                if (whole_color || taken[next_row][next_col] || !in_this_copy(next_row, next_col)) return false;
+                if (whole_color || taken.has(next_row, next_col) || !in_this_copy(next_row, next_col)) return false;
                 const int there = one_grid.data[next_row][next_col];
                 if (!any_color && there != color) return false;
-                taken[next_row][next_col] = true;
+                taken.add(next_row, next_col);
                 return true;
             };
             auto see = [&](int seen_row, int seen_col) {

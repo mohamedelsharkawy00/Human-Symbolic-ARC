@@ -163,7 +163,7 @@ inline void each_shape_place(const grid& one_grid, const turning_shape& shape, t
 template <class Take>
 inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, object_walk_scratch& scratch,
                             Take take, tile_size tiles = {}) {
-    bool in_shape[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+    cell_set in_shape;
     int pieces = 0;
     int16_t cells[MAX_GRID_CELLS];
     each_shape_place(one_grid, shape, tiles, [&](int row, int col) {
@@ -173,7 +173,7 @@ inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, ob
         shape.cells.each_cell([&](int down, int across, int8_t) {
             cells[count++] = (int16_t)cell_index(row + down, col + across);
             box.include_cell(row + down, col + across);
-            in_shape[row + down][col + across] = true;
+            in_shape.add(row + down, col + across);
         });
         take(summary_of(box, count), cells, count);
         ++pieces;
@@ -182,7 +182,7 @@ inline int each_shape_piece(const grid& one_grid, const turning_shape& shape, ob
     each_object(one_grid, grouping::touching_same_color, scratch,
                 [&](const object_summary& box, const int16_t* found, int count) {
         if (pieces++ < MAX_GRID_CELLS) take(box, found, count);
-    }, tiles, [&](int row, int col) { return !in_shape[row][col]; });
+    }, tiles, [&](int row, int col) { return !in_shape.has(row, col); });
     return places;
 }
 

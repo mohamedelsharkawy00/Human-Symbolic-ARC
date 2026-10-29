@@ -770,9 +770,9 @@ private:
             };
             // Only this source's accepted placements can duplicate its shape
             // matches. Keep their corners once instead of rescanning all edges.
-            bool placed[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+            cell_set placed;
             auto keep = [&](const edge& match) {
-                if (into.contains(match.row, match.col)) placed[match.row][match.col] = true;
+                if (into.contains(match.row, match.col)) placed.add(match.row, match.col);
                 // Grown, it landed on a piece of the other grid, a figure by being one.
                 on_figures.push_back(match.scale != 1 || landed_on_a_figure(match, posed_for(match.pose), into));
                 found.push_back(match);
@@ -862,7 +862,7 @@ private:
                 const auto& landing = into_info[into_index];
                 if (landing.shape != one_object.shape || landing.summary.count != one_object.summary.count) continue;
                 if (same_corner(landing.summary, one_object.summary)) continue;
-                if (placed[landing.summary.row][landing.summary.col]) continue;
+                if (placed.has(landing.summary.row, landing.summary.col)) continue;
                 // Estimate chance from the target color count, or all grid colors for multicolor objects.
                 double odds = 1.0;
                 if (landing.color >= 0)
@@ -990,11 +990,11 @@ private:
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             laid_out.travel[found_index] =
                 travel_of(found[found_index], from_objects[found[found_index].from]);
-        bool held[MAX_GRID_DIM][MAX_GRID_DIM] = {};
+        cell_set held;
         for (const object& piece : from_objects)
             piece.each_cell([&](int row, int col, int8_t) {
-                laid_out.shared = laid_out.shared || held[row][col];
-                held[row][col] = true;
+                laid_out.shared = laid_out.shared || held.has(row, col);
+                held.add(row, col);
             });
         // Where pieces share a cell: the cell of its own grid one landing carries
         // to each target cell, -1 for none, and the target cells it set, cleared
