@@ -3,20 +3,20 @@
 // Nothing is searched: this only answers "can the operators we have already
 // say this?".
 //
-//   spell <task-id> "<program>"          one program
-//   spell <task-id> "<program>" --test   and what it draws on each test, fitting or not
-//   spell <task-id> --file <path>        one program per line, first that solves wins
-#include "23_solver.hpp"
+//   arc_headless --spell <task-id> "<program>"          one program
+//   arc_headless --spell <task-id> "<program>" --test   and what it draws on each test, fitting or not
+//   arc_headless --spell <task-id> --file <path>        one program per line, first that solves wins
+#pragma once
 #include "21_puzzle_loader.hpp"
+#include "23_solver.hpp"
 #include <cstdio>
 #include <fstream>
 #include <string>
 #include <vector>
 
-using namespace arc;
-using namespace std;
+namespace arc {
 
-static void show(const char* label, const grid& g) {
+inline void show_grid(const char* label, const grid& g) {
     printf("    %s", label);
     if (g.width <= 0 || g.height <= 0) { printf(" (nothing)\n"); return; }
     printf(" %dx%d\n", g.width, g.height);
@@ -27,20 +27,24 @@ static void show(const char* label, const grid& g) {
     }
 }
 
-int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "spell <task-id> \"<program>\" [--test] | --file <path>\n"); return 2; }
-    const string id = argv[1];
+// THE BENCH, told `args`, the words after --spell.
+inline int what_the_program_draws(const vector<string>& args) {
+    if (args.size() < 2 || (args[1] == "--file" && args.size() < 3)) {
+        fprintf(stderr, "arc_headless --spell <task-id> \"<program>\" [--test] | --file <path>\n");
+        return 2;
+    }
+    const string& id = args[0];
     vector<string> programs;
     // Every test drawn, whether the program fits the pairs or not: what a
     // program not finished yet has drawn so far.
     bool every_test = false;
-    if (string(argv[2]) == "--file") {
-        ifstream in(argv[3]);
+    if (args[1] == "--file") {
+        ifstream in(args[2]);
         for (string line; getline(in, line);)
             if (!line.empty() && line[0] != '#') programs.push_back(line);
     } else {
-        programs.push_back(argv[2]);
-        every_test = argc > 3 && string(argv[3]) == "--test";
+        programs.push_back(args[1]);
+        every_test = args.size() > 2 && args[2] == "--test";
     }
 
     task_set set = load_task_set(DS_TRAIN | DS_EVAL);
@@ -69,8 +73,8 @@ int main(int argc, char** argv) {
         if (fits != (int)task.train.size() && programs.size() == 1)
             for (size_t i = 0; i < task.train.size(); ++i) {
                 printf("  pair %zu\n", i);
-                show("drew  ", drew[i]);
-                show("wanted", task.train[i].output);
+                show_grid("drew  ", drew[i]);
+                show_grid("wanted", task.train[i].output);
             }
         if (fits == (int)task.train.size() || every_test) {
             const vector<grid>* answers = set.solutions_for(id);
@@ -81,8 +85,8 @@ int main(int argc, char** argv) {
                 // A program that fits every pair and still misses the test is the
                 // mistake worth seeing, so it is shown the way a pair is.
                 if ((!right && programs.size() == 1) || every_test) {
-                    show("drew  ", drawn);
-                    show("wanted", (*answers)[i]);
+                    show_grid("drew  ", drawn);
+                    show_grid("wanted", (*answers)[i]);
                 }
             }
         }
@@ -90,3 +94,5 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
+
+}  // namespace arc

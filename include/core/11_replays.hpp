@@ -1367,21 +1367,53 @@ inline optional<paint_walk> copy_walk(const replay_facts& facts, const vector<pa
     });
 }
 
+// ONE FIGURE LAID AGAIN WHERE A Tile LAYS IT (each_tile_offset, 15_op_math.hpp,
+// the arithmetic the op runs): `height` by `width`, color_at(row, col) its
+// cells from its box's corner, the corner at (top, left), each step measured
+// off it in a hand of `colors` colors and the key `key`, a copy one step of it
+// where a step is shorter (copy_size), and laid where it lies when no step
+// moves it. Each cell that lands on `output` handed to put(row, col, color),
+// and each copy, before it is laid, to slot(), false where the op's list has
+// no room for it. False where either refused.
+template <class ColorAt, class Slot, class Put>
+inline bool lay_tiled(const tile_value& tile, int height, int width, ColorAt color_at, int top, int left,
+                      int colors, const cell_box& key, const grid& output, Slot slot, Put&& put) {
+    const tile_moves moves = moves_of(tile, measures_of(tile, height, width, [&](int row, int col) {
+        return color_at(row, col) != (int8_t)TRANSPARENT; }, colors, key));
+    const auto [rows, columns] = copy_size(moves, height, width);
+    bool laid = true;
+    auto lay_copy = [&](int down, int across) {
+        if (!slot()) return laid = false;
+        for (int row = 0; row < rows && laid; ++row)
+            for (int col = 0; col < columns && laid; ++col) {
+                const int8_t color = color_at(row, col);
+                const int at_row = top + down + row, at_col = left + across + col;
+                if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col)) laid = put(at_row, at_col, color);
+            }
+        return laid;
+    };
+    if (moves.count == 0) lay_copy(0, 0);
+    else each_tile_offset(tile, moves, top, left, rows, columns, output.width, output.height, lay_copy);
+    return laid;
+}
+
+// How many colors the picked pieces of a cut hold together (color_count).
+inline int picked_colors(const partner_pieces& cut) {
+    return color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
+                       [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
+}
+
 // A PIECE REPEATED, walked: each picked piece laid again where its Tile lays it
-// (each_tile_offset, 15_op_math.hpp, the arithmetic the op runs), each step read
-// off the pieces the pair's cut hands over, a copy one step of the piece where
-// a step is shorter (copy_size) -- walked (walk_paint) and laid every way the
-// line asks (lay_paint). A piece no step moves is drawn where it lies, as the
-// op hands it on. THE OP LAYS EVERY COPY INTO ITS ONE LIST and drops those past
-// its room, so a pair whose pieces and copies would not fit in it cannot be
-// drawn (8a371977's 3s, each repeated along its row: the later rows' copies
-// were dropped).
+// (lay_tiled), each step read off the pieces the pair's cut hands over --
+// walked (walk_paint) and laid every way the line asks (lay_paint). A piece no
+// step moves is drawn where it lies, as the op hands it on. THE OP LAYS EVERY
+// COPY INTO ITS ONE LIST and drops those past its room, so a pair whose pieces
+// and copies would not fit in it cannot be drawn (8a371977's 3s, each repeated
+// along its row: the later rows' copies were dropped).
 inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
                                       const tile_value& tile) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
-        const grid& output = facts.train[which].output;
-        const int colors = color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
-                                       [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
+        const int colors = picked_colors(cut);
         const cell_box key = key_box(cut);
         // The list's slots taken: every piece not picked rides through in one.
         int slots = (int)std::count(cut.picked.begin(), cut.picked.end(), false);
@@ -1389,24 +1421,10 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
             if (!cut.picked[i]) continue;
             const object& piece = cut.pieces[i];
             const auto& box = piece.summary;
-            const tile_moves moves = moves_of(tile, measures_of(tile, box.height, box.width, [&](int row, int col) {
-                return piece.data[row][col] != (int8_t)TRANSPARENT; }, colors, key));
-            const auto [rows, columns] = copy_size(moves, box.height, box.width);
-            bool laid = true;
-            auto lay_copy = [&](int down, int across) {
-                if (++slots > MAX_OBJECTS_IN_A_LIST) return laid = false;
-                for (int row = 0; row < rows && laid; ++row)
-                    for (int col = 0; col < columns && laid; ++col) {
-                        const int8_t color = piece.data[row][col];
-                        const int at_row = box.row + down + row, at_col = box.col + across + col;
-                        if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col))
-                            laid = put(at_row, at_col, color);
-                    }
-                return laid;
-            };
-            if (moves.count == 0) lay_copy(0, 0);
-            else each_tile_offset(tile, moves, box.row, box.col, rows, columns, output.width, output.height, lay_copy);
-            if (!laid) return false;
+            if (!lay_tiled(tile, box.height, box.width, [&](int row, int col) { return (int8_t)piece.data[row][col]; },
+                           box.row, box.col, colors, key, facts.train[which].output,
+                           [&] { return ++slots <= MAX_OBJECTS_IN_A_LIST; }, put))
+                return false;
         }
         return true;
     });
@@ -1415,14 +1433,13 @@ inline optional<paint_walk> tile_walk(const replay_facts& facts, const vector<pa
 // THE PICKED PIECES, AS ONE FIGURE, REPEATED FROM PAST THEMSELVES, walked:
 // UnionList folds them into one figure and Trim fits its box to them, Shift
 // moves it its own size the way `shift` names (shift_by, the step the op
-// takes), and the Tile lays it again from there, as tile_walk lays a piece,
-// each step read off the figure and the key, the pieces not picked (12422b43's
-// rows beside the 5s, stacked under the figure every key height). Picking
-// nothing, it draws nothing.
+// takes), and the Tile lays it again from there (lay_tiled), each step read off
+// the figure and the key, the pieces not picked (12422b43's rows beside the
+// 5s, stacked under the figure every key height). Picking nothing, it draws
+// nothing.
 inline optional<paint_walk> past_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int shift,
                                       const tile_value& tile) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
-        const grid& output = facts.train[which].output;
         cell_box figure;
         cells drawn;
         for (int i = 0; i < cut.count(); ++i)
@@ -1431,26 +1448,11 @@ inline optional<paint_walk> past_walk(const replay_facts& facts, const vector<pa
                 cut.pieces[i].each_cell([&](int row, int col, int8_t color) { drawn[row][col] = color; });
             }
         if (figure.empty()) return false;
-        const int colors = color_count(cut.count(), [&](int i) { return (bool)cut.picked[(size_t)i]; },
-                                       [&](int i) { return (uint32_t)palette(cut.pieces[(size_t)i]); });
-        const tile_moves moves = moves_of(tile, measures_of(tile, figure.height(), figure.width(), [&](int row, int col) {
-            return drawn[figure.row0 + row][figure.col0 + col] != (int8_t)TRANSPARENT; }, colors, key_box(cut)));
-        const auto [rows, columns] = copy_size(moves, figure.height(), figure.width());
         const direction_step by = shift_by(shift, figure.width(), figure.height());
-        const int top = figure.row0 + by.down, left = figure.col0 + by.across;
-        bool laid = true;
-        auto lay_copy = [&](int down, int across) {
-            for (int row = 0; row < rows && laid; ++row)
-                for (int col = 0; col < columns && laid; ++col) {
-                    const int8_t color = drawn[figure.row0 + row][figure.col0 + col];
-                    const int at_row = top + down + row, at_col = left + across + col;
-                    if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col)) laid = put(at_row, at_col, color);
-                }
-            return laid;
-        };
-        if (moves.count == 0) lay_copy(0, 0);
-        else each_tile_offset(tile, moves, top, left, rows, columns, output.width, output.height, lay_copy);
-        return laid;
+        return lay_tiled(tile, figure.height(), figure.width(),
+                         [&](int row, int col) { return (int8_t)drawn[figure.row0 + row][figure.col0 + col]; },
+                         figure.row0 + by.down, figure.col0 + by.across, picked_colors(cut), key_box(cut),
+                         facts.train[which].output, [] { return true; }, put);
     });
 }
 
@@ -1986,17 +1988,13 @@ inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<p
 }
 
 // THE CELLS A PIECE ENCLOSES: those its own paint walls off from the edge of its
-// box (mark_outside, the four-way flood the ops flood), each handed to
-// `see(row, col)` where it lies.
+// box (grid_parts, the hollows the ops fill), each handed to `see(row, col)`
+// where it lies.
 template <class See>
 inline void each_hollow(const object& piece, See see) {
-    const int height = piece.summary.height, width = piece.summary.width;
-    auto occupied = [&](int row, int col) { return piece.data[row][col] != (int8_t)TRANSPARENT; };
-    bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
-    mark_outside(height, width, occupied, outside);
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col)
-            if (!occupied(row, col) && !outside[row][col]) see(piece.summary.row + row, piece.summary.col + col);
+    grid_parts(piece.summary.width, piece.summary.height, [&](int row, int col) {
+        return piece.data[row][col] != (int8_t)TRANSPARENT;
+    }).each_hollow([&](int row, int col) { see(piece.summary.row + row, piece.summary.col + col); });
 }
 
 // THE HOLLOWS OF A PIECE, FILLED, replayed. InteriorColor fills each picked

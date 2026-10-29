@@ -16,7 +16,7 @@
 namespace arc {
 using namespace std;
 
-// Diagnostic calls and volumes, reset per puzzle by arc_said. Matching never
+// Diagnostic calls and volumes, reset per puzzle by --said. Matching never
 // reads these counters when making a decision.
 struct matching_work_counts {
     unsigned long long calls = 0, rematches = 0, gathers = 0;

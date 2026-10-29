@@ -22,7 +22,7 @@ if(MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/MP>")
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")  # source and exec charset agree
-    # No /GL (and so no /LTCG) since 2026-10-08: arc_said ran as fast without it,
+    # No /GL (and so no /LTCG) since 2026-10-08: a scored run ran as fast without it,
     # and the code generation it moves into the link made each link 6-26 s.
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:/O2;/Oi;/Ot;/GS-;/fp:fast;/Qpar;/favor:blend>")
     add_compile_options("$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:RelWithDebInfo>>:/O2;/Ob2;/Oi;/Ot;/Zi>")
@@ -67,40 +67,20 @@ add_custom_command(
 add_library(arc_core INTERFACE)
 target_include_directories(arc_core INTERFACE include/core)
 
-# THE OPS: what runs a program. Only the programs that run programs link it.
-add_library(arc_ops STATIC "src/ops.cpp")
-target_link_libraries(arc_ops PUBLIC arc_core)
-
 # The solver on its own, no window: every reading the GUI shows runs in one of
 # these, and it is what Kaggle runs. Built here too, so what Kaggle compiles is
-# compiled on every build and can be run on a desk.
+# compiled on every build and can be run on a desk. It alone has the ops
+# (include/ops), what runs a program, and the tools that run programs
+# (scripts: said, spell) on its include path.
 add_executable(arc_headless "src/kaggle_main.cpp")
-target_link_libraries(arc_headless PRIVATE arc_ops)
+target_link_libraries(arc_headless PRIVATE arc_core)
+target_include_directories(arc_headless PRIVATE include/ops scripts)
 # It reads its settings with getenv, the call Kaggle's compiler has; MSVC would
 # rather it used its own _dupenv_s.
 target_compile_definitions(arc_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# ONE PROGRAM, ONE PUZZLE: hands a written program to a puzzle and
-# shows what it drew beside what was wanted, pair by pair. It answers only
-# "can the words we already have say this?", which is the question a new op
-# should have to survive before it is added. Run it from the repo root:
-#   arc_spell <task-id> "<program>"      one program
-#   arc_spell <task-id> --file <path>    one a line, each reported in turn
-add_executable(arc_spell "scripts/spell.cpp")
-target_link_libraries(arc_spell PRIVATE arc_ops)
-target_compile_definitions(arc_spell PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-# WHAT THE READING SOLVES, counted over a whole dataset, and
-# every puzzle's inference readout, in one run into out/<label>. The guard on
-# say_the_reading: a sentence it spells that draws the wrong thing is reported
-# here and nowhere else. scripts\said.bat builds it and runs it, and
-# scripts\readouts.py compares two runs.
-add_executable(arc_said "scripts/said.cpp")
-target_link_libraries(arc_said PRIVATE arc_ops)
-target_compile_definitions(arc_said PRIVATE _CRT_SECURE_NO_WARNINGS)
-
 # The GUI: a window onto the reading, which runs in an arc_headless child. It
-# links the solver's headers and not its ops, so it cannot run a program: GUI
+# has the solver's headers and not its ops, so it cannot run a program: GUI
 # code that tried would fail to link.
 # Its code compiles apart, in arc_gui, because Ninja holds back every compile
 # of a target until the targets it depends on are built: inside ARC, gui_main.cpp

@@ -1,4 +1,4 @@
-// What each op does to the cells, said once. The op calls it (src/ops.cpp),
+// What each op does to the cells, said once. The op calls it (38_ops.hpp),
 // and the reading replays the op by calling the same (7_facts.hpp to
 // 13_infer.hpp), so the two cannot draw differently. An operator's arithmetic
 // goes here before the operator is said.
@@ -6,7 +6,6 @@
 // generate, after what several of them share.
 #pragma once
 #include "1_readings.hpp"
-#include "3_background.hpp"  // mark_outside
 #include "14_vocabulary.hpp"  // color_pair, BidiColorMap's key values
 #include <algorithm>
 #include <bit>
@@ -96,34 +95,6 @@ inline bool shapes_alike(const Pieces& pieces, int mine, int other, int like) {
         sized ? pieces.blocks(other) : shape_blocks{}, likeness_freedom(like));
 }
 
-// Count four-connected enclosed spaces in an occupancy mask: the runs of empty
-// cells no four-way walk in from the edge of the box reaches (mark_outside).
-// Shared by inference and SelectObjectsWithHoles so learned keys mean the same
-// at runtime.
-template <class Occupied>
-inline int object_hole_count(int height, int width, Occupied occupied) {
-    if (width <= 0 || height <= 0) return 0;
-    // Walked: outside, or in a hole already counted.
-    bool walked[MAX_GRID_DIM][MAX_GRID_DIM];
-    mark_outside(height, width, occupied, walked);
-    auto claim = [&](int row, int col) {
-        if (walked[row][col] || occupied(row, col)) return false;
-        walked[row][col] = true;
-        return true;
-    };
-    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-    int holes = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            if (!claim(row, col)) continue;
-            ++holes;
-            queue_row[0] = (int16_t)row;
-            queue_col[0] = (int16_t)col;
-            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
-        }
-    return holes;
-}
-
 // THE LONGEST STRAIGHT LINE of a `height` by `width` piece's cells running
 // `toward` one direction from each line's first cell, occupied(row, col) saying
 // which cells of its box it holds: how many cells it has.
@@ -145,7 +116,7 @@ inline int longest_line(int height, int width, Occupied occupied, int toward) {
 }
 
 // HOW MUCH OF A MEASURE A PIECE HAS (count_kind, 14_vocabulary.hpp): its cells,
-// its colors, its holes (object_hole_count), its cells of one color, or the
+// its colors, its holes (grid_parts::hollows), its cells of one color, or the
 // cells of its longest line along a way (longest_line). color_at(row, col)
 // reads the piece in its box, TRANSPARENT where it paints none. Said once for
 // the ops and the reading.
@@ -153,7 +124,7 @@ template <class ColorAt>
 inline int count_of(int kind, int height, int width, ColorAt color_at) {
     auto held = [&](int row, int col) { return is_color(color_at(row, col)); };
     if (kind == (int)count_kind::holes)
-        return object_hole_count(height, width, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; });
+        return grid_parts(width, height, [&](int row, int col) { return color_at(row, col) != TRANSPARENT; }).hollows();
     if (kind >= (int)count_kind::line_along_rows) {
         const int rows = longest_line(height, width, held, direction::right);
         const int columns = longest_line(height, width, held, direction::down);
@@ -567,55 +538,15 @@ inline int line_from_middle(int lo, int hi, int from) {
     return line >= lo && line <= hi ? line : -1;
 }
 
-// THE GAPS OF A PIECE, the sockets another piece fits or pours into: each run
-// of the cells of its `box` the piece leaves empty, joined side to side, that
-// meets the edge of the box on one side alone -- the mouth of a cup, open that
-// way. painted(row, col) says whether the piece paints a cell of the grid. Each
-// handed to see(opens, run_row, run_col, count), in reading order: the side it
-// opens to (box_side), its cells in the box's own rows and columns, the first
-// first in reading order, and how many; see answers true to stop at it, and so
-// does this.
-enum box_side : uint8_t { side_top = 1, side_bottom = 2, side_left = 4, side_right = 8 };
-template <class Painted, class See>
-inline bool each_gap(const cell_box& box, Painted painted, See see) {
-    const int tall = box.height(), wide = box.width();
-    bool walked[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-    int16_t run_row[MAX_GRID_CELLS], run_col[MAX_GRID_CELLS];
-    for (int start_row = 0; start_row < tall; ++start_row)
-        for (int start_col = 0; start_col < wide; ++start_col) {
-            if (walked[start_row][start_col] || painted(box.row0 + start_row, box.col0 + start_col)) continue;
-            // Walk the run from its first cell in reading order, noting the box's sides it meets.
-            uint8_t meets = 0;
-            walked[start_row][start_col] = true;
-            run_row[0] = (int16_t)start_row;
-            run_col[0] = (int16_t)start_col;
-            const int count = walk_out<4>(tall, wide, run_row, run_col, 1,
-                [&](int row, int col) {
-                    if (walked[row][col] || painted(box.row0 + row, box.col0 + col)) return false;
-                    walked[row][col] = true;
-                    return true;
-                },
-                [&](int row, int col) {
-                    if (row == 0) meets |= side_top;
-                    if (row == tall - 1) meets |= side_bottom;
-                    if (col == 0) meets |= side_left;
-                    if (col == wide - 1) meets |= side_right;
-                });
-            const bool one_side = meets == side_top || meets == side_bottom || meets == side_left || meets == side_right;
-            if (one_side && see(meets, run_row, run_col, count)) return true;
-        }
-    return false;
-}
-
 // WHERE THE PIECE `mine` FITS INTO `partner`: turned or mirrored any of the
-// eight ways and set down so it fills one of the partner's gaps (each_gap)
-// whole, a gap opening to one of the sides `opening` names, paints no cell the
-// partner paints, and whatever it has over hangs out past the partner's box on
-// the side the gap opens to. Each gap it fits, in reading order, handed to
-// see(pose, row, col, cells) with its first place -- poses in order, then where
-// it lands: the pose it is set in, where the corner of its box, so posed,
-// lands, and how many cells the gap holds; see answers true to stop, and so
-// does this. The pieces are asked as each_partner asks them.
+// eight ways and set down so it fills one of the partner's gaps
+// (grid_parts::gap) whole, a gap opening to one of the sides `opening` names,
+// paints no cell the partner paints, and whatever it has over hangs out past
+// the partner's box on the side the gap opens to. Each gap it fits, in reading
+// order, handed to see(pose, row, col, cells) with its first place -- poses in
+// order, then where it lands: the pose it is set in, where the corner of its
+// box, so posed, lands, and how many cells the gap holds; see answers true to
+// stop, and so does this. The pieces are asked as each_partner asks them.
 template <class Pieces, class See>
 inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t opening, See see) {
     const cell_box own = pieces.box(mine), box = pieces.box(partner);
@@ -624,13 +555,16 @@ inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t openin
     int cells = 0;
     for (int row = own.row0; row <= own.row1; ++row)
         for (int col = own.col0; col <= own.col1; ++col) cells += painted(mine, row, col) ? 1 : 0;
-    // The cells of the gap asked now, in the box's own rows and columns.
-    bool in_run[MAX_GRID_DIM][MAX_GRID_DIM];
-    // Whether the piece, some way round, fills whole the run of `count` cells
-    // starting at (first_row, first_col), hanging out past `side` with whatever
-    // it has over -- and if so, whether `see` stops there.
-    auto fills = [&](int first_row, int first_col, int count, uint8_t side) {
-        const int anchor_row = box.row0 + first_row, anchor_col = box.col0 + first_col;
+    const grid_parts space(box.width(), box.height(),
+                             [&](int row, int col) { return painted(partner, box.row0 + row, box.col0 + col); });
+    // Whether the piece, some way round, fills gap `which` whole from its first
+    // cell, hanging out past the side it opens to with whatever it has over --
+    // and if so, whether `see` stops there.
+    auto fills = [&](int which) {
+        const int count = space.size(which);
+        const uint8_t side = space.meets[which];
+        const int anchor_row = box.row0 + space.rows[space.first[which]];
+        const int anchor_col = box.col0 + space.cols[space.first[which]];
         for (int pose = 0; pose < POSE_COUNT; ++pose) {
             const auto [broad, high] = posed_size(pose, own.width(), own.height());
             auto at = [&](int row, int col) {
@@ -650,7 +584,7 @@ inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t openin
                             const int on_row = row + down, on_col = col + across;
                             if (painted(partner, on_row, on_col)) { sits = false; break; }
                             if (on_row >= box.row0 && on_row <= box.row1 && on_col >= box.col0 && on_col <= box.col1) {
-                                if (in_run[on_row - box.row0][on_col - box.col0]) ++covered;
+                                if (space.part[on_row - box.row0][on_col - box.col0] == which) ++covered;
                                 else sits = false;
                             } else {
                                 sits = side == side_top ? on_row < box.row0 : side == side_bottom ? on_row > box.row1
@@ -662,14 +596,10 @@ inline bool each_fit(int mine, int partner, const Pieces& pieces, uint8_t openin
         }
         return false;
     };
-    return each_gap(box, [&](int row, int col) { return painted(partner, row, col); },
-                    [&](uint8_t opens, const int16_t* run_row, const int16_t* run_col, int count) {
-        if (!(opens & opening) || count > cells) return false;
-        for (int row = 0; row < box.height(); ++row)
-            for (int col = 0; col < box.width(); ++col) in_run[row][col] = false;
-        for (int i = 0; i < count; ++i) in_run[run_row[i]][run_col[i]] = true;
-        return fills(run_row[0], run_col[0], count, opens);
-    });
+    for (int which = 0; which < space.count; ++which)
+        if (space.gap(which) && (space.meets[which] & opening) && space.size(which) <= cells && fills(which))
+            return true;
+    return false;
 }
 
 // WHETHER THE PIECE `mine` WOULD FIT INTO `partner` (each_fit) through a gap
@@ -721,7 +651,7 @@ inline void each_fit_move(const Pieces& pieces, Move move) {
 }
 
 // WHERE THE PICKED PIECES POUR (FitInto [poured]): each color they wear, every
-// picked cell of it together, into the one gap (each_gap) of a piece wearing
+// picked cell of it together, into the one gap (grid_parts::gap) of a piece wearing
 // none of it that holds exactly as many cells -- nowhere where no gap does or
 // several do (7acdf6d3's dots, into the cup that holds them all, whichever
 // color the cups and the dots wear). Each pour, color by color, lowest first,
@@ -744,61 +674,26 @@ inline void each_pour(const Pieces& pieces, Pour pour) {
         for (int j = 0; j < pieces.count() && found < 2; ++j) {
             const cell_box box = pieces.box(j);
             if (box.empty() || pieces.holds(j, color)) continue;
-            each_gap(box, [&](int row, int col) { return pieces.painted(j, row, col); },
-                     [&](uint8_t, const int16_t* run_row, const int16_t* run_col, int count) {
-                if (count != cells_of[color]) return false;
-                if (++found == 1)
-                    for (int k = 0; k < count; ++k) {
-                        gap_row[k] = (int16_t)(box.row0 + run_row[k]);
-                        gap_col[k] = (int16_t)(box.col0 + run_col[k]);
-                    }
-                return found > 1;
-            });
+            const grid_parts space(box.width(), box.height(),
+                                     [&](int row, int col) { return pieces.painted(j, box.row0 + row, box.col0 + col); });
+            for (int which = 0; which < space.count && found < 2; ++which) {
+                if (!space.gap(which) || space.size(which) != cells_of[color]) continue;
+                if (++found > 1) break;
+                for (int k = 0; k < space.size(which); ++k) {
+                    gap_row[k] = (int16_t)(box.row0 + space.rows[space.first[which] + k]);
+                    gap_col[k] = (int16_t)(box.col0 + space.cols[space.first[which] + k]);
+                }
+            }
         }
         if (found == 1) pour(color, gap_row, gap_col, cells_of[color]);
     }
 }
 
-// THE PARTS WALLS FENCE OFF: every cell of a canvas `width` by `height` that is
-// no wall, joined to the cells beside it at a side -- four ways, as water runs
-// (walk_out), so walls that meet only at a corner still fence -- each cell's
-// part into `part`, -1 on a wall and off the canvas, and how many parts there
-// are. Numbered in reading order by the first cell of each, row by row, left to
-// right, as rows wrap. Walls across the whole canvas fence the tiles of a
-// lattice, numbered row by row; walls that cross nothing fence what they close
-// off against the edges (63613498's grey corner, its key alone in part 0).
-// `wall(row, col)` says whether a cell is a wall. Partition cuts on these parts
-// and SelectPartition picks by them, so a part is one thing wherever it is asked.
-template <class Wall>
-inline int fence_parts(int width, int height, Wall wall, int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
-    for (int row = 0; row < MAX_GRID_DIM; ++row)
-        for (int col = 0; col < MAX_GRID_DIM; ++col) part[row][col] = -1;
-    if (width > MAX_GRID_DIM) width = MAX_GRID_DIM;
-    if (height > MAX_GRID_DIM) height = MAX_GRID_DIM;
-    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-    int parts = 0;
-    auto claim = [&](int row, int col) {
-        if (part[row][col] >= 0 || wall(row, col)) return false;
-        part[row][col] = (int16_t)parts;
-        return true;
-    };
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            if (!claim(row, col)) continue;
-            queue_row[0] = (int16_t)row;
-            queue_col[0] = (int16_t)col;
-            walk_out<4>(height, width, queue_row, queue_col, 1, claim, [](int, int) {});
-            ++parts;
-        }
-    return parts;
-}
-
-// THE PARTS A PICK FENCES OFF (fence_parts): its walls are every cell a picked
-// piece paints, as Partition and SelectPartition read them. The pieces are
-// asked as each_partner asks them.
+// THE PARTS A PICK FENCES OFF (grid_parts) on a canvas `width` by `height`:
+// its walls are every cell a picked piece paints, as Partition and
+// SelectPartition read them. The pieces are asked as each_partner asks them.
 template <class Pieces>
-inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
-                                                int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+inline grid_parts parts_the_pick_fences(const Pieces& pieces, int width, int height) {
     bool wall[MAX_GRID_DIM][MAX_GRID_DIM] = {};
     for (int i = 0; i < pieces.count(); ++i) {
         if (!pieces.is_picked(i)) continue;
@@ -808,43 +703,35 @@ inline int parts_the_pick_fences(const Pieces& pieces, int width, int height,
             for (int col = box.col0 < 0 ? 0 : box.col0; col <= box.col1 && col < MAX_GRID_DIM; ++col)
                 wall[row][col] = wall[row][col] || pieces.painted(i, row, col);
     }
-    return fence_parts(width, height, [&](int row, int col) { return wall[row][col]; }, part);
+    return grid_parts(width, height, [&](int row, int col) { return wall[row][col]; });
 }
 
 // Each part fenced by the picked pieces, in reading order. Both Partition
 // and its replay clip the source's colored cells to these same parts.
 template <class Pieces, class Part>
 inline void each_fenced_part(const Pieces& pieces, int width, int height, Part see) {
-    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
-    const int parts = parts_the_pick_fences(pieces, width, height, part);
-    for (int which = 0; which < parts; ++which) {
-        cell_box box;
-        for (int row = 0; row < height && row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < width && col < MAX_GRID_DIM; ++col)
-                if (part[row][col] == which) box.include_cell(row, col);
-        if (!box.empty())
-            see(which, box, [&](int row, int col) { return part[row][col] == which; });
-    }
+    const grid_parts parts = parts_the_pick_fences(pieces, width, height);
+    for (int which = 0; which < parts.count; ++which)
+        see(which, parts.box_of(which), [&](int row, int col) { return parts.part[row][col] == which; });
 }
 
-// WHETHER THE PIECE `mine` LIES IN PART `which` of `part` (parts_the_pick_fences):
-// it paints a cell, and every cell it paints is in that part. A piece over a
-// wall, or across two parts, lies in none. SelectPartition[which] picks these.
+// WHETHER THE PIECE `mine` LIES IN PART `which` (parts_the_pick_fences): it
+// paints a cell, and every cell it paints is in that part. A piece over a wall,
+// or across two parts, lies in none. SelectPartition[which] picks these.
 template <class Pieces>
-inline bool lies_in_part(const Pieces& pieces, int mine, int which,
-                         const int16_t (&part)[MAX_GRID_DIM][MAX_GRID_DIM]) {
+inline bool lies_in_part(const Pieces& pieces, int mine, int which, const grid_parts& parts) {
     const cell_box box = pieces.box(mine);
     if (box.empty()) return false;
     for (int row = box.row0; row <= box.row1; ++row)
         for (int col = box.col0; col <= box.col1; ++col)
             if (pieces.painted(mine, row, col) &&
-                (row < 0 || col < 0 || row >= MAX_GRID_DIM || col >= MAX_GRID_DIM || part[row][col] != which))
+                (row < 0 || col < 0 || row >= MAX_GRID_DIM || col >= MAX_GRID_DIM || parts.part[row][col] != which))
                 return false;
     return true;
 }
 
 // A WALL: a piece that reaches two edges of a canvas `width` by `height` and
-// fences it into two parts at least (fence_parts) -- a line across it, or bent
+// fences it into two parts at least (grid_parts) -- a line across it, or bent
 // across a corner -- what the grid is divided by, not a figure on it
 // (e3721c99's fence between its key and the pieces the key colors). `box` is
 // the box its cells fill, `painted(row, col)` whether it paints that cell.
@@ -854,10 +741,9 @@ inline bool is_wall(int width, int height, const cell_box& box, Painted painted)
     if (box.empty()) return false;
     const int edges = (box.row0 <= 0) + (box.row1 >= height - 1) + (box.col0 <= 0) + (box.col1 >= width - 1);
     if (edges < 2) return false;
-    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
-    return fence_parts(width, height, [&](int row, int col) {
+    return grid_parts(width, height, [&](int row, int col) {
         return row >= box.row0 && row <= box.row1 && col >= box.col0 && col <= box.col1 && painted(row, col);
-    }, part) >= 2;
+    }).count >= 2;
 }
 
 // WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --

@@ -266,71 +266,6 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
     evidence.grid_count++;
 }
 
-// The objects of one grid — same-color cells that touch, corners counting —
-// labelled once. `cells` holds every object's cells, object by object, with
-// first_cell naming where each starts.
-struct object_map {
-    int16_t id[MAX_GRID_DIM][MAX_GRID_DIM];
-    int16_t color[MAX_GRID_DIM * MAX_GRID_DIM], size[MAX_GRID_DIM * MAX_GRID_DIM];
-    int16_t first_cell[MAX_GRID_DIM * MAX_GRID_DIM], cells[MAX_GRID_DIM * MAX_GRID_DIM];
-    bool on_border[MAX_GRID_DIM * MAX_GRID_DIM];
-    int object_count = 0, cell_count = 0;
-    int count() const { return object_count; }
-};
-
-inline void label_objects(const grid& one_grid, object_map& objects) {
-    for (int row = 0; row < one_grid.height; ++row)
-        for (int col = 0; col < one_grid.width; ++col) objects.id[row][col] = -1;
-    object_walk_scratch scratch;
-    each_object(one_grid, grouping::touching_same_color, scratch,
-        [&](const object_summary& summary, const int16_t* cells, int count) {
-            const int color = one_grid.data[cell_row(cells[0])][cell_col(cells[0])];
-            if (!is_color(color)) return;
-            const int16_t id = (int16_t)objects.count();
-            objects.first_cell[id] = (int16_t)objects.cell_count;
-            for (int i = 0; i < count; ++i) {
-                const int row = cell_row(cells[i]), col = cell_col(cells[i]);
-                objects.id[row][col] = id;
-                objects.cells[objects.cell_count++] = cells[i];
-            }
-            objects.color[id] = (int16_t)color;
-            objects.size[id] = (int16_t)count;
-            objects.on_border[id] = summary.col == 0 || summary.row == 0 ||
-                summary.col + summary.width == one_grid.width ||
-                summary.row + summary.height == one_grid.height;
-            ++objects.object_count;
-        });
-}
-
-// Whether a cell sits in the outermost ring of a height x width grid.
-constexpr bool on_border(int row, int col, int height, int width) {
-    return row == 0 || col == 0 || row == height - 1 || col == width - 1;
-}
-
-// Mark cells reachable from the border without crossing a blocked cell.
-// Space uses four-way connectivity, so it cannot leak through touching corners.
-template <class Blocked>
-inline void mark_outside(int height, int width, Blocked blocked,
-                         bool outside[MAX_GRID_DIM][MAX_GRID_DIM]) {
-    int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) outside[row][col] = false;
-    auto claim = [&](int row, int col) {
-        if (outside[row][col] || blocked(row, col)) return false;
-        outside[row][col] = true;
-        return true;
-    };
-    int seeded = 0;
-    for (int row = 0; row < height; ++row)
-        for (int col = 0; col < width; ++col) {
-            if (!on_border(row, col, height, width)) continue;
-            if (!claim(row, col)) continue;
-            queue_row[seeded] = (int16_t)row;
-            queue_col[seeded++] = (int16_t)col;
-        }
-    walk_out<4>(height, width, queue_row, queue_col, seeded, claim, [](int, int) {});
-}
-
 // STAGE 2 — each figure votes for the color it sits in, weighted by its own
 // cells. FIGURE = an object whose outer contour is majority-owned by ONE other
 // object; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
@@ -338,43 +273,45 @@ inline void mark_outside(int height, int width, Blocked blocked,
 // present and appears solely as enclosed windows.
 inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
                               background_evidence& evidence) {
-    object_map objects;
-    label_objects(one_grid, objects);
+    // The objects: same-color cells that touch, corners counting, each the
+    // color of its first cell.
+    const grid_parts objects(one_grid, grouping::touching_same_color);
+    auto color_of = [&](int object) {
+        return one_grid.data[objects.rows[objects.first[object]]][objects.cols[objects.first[object]]];
+    };
     int figure_area = 0, embedded_area[COLOR_COUNT] = {};
     int objects_of_color[COLOR_COUNT] = {}, backdrop_objects_of_color[COLOR_COUNT] = {};
 
-    bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
     // One vote box per object, indexed by the object's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
     // boxes this object touched, so clearing costs what was used, not all of them.
     int16_t votes[MAX_GRID_DIM * MAX_GRID_DIM] = {};
     int16_t voted[MAX_GRID_DIM * MAX_GRID_DIM];
     int voted_count = 0;
-    for (int this_object = 0; this_object < objects.count(); ++this_object) {
-        objects_of_color[objects.color[this_object]]++;
-        if (objects.on_border[this_object]) {
-            backdrop_objects_of_color[objects.color[this_object]]++; continue;
+    for (int this_object = 0; this_object < objects.count; ++this_object) {
+        objects_of_color[color_of(this_object)]++;
+        if (objects.meets[this_object]) {
+            backdrop_objects_of_color[color_of(this_object)]++; continue;
         }
-        // Flood "outside" = everything reachable from the border without
-        // entering this object. Four-way space cannot leak through corners
+        // Outside = everything reachable from the border without entering this
+        // object (grid_parts). Four-way space cannot leak through corners
         // joined by the object's eight-way connectivity.
-        mark_outside(one_grid.height, one_grid.width,
-            [&](int row, int col) { return objects.id[row][col] == this_object; }, outside);
+        const grid_parts space(one_grid.width, one_grid.height,
+            [&](int row, int col) { return objects.part[row][col] == this_object; });
         // Outer contour = the outside cells directly beside this object (edges
         // only, not corners). Every such cell
         // votes for the object it belongs to; a majority makes this a figure
         // sitting in that object.
         int contour_votes_total = 0;
         voted_count = 0;
-        for (int nth = 0; nth < objects.size[this_object]; ++nth) {
-            int row = cell_row(objects.cells[objects.first_cell[this_object] + nth]);
-            int col = cell_col(objects.cells[objects.first_cell[this_object] + nth]);
+        for (int at = objects.first[this_object]; at < objects.first[this_object + 1]; ++at) {
+            const int row = objects.rows[at], col = objects.cols[at];
             for (int neighbor_direction = 0; neighbor_direction < direction::count; neighbor_direction += every_nth_direction<4>) {
                 int next_row = row + step_of(neighbor_direction).down;
                 int next_col = col + step_of(neighbor_direction).across;
                 if (next_row < 0 || next_row >= one_grid.height || next_col < 0 || next_col >= one_grid.width) continue;
-                if (!outside[next_row][next_col]) continue;
-                int owner_object = objects.id[next_row][next_col];
+                if (!space.outside(next_row, next_col)) continue;
+                int owner_object = objects.part[next_row][next_col];
                 if (owner_object < 0) continue;
                 if (votes[owner_object] == 0) voted[voted_count++] = (int16_t)owner_object;
                 votes[owner_object]++;
@@ -388,9 +325,9 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
         }
         for (int i = 0; i < voted_count; ++i) votes[voted[i]] = 0;
         bool is_figure = best_owner >= 0 && best_votes * 2 > contour_votes_total;
-        if (!is_figure) { backdrop_objects_of_color[objects.color[this_object]]++; continue; }
-        figure_area += objects.size[this_object];
-        embedded_area[objects.color[best_owner]] += objects.size[this_object];
+        if (!is_figure) { backdrop_objects_of_color[color_of(this_object)]++; continue; }
+        figure_area += objects.size(this_object);
+        embedded_area[color_of(best_owner)] += objects.size(this_object);
     }
     for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.embeds[i] = min(evidence.embeds[i],
@@ -427,13 +364,12 @@ inline void close_underneath(background_evidence& evidence) {
 // punched-through and embeds are graded votes.
 // KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
-inline void score_candidates(vector<background_election::hypothesis>& ranked,
-                             const background_evidence& evidence, const bool in_every[COLOR_COUNT]) {
+inline void score_candidates(vector<background_election::hypothesis>& ranked, const background_evidence& evidence) {
     long long total_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) total_cells += evidence.global_cells[i];
 
     for (auto& candidate : ranked) {
-        if (candidate.color < 0 || !in_every[candidate.color]) { candidate.score = 0; continue; }
+        if (candidate.color < 0) { candidate.score = 0; continue; }
         const int color = candidate.color;
         const int global_area =
             total_cells ? (int)(evidence.global_cells[color] * 1000 / total_cells) : 0;
@@ -483,41 +419,6 @@ inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
     }
 }
 
-// The same candidate construction and arithmetic for pooled and local elections.
-inline void finish_background_election(vector<background_election::hypothesis>& ranked,
-        const background_evidence& evidence, const bool in_every[COLOR_COUNT],
-        const bool* persists = nullptr) {
-    ranked.push_back({ .color = -1, .appears_in_any_output = false });  // "none" always a candidate
-    for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
-        if (!in_every[candidate]) continue;
-        ranked.push_back({ .color = (int8_t)candidate,
-                           .embeds = evidence.embeds[candidate],
-                           .dominance = evidence.dominance[candidate],
-                           .appears_in_any_output = persists ? persists[candidate] : true,
-                           .span = evidence.span[candidate],
-                           .gaps = evidence.gaps[candidate],
-                           .underneath = evidence.only_windows[candidate] });
-    }
-
-    score_candidates(ranked, evidence, in_every);
-    rank_candidates(ranked);
-}
-
-// The background of one grid on its own, with no training pairs.
-inline vector<background_election::hypothesis> elect_grid_background(const grid& one_grid) {
-    vector<background_election::hypothesis> ranked;
-    if (one_grid.width <= 0 || one_grid.height <= 0) return ranked;
-    const color_tally counts(one_grid);
-    bool present[COLOR_COUNT];
-    for (int c = 0; c < COLOR_COUNT; ++c) present[c] = counts.has(c);
-    background_evidence evidence;
-    measure_area_and_reach(one_grid, counts.counts, evidence);
-    measure_embedding(one_grid, counts.counts, evidence);
-    close_underneath(evidence);
-    finish_background_election(ranked, evidence, present);
-    return ranked;
-}
-
 // A candidate must appear in EVERY grid on the side.
 inline void colors_in_every_grid(const vector<const grid*>& grids, bool in_every[COLOR_COUNT]) {
     for (int i = 0; i < COLOR_COUNT; ++i) in_every[i] = true;
@@ -549,8 +450,26 @@ inline vector<background_election::hypothesis> elect_side_background(
     }
     close_underneath(evidence);
 
-    finish_background_election(ranked, evidence, in_every, persists);
+    // "None" is always a candidate.
+    ranked.push_back({ .color = -1, .appears_in_any_output = false });
+    for (int candidate = 0; candidate < COLOR_COUNT; ++candidate) {
+        if (!in_every[candidate]) continue;
+        ranked.push_back({ .color = (int8_t)candidate,
+                           .embeds = evidence.embeds[candidate],
+                           .dominance = evidence.dominance[candidate],
+                           .appears_in_any_output = persists ? persists[candidate] : true,
+                           .span = evidence.span[candidate],
+                           .gaps = evidence.gaps[candidate],
+                           .underneath = evidence.only_windows[candidate] });
+    }
+    score_candidates(ranked, evidence);
+    rank_candidates(ranked);
     return ranked;
+}
+
+// The background of one grid on its own, with no training pairs: a side of one.
+inline vector<background_election::hypothesis> elect_grid_background(const grid& one_grid) {
+    return elect_side_background({ &one_grid });
 }
 
 // A per-pair background must be CONFIDENT: on a single grid the standout share

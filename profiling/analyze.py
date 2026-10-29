@@ -27,8 +27,8 @@ HOT_SOURCE_FILES = {
     "1_readings.hpp", "3_background.hpp", "4_objects.hpp",
     "5_matching.hpp", "6_correspondence.hpp", "7_facts.hpp", "8_panes.hpp", "9_rules.hpp",
     "10_picks_and_frames.hpp", "11_replays.hpp", "12_line.hpp", "13_infer.hpp", "15_op_math.hpp",
-    "16_sentences.hpp", "said.cpp",
-    "ops.cpp",
+    "16_sentences.hpp", "said.hpp",
+    "38_ops.hpp",
     "20_environment.hpp",
 }
 
@@ -47,7 +47,7 @@ OS_KERNEL = {"ntoskrnl", "win32kfull.sys", "win32kbase.sys", "win32k.sys",
 NOISE = {"imagehlp", "dbghelp", "graphics-hook64", "apphelp",
          "wpprecorder.sys", "directxdatabasehelper", "shcore"}
 
-ARC_MODULES = {"arc", "arc_said", "arc_headless"}
+ARC_MODULES = {"arc", "arc_headless"}
 CAT_LABELS = {
     "ARC":    "ARC",
     "MEM":    "ARC:mem",

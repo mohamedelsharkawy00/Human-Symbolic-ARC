@@ -31,21 +31,21 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 
 # 3. Build and check
 1. Build: `scripts\build.bat x64-Release NOLAUNCH`, never any other way.
-2. Score and readouts, one run: `scripts\said.bat [--as <label>] [--solved [label]] [id...]` builds arc_said and reads every training puzzle, or the ids named, into `out\x64-Release\`, or `out\<label>\` when a run is named to compare.
+2. Score and readouts, one run: `scripts\said.bat [--as <label>] [--solved [label]] [id...]` builds arc_headless and, `--said`, reads every training puzzle, or the ids named, into `out\x64-Release\`, or `out\<label>\` when a run is named to compare.
 3. What it writes: `said.txt`, a line per puzzle whose program fits the training pairs (id, SOLVED or WRONG, program); `tally.txt`, the counts, also on screen; and `logs\inference\<id>.txt`, each puzzle's readout (background, readings, fired rules, sentences).
 4. A label is a new name, never a build folder (x64-Release), which readouts.py takes for the unnamed run; a full run writes about 225 MB, so delete old labels.
 5. It reads a puzzle on every CPU thread and takes 3 to 10 minutes on the 20-thread laptop, by how warm it is and what the reading asks (383 s on 2026-10-24, 344 s cold and 581 s warm on 2026-10-20).
 6. `ARC_THREADS=1` reads one at a time (the profiler does, under the label `profile`).
 7. `ARC_DATASET=eval` reads the evaluation set instead (training by default).
-8. Run a program by hand: `out\x64-Release\arc_spell.exe <id> "<program>"` shows what it drew beside what was wanted, pair by pair, for a training or evaluation puzzle; `--test` after the program also shows each test, whether it fits the pairs or not.
+8. Run a program by hand: `out\x64-Release\arc_headless.exe --spell <id> "<program>"` shows what it drew beside what was wanted, pair by pair, for a training or evaluation puzzle; `--test` after the program also shows each test, whether it fits the pairs or not.
 9. Tests: none besides the score and the readouts. `tests/puzzles` holds small made-up puzzles to view in the app (the CUS dataset button).
 
 # 4. Layout
 1. `include\core` is the solver. Give it a puzzle, call `infer()`, read the best program off the puzzle. It has no thread, window, sound or settings file of its own.
 2. `include\gui` is the window: the puzzle list, pause, settings, sounds, and the pictures of what the reading drew. It never runs the solver itself (section 5).
-3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` links the solver's headers but not its operators (`src\ops.cpp`), so GUI code that tried to run a program would not link.
-4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every reading the GUI shows, and the Kaggle run. Both come out of every build.
-5. Headers are numbered in the order they are meant to be read, core first. The number says where a file sits in the story, not what it may include: `14_vocabulary.hpp` needs only `0_core.hpp`, but its operators name facts established by `1_readings.hpp` through `13_infer.hpp`.
+3. The GUI depends on the solver and never the other way, and the build enforces both halves. The solver is compiled with only `include\core` on its include path, so a core file that reached into `include\gui` would not build. `ARC.exe` has the solver's headers but not its operators (`include\ops`, on `arc_headless`'s include path alone), so GUI code that tried to run a program would not link.
+4. Two programs, one solver. `ARC.exe` (`src\gui_main.cpp`) is the GUI, for analysis on Windows. `arc_headless.exe` (`src\kaggle_main.cpp`) is the solver on its own: every reading the GUI shows, the Kaggle run, the scored run (`--said`, `scripts\said.hpp`) and the spelling bench (`--spell`, `scripts\spell.hpp`). Both come out of every build, and are the only `.cpp` files.
+5. Headers are numbered in the order they are meant to be read: core, the GUI, then the ops. The number says where a file sits in the story, not what it may include: `14_vocabulary.hpp` needs only `0_core.hpp`, but its operators name facts established by `1_readings.hpp` through `13_infer.hpp`.
 
 # 5. One puzzle, one process
 1. Every puzzle runs in a fresh `arc_headless` process of its own. A solver that has worked through one puzzle carries its memory and state into the next, and freeing it by hand never cleaned up as thoroughly as ending the process does; puzzles that ran after another went measurably worse than the same puzzle run first.
@@ -55,14 +55,14 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 5. Everything that runs many puzzles, the Kaggle run and the GUI's benchmark, starts one of these per puzzle. A puzzle whose process dies still gets a line in the submission, its test inputs echoed as answers, since every task must be there.
 
 # 6. Benchmark
-1. The BENCHMARK button in the GUI reads the checked datasets from their first puzzle, stopping after LIMIT puzzles: arc_said in the window.
+1. The BENCHMARK button in the GUI reads the checked datasets from their first puzzle, stopping after LIMIT puzzles: a scored run in the window.
 2. The AGI button beside the dataset boxes narrows them: AGI 1+2 every puzzle, AGI 1 only those ARC-AGI-1 already had (its 800 ids, `assets\arc_agi_1_ids.txt`), AGI 2 only ARC-AGI-2's own. The puzzle list, the benchmark and the saved settings follow it.
 3. The puzzle's process on screen is killed, and each puzzle is read in its own `arc_headless.exe`, one at a time, shown the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh process starts, paused, on the last puzzle it read.
 4. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
 
 # 7. Kaggle
-1. `scripts\kaggle_push.py` uploads `include\core`, `src\kaggle_main.cpp`, `src\ops.cpp` and `scripts\said.cpp` with `in_parallel.hpp` as a Kaggle dataset, the commit they came from as its version message, and `commit.txt` (that commit and a digest of the files), which the push waits to see Kaggle serve before it runs anything; nothing from `include\gui` goes.
-2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it with g++ and starts one `arc_headless` per CPU thread. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`. Told to read training or evaluation (`ARC_DATASET`), it builds `arc_said` instead: a scored run (below).
+1. `scripts\kaggle_push.py` uploads `include\core`, `include\ops`, `src\kaggle_main.cpp` and `scripts\said.hpp`, `spell.hpp` and `in_parallel.hpp` as a Kaggle dataset, the commit they came from as its version message, and `commit.txt` (that commit and a digest of the files), which the push waits to see Kaggle serve before it runs anything; nothing from `include\gui` goes.
+2. The notebook in `kaggle\src\arc_build\` (generated from `build.py` by `scripts\build_to_ipynb.py`) compiles it with g++ and starts one `arc_headless` per CPU thread. Each solves its share of the puzzles, one process per puzzle, and the notebook merges their files into `submission.json`. Told to read training or evaluation (`ARC_DATASET`), it runs it `--said` instead: a scored run (below).
 3. On Kaggle it emits programs, accepts the first that exactly reproduces every training output, and predicts the test outputs. Run the same path locally with `arc_headless.exe` and `ARC_DATASET` set to test, eval, train or custom. Optional controls are `ARC_PUZZLE_LIMIT` and `ARC_SHARD_INDEX` / `ARC_SHARD_TOTAL`. It writes `kaggle\working\submission.json`. One task can be run with `arc_headless --task ID --datasets MASK --out FILE`.
 
 One dataset (`solver-source-code`) and one notebook (`arc-build`) serve
@@ -108,7 +108,7 @@ integer arrays, colors 0-9, dimensions 1-30 (the
 
 The Kaggle score counts test outputs: an output earns one point if either
 attempt exactly matches its answer, including dimensions and every cell.
-Divide correct outputs by all test outputs. This differs from `arc_said`'s
+Divide correct outputs by all test outputs. This differs from a scored run's
 whole-puzzle tally, which requires every test output in a puzzle to match.
 Fitting the demonstration pairs alone earns no points.
 

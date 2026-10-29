@@ -33,7 +33,7 @@
 namespace arc {
 
 // Diagnostic work counts, local to the worker; never read by inference decisions.
-// arc_said resets these for each puzzle. Count calls, not cells or clock reads.
+// --said resets these for each puzzle. Count calls, not cells or clock reads.
 struct inference_work_counts {
     unsigned long long preparations = 0, readings = 0, later_readings = 0, lines = 0;
     unsigned long long paint_replays = 0, slide_replays = 0, drop_replays = 0, walks = 0, lays = 0;
@@ -630,7 +630,6 @@ struct shape_color_map_rule : shape_table {
 
         object_walk_scratch scratch;
         bool occupied[MAX_GRID_CELLS] = {};
-        bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
         for (size_t which = 0; which < train.size(); ++which) {
             const example& ex = train[which];
             const grid& in = ex.input;
@@ -643,8 +642,7 @@ struct shape_color_map_rule : shape_table {
                 fill_n(occupied, width * height, false);
                 for (int i = 0; i < found; ++i)
                     occupied[(cell_row(cells[i]) - top) * width + cell_col(cells[i]) - left] = true;
-                mark_outside(height, width,
-                    [&](int row, int col) { return occupied[row * width + col]; }, outside);
+                const grid_parts space(width, height, [&](int row, int col) { return occupied[row * width + col]; });
 
                 // Fill color = the output color on interior cells whose INPUT was
                 // TRANSPARENT — the cells the fill actually paints. Cells that are
@@ -654,8 +652,7 @@ struct shape_color_map_rule : shape_table {
                 int fill = -1; bool any_painted = false;
                 for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col) {
-                    int id = row * width + col;
-                    if (occupied[id] || outside[row][col]) continue;         // not interior
+                    if (!space.hollow(row, col)) continue;
                     int in_row = top + row, in_col = left + col;
                     if (in.data[in_row][in_col] != TRANSPARENT) continue;  // inside-noise
                     int out_color = out.data[in_row][in_col];
@@ -818,7 +815,7 @@ inline bool paint_piece(grid& canvas, const object& piece, int row0, int col0,
 
 // THE HAND DRAWN AS ITS SENTENCE LAYS IT: every piece, moved by `by(i)`, in the
 // order the list holds them, as the ops Union and Underlay draw a list
-// (each_picked_cell, src/ops.cpp) -- each over what the pieces before it put down,
+// (each_picked_cell, 38_ops.hpp) -- each over what the pieces before it put down,
 // or, laid `under`, only where nothing is yet. Where two pieces meet, Union
 // shows the later one and Underlay the earlier, whatever the output wants there
 // (833966f4's 9, slid level with the 0 after it in the list, lay under the 0).

@@ -11,7 +11,7 @@
 //   N train_solved test_solved          the reading is done
 //   B solved test_solved | program      the best program and its verdicts
 //   V hash examples, then per example:  what a program paints (a hover preview)
-//     w h cells...  objects, then per object: x0 y0 x1 y1 w h cells...
+//     w h cells...  objects, then per object: x0 y0 width height w h cells...
 // Each B is followed by a V of what its program paints, under the hash the
 // watcher's own reading of the program gives it.
 //
@@ -32,7 +32,7 @@ using namespace std;
 // the GUI shows when a program in the footer is hovered, and the best
 // program's in the BEST column.
 struct preview_payload {
-  struct bbox { int x0, y0, x1, y1, canvas_w, canvas_h; };
+  struct bbox { int x0, y0, width, height, canvas_w, canvas_h; };
   vector<grid> accumulators;          // size = #examples
   vector<vector<grid>> object_lists;  // [example][object]
   vector<vector<bbox>> object_bboxes; // [example][object] world bbox + tile canvas dims
@@ -66,8 +66,8 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
       int canvas_h = out.height > 0 ? out.height : max(ex.input.height, ex.output.height);
       for (int k = 0; k < ol.count; ++k) {
         const auto &o = ol.objects[k];
-        canvas_w = max(canvas_w, o.x1 + 1);
-        canvas_h = max(canvas_h, o.y1 + 1);
+        canvas_w = max(canvas_w, o.x0 + o.width);
+        canvas_h = max(canvas_h, o.y0 + o.height);
       }
       canvas_w = min(canvas_w, MAX_GRID_DIM);
       canvas_h = min(canvas_h, MAX_GRID_DIM);
@@ -91,7 +91,7 @@ inline preview_payload preview_of(const puzzle &task, const node *target) {
         }
         payload.object_lists[slot].push_back(std::move(g));
         payload.object_bboxes[slot].push_back({
-          (int)o.x0, (int)o.y0, (int)o.x1, (int)o.y1, canvas_w, canvas_h});
+          (int)o.x0, (int)o.y0, (int)o.width, (int)o.height, canvas_w, canvas_h});
       }
       ++slot;
     }
@@ -143,7 +143,7 @@ public:
       text += to_text(" %zu", p.object_lists[i].size());
       for (size_t k = 0; k < p.object_lists[i].size(); ++k) {
         const auto &b = p.object_bboxes[i][k];
-        text += to_text(" %d %d %d %d", b.x0, b.y0, b.x1, b.y1);
+        text += to_text(" %d %d %d %d", b.x0, b.y0, b.width, b.height);
         write_grid(text, p.object_lists[i][k]);
       }
     }
@@ -233,7 +233,7 @@ inline void apply_stream_line(const string &text, puzzle &p, search_progress &pr
       objects = min(objects, (size_t)MAX_OBJECTS_IN_A_LIST);
       for (size_t k = 0; k < objects; ++k) {
         preview_payload::bbox b{};
-        in >> b.x0 >> b.y0 >> b.x1 >> b.y1;
+        in >> b.x0 >> b.y0 >> b.width >> b.height;
         grid g;
         read_grid(in, g);
         b.canvas_w = g.width;

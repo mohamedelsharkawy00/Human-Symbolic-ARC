@@ -18,7 +18,7 @@
 // become a second solver.
 //
 // HAND-WRITE THE PROGRAM FIRST. Before teaching the reading to say a puzzle,
-// write its solution by hand in solutions/<id>.txt and check it with arc_spell.
+// write its solution by hand in solutions/<id>.txt and check it with --spell.
 // If the operators cannot say it, the gap is the vocabulary, and no reading can
 // spell what the DSL has no operator for. But write it out before calling an
 // operator missing: 0bb8deee looked like that gap, and one sentence a pane said

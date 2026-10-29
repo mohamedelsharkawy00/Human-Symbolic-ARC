@@ -2,7 +2,7 @@
 // made of. Numbered after the reading (7_facts.hpp to 13_infer.hpp), whose
 // elected facts some ops name. The vocabulary itself compiles against
 // 0_core.hpp alone. Read by 16_sentences.hpp, which spells programs, and
-// src/ops.cpp, which runs them, from the same definitions.
+// 38_ops.hpp, which runs them, from the same definitions.
 //
 // OPERATORS THE READING CANNOT SAY YET (as of 2026-10-04). Inference says an
 // operator only after replaying it on every training pair, with the arithmetic
@@ -10,7 +10,7 @@
 // replay in the general reading: no inferred program uses them, except where one
 // special-case rule spells them for its own pattern. To unlock one:
 //   1. Move the op's arithmetic into a shared helper in 15_op_math.hpp and
-//      have the op in src/ops.cpp call it, so the replay and the op cannot
+//      have the op in 38_ops.hpp call it, so the replay and the op cannot
 //      differ.
 //   2. Replay it: a *_holds check (11_replays.hpp) on one of the replay
 //      templates (paint_holds, slides_hold, drops_hold) asked in finish_the_line
@@ -30,7 +30,7 @@
 // IntersectionList: folds the picked pieces into one; only the pane rules say it.
 // Seeds: every piece but the largest; only ProjectOnSeeds reads it, internally.
 // Partition: cuts the parts the walls the selection marks fence off
-//   (fence_parts, the parts SelectPartition picks by); cut before the ground
+//   (grid_parts, the parts SelectPartition picks by); cut before the ground
 //   is deleted, the ground's part in each is its room. Overlaps the pane rules.
 // Panes: only the pane rules say it; it is not a frame kind yet.
 // Fit: nearest-neighbor stretch to the input frame [0], output frame [1],
@@ -430,7 +430,7 @@ enum class inferred_amount { none, some, all };
 // macro, so none can drift from the others.
 // INFERRED says how much the op depends on learned facts.
 // CLEARS means it removes selection marks. That describes what the op does
-// (src/ops.cpp), so update both together.
+// (38_ops.hpp), so update both together.
 // The ID also supplies its text spelling (#id), so names cannot drift.
 // Every op is unary (one Objects input, one Objects output); nodes form a chain.
 // ROLE is a column here, not a list elsewhere, so a new op cannot be added
@@ -582,7 +582,7 @@ enum class inferred_amount { none, some, all };
   X(SelectRowFromMiddle         , -14               , 14                       , select   , none, false)        \
   X(SelectColumnFromMiddle      , -14               , 14                       , select   , none, false)        \
   /* The picked pieces are walls, as Partition reads them, and the pick    */ \
-  /* becomes the pieces lying in one part they fence off (fence_parts),   */ \
+  /* becomes the pieces lying in one part they fence off (grid_parts),    */ \
   /* the parts numbered in reading order, row by row, as rows wrap.       */ \
   X(SelectPartition             , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
   /* Of the picked pieces, only those like a piece of the key -- every    */ \

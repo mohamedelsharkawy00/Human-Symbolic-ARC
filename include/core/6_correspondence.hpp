@@ -382,23 +382,28 @@ struct correspondence_election {
         // THE CUT'S OWN LINE, in the order it is said: indices into `fired`. A
         // change no rule says sits where its rule would have been said.
         vector<int8_t> line;
-        // ONE MORE RULE, listed under the one it reads, said next on the line,
-        // and accounting for the cells it explains: `claims(pair, cell)` names
-        // them. Each cell is claimed once, by the first rule that asks, and
-        // counted as that rule's. Hands back where the rule sits on the list.
+        // THE CELLS A RULE ACCOUNTS FOR, `rule` being the next on the list:
+        // those `claims(pair, cell)` names that no rule claims yet. Each cell
+        // is claimed once, by the first rule that asks, and counted as its.
         template <class Claims>
-        int8_t say_fired(fired_rule rule, int8_t under, Claims claims) {
-            const int8_t index = (int8_t)fired.size();
-            rule.under = under;
+        void claim_for(fired_rule& rule, Claims claims) {
             for (size_t which = 0; which < pairs.size(); ++which)
                 for (auto& cell : pairs[which].left_over)
                     if (cell.claimed_by < 0 && claims(which, cell)) {
-                        cell.claimed_by = index;
+                        cell.claimed_by = (int8_t)fired.size();
                         ++rule.cells;
                     }
+        }
+        // ONE MORE RULE, listed under the one it reads, said next on the line,
+        // and accounting for the cells it explains (claim_for). Hands back
+        // where the rule sits on the list.
+        template <class Claims>
+        int8_t say_fired(fired_rule rule, int8_t under, Claims claims) {
+            rule.under = under;
+            claim_for(rule, claims);
+            line.push_back((int8_t)fired.size());
             fired.push_back(std::move(rule));
-            line.push_back(index);
-            return index;
+            return line.back();
         }
         int8_t say_fired(fired_rule rule, int8_t under) {
             return say_fired(std::move(rule), under, [](size_t, const left_over_cell&) { return false; });
@@ -408,16 +413,10 @@ struct correspondence_election {
         // Listed only where it claims a cell; -1 where it claims none.
         template <class Claims>
         int8_t list_claims(fired_rule rule, Claims claims) {
-            const int8_t index = (int8_t)fired.size();
-            for (size_t which = 0; which < pairs.size(); ++which)
-                for (auto& cell : pairs[which].left_over)
-                    if (cell.claimed_by < 0 && claims(which, cell)) {
-                        cell.claimed_by = index;
-                        ++rule.cells;
-                    }
+            claim_for(rule, claims);
             if (rule.cells == 0) return -1;
             fired.push_back(std::move(rule));
-            return index;
+            return (int8_t)(fired.size() - 1);
         }
         // The rule this reading fired by that name, -1 when it fired none.
         int8_t fired_named(const string& name) const {
@@ -1085,16 +1084,17 @@ private:
                                const vector<object>& objects, const grid& other) {
             if (ranges::all_of(info, [](const auto& one) {
                     return one.has_partner; })) return;
-            vector<blank_patch> patches;
-            int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM];
-            find_blanks(other, patches, patch_of);
+            // The empty regions of the other grid, and whether each runs off its edge.
+            const grid_parts blanks(other.width, other.height,
+                                      [&](int row, int col) { return other.data[row][col] != TRANSPARENT; });
             for (size_t i = 0; i < info.size() && i < objects.size(); ++i) {
                 auto& one = info[i];
                 if (one.has_partner || one.instance_of >= 0) continue;
                 // The patch under the first of its cells, in reading order, that has one.
                 objects[i].each_cell([&](int row, int col, int8_t) {
-                    if (one.blank.found() || !other.contains(row, col) || patch_of[row][col] < 0) return;
-                    one.blank = patches[patch_of[row][col]];
+                    if (one.blank.found() || !other.contains(row, col) || blanks.part[row][col] < 0) return;
+                    const int patch = blanks.part[row][col];
+                    one.blank = { summary_of(blanks.box_of(patch), blanks.size(patch)), blanks.meets[patch] == 0 };
                 });
             }
         };
@@ -1254,36 +1254,6 @@ private:
                     if (object_matching::landing_shows(edge, footprint, into, row, col))
                         covered[edge.row + row][edge.col + col] = true;
         }
-    }
-
-    // Finds empty regions to help describe where objects appeared or disappeared.
-    static void find_blanks(const grid& one_grid, vector<blank_patch>& patches,
-                            int16_t patch_of[MAX_GRID_DIM][MAX_GRID_DIM]) {
-        for (int row = 0; row < MAX_GRID_DIM; ++row)
-            for (int col = 0; col < MAX_GRID_DIM; ++col) patch_of[row][col] = -1;
-        int16_t queue_row[MAX_GRID_CELLS], queue_col[MAX_GRID_CELLS];
-        for (int row = 0; row < one_grid.height; ++row)
-            for (int col = 0; col < one_grid.width; ++col) {
-                if (one_grid.data[row][col] != TRANSPARENT) continue;
-                if (patch_of[row][col] >= 0) continue;
-                const int16_t mine = (int16_t)patches.size();
-                cell_box box;
-                bool open = false;
-                queue_row[0] = (int16_t)row; queue_col[0] = (int16_t)col;
-                patch_of[row][col] = mine;
-                const int cells = walk_out<4>(one_grid.height, one_grid.width, queue_row, queue_col, 1,
-                    [&](int next_row, int next_col) {
-                        if (one_grid.data[next_row][next_col] != TRANSPARENT ||
-                            patch_of[next_row][next_col] >= 0) return false;
-                        patch_of[next_row][next_col] = mine;
-                        return true;
-                    },
-                    [&](int at_row, int at_col) {
-                        box.include_cell(at_row, at_col);
-                        open = open || on_border(at_row, at_col, one_grid.height, one_grid.width);
-                    });
-                patches.push_back({ summary_of(box, cells), !open });
-            }
     }
 
     // 5. What a kept reading's edges were taken to say, rule by rule. An edge

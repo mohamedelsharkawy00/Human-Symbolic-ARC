@@ -9,7 +9,7 @@
 3. Solve each puzzle with all of its adjacent concepts, as much and as far as they go: the rule it lacks, built in the operator that owns it (read the whole operator list), with every concept next to it, each as general as it can be made; then a full run shows what else they say.
 4. The training set is the measure until 2026-10-25, then the evaluation set for the last week before the 2026-11-02 deadline (HANDOFF.md, the plan).
 5. A rule is said only after it is replayed on every training pair and seen to change something in every pair; a pair already finished asks only that it lay nothing wrong.
-   1. The replay runs the arithmetic the operator runs: a shared helper in `15_op_math.hpp` the operator (`src/ops.cpp`) calls.
+   1. The replay runs the arithmetic the operator runs: a shared helper in `15_op_math.hpp` the operator (`include/ops/38_ops.hpp`) calls.
    2. Anything less would let the language say a rule the pairs don't back.
 6. New rules are compositions of existing operators where possible. Add an operator only when none exists.
 7. No binary operators, no hidden state in operators, prefer the DSL over preprocessing.

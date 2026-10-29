@@ -1,6 +1,7 @@
 // THE SOLVER ON ITS OWN. No window, no thread, nothing from include/gui --
-// this program is built with include/core alone, so it cannot reach anything
-// else by accident.
+// this program is built with include/core, the ops (include/ops) and the
+// tools that run programs (scripts) alone, so it cannot reach anything else by
+// accident.
 //
 // EVERY PUZZLE IN A FRESH PROCESS. A solver that has worked through one puzzle
 // carries its memory into the next, and runs after the first went measurably
@@ -39,6 +40,14 @@
 //       to quit or stdin closes; with it (a benchmark) it reads at once,
 //       writes FILE and stops. It also takes --logs (write logs/<id>.txt and
 //       the inference readout) and --verbose (debug lines in them too).
+//
+//   arc_headless --said [--as <label>] [--solved [label]] [id...]
+//       What the reading solves, over a whole dataset or the ids named, and
+//       every puzzle's readout (said.hpp; scripts\said.bat runs it).
+//
+//   arc_headless --spell <task-id> "<program>" [--test] | --file <path>
+//       What one written program draws on one puzzle, beside what was wanted
+//       (spell.hpp).
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -59,6 +68,9 @@
 #include "23_solver.hpp"
 #include "25_submission.hpp"
 #include "26_search_stream.hpp"
+#include "38_ops.hpp"
+#include "said.hpp"
+#include "spell.hpp"
 
 using namespace std;
 using namespace arc;
@@ -141,7 +153,7 @@ static int solve_one(int argc, char **argv) {
 		return 1;
 	}
 	if (!serve) {
-		// Same selection as arc_said: only programs emitted by inference, and
+		// Same selection as --said: only programs emitted by inference, and
 		// only the first that draws every training output exactly.
 		const auto started = chrono::steady_clock::now();
 		puzzle p;
@@ -333,5 +345,8 @@ int main(int argc, char **argv) {
 	}
 	filesystem::current_path(root);
 
+	const vector<string> args(argv + 1, argv + argc);
+	if (!args.empty() && args[0] == "--said") return what_the_reading_solves({args.begin() + 1, args.end()}, self);
+	if (!args.empty() && args[0] == "--spell") return what_the_program_draws({args.begin() + 1, args.end()});
 	return has_arg(argc, argv, "--task") ? solve_one(argc, argv) : run_shard(self);
 }

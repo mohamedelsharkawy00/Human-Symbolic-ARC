@@ -1,4 +1,4 @@
-"""Reads what arc_said writes (scripts\\said.bat [--as <label>]; unnamed is x64-Release): out\\<label>\\said.txt
+"""Reads what a scored run writes (scripts\\said.bat [--as <label>]; unnamed is x64-Release): out\\<label>\\said.txt
 (id, SOLVED or WRONG, program) and out\\<label>\\logs\\inference\\<id>.txt.
 
   python scripts/readouts.py explained <before> <after>

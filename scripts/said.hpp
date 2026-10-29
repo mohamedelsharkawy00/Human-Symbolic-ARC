@@ -2,9 +2,9 @@
 // puzzle -- or, with ARC_DATASET=eval (as arc_headless names the sets), every
 // evaluation puzzle -- or only the ids named -- infer, write the inference readout, take
 // suggested_programs, run each on the train pairs, and where one fits them all,
-// ask it for the held-out test answer. No search anywhere. Run it from the repo
-// root, through scripts\said.bat, which builds it first:
-//   arc_said [--as <label>] [--solved [label]] [id...]
+// ask it for the held-out test answer. No search anywhere. Run through
+// scripts\said.bat, which builds it first:
+//   arc_headless --said [--as <label>] [--solved [label]] [id...]
 // Everything it writes lands beside the program (out/x64-Release),
 // or in out/<label>/ when a run is named to be compared with another:
 //   said.txt                  a line per puzzle whose program fits the train
@@ -27,19 +27,20 @@
 // THE PUZZLES ARE READ AT ONCE, one per CPU thread (in_parallel.hpp). Each
 // writes its own readout and runs its own programs. The lines come out in the
 // dataset's order, as they did one puzzle at a time.
-#include "23_solver.hpp"
+#pragma once
 #include "21_puzzle_loader.hpp"
+#include "23_solver.hpp"
 #include "in_parallel.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
 
-using namespace arc;
-using namespace std;
+namespace arc {
 
 // What one puzzle came to: whether the reading spoke, and the first program it
 // spelled that fits every pair, with whether it drew the test answers too.
@@ -54,13 +55,13 @@ struct said_one {
 };
 
 using run_clock = chrono::steady_clock;
-static double milliseconds_since(run_clock::time_point start) {
+inline double milliseconds_since(run_clock::time_point start) {
     return chrono::duration<double, milli>(run_clock::now() - start).count();
 }
 
 // The first of the programs the reading spelled that draws every train pair,
 // and whether it draws the test answers too.
-static void run_what_it_said(const puzzle& task, const vector<grid>* answers, said_one& one) {
+inline void run_what_it_said(const puzzle& task, const vector<grid>* answers, said_one& one) {
     for (const string& program : task.suggested_programs) {
         node* tree = environment::parse(program);
         if (!tree) continue;
@@ -81,18 +82,19 @@ static void run_what_it_said(const puzzle& task, const vector<grid>* answers, sa
     }
 }
 
-int main(int argc, char** argv) {
+// THE RUN, told `args`, the words after --said, by the program at `self`,
+// beside which an unnamed run writes.
+inline int what_the_reading_solves(const vector<string>& args, const filesystem::path& self) {
     // A name only when asked for: the run is kept apart to compare against.
     // --solved [label] reads only the IDs marked SOLVED in out/<label>/said.txt
     // (defaulting to out/x64-Release/said.txt).
-    vector<string> args(argv + 1, argv + argc);
     string label;
     bool only_solved = false;
     string solved_from = "x64-Release";
     vector<string> only;
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--as") {
-            if (i + 1 >= args.size()) { fprintf(stderr, "arc_said [--as <label>] [--solved [label]] [id...]\n"); return 2; }
+            if (i + 1 >= args.size()) { fprintf(stderr, "arc_headless --said [--as <label>] [--solved [label]] [id...]\n"); return 2; }
             label = args[++i];
         } else if (args[i] == "--solved") {
             only_solved = true;
@@ -105,7 +107,7 @@ int main(int argc, char** argv) {
     }
     if (only_solved) {
         filesystem::path path = filesystem::path("out") / solved_from / "said.txt";
-        if (!filesystem::exists(path)) path = filesystem::absolute(argv[0]).parent_path() / "said.txt";
+        if (!filesystem::exists(path)) path = self.parent_path() / "said.txt";
         FILE* f = fopen(path.string().c_str(), "r");
         if (!f) {
             fprintf(stderr, "cannot read %s to find solved puzzles\n", path.string().c_str());
@@ -145,9 +147,7 @@ int main(int argc, char** argv) {
 
     // EVERYTHING IT WRITES, IN ONE FOLDER: the program's own, or out/<label>,
     // the readouts in its logs/inference, where log_inference writes them.
-    const filesystem::path out = label.empty()
-        ? filesystem::absolute(argv[0]).parent_path()
-        : filesystem::path("out") / label;
+    const filesystem::path out = label.empty() ? self.parent_path() : filesystem::path("out") / label;
     filesystem::create_directories(out);
     filesystem::current_path(out);
     const bool audit_preparations = getenv("ARC_PREP_AUDIT") != nullptr;
@@ -260,3 +260,5 @@ int main(int argc, char** argv) {
     fprintf(stderr, "written to %s\n", out.string().c_str());
     return found_every_id ? 0 : 2;
 }
+
+}  // namespace arc

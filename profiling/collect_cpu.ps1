@@ -9,15 +9,15 @@ $runDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $scorePath = Join-Path $runDirectory 'score.txt'
 # Run from the repo root under the label "profile": its readouts land in
 # out/profile, and what it prints is kept here beside the profile.
-$runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_said.exe" -ArgumentList (@('--as','profile') + $Ids) -WorkingDirectory "$PSScriptRoot/.." -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
+$runner = Start-Process -FilePath "$PSScriptRoot/../out/x64-RelWithDebInfo/arc_headless.exe" -ArgumentList (@('--said','--as','profile') + $Ids) -WorkingDirectory "$PSScriptRoot/.." -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runDirectory 'said.txt') -RedirectStandardError $scorePath
 try {
     $runner.PriorityClass = 'AboveNormal'
     # Attach once the puzzles are loaded. The score still covers every
     # puzzle; the profile excludes startup and attachment time.
     $startup = [Diagnostics.Stopwatch]::StartNew()
     while (!(Select-String -LiteralPath $scorePath -Pattern 'dataset flags' -Quiet)) {
-        if ($runner.HasExited) { throw 'arc_said exited before profiler attachment.' }
-        if ($startup.Elapsed.TotalSeconds -gt 30) { throw 'arc_said startup timed out.' }
+        if ($runner.HasExited) { throw 'The scored run exited before profiler attachment.' }
+        if ($startup.Elapsed.TotalSeconds -gt 30) { throw 'The scored run startup timed out.' }
         Start-Sleep -Milliseconds 50
     }
     # Windows PowerShell treats native stderr warnings as errors. VTune's

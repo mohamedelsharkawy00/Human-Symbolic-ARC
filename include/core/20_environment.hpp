@@ -179,7 +179,7 @@ namespace arc {
 		// WHAT THE PROGRAM `tree` DRAWS ON ONE EXAMPLE: its canvas once the last
 		// op has painted, and into `held`, when asked, the list that op held.
 		// Every fact an op reads is read off `p`, so a new learned fact needs no
-		// new parameter here. src/ops.cpp runs it.
+		// new parameter here. 38_ops.hpp runs it.
 		static grid draw(const node* tree, const example& ex, const puzzle& p, object_list* held = nullptr);
 
 		// Parse pipeline format: "A -> B[v] -> C" (deepest leaf first, root last).

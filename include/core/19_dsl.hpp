@@ -7,7 +7,7 @@
 // Its operators can find objects, move them, change their colors,
 // and draw the result.
 //
-// 14_vocabulary.hpp defines the operators; src/ops.cpp runs them
+// 14_vocabulary.hpp defines the operators; 38_ops.hpp runs them
 // (environment::draw), on the objects defined here.
 #pragma once
 // MAX_OBJECTS_IN_A_LIST, and the vocabulary.
@@ -28,7 +28,6 @@ namespace arc {
 // object first (Split/Colors), then selecting it — not from marking cells.
 struct held_object {
     int16_t x0 = 0, y0 = 0;
-    int16_t x1 = 0, y1 = 0;
     int16_t width = 0, height = 0;
     bool selected = false;
     cells mask;

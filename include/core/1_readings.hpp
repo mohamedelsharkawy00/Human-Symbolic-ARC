@@ -2,6 +2,7 @@
 // its examples, to be applied later to the test cases.
 #pragma once
 #include "0_core.hpp"
+#include <bit>
 #include <cstdint>
 #include <utility>
 
@@ -349,6 +350,115 @@ inline void each_object(const grid& one_grid, grouping how, object_walk_scratch&
                         Take take, tile_size tiles = {}) {
     each_object(one_grid, how, scratch, take, tiles, [](int, int) { return true; });
 }
+
+// PARTS · a grid cut into its pieces, or its space into what walls fence off
+
+// The sides of a box, a bit each.
+enum box_side : uint8_t { side_top = 1, side_bottom = 2, side_left = 4, side_right = 8 };
+
+// A GRID CUT INTO PARTS: each cell's part, each part's cells in the order the
+// walk met them, and the sides of the box each part meets, the parts numbered
+// in reading order by the first cell of each. Cut two ways: into the pieces
+// each_object groups, or into the space a box's blocked cells fence off -- the
+// free cells joined at a side, four ways, as water runs, so blocked cells that
+// meet only at a corner still fence. A part of the space that meets no side is
+// a hollow, one that meets a side is outside, and one that meets a single side
+// is a gap: the mouth of a cup, the socket another piece fits or pours into.
+// Walls across a whole canvas fence the tiles of a lattice; walls that cross
+// nothing fence what they close off against the edges (63613498's grey corner,
+// its key alone in part 0). Partition cuts on these parts and SelectPartition
+// picks by them, so a part is one thing wherever it is asked.
+struct grid_parts {
+    int width, height;
+    // Each cell's part, -1 on a cell in none and off the box.
+    int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
+    // Every part's cells, part after part: part `which` starts at first[which].
+    int16_t rows[MAX_GRID_CELLS], cols[MAX_GRID_CELLS], first[MAX_GRID_CELLS + 1];
+    // The sides of the box each part meets (box_side).
+    uint8_t meets[MAX_GRID_CELLS];
+    int count = 0;
+
+    // The space of a `box_width` by `box_height` box that `blocked(row, col)`
+    // leaves free.
+    template <class Blocked>
+    grid_parts(int box_width, int box_height, Blocked blocked) : grid_parts(box_width, box_height) {
+        auto claim = [&](int row, int col) {
+            if (part[row][col] >= 0 || blocked(row, col)) return false;
+            part[row][col] = (int16_t)count;
+            return true;
+        };
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col) {
+                if (!claim(row, col)) continue;
+                const int at = first[count];
+                rows[at] = (int16_t)row;
+                cols[at] = (int16_t)col;
+                close_part(walk_out<4>(height, width, rows + at, cols + at, 1, claim, [](int, int) {}));
+            }
+    }
+
+    // The pieces of a grid, as `how` groups them.
+    grid_parts(const grid& one_grid, grouping how) : grid_parts(one_grid.width, one_grid.height) {
+        object_walk_scratch scratch;
+        each_object(one_grid, how, scratch, [&](const object_summary&, const int16_t* found, int taken) {
+            for (int k = 0; k < taken; ++k) {
+                const int at = first[count] + k;
+                rows[at] = (int16_t)cell_row(found[k]);
+                cols[at] = (int16_t)cell_col(found[k]);
+                part[rows[at]][cols[at]] = (int16_t)count;
+            }
+            close_part(taken);
+        });
+    }
+
+    // How many cells part `which` holds, and the box they fill.
+    int size(int which) const { return first[which + 1] - first[which]; }
+    cell_box box_of(int which) const {
+        cell_box box;
+        for (int at = first[which]; at < first[which + 1]; ++at) box.include_cell(rows[at], cols[at]);
+        return box;
+    }
+    bool gap(int which) const { return has_single_bit(meets[which]); }
+    bool hollow(int row, int col) const { return part[row][col] >= 0 && meets[part[row][col]] == 0; }
+    bool outside(int row, int col) const { return part[row][col] >= 0 && meets[part[row][col]] != 0; }
+    // How many hollows there are: a piece's holes.
+    int hollows() const {
+        int closed = 0;
+        for (int which = 0; which < count; ++which) closed += meets[which] == 0;
+        return closed;
+    }
+    // Every cell of a hollow, in reading order: see(row, col).
+    template <class See>
+    void each_hollow(See see) const {
+        for (int row = 0; row < height; ++row)
+            for (int col = 0; col < width; ++col)
+                if (hollow(row, col)) see(row, col);
+    }
+
+private:
+    // No part yet, on a box no larger than the largest grid.
+    grid_parts(int box_width, int box_height)
+        : width(box_width < MAX_GRID_DIM ? box_width : MAX_GRID_DIM),
+          height(box_height < MAX_GRID_DIM ? box_height : MAX_GRID_DIM) {
+        for (auto& row : part)
+            for (int16_t& cell : row) cell = -1;
+        first[0] = 0;
+    }
+    // The part whose `taken` cells were just laid down from first[count]
+    // closed: the sides of the box they meet, and where the next one starts.
+    void close_part(int taken) {
+        const int at = first[count];
+        uint8_t sides = 0;
+        for (int k = at; k < at + taken; ++k) {
+            if (rows[k] == 0) sides |= side_top;
+            if (rows[k] == height - 1) sides |= side_bottom;
+            if (cols[k] == 0) sides |= side_left;
+            if (cols[k] == width - 1) sides |= side_right;
+        }
+        meets[count] = sides;
+        first[++count] = (int16_t)(at + taken);
+    }
+};
 
 // SHAPES · a shape as one number, and the ways round that leave it be
 

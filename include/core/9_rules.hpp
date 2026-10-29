@@ -49,8 +49,8 @@ struct hole_color_rule {
                         color = target;
                         changed = changed || target != ex.input.data[r][c];
                     }
-                    const int key = object_hole_count(box.height, box.width,
-                        [&](int r, int c) { return occupied[r][c]; });
+                    const int key = grid_parts(box.width, box.height,
+                        [&](int r, int c) { return occupied[r][c]; }).hollows();
                     if (key >= key_count || (rule.colors[key] >= 0 && rule.colors[key] != color)) {
                         consistent = false;
                         return;
@@ -302,17 +302,10 @@ struct ray_extension_rule {
             }
         if (bounds.empty()) return false;
 
-        if (how.fill_interior) {
-            bool outside[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-            mark_outside(bounds.height(), bounds.width(),
-                         [&](int row, int col) {
-                             return layer.data[bounds.row0 + row][bounds.col0 + col] == color;
-                         }, outside);
-            for (int row = 0; row < bounds.height(); ++row)
-                for (int col = 0; col < bounds.width(); ++col)
-                    if (!outside[row][col])
-                        layer.data[bounds.row0 + row][bounds.col0 + col] = color;
-        }
+        if (how.fill_interior)
+            grid_parts(bounds.width(), bounds.height(), [&](int row, int col) {
+                return layer.data[bounds.row0 + row][bounds.col0 + col] == color;
+            }).each_hollow([&](int row, int col) { layer.data[bounds.row0 + row][bounds.col0 + col] = color; });
 
         object_walk_scratch scratch{};
         bool drew = false;
@@ -1424,16 +1417,14 @@ struct interior_fill_rule {
                     if (!consistent) return;
                     ++pieces;
                     const object piece = object::from_cells(pair.input, box, cells, count);
-                    bool outside[MAX_GRID_DIM][MAX_GRID_DIM];
-                    mark_outside(box.height, box.width,
-                        [&](int r, int c) { return is_color(piece.data[r][c]); }, outside);
+                    const grid_parts space(box.width, box.height,
+                                             [&](int r, int c) { return is_color(piece.data[r][c]); });
                     // Separate marker objects inside a hole keep their own
                     // colors. They are not evidence for the interior's fill.
                     for (int r = 0; r < box.height; ++r)
                         for (int c = 0; c < box.width; ++c) {
                             const int y = box.row + r, x = box.col + c;
-                            if (is_color(piece.data[r][c]) || outside[r][c] ||
-                                pair.input.data[y][x] != TRANSPARENT) continue;
+                            if (!space.hollow(r, c) || pair.input.data[y][x] != TRANSPARENT) continue;
                             const int fill = pair.output.data[y][x];
                             if (!is_color(fill) || (rule.holds() && rule.color != fill)) {
                                 consistent = false;
@@ -1449,7 +1440,7 @@ struct interior_fill_rule {
                             const int y = box.row + r, x = box.col + c;
                             if (is_color(piece.data[r][c]))
                                 drawn.data[y][x] = piece.data[r][c];
-                            else if (!outside[r][c] && rule.holds())
+                            else if (space.hollow(r, c) && rule.holds())
                                 drawn.data[y][x] = rule.color;
                         }
                 }, tiles.of(pair));

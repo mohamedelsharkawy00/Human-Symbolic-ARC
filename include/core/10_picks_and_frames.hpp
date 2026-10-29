@@ -15,7 +15,7 @@ namespace arc {
 
 // THE PIECES A PICK BY HOLES OR BY SIZE TAKES, as the op takes them from the
 // pieces as the cut hands them over: every one with `value` holes
-// (object_hole_count, the count SelectObjectsWithHoles makes), or the one `value`
+// (grid_parts::hollows, the count SelectObjectsWithHoles makes), or the one `value`
 // down the order of painted cells, largest or smallest first, ties keeping the
 // order the pieces came in -- the order SelectLargestObject and
 // SelectSmallestObject take (size_order) -- or the first `value` of it, one selector
@@ -108,8 +108,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, int8_t how, int 
     if (how == piece_pick::by_holes) {
         for (size_t i = 0; i < pieces.size(); ++i) {
             const object& piece = pieces[i];
-            picked[i] = object_hole_count(piece.summary.height, piece.summary.width, [&](int row, int col) {
-                return piece.data[row][col] != (int8_t)TRANSPARENT; }) == value;
+            picked[i] = grid_parts(piece.summary.width, piece.summary.height, [&](int row, int col) {
+                return piece.data[row][col] != (int8_t)TRANSPARENT; }).hollows() == value;
         }
         return picked;
     }
@@ -166,9 +166,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick
         // SelectPartition: the pick as it stands is the walls, and the pieces
         // lying in the part `part` they fence off are picked instead.
         const partner_pieces walls(pieces, picked, answers);
-        int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
-        parts_the_pick_fences(walls, canvas.width, canvas.height, part);
-        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = lies_in_part(walls, (int)i, pick.part, part);
+        const grid_parts parts = parts_the_pick_fences(walls, canvas.width, canvas.height);
+        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = lies_in_part(walls, (int)i, pick.part, parts);
     }
     if (pick.partner >= 0) {
         // SelectPartner: the pick moves onto every partner the pieces it took
@@ -518,15 +517,15 @@ inline vector<piece_pick> names_of_group(const replay_facts& facts, size_t which
     // Room numbers come from the walls, not from a sweep over possible numbers.
     for (const auto& [color, members] : colors) {
         const partner_pieces walls(pieces, members, facts.answers_of(which));
-        int16_t rooms[MAX_GRID_DIM][MAX_GRID_DIM];
         const auto canvas = facts.canvas(which);
-        if (parts_the_pick_fences(walls, canvas.width, canvas.height, rooms) < 2) continue;
+        const grid_parts rooms = parts_the_pick_fences(walls, canvas.width, canvas.height);
+        if (rooms.count < 2) continue;
         vector<int> room_of(count, -1);
         for (size_t index = 0; index < count; ++index) {
             int room = -1;
             pieces[index].each_cell([&](int row, int col, int8_t) {
                 if (room < 0 && row >= 0 && col >= 0 && row < canvas.height && col < canvas.width)
-                    room = rooms[row][col];
+                    room = rooms.part[row][col];
             });
             if (room >= 0 && lies_in_part(walls, (int)index, room, rooms)) room_of[index] = room;
         }
@@ -1042,8 +1041,7 @@ inline vector<piece_pick> picks_to_ask(const replay_facts& facts, uint16_t color
         int parts = row_of(node_type::SelectPartition).high + 1;
         for (size_t which = 0; which < facts.cuts().size(); ++which) {
             const tile_size canvas = facts.canvas(which);
-            int16_t part[MAX_GRID_DIM][MAX_GRID_DIM];
-            parts = min(parts, parts_the_pick_fences(facts.handed(which, walls), canvas.width, canvas.height, part));
+            parts = min(parts, parts_the_pick_fences(facts.handed(which, walls), canvas.width, canvas.height).count);
         }
         if (parts < 2) continue;
         for (int which_part = 0; which_part < parts; ++which_part) {

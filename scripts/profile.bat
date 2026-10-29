@@ -14,7 +14,7 @@ call "%~dp0build.bat" x64-RelWithDebInfo NOLAUNCH
 if errorlevel 1 exit /b 1
 
 :: One puzzle at a time, so the profile reads like every one before it
-:: (arc_said otherwise reads a puzzle on every CPU thread).
+:: (a scored run otherwise reads a puzzle on every CPU thread).
 set "ARC_THREADS=1"
 
 :: Keep each run separate, including score output.

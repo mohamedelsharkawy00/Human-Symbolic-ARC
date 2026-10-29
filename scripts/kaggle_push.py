@@ -38,17 +38,19 @@ DATASET_METADATA = {
     "licenses": [{"name": "CC0-1.0"}],
 }
 
-# The complete set of files the Kaggle build needs: its two mains (the
-# submission's and the scored run's), the ops, the one header arc_said keeps
-# beside itself, and every header in include/core. The folder IS the list
-# -- the solver is built from include/core alone, locally too (the arc_headless
-# target), so a header it needs cannot be missing from it, and none of
-# include/gui is sent.
-CORE = os.path.join(ROOT, "include", "core")
+# The complete set of files the Kaggle build needs: its one main, the tools it
+# runs (the scored run's and the spelling bench's, and the header the scored run
+# keeps beside itself), and every header in include/core and include/ops. Those
+# folders ARE the list -- the solver is built from them alone, locally too (the
+# arc_headless target), so a header it needs cannot be missing from them, and
+# none of include/gui is sent.
+def headers(folder):
+    return folder, sorted(f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)))
 FOLDERS = {
-    "src": (os.path.join(ROOT, "src"), ["kaggle_main.cpp", "ops.cpp"]),
-    "scripts": (os.path.join(ROOT, "scripts"), ["said.cpp", "in_parallel.hpp"]),
-    "include": (CORE, sorted(f for f in os.listdir(CORE) if os.path.isfile(os.path.join(CORE, f)))),
+    "src": (os.path.join(ROOT, "src"), ["kaggle_main.cpp"]),
+    "scripts": (os.path.join(ROOT, "scripts"), ["said.hpp", "spell.hpp", "in_parallel.hpp"]),
+    "include": headers(os.path.join(ROOT, "include", "core")),
+    "ops": headers(os.path.join(ROOT, "include", "ops")),
 }
 
 def git(*args):

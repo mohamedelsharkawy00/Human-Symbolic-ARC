@@ -9,8 +9,8 @@ QUICK_CHECK = os.environ.get("ARC_SMOKE_CHECK") == "1"
 
 # WHICH SET TO READ. The test set makes the submission, and the notebook as
 # submitted reads it. Training or evaluation, whose answers are known, make a
-# scored run: what arc_said writes on a desk, for every puzzle or only the ids
-# named. kaggle_push.py --run sets both.
+# scored run: what scripts\said.bat writes on a desk, for every puzzle or only
+# the ids named. kaggle_push.py --run sets both.
 DATASET = os.environ.get("ARC_DATASET", "test")
 RUN_IDS = os.environ.get("ARC_RUN_IDS", "").split()
 
@@ -75,7 +75,6 @@ if PROBE or PROBE_ONLY:
 src_cands = glob.glob("/kaggle/input/**/src/kaggle_main.cpp", recursive=True)
 assert src_cands, "could not find src/kaggle_main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
-INC = SRC_ROOT + "/include"
 print("source root:", SRC_ROOT)
 # The code this run builds, as kaggle_push.py stamped it: the proof it is the code pushed.
 print("source commit:", open(SRC_ROOT + "/commit.txt").read().strip())
@@ -83,8 +82,12 @@ print("source commit:", open(SRC_ROOT + "/commit.txt").read().strip())
 # --- compile -------------------------------------------------------------
 print(subprocess.check_output(["g++", "--version"], text=True))
 
-def compile_to(binary, *sources):
-    cmd = ["g++", "-std=c++20", "-O2", "-pthread", "-I", INC, *sources, "-o", binary]
+# The one program, its include path as arc_headless has it locally: the core,
+# the ops, and the tools that run programs.
+def compile_to(binary):
+    cmd = ["g++", "-std=c++20", "-O2", "-pthread",
+           *(f"-I{SRC_ROOT}/{folder}" for folder in ("include", "ops", "scripts")),
+           SRC_ROOT + "/src/kaggle_main.cpp", "-o", binary]
     print("compiling:\n  " + " ".join(cmd))
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -97,22 +100,22 @@ def compile_to(binary, *sources):
     print("compiled OK ->", binary)
 
 # --- a scored run ---------------------------------------------------------
-# arc_said reads the set on every CPU thread, runs what each reading says,
-# and writes said.txt, tally.txt, timings.csv and every readout beside itself,
-# all of it handed back as one archive, said.tar.gz.
+# --said reads the set on every CPU thread, runs what each reading says,
+# and writes said.txt, tally.txt, timings.csv and every readout beside the
+# program, all of it handed back as one archive, said.tar.gz.
 def scored_run():
     run = "/kaggle/working/said"
     os.makedirs(run, exist_ok=True)
-    compile_to(run + "/arc_said", SRC_ROOT + "/scripts/said.cpp", SRC_ROOT + "/src/ops.cpp")
+    compile_to(run + "/arc_solver")
     print(f"reading {len(RUN_IDS) or 'every'} {DATASET} puzzle(s) on {os.cpu_count()} CPU threads")
     t0 = time.time()
-    # "/" holds kaggle/input, where arc_said finds the puzzles.
-    r = subprocess.run([run + "/arc_said", *RUN_IDS], cwd="/")
+    # "/" holds kaggle/input, where it finds the puzzles.
+    r = subprocess.run([run + "/arc_solver", "--said", *RUN_IDS], cwd="/")
     print(f"run took {time.time()-t0:.1f}s, exit={r.returncode}")
-    os.remove(run + "/arc_said")
+    os.remove(run + "/arc_solver")
     shutil.make_archive(run, "gztar", run)
     shutil.rmtree(run)
-    assert r.returncode == 0, "arc_said failed; said.tar.gz holds what it wrote"
+    assert r.returncode == 0, "the scored run failed; said.tar.gz holds what it wrote"
 
 # --- the submission ------------------------------------------------------
 def submission():
@@ -128,7 +131,7 @@ def submission():
 
     # --- 2. compile -----------------------------------------------------------
     BIN = "/kaggle/working/arc_solver"
-    compile_to(BIN, SRC_ROOT + "/src/kaggle_main.cpp", SRC_ROOT + "/src/ops.cpp")
+    compile_to(BIN)
 
     # --- 3. run: one shard PER CPU THREAD ---------------------------------------
     # One process per thread the machine has, each solving a contiguous shard and
