@@ -25,14 +25,20 @@ struct piece_pick;
 struct ray_seed;
 
 // What two pieces of a hand answer, worked out once: touching [0], touching at a
-// side [1], then each likeness of shape; and what one piece counts, for the
-// partner ways by count (counted_by).
+// side [1], then each likeness of shape; what one piece counts, for the
+// partner ways by count (counted_by); and whether one piece is a wall of the
+// canvas the hand lies on (is_wall).
 struct hand_answers {
     static constexpr int QUESTIONS = 2 + SHAPE_LIKENESSES;
+    // The canvas the hand lies on, the one whose edges a wall reaches.
+    tile_size canvas;
+    explicit hand_answers(tile_size on) : canvas(on) {}
     // Per question, piece by piece: -1 not asked yet.
     array<vector<int8_t>, QUESTIONS> kept;
     // Per count (count_kind, up to holes), piece by piece: -1 not counted yet.
     array<vector<int16_t>, (size_t)count_kind::holes + 1> counts;
+    // Piece by piece, whether it is a wall: -1 not asked yet.
+    vector<int8_t> walls;
     int pieces = 0;
     template <class Work> bool answer(int question, int mine, int other, int count, Work work) {
         if (count != pieces) forget(count);
@@ -50,9 +56,17 @@ struct hand_answers {
         if (known < 0) known = (int16_t)work();
         return known;
     }
+    template <class Work> bool walled(int mine, int count, Work work) {
+        if (count != pieces) forget(count);
+        if (walls.empty()) walls.assign((size_t)count, -1);
+        int8_t& known = walls[(size_t)mine];
+        if (known < 0) known = work() ? 1 : 0;
+        return known != 0;
+    }
     void forget(int count = 0) {
         for (vector<int8_t>& asked : kept) asked.clear();
         for (vector<int16_t>& asked : counts) asked.clear();
+        walls.clear();
         pieces = count;
     }
 };
@@ -76,9 +90,9 @@ struct partner_pieces {
         for (size_t i = 0; i < pieces.size(); ++i) boxes[i] = pieces[i].painted_box();
     }
     // The pieces of a cut, the ones `pick` takes picked (picked_pieces,
-    // 10_picks_and_frames.hpp), on a canvas the size of `canvas`, where a pick
-    // reads the parts walls fence.
-    partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas, hand_answers& kept);
+    // 10_picks_and_frames.hpp), on the canvas they lie on (hand_answers), where
+    // a pick reads the parts walls fence.
+    partner_pieces(const vector<object>& cut, const piece_pick& pick, hand_answers& kept);
     // The blocks piece i's shape is drawn in (blocks_of), its colors aside:
     // read the first time a partner way at another size asks, and kept.
     shape_blocks blocks(int i) const {
@@ -106,6 +120,7 @@ struct partner_pieces {
     bool touching(int mine, int other, bool sides_only) const;
     bool alike(int mine, int other, int like) const;
     int counted(int i, int kind) const;
+    bool wall(int i) const;
     // key_piece_at, worked out once a cell.
     int key_piece(int row, int col) const;
     bool every_piece_picked() const { return ranges::all_of(picked, [](bool one) { return one; }); }
@@ -293,13 +308,20 @@ constexpr int counted_by(partner_by how) {
 // `alike(i, j, like)` and `counted(i, kind)` (touches, shapes_alike, count_of),
 // which a reading may keep; and, for the color questions below, `color(i)`, the
 // color an op reads off its first cell, and `holds(i, color)`, whether it holds
-// a cell of that color.
+// a cell of that color. A WALL HAS A PLACE, NOT A KIND (`wall(i)`, is_wall): a
+// partner by where it lies may be one -- 1acc24af's pieces fit the sockets of
+// theirs -- but none by what it is like, its shape or what it counts:
+// e3721c99's fence has no holes, as the key's solid piece has none.
 template <class Visit>
 inline void each_partner(partner_by how, int mine, const partner_pieces& pieces, Visit visit,
                          bool among_all = false) {
     const cell_box own = pieces.box(mine);
     if (own.empty()) return;
-    auto may_partner = [&](int other) { return other != mine && (among_all || !pieces.is_picked(other)); };
+    const bool by_likeness = likeness_of(how) >= 0;
+    if (by_likeness && pieces.wall(mine)) return;
+    auto may_partner = [&](int other) {
+        return other != mine && (among_all || !pieces.is_picked(other)) && !(by_likeness && pieces.wall(other));
+    };
     int nearest = 1 << 30;
     if (how == partner_by::nearest)
         for (int other = 0; other < pieces.count(); ++other) {
@@ -856,19 +878,30 @@ inline bool lies_in_part(const partner_pieces& pieces, int mine, int which, cons
 }
 
 // A WALL: a piece that reaches two edges of a canvas `width` by `height` and
-// fences it into two parts at least (grid_parts) -- a line across it, or bent
-// across a corner -- what the grid is divided by, not a figure on it
-// (e3721c99's fence between its key and the pieces the key colors). `box` is
-// the box its cells fill, `painted(row, col)` whether it paints that cell.
-// SelectWalls picks these, and the reading sets them apart (set_the_walls_apart).
-template <class Painted>
-inline bool is_wall(int width, int height, const cell_box& box, Painted painted) {
+// fences it into parts (grid_parts), two of them at least holding pieces -- a
+// line across it, or bent across a corner -- what the grid is divided by,
+// standing between the pieces on it (e3721c99's fence between its key and the
+// pieces the key colors). A piece in a corner that closes off only empty cells
+// is a figure (63613498's key). `box` is the box its cells fill,
+// `painted(row, col)` whether it paints that cell, `held(row, col)` whether some
+// piece paints it. SelectWalls picks these, and no likeness takes one for a
+// partner (each_partner).
+template <class Painted, class Held>
+inline bool is_wall(int width, int height, const cell_box& box, Painted painted, Held held) {
     if (box.empty()) return false;
     const int edges = (box.row0 <= 0) + (box.row1 >= height - 1) + (box.col0 <= 0) + (box.col1 >= width - 1);
     if (edges < 2) return false;
-    return grid_parts(width, height, [&](int row, int col) {
+    const grid_parts parts(width, height, [&](int row, int col) {
         return row >= box.row0 && row <= box.row1 && col >= box.col0 && col <= box.col1 && painted(row, col);
-    }).count >= 2;
+    });
+    int holding = 0;
+    for (int which = 0; which < parts.count && holding < 2; ++which)
+        for (int at = parts.first[which]; at < parts.first[which + 1]; ++at)
+            if (held(parts.rows[at], parts.cols[at])) {
+                ++holding;
+                break;
+            }
+    return holding >= 2;
 }
 
 // WHETHER SelectLikeKey[how] KEEPS THE PIECE `mine`: some piece of the key --
@@ -2398,6 +2431,15 @@ inline int partner_pieces::counted(int i, int kind) const {
         const cell_box own = boxes[(size_t)i];
         return count_of(kind, own.height(), own.width(),
                         [&](int row, int col) { return pieces[(size_t)i].color_at(own.row0 + row, own.col0 + col); });
+    });
+}
+inline bool partner_pieces::wall(int i) const {
+    return answers.walled(i, count(), [&] {
+        return is_wall(answers.canvas.width, answers.canvas.height, boxes[(size_t)i],
+                       [&](int row, int col) { return pieces[(size_t)i].holds(row, col); },
+                       [&](int row, int col) {
+                           return ranges::any_of(pieces, [&](const object& piece) { return piece.holds(row, col); });
+                       });
     });
 }
 inline int partner_pieces::key_piece(int row, int col) const {

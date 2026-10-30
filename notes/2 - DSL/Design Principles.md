@@ -236,7 +236,12 @@ read off one piece that decides another rule's argument (97d7923e's rank).
   (`is_wall`, SelectWalls), set apart as the ground is (`ground_plan::walls_apart`)
   in a second reading of the plan, made where every pair's walls stand as they
   were and kept where it says as much in fewer passes. Evaluation 2 -> 3 right,
-  test outputs 3 -> 5 of 167; training unchanged.
+  test outputs 3 -> 5 of 167; training unchanged. Since 2026-10-30 no second
+  reading: the walls stay in, marked (`partner_pieces::wall`). A wall has a
+  place, not a kind: the partner ways by likeness (shape, holes, cells,
+  colors) pass it by, the ways by place keep it (1acc24af's sockets). And a
+  wall stands between pieces, two of the parts it fences holding one, so a key
+  in a corner is none (63613498).
 - **The most, cells by the way they run** (1d61978c): SelectRunningAlong [5],
   the pieces running the way most cells run (`the_way_most_cells_run`), as
   SelectMostCommonColor picks the color most cells wear; a tie picks nothing.

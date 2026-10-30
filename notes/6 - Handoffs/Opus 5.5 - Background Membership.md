@@ -278,7 +278,8 @@ These are prerequisites, not the main behavior change. The source diff is
   and `12_line`, with special spelling in `16_sentences`.
 - `said_reading::before_ground` in `16_sentences.hpp` still exists. It stores
   sentence indices, not input copies. Do not confuse it with the removed field.
-- Walls still have the separate `walls_apart` plan and `set_the_walls_apart`.
+- Walls (2026-10-30): no separate plan any more. They stay in, marked
+  (`partner_pieces::wall`, `is_wall`): the partner ways by likeness pass them by.
   No election, ranking, pass limit or rule preference changed.
 
 ## Remaining work, in order
@@ -286,7 +287,7 @@ These are prerequisites, not the main behavior change. The source diff is
 The user agreed (2026-10-28) to move one reader at a time, its grouping and
 its empty-cell tests together, so no function is touched twice: the matching
 (`5_matching`, `6_correspondence`), then the other readers file by file, all
-expected identical; then background shapes and walls through the shared
+expected identical; then background shapes (walls done 2026-10-30) through the shared
 owners, the first step that can change the score; then the deletions. The
 items below are what each reader's move has to cover.
 

@@ -437,7 +437,7 @@ struct shape_color_map_rule : shape_table {
             // finds it among the pieces not picked: that must be the key.
             vector<bool> largest(cut.size(), false);
             largest[(size_t)target] = true;
-            hand_answers fresh;
+            hand_answers fresh({ train[which].input.width, train[which].input.height });
             if (partner_pieces(cut, largest, fresh).partner(partner_by::nearest, target) != key) return {};
             if (!rule.learn(key_of(shape_key::shape, cut[key]), became)) return {};
             rule.read.push_back({ (int16_t)key, (int16_t)target, became });

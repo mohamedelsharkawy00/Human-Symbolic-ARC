@@ -1,6 +1,6 @@
-// The reading in order: each ground plan, cut and pass read to the end of its
-// rules, the one that says the most kept (says_the_most), and infer(), which
-// asks them all.
+// The reading in order: the ground plan, each cut and pass read to the end of
+// its rules, the cut that says the most kept (says_the_most), and infer(),
+// which asks them all.
 #pragma once
 #include "12_line.hpp"
 #include <algorithm>
@@ -9,7 +9,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,14 +50,12 @@ inline int passes_said(const inference& read) {
 }
 
 // THE CANDIDATE WHOSE RULES SAY THE MOST: each one read in the order given, and
-// the one whose reading leaves the fewest cells unsaid kept -- of those leaving
-// as few, the one saying it in the fewest passes (passes_said), the plainer
-// telling -- a tie going to the one read first. So once one leaves none in its
-// own pass, no later one is read. Every choice the reading makes is made here
-// and judged this one way, by its rules: the ground plan (infer), the cut
-// (read_figures), each asked just above the first rule that reads it; the passes
-// are read once a cut is chosen, so a cut is judged by its line alone, and only
-// a plan by its passes too. Whatever orders the candidates only breaks a tie.
+// the one whose reading leaves the fewest cells unsaid kept, a tie going to the
+// one read first. So once one leaves none, no later one is read. Every choice
+// the reading makes is made here and judged this one way, by its rules: the cut
+// (read_figures), asked just above the first rule that reads it, and how its
+// line opens (read_the_cut); the passes are read once a cut is chosen, so a cut
+// is judged by its line alone. Whatever orders the candidates only breaks a tie.
 // Hands back the one kept, where it stood, and the cells each one left unsaid,
 // -1 for one never read.
 struct said_most {
@@ -70,18 +67,14 @@ template <class Read>
 inline said_most says_the_most(int count, Read read) {
     said_most most;
     most.left.assign((size_t)count, -1);
-    int passes = 0;
     for (int i = 0; i < count; ++i) {
         inference one = read(i);
         most.left[i] = cells_left_unsaid(one);
-        const int said_in = passes_said(one);
-        if (most.kept < 0 || most.left[i] < most.left[most.kept] ||
-            (most.left[i] == most.left[most.kept] && said_in < passes)) {
+        if (most.kept < 0 || most.left[i] < most.left[most.kept]) {
             most.reading = std::move(one);
             most.kept = i;
-            passes = said_in;
         }
-        if (most.left[most.kept] == 0 && passes == most.reading.pass) break;
+        if (most.left[most.kept] == 0) break;
     }
     return most;
 }
@@ -261,55 +254,13 @@ inline ground_plan plan_to_read(const vector<example>& train, const background_e
     return plans.front();
 }
 
-// THE WALLS OF A PAIR'S INPUT: its figures' one-color pieces, joined at sides
-// or corners as Split [1] joins them, that are walls (is_wall) -- each cell of
-// each handed to `see(row, col)`.
-template <class See>
-inline void each_wall_cell(const figure_pair& pair, See see) {
-    const grid& input = pair.whole.input;
-    object_walk_scratch scratch;
-    each_object(input, grouping::touching_same_color, scratch,
-                [&](const object_summary& found, const int16_t* cells, int count) {
-        const object piece = object::from_cells(input, found, cells, count);
-        if (is_wall(input.width, input.height, found.box(), [&](int row, int col) { return piece.holds(row, col); }))
-            piece.each_cell([&](int row, int col, int8_t) { see(row, col); });
-    }, {}, [&](int row, int col) { return pair.input_figures.has(row, col); });
-}
-
-// THE FIGURES WITH THEIR WALLS SET APART (ground_plan::walls_apart): each
-// pair's input loses its walls from its figures, and its output the same cells,
-// which show them as they were, so the reading reads what lies between the
-// walls and the program lays them back last (walls_laid_back). False, the
-// figures left as they were, where some pair has no wall, or an output of
-// another size, or one that changes a wall.
-inline bool set_the_walls_apart(vector<figure_pair>& pairs) {
-    vector<cell_set> walls(pairs.size());
-    for (size_t which = 0; which < pairs.size(); ++which) {
-        const figure_pair& pair = pairs[which];
-        if (!pair.whole.input.same_size(pair.whole.output)) return false;
-        bool as_they_were = true;
-        each_wall_cell(pair, [&](int row, int col) {
-            walls[which].add(row, col);
-            as_they_were = as_they_were && pair.output_figures.has(row, col) &&
-                           pair.whole.output.data[row][col] == pair.whole.input.data[row][col];
-        });
-        if (walls[which].empty() || !as_they_were) return false;
-    }
-    for (size_t which = 0; which < pairs.size(); ++which) {
-        pairs[which].input_figures.bits &= ~walls[which].bits;
-        pairs[which].output_figures.bits &= ~walls[which].bits;
-    }
-    return true;
-}
-
 // A reading inside the puzzle's first one -- its framed reading, the passes
 // after it -- cuts by the shape that one learned (`inherited_shape`), the one
 // the program carries; the first reading, handed none, learns it off the pairs
 // as given, before the plan deletes their ground (changed_shape), so a shape
 // whose places turn into the ground is learned as well.
 inline shared_ptr<const inference> read_with_ground(const vector<example>& train, const tiled_pieces& tiles,
-        int8_t pass, bool partners, figure_readings& readings,
-        optional<inference>* prepared = nullptr, const ground_plan& plan = {},
+        int8_t pass, bool partners, figure_readings& readings, const ground_plan& plan = {},
         const vector<int8_t>& elected = {}, const turning_shape* inherited_shape = nullptr) {
     string key = figures_key(train, tiles);
     for (const background_source side : {plan.deleted, plan.filled}) {
@@ -317,7 +268,6 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
         key.push_back((char)side.per_grid);
     }
     key.push_back((char)plan.fill_is_ground_too);
-    key.push_back((char)plan.walls_apart);
     key.push_back((char)elected.size());
     for (const int8_t color : elected) key.push_back((char)color);
     key.push_back((char)pass);
@@ -334,20 +284,16 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     }
     if (const auto found = readings.completed.find(key); found != readings.completed.end())
         return found->second;
-    optional<inference> local;
-    auto& facts = prepared ? *prepared : local;
     const vector<int8_t> grounds = plan_grounds(train, plan, elected);
-    vector<figure_pair> pairs = plan_figures(train, plan, grounds);
-    if (plan.walls_apart) set_the_walls_apart(pairs);
+    const vector<figure_pair> pairs = plan_figures(train, plan, grounds);
     const vector<example> figures = figures_only(pairs);
     const tiled_pieces figure_tiles{figures.data(), tiles.originals};
-    if (!facts) {
-        facts = prepare_figures(figures, pairs, figure_tiles, inherited_shape ? *inherited_shape : changed_shape(train));
-        facts->plan = plan;
-        facts->elected_backgrounds = grounds;
-    }
+    inference facts = prepare_figures(figures, pairs, figure_tiles,
+                                      inherited_shape ? *inherited_shape : changed_shape(train));
+    facts.plan = plan;
+    facts.elected_backgrounds = grounds;
     auto read = make_shared<const inference>(read_figures(figures, pairs, figure_tiles, pass, partners,
-        prepared ? *facts : std::move(*facts), readings));
+        std::move(facts), readings));
     readings.keep(std::move(key), read);
     return read;
 }
@@ -381,7 +327,7 @@ inline void read_the_rest(inference& inf, const vector<example>& train, figure_r
     // A paint is still a figure on the next pass, even if it now fills most
     // of the picture. Keep the chosen ground rather than electing it again.
     inf.rest = read_with_ground(rest, {}, (int8_t)(inf.pass + 1), inf.partners, readings,
-        nullptr, ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds,
+        ground_plan{inf.plan.filled, inf.plan.filled, true}, inf.elected_backgrounds,
         &inf.correspondence.shape);
     inf.rest_says_more = cells_left_unsaid(*inf.rest) < cells_left_unsaid(inf);
 }
@@ -529,7 +475,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
             // Split before Tile: each copy keeps the original input's boundaries.
             const tiled_pieces copies = inf.frame.kind == kind::tiled
                 ? tiled_pieces{ framed.data(), train.data() } : tiled_pieces{};
-            inf.framed = read_with_ground(framed, copies, 1, inf.partners, readings, nullptr, {}, {},
+            inf.framed = read_with_ground(framed, copies, 1, inf.partners, readings, {}, {},
                                           &inf.correspondence.shape);
         }
     }
@@ -538,52 +484,18 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
 // Asks every question about the training pairs, in order, and returns the answers.
 // THE GROUND IS CHOSEN ONCE: the election names the plans a puzzle allows
 // (ground_plans) and the first that leaves every output something to draw is
-// read (plan_to_read, read_figures) -- then, where every pair has walls that
-// stand as they were, the same plan with its walls set apart
-// (set_the_walls_apart), and the one whose rules say the most, in the fewest
-// passes, is said (says_the_most), a tie keeping the walls in. Each pass
-// applies that plan before reading its figures.
+// read (plan_to_read, read_figures). Each pass applies that plan before reading
+// its figures.
 inline inference infer(const vector<example>& train) {
     figure_readings readings;
     const background_election election = elect_background(train);
-    const ground_plan elected = plan_to_read(train, election);
-    vector<ground_plan> plans{ elected };
-    if (vector<figure_pair> pairs = plan_figures(train, elected, plan_grounds(train, elected));
-        !elected.keeps() && set_the_walls_apart(pairs)) {
-        plans.push_back(elected);
-        plans.back().walls_apart = true;
+    inference read;
+    {
+        const time_into clock{ inference_time.ms[inference_times::plain] };
+        read = *read_with_ground(train, {}, 1, true, readings, plan_to_read(train, election));
     }
-    const int count = (int)plans.size();
-    vector<optional<inference>> prepared((size_t)count);
-    auto read_plan = [&](int at, bool partners) {
-        return *read_with_ground(train, {}, 1, partners, readings, &prepared[(size_t)at], plans[(size_t)at]);
-    };
-    vector<inference::plan_read> plans_read;
-    // Each plan read, as the readout shows it: the rules its line said.
-    auto note_read = [&](const ground_plan& plan, const inference& read) {
-        string rules;
-        if (!read.correspondence.readings.empty()) {
-            const auto& line = read.correspondence.readings[read.correspondence.chosen];
-            for (const int8_t said : line.line)
-                rules += (rules.empty() ? "" : " | ") + string(line.fired[said].name) +
-                         (line.fired[said].says.empty() ? "" : " " + line.fired[said].says);
-        }
-        plans_read.push_back({ plan, cells_left_unsaid(read), passes_said(read), rules, read.partners });
-    };
-    inference best = says_the_most(count, [&](int which) {
-        const ground_plan& plan = plans[(size_t)which];
-        inference read;
-        {
-            const time_into clock{ inference_time.ms[inference_times::plain] };
-            read = read_plan(which, true);
-        }
-        read.plan = plan;
-        note_read(plan, read);
-        return read;
-    }).reading;
-    best.ground_election = election;
-    best.plans_read = std::move(plans_read);
-    return best;
+    read.ground_election = election;
+    return read;
 }
 
 }  // namespace arc

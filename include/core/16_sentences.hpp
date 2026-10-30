@@ -80,16 +80,10 @@ inline string background_marks(const ground_plan& plan) {
     return mark(plan.deleted) + (filled == plan.deleted ? string() : mark(filled));
 }
 
-// Where the plan sets the walls apart, the figures lose them too, cut as
-// Split [1] cuts them: the reading read what lies between them.
 inline string foreground_input(const ground_plan& plan, bool on_picture) {
     const string marks = background_marks(plan);
-    const string figures = marks.empty() ? "Input" : "Input Colors" + marks +
+    return marks.empty() ? "Input" : "Input Colors" + marks +
         (on_picture ? " Difference CurrentObjects" : "") + " DeleteSelection UnionList";
-    return plan.walls_apart && !on_picture
-        ? figures + " " + operator_for_segmentation(segmentation_methods::connected_monochrome) +
-              " SelectWalls DeleteSelection UnionList"
-        : figures;
 }
 
 // A PICK AS OPERATORS, picked from none: by a kind of pick -- holes, size, band,
@@ -298,15 +292,6 @@ inline string closed_with(const string& operators, const string& combine) {
 // means rather than the closer guessing.
 inline string closed_on_the_pick(const string& operators, const string& combine) {
     return operators + " " + combine;
-}
-
-// THE WALLS LAID BACK, last, where the plan set them apart: the figures, cut
-// as Split [1] cuts them, their walls laid over whatever is there.
-inline string walls_laid_back(ground_plan plan) {
-    plan.walls_apart = false;
-    return closed_on_the_pick(foreground_input(plan, false) + " " +
-                              operator_for_segmentation(segmentation_methods::connected_monochrome) +
-                              " SelectWalls", "Union");
 }
 
 // ONE SENTENCE THAT OPENS WITH A SOURCE OF ITS OWN, as written, closed.
@@ -1519,7 +1504,6 @@ inline said_reading say_the_reading(const inference& inf) {
     said_reading said = cheapest ? *cheapest : said_reading{};
     said.no_rule_for.insert(said.no_rule_for.begin(), no_rule_for.begin(), no_rule_for.end());
     said.no_operator_for.insert(said.no_operator_for.begin(), no_operator_for.begin(), no_operator_for.end());
-    if (inf.plan.walls_apart && !said.sentences.empty()) said.sentences.push_back(walls_laid_back(inf.plan));
     const int ground = inf.plan.deleted.color;
     for (string& sentence : said.sentences) sentence = without_redundant_steps(sentence, ground);
     for (string& opening : said.other_openings) opening = without_redundant_steps(opening, ground);

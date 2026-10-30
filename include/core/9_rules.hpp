@@ -1220,7 +1220,7 @@ struct bridge_rule {
                         });
                     // Each bar is laid under whatever is already drawn. Every
                     // piece is picked, as SelectAll picks them before Bridge.
-                    hand_answers fresh;
+                    hand_answers fresh({ pair.input.width, pair.input.height });
                     bridge_bars(way, pair.output.width, pair.output.height,
                                 partner_pieces(pieces, vector<bool>(pieces.size(), true), fresh),
                                 [&](const cell_box& bar, int8_t color) {
@@ -1714,13 +1714,6 @@ struct inference {
     ground_plan plan;
     vector<int8_t> elected_backgrounds;
     background_election ground_election;
-    // EACH PLAN READ, in the order infer reads them (says_the_most): which plan,
-    // the cells it left unsaid, the passes it took, the rules its line said,
-    // and whether with the partner picks -- the readout's [plans read], which
-    // shows why one plan was kept over another (a61f2674's lost line was found
-    // this way).
-    struct plan_read { ground_plan plan; int left = 0, passes = 0; string rules; bool partners = false; };
-    vector<plan_read> plans_read;
 };
 
 // THE RULES THAT SAY A WHOLE PROGRAM OF THEIR OWN, each an explanation of every

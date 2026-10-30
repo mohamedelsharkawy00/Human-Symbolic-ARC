@@ -587,31 +587,34 @@ inline void log_inference(const string& id, const inference& inf,
              : is_color(ground.color) ? to_string((int)ground.color) : string("none");
     };
     // A plan as words: what the inputs lose -- the ground deleted, and what the
-    // fill takes off them as well -- what is filled last, and the walls set apart.
+    // fill takes off them as well -- and what is filled last.
     auto plan_said = [&](const ground_plan& plan) {
         const background_source also = plan.filled_on_input();
         const string deleted = !also.removes_color() || also == plan.deleted ? side(plan.deleted)
                              : !plan.deleted.removes_color() ? side(also)
                              : side(plan.deleted) + " and " + side(also);
-        return "delete " + deleted + ", fill " + side(plan.filled) + (plan.walls_apart ? ", walls apart" : "");
+        return "delete " + deleted + ", fill " + side(plan.filled);
     };
-    // The plan kept, starred among the election's, which name no walls.
-    ground_plan kept = inf.plan;
-    kept.walls_apart = false;
+    // The plan kept, starred among the election's.
     for (const ground_plan& plan : ground_plans(inf.ground_election))
-        report << "  |" << (plan == kept ? "*" : " ") << plan_said(plan);
-    if (inf.plan.walls_apart) report << "  | walls apart";
+        report << "  |" << (plan == inf.plan ? "*" : " ") << plan_said(plan);
     // Kept with the partner picks (inference::partners).
     if (inf.partners) report << "  | with the partner picks";
     report << "\n";
-    // Each plan read, in order, until one said every cell with no pass after it.
-    report << "[plans read] in order, the one to say the most in the fewest passes kept\n";
-    for (const auto& read : inf.plans_read)
-        report << "  " << plan_said(read.plan)
-               << (read.partners ? ", with the partner picks" : "") << ": " << read.left << " unsaid, "
-               << read.passes << (read.passes == 1 ? " pass" : " passes")
-               << (read.rules.empty() ? string() : ": " + read.rules) << "\n";
-    report << "\n";
+    // The plan read: the cells its rules left unsaid, in how many passes, and
+    // the rules its line said.
+    string rules;
+    if (!inf.correspondence.readings.empty()) {
+        const auto& line = inf.correspondence.readings[inf.correspondence.chosen];
+        for (const int8_t said : line.line)
+            rules += (rules.empty() ? "" : " | ") + string(line.fired[said].name) +
+                     (line.fired[said].says.empty() ? "" : " " + line.fired[said].says);
+    }
+    const int passes = passes_said(inf);
+    report << "[plan read] the cells left unsaid, the passes taken, the rules the line said\n";
+    report << "  " << plan_said(inf.plan) << (inf.partners ? ", with the partner picks" : "") << ": "
+           << cells_left_unsaid(inf) << " unsaid, " << passes << (passes == 1 ? " pass" : " passes")
+           << (rules.empty() ? string() : ": " + rules) << "\n\n";
     report_pane_split(report, inf.pane_split);
     report_pane_mask(report, inf.pane_mask);
     report_pane_pick(report, inf.pane_pick);

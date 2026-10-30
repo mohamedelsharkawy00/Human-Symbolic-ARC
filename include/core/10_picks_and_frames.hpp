@@ -151,20 +151,19 @@ static_assert(row_of(node_type::SelectPartner).high + 1 == SELECT_PARTNER_VALUES
 static_assert(row_of(node_type::SelectRunningAlong).high == WAY_MOST_CELLS_RUN,
               "SelectRunningAlong takes one value for each way a piece runs, then the way most cells run");
 
-// THE PIECES A PICK TAKES, as its operators take them on a canvas the size of
-// `canvas`, in the order pick_operators says them: its colors or its kind, the
-// walls of that canvas among the kinds (is_wall, as SelectWalls takes them); the
-// pieces in the part those fence off, where it names a part; their partners,
-// where it names a partner; every piece but those, where it turns them round;
-// then WouldFit's and SelectLikeKey's keeps.
-inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick, tile_size canvas,
-                                  hand_answers& answers) {
+// THE PIECES A PICK TAKES, as its operators take them on the canvas the hand
+// lies on (hand_answers), in the order pick_operators says them: its colors or
+// its kind, the walls of that canvas among the kinds (is_wall, as SelectWalls
+// takes them); the pieces in the part those fence off, where it names a part;
+// their partners, where it names a partner; every piece but those, where it
+// turns them round; then WouldFit's and SelectLikeKey's keeps.
+inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick& pick, hand_answers& answers) {
+    const tile_size canvas = answers.canvas;
     vector<bool> picked(pieces.size(), false);
-    if (pick.how == piece_pick::walls)
-        for (size_t i = 0; i < pieces.size(); ++i)
-            picked[i] = is_wall(canvas.width, canvas.height, pieces[i].box(),
-                                [&](int row, int col) { return pieces[i].holds(row, col); });
-    else if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
+    if (pick.how == piece_pick::walls) {
+        const partner_pieces hand(pieces, picked, answers);
+        for (size_t i = 0; i < pieces.size(); ++i) picked[i] = hand.wall((int)i);
+    } else if (pick.how >= 0) picked = picked_pieces(pieces, pick.how, pick.value);
     else
         for (size_t i = 0; i < pieces.size(); ++i) picked[i] = (palette(pieces[i]) & pick.colors) != 0;
     if (pick.part >= 0) {
@@ -202,9 +201,8 @@ inline vector<bool> picked_pieces(const vector<object>& pieces, const piece_pick
     return picked;
 }
 
-inline partner_pieces::partner_pieces(const vector<object>& cut, const piece_pick& pick, tile_size canvas,
-                                      hand_answers& kept)
-    : partner_pieces(cut, picked_pieces(cut, pick, canvas, kept), kept) {}
+inline partner_pieces::partner_pieces(const vector<object>& cut, const piece_pick& pick, hand_answers& kept)
+    : partner_pieces(cut, picked_pieces(cut, pick, kept), kept) {}
 
 static_assert(row_of(node_type::SelectLargestObject).low == row_of(node_type::SelectSmallestObject).low &&
               row_of(node_type::SelectLargestObject).high == row_of(node_type::SelectSmallestObject).high,
@@ -257,7 +255,7 @@ struct replay_facts {
             hands.push_back(pieces_as_said(train[which].input, cut, tiles.of(train[which]), shape));
             read_pair(which, train[which].input);
         }
-        answers.resize(hands.size());
+        answer_on_canvases();
     }
     replay_facts(const inference& inf, const vector<example>& figures, const vector<figure_pair>& whole,
         const tiled_pieces& tiles)
@@ -271,14 +269,14 @@ struct replay_facts {
             hands.push_back(pieces_as_said(grids[which], cut, tiles.of(train[which]), shape));
             read_pair(which, grids[which]);
         }
-        answers.resize(hands.size());
+        answer_on_canvases();
     }
     // The pieces a sentence hands over, a hand a pair, as given: the rooms
     // Partition hands back, for a pick to name some of them.
     replay_facts(const vector<example>& figures, const vector<figure_pair>& whole, vector<vector<object>> handed)
         : train(figures), pairs(whole), hands(std::move(handed)) {
         for (size_t which = 0; which < train.size(); ++which) read_pair(which, train[which].input);
-        answers.resize(hands.size());
+        answer_on_canvases();
     }
     // The canvas pair `which`'s pieces lie on: its input's, as the ops take it.
     tile_size canvas(size_t which) const { return { train[which].input.width, train[which].input.height }; }
@@ -336,10 +334,10 @@ struct replay_facts {
     }
     hand_answers& answers_of(size_t which) const { return answers[which]; }
     vector<bool> picked(size_t which, const piece_pick& pick) const {
-        return picked_pieces(hands[which], pick, canvas(which), answers[which]);
+        return picked_pieces(hands[which], pick, answers[which]);
     }
     partner_pieces handed(size_t which, const piece_pick& pick) const {
-        return { hands[which], pick, canvas(which), answers[which] };
+        return { hands[which], pick, answers[which] };
     }
     // Pair `which`'s hand, open to change; what was read off it is forgotten after.
     class hand_change {
@@ -364,6 +362,10 @@ private:
         done.push_back(redraws_the_output(picture, pairs[which]));
         open += !done.back();
         overlays = overlays && train[which].input.same_size(train[which].output);
+    }
+    // What each pair's hand answers, on the canvas its pieces lie on.
+    void answer_on_canvases() {
+        for (size_t which = 0; which < hands.size(); ++which) answers.emplace_back(canvas(which));
     }
     void forget(size_t which) {
         answers[which].forget();
@@ -1228,8 +1230,8 @@ inline bool size_pick_ties(const vector<object>& pieces, const piece_pick& pick,
 // first.
 inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, const grid& input,
                          const output_dimension_rule& size, grid& framed, bool& several) {
-    hand_answers fresh;
-    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height }, fresh);
+    hand_answers fresh({ input.width, input.height });
+    const vector<bool> picked = picked_pieces(pieces, pick, fresh);
     cell_box box;
     int taken = 0, one = -1;
     for (size_t i = 0; i < picked.size(); ++i) {
@@ -1263,8 +1265,8 @@ inline bool framed_input(const vector<object>& pieces, const piece_pick& pick, c
 // (shows_what_it_frames).
 inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick, int cell, const grid& input,
                            const output_dimension_rule& size, grid& framed) {
-    hand_answers fresh;
-    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height }, fresh);
+    hand_answers fresh({ input.width, input.height });
+    const vector<bool> picked = picked_pieces(pieces, pick, fresh);
     vector<const object*> kept;
     for (size_t i = 0; i < pieces.size() && kept.size() < (size_t)MAX_OBJECTS_IN_A_LIST; ++i)
         if (picked[i]) kept.push_back(&pieces[i]);
@@ -1304,8 +1306,8 @@ inline bool laid_out_input(const vector<object>& pieces, const piece_pick& pick,
 inline bool filled_input(const vector<object>& pieces, const piece_pick& pick, int8_t keyed,
                          const shape_color_map_rule& table, const grid& input, const output_dimension_rule& size,
                          grid& framed) {
-    hand_answers fresh;
-    const vector<bool> picked = picked_pieces(pieces, pick, { input.width, input.height }, fresh);
+    hand_answers fresh({ input.width, input.height });
+    const vector<bool> picked = picked_pieces(pieces, pick, fresh);
     int color = -1, one = -1;
     for (size_t i = 0; i < pieces.size(); ++i) {
         if (!picked[i]) continue;

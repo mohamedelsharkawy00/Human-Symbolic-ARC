@@ -211,15 +211,16 @@ vector<bool> picks_of(const object_list& list) {
 }
 
 // THE LIST AS THE PARTNER HELPERS ASK IT (partner_pieces, 15_op_math.hpp): a
-// copy of its objects and which are picked, asked as a rule's replay asks the
-// pieces it replays.
+// copy of its objects and which are picked, on the input's canvas, asked as a
+// rule's replay asks the pieces it replays.
 struct listed_objects {
     vector<object> objects;
     hand_answers answered;
 };
 struct listed_pieces : private listed_objects, partner_pieces {
-    explicit listed_pieces(const object_list& list)
-        : listed_objects{ vector<object>(list.objects, list.objects + list.count), {} },
+    listed_pieces(const object_list& list, const grid& input)
+        : listed_objects{ vector<object>(list.objects, list.objects + list.count),
+                          hand_answers({ input.width, input.height }) },
           partner_pieces(objects, picks_of(list), answered) {}
 };
 
@@ -599,7 +600,7 @@ object_list& op_bridge(program_run& run, const object_list& from, int8_t way) {
     bars.selected = true;
     bars.data.clear();
     bool drew = false;
-    bridge_bars(way, run.canvas.width, run.canvas.height, listed_pieces(from),
+    bridge_bars(way, run.canvas.width, run.canvas.height, listed_pieces(from, run.input),
         [&](const cell_box& bar, int8_t color) {
             for (int row = max(bar.row0, 0); row <= min(bar.row1, MAX_GRID_DIM - 1); ++row)
                 for (int col = max(bar.col0, 0); col <= min(bar.col1, MAX_GRID_DIM - 1); ++col)
@@ -640,7 +641,7 @@ object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t
         return res;
     }
     int8_t to[COLOR_COUNT];
-    if (!swaps_of(value, listed_pieces(from), to)) return res;
+    if (!swaps_of(value, listed_pieces(from, run.input), to)) return res;
     for (int i = 0; i < res.count; ++i) {
         held_object& one = res.objects[i];
         // Only what was picked swaps colors; the rest ride through as they are.
@@ -658,11 +659,11 @@ object_list& op_bidi_color_map(program_run& run, const object_list& from, int8_t
 // takes the color a key drawn in the grid -- the objects not picked -- shows at
 // its place, the n-th picked in reading order the key's n-th entry
 // (key_place_colors, 15_op_math.hpp, the walk inference replays).
-void paint_key_places(const object_list& from, object_list& res) {
+void paint_key_places(const object_list& from, object_list& res, const grid& input) {
     int8_t color[MAX_OBJECTS_IN_A_LIST], band[MAX_OBJECTS_IN_A_LIST];
     int16_t lows[MAX_OBJECTS_IN_A_LIST], highs[MAX_OBJECTS_IN_A_LIST];
     int order[MAX_OBJECTS_IN_A_LIST];
-    if (!key_place_colors(listed_pieces(from), color, lows, highs, band, order)) return;
+    if (!key_place_colors(listed_pieces(from, input), color, lows, highs, band, order)) return;
     for (int i = 0; i < res.count; ++i)
         if (color[i] >= 0) recolor(res.objects[i], color[i]);
 }
@@ -678,10 +679,10 @@ object_list& op_color_from(program_run& run, const object_list& from, int8_t how
     object_list& res = run.fresh();
     copy_list(res, from);
     if (how == KEY_BY_PLACE) {
-        paint_key_places(from, res);
+        paint_key_places(from, res, run.input);
         return res;
     }
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     if (how == KEY_COLOR) {
         const int color = key_color(view);
         for (int i = 0; i < res.count && color >= 0; ++i)
@@ -732,7 +733,7 @@ object_list& op_shape_from(program_run& run, const object_list& from, int8_t how
         one.col = (int16_t)box.col0; one.row = (int16_t)box.row0;
         one.width = (int16_t)box.width(); one.height = (int16_t)box.height();
     };
-    each_shape_taken(how, listed_pieces(from), [&](int i, int row, int col, int color) {
+    each_shape_taken(how, listed_pieces(from, run.input), [&](int i, int row, int col, int color) {
         if (i != taking) {
             set_drawing();
             taking = i;
@@ -756,7 +757,7 @@ object_list& op_would_fit(program_run& run, const object_list& from, int8_t how)
     object_list& res = run.fresh();
     copy_list(res, from);
     if (how < 0 || how >= (int8_t)partner_by::count) return res;
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner((partner_by)how, i);
@@ -771,7 +772,7 @@ object_list& op_would_fit(program_run& run, const object_list& from, int8_t how)
 object_list& op_select_like_key(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < from.count; ++i)
         if (from.objects[i].selected) res.objects[i].selected = like_the_key(how, i, view);
     return res;
@@ -786,7 +787,7 @@ object_list& op_select_partner(program_run& run, const object_list& from, int va
     object_list& res = run.fresh();
     copy_list(res, from);
     for (int i = 0; i < res.count; ++i) res.objects[i].selected = false;
-    each_partner_picked(value, listed_pieces(from), [&](int other) { res.objects[other].selected = true; });
+    each_partner_picked(value, listed_pieces(from, run.input), [&](int other) { res.objects[other].selected = true; });
     return res;
 }
 
@@ -798,7 +799,7 @@ object_list& op_select_partner(program_run& run, const object_list& from, int va
 object_list& op_select_partition(program_run& run, const object_list& from, int which) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     const grid_parts parts = parts_the_pick_fences(view, run.input.width, run.input.height);
     for (int i = 0; i < from.count; ++i) res.objects[i].selected = lies_in_part(view, i, which, parts);
     return res;
@@ -825,7 +826,7 @@ object_list& op_partition(program_run& run, const object_list& from) {
             res.objects[res.count] = from.objects[i];
             res.objects[res.count++].selected = false;
         }
-    each_fenced_part(listed_pieces(from), grid_width, grid_height,
+    each_fenced_part(listed_pieces(from, run.input), grid_width, grid_height,
         [&](int, const cell_box& box, auto in_part) {
             for (int index = 0; index < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++index) {
                 if (from.objects[index].selected) continue;
@@ -853,7 +854,7 @@ object_list& op_align_to(program_run& run, const object_list& from, int8_t value
     if (value < 0 || value >= 2 * ways) return res;
     const bool columns = value >= ways;
     const auto how = (partner_by)(value % ways);
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner(how, i);
@@ -884,7 +885,7 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
     if (value < 0 || value >= (int)toward_by::count * PARTNER_KINDS) return res;
     const auto far = (toward_by)(value / PARTNER_KINDS);
     const int kind = value % PARTNER_KINDS;
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < from.count; ++i) {
         if (!from.objects[i].selected) continue;
         const int partner = view.partner_of_kind(kind, i);
@@ -916,7 +917,7 @@ object_list& op_mirror_around(program_run& run, const object_list& from, int8_t 
     if (value < 0 || value >= (int)mirror_by::count * partners) return res;
     const auto mirror = (mirror_by)(value / partners);
     const int how = value % partners;
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < from.count; ++i) {
         const held_object& piece = from.objects[i];
         if (!piece.selected || piece.width <= 0 || piece.height <= 0) continue;
@@ -995,8 +996,8 @@ object_list& op_select_running_along(program_run& run, const object_list& from, 
 // FitInto[moved]: each picked object moved into the one object it fits into
 // (each_fit_move, which the reading replays), its painted cells turned as the
 // place names and laid with their corner there, the rest where they were.
-void fit_moved(object_list& res, const object_list& from) {
-    each_fit_move(listed_pieces(from), [&](int i, int pose, int row, int col) {
+void fit_moved(object_list& res, const object_list& from, const grid& input) {
+    each_fit_move(listed_pieces(from, input), [&](int i, int pose, int row, int col) {
         const held_object& source = from.objects[i];
         const cell_box paint = paint_in_frame(source);
         const auto [broad, high] = posed_size(pose, paint.width(), paint.height());
@@ -1021,12 +1022,12 @@ object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) 
     object_list& res = run.fresh();
     copy_list(res, from);
     if (how == (int8_t)fit_into_way::moved) {
-        fit_moved(res, from);
+        fit_moved(res, from, run.input);
         return res;
     }
     vector<held_object> gaps;
     vector<int8_t> poured;
-    each_pour(listed_pieces(from), [&](int color, const int16_t* rows, const int16_t* cols, int count) {
+    each_pour(listed_pieces(from, run.input), [&](int color, const int16_t* rows, const int16_t* cols, int count) {
         cell_box box;
         for (int k = 0; k < count; ++k) box.include_cell(rows[k], cols[k]);
         held_object& one = gaps.emplace_back();
@@ -1064,11 +1065,9 @@ object_list& op_fit_into(program_run& run, const object_list& from, int8_t how) 
 object_list& op_select_walls(program_run& run, const object_list& from) {
     object_list& res = run.fresh();
     copy_list(res, from);
-    const listed_pieces view(from);
+    const listed_pieces view(from, run.input);
     for (int i = 0; i < res.count; ++i)
-        if (is_wall(run.input.width, run.input.height, view.box(i),
-                    [&](int row, int col) { return view.painted(i, row, col); }))
-            res.objects[i].selected = true;
+        if (view.wall(i)) res.objects[i].selected = true;
     return res;
 }
 
@@ -1755,7 +1754,7 @@ object_list& op_tile(program_run& run, const object_list& from, const tile_value
         each_painted(from.objects[i], [&](int, int, int8_t color) { if (is_color(color)) held |= 1u << color; });
         return held;
     });
-    const cell_box key = key_box(listed_pieces(from));
+    const cell_box key = key_box(listed_pieces(from, run.input));
     for (int i = 0; i < count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
         const tile_moves moves = !source.selected ? tile_moves{}

@@ -598,10 +598,6 @@ struct ground_plan {
     // of its own, cells of that color can be figures the rule reads (1b2d62fb's
     // 0s, read through its panes).
     bool fill_is_ground_too = false;
-    // WHETHER THE WALLS ARE SET APART as the ground is: taken off every input,
-    // and off its output where they stand as they were, read past, and laid
-    // back last (set_the_walls_apart, 13_infer.hpp).
-    bool walls_apart = false;
     // What the fill takes off the inputs as well: none where they keep it.
     background_source filled_on_input() const { return fill_is_ground_too ? filled : background_source{}; }
     // Whether the inputs lose nothing.
@@ -645,8 +641,8 @@ inline vector<ground_plan> ground_plans(const background_election& election) {
 }
 
 // A PAIR AS A PLAN READS IT: whole, every cell in its own color, and which
-// cells of each grid are figures. The rest -- the ground the plan deletes or
-// fills, the walls it sets apart -- is still there, in no figure.
+// cells of each grid are figures. The rest, the ground the plan deletes or
+// fills, is still there, in no figure.
 struct figure_pair {
     example whole;
     cell_set input_figures, output_figures;
