@@ -51,11 +51,9 @@ inline int passes_said(const inference& read) {
 
 // THE CANDIDATE WHOSE RULES SAY THE MOST: each one read in the order given, and
 // the one whose reading leaves the fewest cells unsaid kept, a tie going to the
-// one read first. So once one leaves none, no later one is read. Every choice
-// the reading makes is made here and judged this one way, by its rules: the cut
-// (read_figures), asked just above the first rule that reads it, and how its
-// line opens (read_the_cut); the passes are read once a cut is chosen, so a cut
-// is judged by its line alone. Whatever orders the candidates only breaks a tie.
+// one read first. Once one leaves none, no later one is read. The cuts compete
+// here (read_figures), before the passes, so each is judged by its line alone.
+// Whatever orders the candidates only breaks a tie.
 // Hands back the one kept, where it stood, and the cells each one left unsaid,
 // -1 for one never read.
 struct said_most {
@@ -389,27 +387,8 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
         });
     });
 
-    // Last, once every rule is known: the rivals, the rest of the cut's line,
-    // and only then what no rule on it says. THE MATCHING'S ACTS, OR THE RULES
-    // ALONE: the acts the matching read off the pieces open the line and the
-    // rules read off the pieces go on from the hand they leave, or the acts are
-    // left unsaid and the rules say every change themselves. A rule that says
-    // what an act says and more is seen at work only on a hand the act has not
-    // changed yet: 9565186b's "8 becomes 5" left its first pair nothing for
-    // "every color but the most common becomes 5" to change. Whichever says
-    // the most is said (says_the_most), a tie keeping the acts.
-    // A PASS AFTER THE FIRST (read_the_rest) says one change in one sentence:
-    // no rival, whose program is its own.
     if (inf.pass == 1) list_the_rivals(inf);
-    const auto& election = inf.correspondence;
-    const bool acts = !election.readings.empty() && !election.readings[election.chosen].line.empty();
-    cut_paints paints;
-    inf = says_the_most(acts ? 2 : 1, [&](int opening) {
-        inference read = inf;
-        if (opening == 1) leave_the_acts_unsaid(read);
-        finish_the_line(read, train, pairs, tiles, paints);
-        return read;
-    }).reading;
+    finish_the_line(inf, train, pairs, tiles);
     inf.correspondence.list_what_is_missing();
 
     // A SIZE CHANGE, READ THROUGH ITS FRAME: once the frame cuts the output's

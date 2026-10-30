@@ -1,5 +1,4 @@
-// The line: the acts and paints said after the cut's own acts, the one that
-// says the most first (finish_the_line).
+// The line: matching changes, acts and paints, the one that says the most first.
 #pragma once
 #include "11_replays.hpp"
 #include <algorithm>
@@ -103,52 +102,24 @@ inline int compose_poses(int first, int then) {
     return 0;
 }
 
-// THE ACTS LEFT UNSAID: the line the matching opened with its acts, cleared.
-// They stay listed, claiming nothing, and every cell they claimed is the rules'
-// to claim again.
-inline void leave_the_acts_unsaid(inference& inf) {
-    auto& read = inf.correspondence.readings[inf.correspondence.chosen];
-    for (auto& pair : read.pairs)
-        for (auto& cell : pair.left_over)
-            if (cell.claimed_by >= 0 && ranges::find(read.line, cell.claimed_by) != read.line.end())
-                cell.claimed_by = -1;
-    for (const int8_t which : read.line) read.fired[which].cells = 0;
-    read.line.clear();
-}
-
-// THE CUT'S PAINTS, READ ONCE FOR EVERY LINE READ ON IT: what a paint reads
-// is the cut opened again, the same for each line read on one cut -- with its
-// acts or the rules alone (read_the_cut) -- so the cut is opened once, the pieces each draw pick takes off it handed over once,
-// and each way of asking a paint -- the kind, the pick, the value -- walked
-// once (paint_walk) for all of them. A walk is counted once for each canvas
-// it is laid on (walk_tally), each canvas of every line its own number.
-// `asked_picks` are the draw picks a paint asks, in order: each takes, in some
-// pair, pieces no pick before it takes (takes_the_same); `asked_partner_picks`
-// the partner picks past them, which a line asks last (partner_picks). The
-// rays of each pick, one way round, are fanned out once for every length
-// (rays_fan).
+// Paint walks are kept while the line changes its canvas. Each walk's tally
+// belongs to the last canvas it was counted on.
 struct walked_paint { optional<paint_walk> walk; int counted_on = -1; walk_tally tally; };
 struct cut_paints {
-    optional<replay_facts> opened;
     vector<piece_pick> draw_picks;
     vector<vector<partner_pieces>> handed_by_pick;
     vector<vector<uint16_t>> colors_by_pick;
     // The draw picks asked, and past them the partner picks a line asks last
     // (partner_picks): indices into draw_picks.
     vector<size_t> asked_picks, asked_partner_picks;
-    size_t plain_draws = 0;
     std::map<std::tuple<int, size_t, int>, walked_paint> walks;
     std::map<std::pair<size_t, bool>, optional<ray_fan>> fans;
-    int canvases = 0;
 };
 
-// THE REST OF THE ELECTED CUT'S LINE, after its own acts: a rule read off the
-// cut's own pieces that drew every output by itself, or else the rules its
-// recolor is said with and what it has no rule for. Listed on the reading under
-// the rule whose evidence each one reads, and put on the line in the order it is
-// said.
+// The elected cut's rules, checked on the pieces and picture they leave.
 inline void finish_the_line(inference& inf, const vector<example>& train, const vector<figure_pair>& pairs,
-                            const tiled_pieces& boundaries, cut_paints& paints) {
+                            const tiled_pieces& boundaries) {
+    cut_paints paints;
     ++inference_work.lines;
     const time_into clock{ inference_time.ms[inf.pass > 1 ? inference_times::lines_later : inference_times::lines_first] };
     using rule = correspondence_election::fired_rule;
@@ -194,22 +165,17 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     replay_facts facts(inf, train, pairs, boundaries);
     picks_on_hand hand_picks;
     facts.laid_under = ranges::any_of(read.pairs, [](const auto& pair) { return pair.sits_on > 0; });
-    // THE MATCHING'S ACTS, REPLAYED BEFORE THEY ARE SAID: carried on a copy of
-    // the hand one by one, each at work in every pair (hand_changes_everywhere),
-    // and what they come to judged as one (hand_change_holds) -- a piece that
-    // moves and changes color lands in its old color before its recolor, wrong
-    // alone and right together. Acts that do not hold are left unsaid.
-    if (!read.line.empty()) {
-        replay_facts carried = facts;
-        bool hold = true;
-        for (size_t at = 0; at < read.line.size() && hold; ++at) {
-            const replay_facts before = carried;
-            hold = carry_the_hand(read.fired[read.line[at]], inf, carried) && hand_changes_everywhere(before, carried);
+    // Matching changes wait beside the other rules, with their original claims.
+    const vector<int8_t> matching_changes = read.line;
+    vector<vector<int8_t>> matching_claims(read.pairs.size());
+    for (size_t which = 0; which < read.pairs.size(); ++which)
+        for (auto& cell : read.pairs[which].left_over) {
+            const bool claimed = ranges::find(matching_changes, cell.claimed_by) != matching_changes.end();
+            matching_claims[which].push_back(claimed ? cell.claimed_by : -1);
+            if (claimed) cell.claimed_by = -1;
         }
-        if (!hold || !hand_change_holds(facts, carried)) leave_the_acts_unsaid(inf);
-    }
-    for (const int8_t which : read.line)
-        facts.hand_known = facts.hand_known && carry_the_hand(read.fired[which], inf, facts);
+    for (const int8_t which : matching_changes) read.fired[which].cells = 0;
+    read.line.clear();
     // Carries the hand through a rule just said on the line. Once it cannot,
     // the line no longer draws its picture, and no rule after lays a cell wrong
     // (the sure rules first, below).
@@ -281,7 +247,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // trades back what the first laid down (9565186b again: 1 and 5, then 2
     // and 5, turns the 5s the first laid down to 2s).
     auto painted_by_the_line = [&](int color) {
-        return ranges::any_of(read.fired, [&](const auto& one) {
+        return ranges::any_of(read.line, [&](int8_t which) {
+            const auto& one = read.fired[which];
             if (one.as == rule::swap_colors) {
                 const auto [traded, other] = color_pair::from_index(one.value);
                 return traded == color || other == color;
@@ -441,8 +408,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             : value(value), said(said), pick(pick), seen(seen), claims(std::move(claims)) {}
         heard(int value, int said, const piece_pick& pick, const marked_paint& seen, claim claims)
             : value(value), said(said), pick(pick), claims(std::move(claims)), marked(seen) {}
-        // Only the best lay of a kind needs lists, for saying it or reading
-        // ahead on its drawing. Every candidate used the same lay_paint judge.
+        // Only the best lay of a kind needs lists to say it.
+        // Every candidate used the same lay_paint judge.
         bool materialize(const replay_facts& facts) {
             if (value < 0) return false;
             if (marked) {
@@ -462,13 +429,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             return step.as == as && step.value == value && step.pick == pick;
         });
     };
-    // What a paint said after the line reads: the cut opened again, as it is said,
-    // once for every line read on the cut (cut_paints). It lays cells wrong where
-    // the rules may (replay_facts::tolerant).
-    const bool cut_opened = paints.opened.has_value();
-    if (!cut_opened) paints.opened.emplace(inf, train, pairs, boundaries);
-    replay_facts& opened = *paints.opened;
-    opened.tolerant = false;
+    // Paints read the original cut, independently of changes to the hand.
+    replay_facts opened(inf, train, pairs, boundaries);
     // THE CELLS A RULE SAID LAID WRONG, every rule's: where the picture the line
     // draws still shows them wrong at its end, they are left unsaid.
     colors_by_pair laid_wrong(facts.train.size());
@@ -606,6 +568,41 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // What a kind offers: how many cells it says, how to say it, and for a
     // paint, the cells it would lay, in what it lays there.
     struct offer { int said = 0; std::function<void()> say; };
+
+    // A move and recolor may be wrong separately and right together.
+    // Replay the matching's whole set on the current hand before offering it.
+    bool matching_said = false;
+    auto matching_rule = [&]() -> offer {
+        if (matching_said || matching_changes.empty() || !facts.hand_known || facts.tolerant) return {};
+        replay_facts checked = facts;
+        for (const int8_t which : matching_changes) {
+            const replay_facts before = checked;
+            if (!carry_the_hand(read.fired[which], inf, checked) || !hand_changes_everywhere(before, checked))
+                return {};
+        }
+        if (!hand_change_holds(facts, checked)) return {};
+        int said = 0;
+        for (size_t which = 0; which < read.pairs.size(); ++which)
+            if (!facts.finished(which))
+                for (size_t cell = 0; cell < read.pairs[which].left_over.size(); ++cell)
+                    said += read.pairs[which].left_over[cell].claimed_by < 0 && matching_claims[which][cell] >= 0;
+        return { said, [&] {
+            for (size_t which = 0; which < read.pairs.size(); ++which)
+                if (!facts.finished(which))
+                    for (size_t cell = 0; cell < read.pairs[which].left_over.size(); ++cell) {
+                        auto& change = read.pairs[which].left_over[cell];
+                        const int8_t owner = matching_claims[which][cell];
+                        if (change.claimed_by >= 0 || owner < 0) continue;
+                        change.claimed_by = owner;
+                        ++read.fired[owner].cells;
+                    }
+            for (const int8_t which : matching_changes) {
+                read.line.push_back(which);
+                carry(which);
+            }
+            matching_said = true;
+        } };
+    };
 
     // A RECOLOR ANOTHER PIECE DECIDES, READ OFF THE PAIRS: the pieces the output
     // shows in other colors where they lie (pieces_recolored); the first find
@@ -842,9 +839,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
 
     // A RECOLOR A PICK DECIDES: the pieces it picks all come out in one color --
     // the pick, then Recolor. The colors an unsaid recolor starts from are asked
-    // too, alone and with a fit: an act says a recolor by color only where the
-    // line opens with the acts, and the rules alone say it themselves (18286ef8's
-    // 6 becomes 9 once its 9 has stepped). Asked of the hand the line leaves --
+    // too, alone and with a fit, on the hand the earlier rules leave --
     // or, where the hand could not be carried, only of a line nothing on it moves
     // or reshapes a piece, with no pick by color, which a recolor on it changes,
     // and the color most cells wear, which a recolor changes, only of a bare line.
@@ -1045,12 +1040,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // The picks a paint is asked with: each color on its own, then the picks by
     // holes, size and band.
     vector<piece_pick>& draw_picks = paints.draw_picks;
-    if (!cut_opened) {
-        for (int color = 0; color < COLOR_COUNT; ++color) draw_picks.push_back(piece_pick::of_color(color));
-        for (const piece_pick& pick : picks_to_ask(opened, 0)) draw_picks.push_back(pick);
-        paints.plain_draws = draw_picks.size();
-        for (const piece_pick& pick : partner_picks(opened)) draw_picks.push_back(pick);
-    }
+    for (int color = 0; color < COLOR_COUNT; ++color) draw_picks.push_back(piece_pick::of_color(color));
+    for (const piece_pick& pick : picks_to_ask(opened, 0)) draw_picks.push_back(pick);
+    const size_t plain_draws = draw_picks.size();
+    for (const piece_pick& pick : partner_picks(opened)) draw_picks.push_back(pick);
 
     // WHAT A PAINT SAID AFTER THE LINE READS: it opens the cut again, so it reads
     // the pieces as the cut hands them over, as its replay does, and paints only
@@ -1093,7 +1086,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // where it lands too, so those ways are asked only where it is known. Laid
     // again before every rule is asked, and counted each time it changes.
     vector<cells> canvas(opened.cuts().size());
-    // Its number among every canvas a line on the cut laid (cut_paints).
+    // Changes whenever the canvas changes.
     int canvas_number = 0;
     // WHAT THE LINE DRAWS SO FAR, CELL BY CELL: the hand as the rules leave it,
     // laid as its sentence lays it -- over what is down, or under it where a
@@ -1135,7 +1128,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             for (const cell_color& cell : painted[which]) now[which][cell.row][cell.col] = cell.color;
         if (now.size() != canvas.size() || memcmp(now.data(), canvas.data(), now.size() * sizeof(cells)) != 0) {
             canvas = std::move(now);
-            canvas_number = ++paints.canvases;
+            ++canvas_number;
             ray_lays.clear();
         }
     };
@@ -1178,7 +1171,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
     // EACH PAINT WALKED ONCE (paint_walk): its walk reads only the cut opened
     // again, so one way of asking it -- the kind, the pick, the value -- is
-    // walked once for every line on the cut (cut_paints), however often the
+    // walked once for the line (cut_paints), however often the
     // rules around it are asked, and laid from that walk every way, on every
     // canvas, in `in` (lay_paint) -- counted once for each canvas it is laid on
     // (walk_tally), so a lay that cannot hold is known from the counts, and only
@@ -1262,22 +1255,20 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return true;
     };
     vector<vector<partner_pieces>>& handed_by_pick = paints.handed_by_pick;
-    if (!cut_opened)
-        for (const piece_pick& pick : draw_picks) {
-            handed_by_pick.push_back(handed_pieces(opened, pick));
-            paints.colors_by_pick.push_back(colors_of_pick(handed_by_pick.back()));
-        }
+    for (const piece_pick& pick : draw_picks) {
+        handed_by_pick.push_back(handed_pieces(opened, pick));
+        paints.colors_by_pick.push_back(colors_of_pick(handed_by_pick.back()));
+    }
     // THE DRAW PICKS A PAINT ASKS, in order. A pick that takes the same pieces
     // as one before it, in every pair, is handed the same pieces: every paint
     // draws for it what it drew for that one, which keeps a tie, so it is not
     // asked.
     vector<size_t>& asked_picks = paints.asked_picks;
-    if (!cut_opened)
-        for (size_t at = 0; at < draw_picks.size(); ++at) {
-            auto same = [&](size_t before) { return takes_the_same(handed_by_pick[before], handed_by_pick[at]); };
-            if (ranges::any_of(asked_picks, same) || ranges::any_of(paints.asked_partner_picks, same)) continue;
-            (at < paints.plain_draws ? asked_picks : paints.asked_partner_picks).push_back(at);
-        }
+    for (size_t at = 0; at < draw_picks.size(); ++at) {
+        auto same = [&](size_t before) { return takes_the_same(handed_by_pick[before], handed_by_pick[at]); };
+        if (ranges::any_of(asked_picks, same) || ranges::any_of(paints.asked_partner_picks, same)) continue;
+        (at < plain_draws ? asked_picks : paints.asked_partner_picks).push_back(at);
+    }
     // The draw picks a paint is asked with now: the partner picks too, once the
     // line has turned to its last resort (partner_picks).
     vector<size_t> asked_now = asked_picks;
@@ -1302,10 +1293,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     int farthest = 0;
     for (const example& pair : opened.train) farthest = max(farthest, max(pair.output.height, pair.output.width) - 1);
     // EVERY RAY LENGTH LAID AT ONCE (lay_every_length): the rays of a pick, one
-    // way round, fanned out once for every line on the cut (rays_fan), every
+    // way round, fanned out once for the line (rays_fan), every
     // length laid the first time one is asked on a canvas, and each kept for
     // that canvas (ray_lays). A length is walked on its own (rays_walk), once for
-    // every line, only where it ties for its color or holds.
+    // the line, only where it ties for its color or holds.
     auto rays_laid_once = [&](size_t at, int8_t lay, bool diagonal, int reach) -> const optional<marked_paint>& {
         const ray_key key = ray_key_of(at, lay, paint_value::packed(diagonal, reach));
         if (const auto found = ray_lays.find(key); found != ray_lays.end()) return found->second;
@@ -1930,7 +1921,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // paints, under the picture it read.
     bool frozen = false, picture_read = false;
     struct asked { std::function<offer()> offers; bool paint, changes_pieces; };
-    const asked kinds[] = { { color_from_rule, false, false }, { move_rule, false, true },
+    const bool matching_moves = ranges::any_of(matching_changes, [&](int8_t which) {
+        return group_of(read.fired[which].as) == rule_group::changes_pieces;
+    });
+    const asked kinds[] = { { matching_rule, false, matching_moves },
+                            { color_from_rule, false, false }, { move_rule, false, true },
                             { mirror_rule, false, true }, { outline_rule, false, true },
                             { recolor_rule, false, false }, { shape_rule, false, false },
                             { [&] { return key_rule(!frozen); }, false, false },
