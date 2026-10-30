@@ -1,6 +1,6 @@
 # Opus 5.5: background membership
 
-Handoff, 2026-10-28. Read README.md, AGENTS.md and the local HANDOFF.md first.
+Handoff, 2026-10-28. Read README.md and the local HANDOFF.md first.
 This note concerns the background redesign only. The code and this note are
 committed together after bfab5c3; use git history for the exact commit.
 
