@@ -397,38 +397,17 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
     // what an act says and more is seen at work only on a hand the act has not
     // changed yet: 9565186b's "8 becomes 5" left its first pair nothing for
     // "every color but the most common becomes 5" to change. Whichever says
-    // the most is said (says_the_most), a tie keeping the acts. EACH READ
-    // AGAIN AHEAD, a paint weighed with what the picture lets be read after it
-    // (finish_the_line), and kept only where it leaves fewer cells unsaid: read
-    // ahead, 0d87d2a6's bars come before "the largest becomes 1", which left the
-    // picture nothing to change in its first pair; but a line read ahead can
-    // say less -- ae3edfdc's rays and the reading after them stopped its moves.
-    // The picture reads recolors alone, so a line is read ahead only where read
-    // plainly it left a recolor unsaid.
+    // the most is said (says_the_most), a tie keeping the acts.
     // A PASS AFTER THE FIRST (read_the_rest) says one change in one sentence:
-    // no rival, whose program is its own, and no reading ahead, which says a
-    // second change after the first.
+    // no rival, whose program is its own.
     if (inf.pass == 1) list_the_rivals(inf);
     const auto& election = inf.correspondence;
     const bool acts = !election.readings.empty() && !election.readings[election.chosen].line.empty();
-    const int openings = acts ? 2 : 1;
-    vector<inference> plain((size_t)openings);
-    auto recolor_unsaid = [](const inference& one) {
-        const auto& said = one.correspondence;
-        return !said.readings.empty() && ranges::any_of(said.readings[said.chosen].pairs, [](const auto& pair) {
-            return ranges::any_of(pair.left_over, [](const auto& cell) {
-                return cell.claimed_by < 0 && cell.answers_to(correspondence_election::missing::a_recolor); });
-        });
-    };
     cut_paints paints;
-    inf = says_the_most(inf.pass == 1 ? 2 * openings : openings, [&](int which) {
-        const int opening = which % openings;
-        const bool ahead = which >= openings;
-        if (ahead && !recolor_unsaid(plain[(size_t)opening])) return plain[(size_t)opening];
+    inf = says_the_most(acts ? 2 : 1, [&](int opening) {
         inference read = inf;
         if (opening == 1) leave_the_acts_unsaid(read);
-        finish_the_line(read, train, pairs, tiles, ahead, paints);
-        if (!ahead) plain[(size_t)opening] = read;
+        finish_the_line(read, train, pairs, tiles, paints);
         return read;
     }).reading;
     inf.correspondence.list_what_is_missing();

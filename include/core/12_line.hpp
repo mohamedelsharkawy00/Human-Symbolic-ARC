@@ -118,8 +118,7 @@ inline void leave_the_acts_unsaid(inference& inf) {
 
 // THE CUT'S PAINTS, READ ONCE FOR EVERY LINE READ ON IT: what a paint reads
 // is the cut opened again, the same for each line read on one cut -- with its
-// acts or the rules alone, plainly or reading ahead (read_the_cut) -- so the
-// cut is opened once, the pieces each draw pick takes off it handed over once,
+// acts or the rules alone (read_the_cut) -- so the cut is opened once, the pieces each draw pick takes off it handed over once,
 // and each way of asking a paint -- the kind, the pick, the value -- walked
 // once (paint_walk) for all of them. A walk is counted once for each canvas
 // it is laid on (walk_tally), each canvas of every line its own number.
@@ -147,11 +146,9 @@ struct cut_paints {
 // cut's own pieces that drew every output by itself, or else the rules its
 // recolor is said with and what it has no rule for. Listed on the reading under
 // the rule whose evidence each one reads, and put on the line in the order it is
-// said. Reading ahead, a paint is weighed with what the picture lets be read
-// right after it (read_figures asks both ways).
+// said.
 inline void finish_the_line(inference& inf, const vector<example>& train, const vector<figure_pair>& pairs,
-                            const tiled_pieces& boundaries,
-                            bool read_ahead, cut_paints& paints) {
+                            const tiled_pieces& boundaries, cut_paints& paints) {
     ++inference_work.lines;
     const time_into clock{ inference_time.ms[inf.pass > 1 ? inference_times::lines_later : inference_times::lines_first] };
     using rule = correspondence_election::fired_rule;
@@ -608,7 +605,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // how much it accounts for, and the saying.
     // What a kind offers: how many cells it says, how to say it, and for a
     // paint, the cells it would lay, in what it lays there.
-    struct offer { int said = 0; std::function<void()> say; colors_by_pair drawn; };
+    struct offer { int said = 0; std::function<void()> say; };
 
     // A RECOLOR ANOTHER PIECE DECIDES, READ OFF THE PAIRS: the pieces the output
     // shows in other colors where they lie (pieces_recolored); the first find
@@ -1351,7 +1348,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") + ", " +
                     to_string(paint_value::number(best.value)) + " long, in " +
                     (own ? string("its own color") : "color " + to_string(best.seen.paint)) + laid_words(best_lay));
-            read.fired[said].lay = best_lay; }, laid_by(best.seen) };
+            read.fired[said].lay = best_lay; } };
     };
 
     // A TRAIL A PIECE GROWS one of the eight ways, in its own color, until it meets
@@ -1387,7 +1384,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 : string("grows ") + grown_names[best.value - direction::count] + " in step with the others until they meet";
             const int8_t said = say_paint(best, rule::trailed, grows + laid_words(best_lay));
             read.fired[said].lay = best_lay;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE PICKED PIECES COPIED ONTO THE OTHERS, lined up one of CopyTo's nine ways.
@@ -1412,7 +1409,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const int8_t said = say_paint(best, rule::copied_onto,
                 string("is copied onto the other pieces, lined up ") + lined_up[best.value] + laid_words(best_lay));
             read.fired[said].lay = best_lay;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // A PIECE REPEATED ALONG ITS ROWS OR DOWN ITS COLUMNS, to the edges both ways
@@ -1517,7 +1514,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                          : "its " + string(tile_measure_names[(int)cells.terms[0].measure]) + " apart ") +
                     (down ? "down its columns" : "along its rows") + laid_words(best_lay));
             read.fired[said].lay = best_lay;
-            read.fired[said].tile = repeat; }, laid_by(best.seen) };
+            read.fired[said].tile = repeat; } };
     };
 
     // THE WHOLE FIGURE DRAWN AGAIN TURNED in its own box -- a quarter turn
@@ -1546,7 +1543,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             const auto turn = ranges::find_if(turns, [&](const auto& one) { return one.first == best.value; });
             say_paint(best, rule::turned_copy, string("is drawn again as one figure, ") + turn->second + " in its box");
-        }, laid_by(best.seen) };
+        } };
     };
 
     // BARS BETWEEN PIECES OF ONE COLOR, in their own color or one of the line's,
@@ -1585,7 +1582,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                      : "an L run along its row to the column of " + partner_named(best.value - BRIDGE_TO_PARTNER) +
                            ", then along that column to it") +
                     ", in " + (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE REST OF THE CHANGE, READ OFF THE PICTURE SO FAR. Once a paint is said,
@@ -1600,19 +1597,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // lie. Only a recolor is read so: a piece moved or removed would leave its
     // old cells drawn. And every act on the hand is drawn before the paints,
     // under the picture this read, so none is asked after it.
-    // The picture with `also` drawn in as well: the cells a paint not said yet
-    // would lay, in what it lays there. Every paint lays its cells in the order
-    // said, the ones it lays wrong in what it lays, so a cell one lays wrong and
-    // a later one sets right shows right.
-    auto the_picture = [&](const colors_by_pair& also) {
+    // The picture: every paint lays its cells in the order said, the ones it
+    // lays wrong in what it lays, so a cell one lays wrong and a later one sets
+    // right shows right.
+    auto the_picture = [&] {
         vector<grid> pictures = line_drawn;
-        for (size_t which = 0; which < pictures.size(); ++which) {
-            auto shown = [&](const vector<cell_color>& cells) {
-                for (const cell_color& cell : cells) pictures[which].data[cell.row][cell.col] = cell.color;
-            };
-            if (which < painted.size()) shown(painted[which]);
-            if (which < also.size()) shown(also[which]);
-        }
+        for (size_t which = 0; which < pictures.size() && which < painted.size(); ++which)
+            for (const cell_color& cell : painted[which]) pictures[which].data[cell.row][cell.col] = cell.color;
         return pictures;
     };
     // A PIECE OF THE PICTURE THE LINE KNOWS: one of the hand's own pieces, the
@@ -1636,15 +1627,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             }
         return true;
     };
-    // The best recolor read off the picture, with `also` drawn in: none before
-    // any paint, since the picture is then the hand the acts read already.
-    auto read_off_the_picture = [&](const colors_by_pair& also) {
+    // The best recolor read off the picture: none before any paint, since the
+    // picture is then the hand the acts read already.
+    auto picture_rule = [&]() -> offer {
         heard best;
-        const bool painted_yet = !also.empty() || ranges::any_of(read.line, [&](int8_t which) {
+        const bool painted_yet = ranges::any_of(read.line, [&](int8_t which) {
             return group_of(read.fired[which].as) == rule_group::paints; });
         const uint16_t from = starts_from(missing::a_recolor);
-        if (!painted_yet || !from || line_drawn.size() != facts.train.size()) return best;
-        const replay_facts picture(facts.train, pairs, the_picture(also), election.segmentation, boundaries,
+        if (!painted_yet || !from || line_drawn.size() != facts.train.size()) return {};
+        const replay_facts picture(facts.train, pairs, the_picture(), election.segmentation, boundaries,
                                    &election.shape);
         for (const piece_pick& pick : picks_to_ask(picture, from)) {
             const vector<partner_pieces> handed = handed_pieces(picture, pick);
@@ -1654,10 +1645,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 else if (const auto seen = color_from_holds(picture, handed, (partner_by)how))
                     weigh(best, how, pick, *seen, recolor_claims(*seen));
         }
-        return best;
-    };
-    auto picture_rule = [&]() -> offer {
-        const heard best = read_off_the_picture({});
         if (best.value < 0) return {};
         return { best.said, [&, best] {
             const int8_t said = say_paint(best, rule::color_from,
@@ -1682,7 +1669,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto symmetry_paint = [&]() -> offer {
         if (!read.line.empty() || line_drawn.size() != facts.train.size()) return {};
         replay_facts as_one = facts;
-        const vector<grid> pictures = the_picture({});
+        const vector<grid> pictures = the_picture();
         for (size_t which = 0; which < as_one.cuts().size(); ++which)
             as_one.change(which).hand = objects_of(pictures[which], grouping::whole_grid);
         const vector<partner_pieces> handed = handed_pieces(as_one, piece_pick::all());
@@ -1698,7 +1685,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const int8_t said = say_paint(best, rule::symmetric,
                                           string("the picture so far ") + symmetries[best.value].says);
             read.fired[said].on_the_picture = true;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // WHERE THE PICKED PIECES MEET, in one color: each piece's rays run to the
@@ -1730,7 +1717,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const int8_t said = say_paint(best, rule::crossing,
                 reaches + ", in color " + to_string(best.seen.paint) + laid_words(best_lay));
             read.fired[said].lay = best_lay;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE PICKED PIECES COPIED WHERE A MOVE WOULD SLIDE THEM, the pieces kept
@@ -1784,7 +1771,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 "is copied, and the copy " + moved_words(best_move, best.value) + laid_words(best_lay));
             read.fired[said].lay = best_lay;
             read.fired[said].moved_by = best_move;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE HOLLOWS OF THE PICKED PIECES, FILLED, in their own color or one of the
@@ -1804,7 +1791,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             say_paint(best, rule::filled,
                       string(best.value == 1 ? "fills its inside in " : "fills its hollows in ") +
                           (best.seen.paint < 0 ? string("its own color") : "color " + to_string(best.seen.paint)));
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE BOXES OF THE PICKED PIECES, FILLED where the pieces leave them empty, in
@@ -1817,7 +1804,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 weigh_paint(best, 0, draw_picks[at], *seen, drawn_claims(seen->drawn));
         }
         if (best.value < 0) return {};
-        return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.seen.paint)); }, laid_by(best.seen) };
+        return { best.said, [&, best] { say_paint(best, rule::boxed, "fills its box in color " + to_string(best.seen.paint)); } };
     };
 
     // THE ROOMS THE PICKED PIECES FENCE OFF, ONE FILLED in one color: the
@@ -1922,7 +1909,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     laid_words(best_lay));
             read.fired[said].lay = best_lay;
             read.fired[said].rooms = best_rooms;
-        }, laid_by(best.seen) };
+        } };
     };
 
     // THE ACTS AND THE PAINTS, THE ONE THAT SAYS THE MOST FIRST. Every kind of
@@ -1965,17 +1952,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
     constexpr int rounds = 8;
     int rules[size(kinds)] = {};
-    // A PAINT IS WORTH WHAT IT SAYS AND WHAT IT LETS BE READ OFF THE PICTURE
-    // RIGHT AFTER IT: 0d87d2a6's bars say 37 cells, and with them drawn, the
-    // blocks they touch take their color, 224 more; weighed alone, the bars
-    // came after "the largest becomes 1" (140), which left the first pair's
-    // one touched block nothing for the picture to change.
-    // A paint said for what it lets be read is followed at once by that reading,
-    // so the line keeps the worth it was chosen for: 833966f4's rays, said ahead
-    // on that promise, were followed by acts on the hand instead, a coincidence
-    // of its pairs that is wrong on its test. The picture can say no more than
-    // every recolored cell still unclaimed, so a paint that could not win even
-    // so is not read ahead.
     // A PASS AFTER THE FIRST SAYS ONE CHANGE (read_the_rest): the acts on its
     // hand, which lay the hand in one sentence, or else one paint. Its sentence
     // reads the picture the passes before it drew, as the program hands it over
@@ -2013,12 +1989,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         own_color_picks.clear();
         for (const size_t at : asked_now)
             if (paint_has_color(paints.colors_by_pick[at])) own_color_picks.push_back(at);
-        int recolors_left = 0;
-        for (const auto& pair : read.pairs)
-            for (const auto& cell : pair.left_over)
-                recolors_left += cell.claimed_by < 0 && cell.answers_to(missing::a_recolor);
         offer best;
-        int best_worth = 0, best_unlocks = 0;
         size_t chosen = 0;
         // THE SURE RULES FIRST: every kind is asked with rules that lay no cell
         // wrong, and only where none says anything, again with rules that may,
@@ -2042,17 +2013,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     const time_into offer_clock{ inference_time.ms[inference_times::first_kind + kind] };
                     one = kinds[kind].offers();
                 }
-                const bool may_unlock = read_ahead && one.said > 0 && !one.drawn.empty() &&
-                                        one.said + recolors_left > best_worth;
-                int unlocks = 0;
-                if (may_unlock) {
-                    const time_into ahead_clock{ inference_time.ms[inference_times::reading_ahead] };
-                    unlocks = read_off_the_picture(one.drawn).said;
-                }
-                if (one.said + unlocks > best_worth) {
+                if (one.said > best.said) {
                     best = std::move(one);
-                    best_worth = best.said + unlocks;
-                    best_unlocks = unlocks;
                     chosen = kind;
                 }
             }
@@ -2063,11 +2025,6 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         ++rules[chosen];
         said_last();
         if (one_change && kinds[chosen].paint) break;
-        if (best_unlocks > 0)
-            if (offer then = picture_rule(); then.said > 0) {
-                then.say();
-                said_last();
-            }
     }
 
     // WHAT THE LINE DRAWS, as the rules leave it (draw_the_line): it explains
@@ -2085,7 +2042,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     if (!line_drawn.empty()) {
         // THE PICTURE THE LINE DRAWS: the hand as the acts leave it, and every
         // paint laid over it in the order said.
-        const vector<grid> pictures = the_picture({});
+        const vector<grid> pictures = the_picture();
         auto shows_right = [&](size_t which, int row, int col) {
             return comes_out(pairs[which], row, col, pictures[which].data[row][col]);
         };
@@ -2134,7 +2091,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             for (const auto& row : wrong_here) read.drawn_wrong += (int)ranges::count(row, true);
     // What the line draws, for the pass after it to read (read_the_rest).
     inf.picture.clear();
-    if (line_drawn.size() == facts.train.size()) inf.picture = the_picture({});
+    if (line_drawn.size() == facts.train.size()) inf.picture = the_picture();
 }
 
 }  // namespace arc

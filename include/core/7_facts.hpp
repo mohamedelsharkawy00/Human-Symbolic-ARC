@@ -44,10 +44,10 @@ inline thread_local inference_work_counts inference_work;
 // finish_the_line's order. Nested: a reading holds its stages.
 struct inference_times {
     static constexpr const char* names[] = { "plain", "partners", "preparing",
-        "lines_first", "lines_later", "reading_ahead", "color_from", "move", "mirror", "outline",
+        "lines_first", "lines_later", "color_from", "move", "mirror", "outline",
         "recolor", "shape", "key", "removal", "socket", "shape_from", "ray", "trail", "copy", "repeat",
         "turned", "bar", "fill", "box", "room", "symmetry", "crossing", "moved_copy", "picture" };
-    enum at { plain, partners, preparing, lines_first, lines_later, reading_ahead, first_kind };
+    enum at { plain, partners, preparing, lines_first, lines_later, first_kind };
     double ms[size(names)] = {};
 };
 inline thread_local inference_times inference_time;
