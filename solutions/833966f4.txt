@@ -1,0 +1,6 @@
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRow [4] AlignTo [the rows of the nearest piece] Withhold CurrentObjects SelectAll InvertSelection SelectRow [1] MoveToEdge [0] SelectAll Union Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRowFromMiddle [-1] InvertSelection CopyTo [0] Underlay Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRow [3] CopyTo [0] Underlay
+Puzzle:       833966f4
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3618
+Nodes:        47

@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll DeleteSelection SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor InvertSelection CopyTo [0] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor CopyTo [0] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       3391f8c0
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4036
+Nodes:        55

@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll ScaleUp [2] Split [1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList SelectAll ScaleUp [2] Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Shift [0] Union Input Colors SelectColor [0] DeleteSelection UnionList SelectAll ScaleUp [2] Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Shift [6] Union Input Colors SelectColor [0] DeleteSelection UnionList SelectAll ScaleUp [2] Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Shift [7] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       46f33fce
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.6706
+Nodes:        68

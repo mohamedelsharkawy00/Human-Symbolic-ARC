@@ -213,6 +213,8 @@ public:
     }
     ifstream sf(sol_path);
     string sol_str, line;
+    // How deep in brackets the program is where a line ends: a value may run on.
+    int depth = 0;
     while (getline(sf, line)) {
       // Strip CR (Windows line endings).
       if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -222,9 +224,15 @@ public:
       size_t b = line.find_last_not_of(" \t");
       line = line.substr(a, b - a + 1);
       // First line of the metadata block ("Puzzle:", "Train:", etc.) ends the
-      // program. Metadata lines are "Key: value" pairs and carry a ':';
-      // op tokens never do.
-      if (line.find(':') != string::npos) break;
+      // program: its "Key:" is a ':' outside every bracket. A program's own
+      // colons sit inside its op values ("Tile [steps: ...]").
+      bool key = false;
+      for (const char c : line) {
+        if (c == '[') ++depth;
+        else if (c == ']') --depth;
+        else if (c == ':' && depth == 0) key = true;
+      }
+      if (key) break;
       if (!sol_str.empty()) sol_str += ' ';
       sol_str += line;
     }

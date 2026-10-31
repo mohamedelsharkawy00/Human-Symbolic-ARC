@@ -1,0 +1,6 @@
+Input Colors SelectColor [7] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [3 cells in a line along its diagonals] Recolor [8] SelectAll Union Output SelectAll AddColor [7] Underlay
+Puzzle:       ecb67b6d
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3879
+Nodes:        22

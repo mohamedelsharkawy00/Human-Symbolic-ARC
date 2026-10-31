@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll MirrorAround [top to bottom around the grid] Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll MirrorAround [top to bottom around the grid] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       f25ffba3
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3428
+Nodes:        19

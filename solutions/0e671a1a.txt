@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] Bridge [an L to the piece of color 4] Recolor [5] Underlay Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [4] Bridge [an L to the piece of color 3] Recolor [5] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       0e671a1a
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3914
+Nodes:        51

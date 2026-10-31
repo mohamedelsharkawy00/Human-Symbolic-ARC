@@ -1,0 +1,6 @@
+Input Colors SelectColor [7] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] MoveToward [until it touches, the nearest piece] Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] ShapeFrom [the nearest piece, mirrored] SelectAll Underlay Output SelectAll AddColor [7] Underlay
+Puzzle:       11dc524f
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3578
+Nodes:        28

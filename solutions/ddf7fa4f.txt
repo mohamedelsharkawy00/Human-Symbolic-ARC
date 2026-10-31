@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] ColorFrom [a piece in its columns] SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       ddf7fa4f
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.6707
+Nodes:        22

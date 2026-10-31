@@ -1,6 +1,6 @@
-Input Colors SelectColor[7] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor[7] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll UnionList Trim TurnRight TurnRight Union Output SelectAll AddColor[7] Underlay
-
+Input Colors SelectColor [7] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [2 cells] MirrorAround [across the nearest piece] SelectAll Union Output SelectAll AddColor [7] Underlay
 Puzzle:       e729b7be
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.8866
+Nodes:        22

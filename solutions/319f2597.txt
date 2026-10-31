@@ -1,0 +1,6 @@
+Input Colors Withhold CurrentObjects SelectAll Trim Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [0] Tile [steps: (1,0) (0,0), start: grid edge, end: grid edge, spread: lines] MaskOut [2] Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [0] Tile [steps: (0,1) (0,0), start: grid edge, end: grid edge, spread: lines] MaskOut [2] Union
+Puzzle:       319f2597
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:02.5643
+Nodes:        35

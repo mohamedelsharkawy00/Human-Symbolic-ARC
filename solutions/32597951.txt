@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection SelectAll Trim Union CurrentObjects SelectAll InvertSelection SelectLargestObject DeleteSelection SelectSmallestObject AddColor[3] Union Input Underlay Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ExtendDiagonal [1] Recolor [3] MaskBy [1] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ExtendOrthogonal [2] Recolor [3] MaskBy [1] Union Output SelectAll AddColor [0] Underlay Output SelectAll Withhold CurrentObjects SelectAll Difference CurrentObjects Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [1] BidiColorMap [50] SelectAll Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [0] Tile [steps: (7,0) (0,0), start: grid edge, end: grid edge, spread: lines] MaskBy [3] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       32597951
 Train:        Solved
 Test:         Solved
-Found by:     manual, migrated to explicit background steps
+Elapsed:      00:00:10.9458
+Nodes:        107

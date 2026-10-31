@@ -1,6 +1,6 @@
-Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap[12] Withhold CurrentObjects SelectAll BidiColorMap[20] Withhold CurrentObjects SelectAll BidiColorMap[24] Withhold CurrentObjects SelectAll BidiColorMap[44] Union
-
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap [12] Withhold CurrentObjects SelectAll BidiColorMap [20] Withhold CurrentObjects SelectAll BidiColorMap [24] Withhold CurrentObjects SelectAll BidiColorMap [44] Union
 Puzzle:       0d3d703e
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3266
+Nodes:        23

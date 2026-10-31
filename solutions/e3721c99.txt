@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] SelectLikeKey [the piece with as many holes] ColorFrom [the piece with as many holes] Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] DeleteSelection SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       e3721c99
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:01.7758
+Nodes:        29

@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Trim InvertSelection SelectLargestObject[0] CopyTo[4] Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] SelectAll Trim InvertSelection SelectLargestObject [0] CopyTo [4] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       88a10436
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3759
+Nodes:        23

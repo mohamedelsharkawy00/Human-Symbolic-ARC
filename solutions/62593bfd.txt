@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [the piece of its shape, turned, any side] MoveToEdge [0] Withhold CurrentObjects SelectAll SelectPartner [the piece of its shape, turned, any side] InvertSelection MoveToEdge [4] SelectAll Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       62593bfd
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.7833
+Nodes:        29

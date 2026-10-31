@@ -1,6 +1,6 @@
 Input SelectAll Union
-
 Puzzle:       2dee498d
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3443
+Nodes:        3

@@ -1,6 +1,6 @@
 Input SelectAll TurnRight Withhold CurrentObjects SelectAll FlipHorizontal Union
-
 Puzzle:       74dd1130
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3430
+Nodes:        8

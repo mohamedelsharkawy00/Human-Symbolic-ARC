@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] ColorFrom [the piece of its shape] SelectAll Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] SelectLikeKey [the piece of its shape] ColorFrom [the piece of its shape] SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       2a5f8217
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.4191
+Nodes:        23

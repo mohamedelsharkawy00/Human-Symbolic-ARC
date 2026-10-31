@@ -1,6 +1,6 @@
 Input SelectAll Union
-
 Puzzle:       d10ecb37
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3718
+Nodes:        3

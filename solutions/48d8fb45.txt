@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] SelectAll Trim SelectAll SelectPartner [the piece it shares a side with, down] InvertSelection DeleteSelection SelectAll Origin Split [1] Withhold CurrentObjects SelectAll Trim Union Output SelectAll AddColor [0] Underlay
+Puzzle:       48d8fb45
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3244
+Nodes:        24

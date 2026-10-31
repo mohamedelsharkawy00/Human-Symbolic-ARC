@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] Recolor[1] SelectAll Union Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal[1] Recolor[1] Union Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendDiagonal[1] Recolor[1] Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap [12] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal [1] Recolor [1] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendDiagonal [1] Recolor [1] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       ce22a75a
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3602
+Nodes:        51

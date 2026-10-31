@@ -1,0 +1,6 @@
+Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] SelectLargestObject [1] InvertSelection Recolor [7] SelectAll Union
+Puzzle:       9caf5b84
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4501
+Nodes:        16

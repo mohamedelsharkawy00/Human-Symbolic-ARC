@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Panes SelectAll Origin UnionList AddColor[3] Colors SelectColor[3] InvertSelection DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Panes SelectAll Origin UnionList AddColor [3] Colors SelectColor [3] InvertSelection DeleteSelection SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       6430c8c4
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3454
+Nodes:        20

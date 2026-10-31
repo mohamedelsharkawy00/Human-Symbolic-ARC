@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll TurnRight Withhold CurrentObjects SelectAll FlipHorizontal Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll TurnRight Withhold CurrentObjects SelectAll FlipHorizontal Union Output SelectAll AddColor [0] Underlay
 Puzzle:       9dfd6313
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3599
+Nodes:        16

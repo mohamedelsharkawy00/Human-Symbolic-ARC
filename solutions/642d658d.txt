@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Colors SelectAll Trim SelectAll InvertSelection SelectObjectsWithHoles [2] InvertSelection DeleteSelection SelectAll AddColor [11] Fit [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       642d658d
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.8123
+Nodes:        28

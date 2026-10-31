@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRow [0] MirrorAround [top to bottom around the grid] SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] Tile [steps: (0,5) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] ExtendTo [8] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ExtendOrthogonal [29] Recolor [4] MaskBy [2] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ExtendTo [4] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       bdad9b1f
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3285
+Nodes:        92

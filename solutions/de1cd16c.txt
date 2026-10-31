@@ -1,0 +1,6 @@
+Input Split [1] SelectAll Trim SelectAll InvertSelection SelectLargestObject [12] InvertSelection DeleteSelection SelectAll AddColor [11] Fit [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay
+Puzzle:       de1cd16c
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.5137
+Nodes:        18

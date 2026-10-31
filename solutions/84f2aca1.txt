@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeToInteriorColorMap Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeToInteriorColorMap Union Output SelectAll AddColor [0] Underlay
 Puzzle:       84f2aca1
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.1728
+Nodes:        19

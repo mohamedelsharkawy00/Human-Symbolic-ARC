@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] SelectPartition [0] InvertSelection SelectLikeKey [the piece of its shape] Recolor [5] SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       63613498
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4526
+Nodes:        25

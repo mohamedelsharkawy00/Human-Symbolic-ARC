@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectColor[5] InvertSelection DeleteSelection Panes SelectAll Origin Union Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectColor[6] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectColor[9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectColor[4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectColor [5] InvertSelection DeleteSelection Panes SelectAll Origin Union Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectColor [6] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectColor [9] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectColor [4] InvertSelection DeleteSelection Panes SelectAll Origin Underlay Output SelectAll AddColor [0] Underlay
 Puzzle:       75b8110e
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.6859
+Nodes:        56

@@ -1,6 +1,6 @@
-Input SelectAll Pattern Withhold CurrentObjects SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Union
-
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll Pattern Withhold CurrentObjects SelectAll Tile [steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       963e52fc
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3725
+Nodes:        16

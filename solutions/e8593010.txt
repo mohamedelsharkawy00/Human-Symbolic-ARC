@@ -1,0 +1,6 @@
+Input Colors SelectColor [5] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeColorMap [0] Union Output SelectAll AddColor [5] Underlay
+Puzzle:       e8593010
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.8489
+Nodes:        19

@@ -1,0 +1,6 @@
+Input Colors SelectColor [7] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [4 cells] MoveToEdge [4] SelectAll Union Output SelectAll AddColor [7] Underlay
+Puzzle:       6ca952ad
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4249
+Nodes:        22

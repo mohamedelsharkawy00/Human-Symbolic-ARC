@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectSmallestObject[0] Union Output SelectAll Trim AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectSmallestObject [0] Union Output SelectAll Trim AddColor [0] Underlay
 Puzzle:       23b5c85d
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3705
+Nodes:        13

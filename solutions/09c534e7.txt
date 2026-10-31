@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Recolor[10] Union Input Colors SelectColor[0] DeleteSelection UnionList Split[0] SelectAll Outline Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] SelectAll Recolor [10] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] SelectAll Outline Union Output SelectAll AddColor [0] Underlay
 Puzzle:       09c534e7
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.8438
+Nodes:        29

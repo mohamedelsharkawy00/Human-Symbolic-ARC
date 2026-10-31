@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectSmallestObject[0] InvertSelection DeleteSelection SelectAll Trim Split[1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal[11] Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectSmallestObject [0] InvertSelection DeleteSelection SelectAll Trim Split [1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal [29] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       623ea044
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3434
+Nodes:        23

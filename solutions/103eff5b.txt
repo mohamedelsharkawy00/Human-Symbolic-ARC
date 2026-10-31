@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ColorFrom [cell by cell from the piece of its shape at any size, turned] SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       103eff5b
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3603
+Nodes:        22

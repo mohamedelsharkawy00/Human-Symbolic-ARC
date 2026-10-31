@@ -1,0 +1,6 @@
+Input Split [1] SelectAll Trim SelectAll InvertSelection SelectWalls InvertSelection InvertSelection DeleteSelection SelectAll Layout [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay
+Puzzle:       7039b2d7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4373
+Nodes:        18

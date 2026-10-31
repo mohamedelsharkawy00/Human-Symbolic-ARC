@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ShapeColorMap Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject [0] ShapeColorMap [0] Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] ColorFrom [the nearest piece] Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject [0] DeleteSelection SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       009d5c81
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3736
+Nodes:        34

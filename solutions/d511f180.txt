@@ -1,6 +1,6 @@
-Input SelectAll BidiColorMap [37] Union
+Input Colors SelectColor [5] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap [55] Union Output SelectAll AddColor [5] Underlay
 Puzzle:       d511f180
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.4365
-Nodes:        4
+Elapsed:      00:00:00.3724
+Nodes:        19

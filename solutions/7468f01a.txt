@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList SelectAll Pattern Split[0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll FlipHorizontal Union Output SelectAll Trim AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll Pattern Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll FlipHorizontal Union Input Colors SelectColor [0] DeleteSelection UnionList SelectAll Pattern SelectAll UnionList Trim Recolor [0] AddColor [0] Underlay
 Puzzle:       7468f01a
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3413
+Nodes:        30

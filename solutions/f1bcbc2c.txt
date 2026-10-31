@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] InvertSelection Partition SelectColor [0] InvertSelection DeleteSelection SelectLargestObject [2] Recolor [8] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [4 cells in a line along its rows] InvertSelection ExtendTo [24] IntersectionList Recolor [8] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Outline InteriorColor [8] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       f1bcbc2c
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.5294
+Nodes:        74

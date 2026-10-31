@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Colors SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split[0] SelectAll Trim Layout[2] SelectAll ScaleDown[2] Union Output SelectAll Trim AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Colors SelectMostCommonColor DeleteSelection SelectMostCommonColor DeleteSelection Split [0] SelectAll Trim Layout [2] SelectAll ScaleDown [2] Union Output SelectAll Trim AddColor [0] Underlay
 Puzzle:       0a1d4ef5
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:01.0349
+Nodes:        22

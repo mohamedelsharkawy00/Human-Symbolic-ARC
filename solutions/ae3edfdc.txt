@@ -1,6 +1,6 @@
-Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] MoveToward [until it touches, the piece of color 1] Withhold CurrentObjects SelectAll InvertSelection SelectColor [0] SelectColor [3] MoveToward [until it touches, the piece of color 2] SelectAll Union Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [0] ExtendOrthogonal [29] Recolor [0] Underlay
+Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [7] MoveToward [until it touches, the piece of color 1] Withhold CurrentObjects SelectAll InvertSelection SelectColor [3] MoveToward [until it touches, the piece of color 2] SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       ae3edfdc
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:01.0423
-Nodes:        35
+Elapsed:      00:00:01.1208
+Nodes:        28

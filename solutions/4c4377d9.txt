@@ -1,6 +1,6 @@
-Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[0] FlipVertical SelectAll Union
-
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList SelectAll Tile [steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow [0] FlipVertical SelectAll Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
 Puzzle:       4c4377d9
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3908
+Nodes:        21

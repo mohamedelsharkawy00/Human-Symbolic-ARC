@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll AddColor [2] Underlay Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay Output Colors SelectElectedBackground [1] Difference CurrentObjects DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] ExtendTo [15] Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       292dd178
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3720
+Nodes:        57

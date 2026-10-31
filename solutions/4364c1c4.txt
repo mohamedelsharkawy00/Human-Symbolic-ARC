@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [the piece it shares a side with, up] MoveRow [-1] Withhold CurrentObjects SelectAll SelectPartner [the piece it shares a side with, up] InvertSelection MoveRow [1] SelectAll Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       4364c1c4
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.1881
+Nodes:        29

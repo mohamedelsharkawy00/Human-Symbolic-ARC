@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Outline InteriorColor [2] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] Outline InteriorColor [3] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [3] Outline InteriorColor [2] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       516b51b7
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.6789
+Nodes:        79

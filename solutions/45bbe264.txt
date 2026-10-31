@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Tile [steps: (4,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRow [1] Tile [steps: (3,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor ExtendTo [2] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendOrthogonal [29] IntersectionList Recolor [2] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo [15] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       45bbe264
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3562
+Nodes:        96

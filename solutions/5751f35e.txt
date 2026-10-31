@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Union Output SelectAll FlipHorizontal Union Output SelectAll FlipVertical Union Output SelectAll TurnRight Union Output SelectAll AddColor [0] Underlay
+Puzzle:       5751f35e
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3921
+Nodes:        27

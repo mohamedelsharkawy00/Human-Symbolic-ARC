@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SelectPartner [the piece inside it, any side] DeleteSelection SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       9720b24f
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4851
+Nodes:        21

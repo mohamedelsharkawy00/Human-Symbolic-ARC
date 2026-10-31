@@ -1,0 +1,6 @@
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] SelectColor [2] SelectColor [3] SelectColor [5] SelectColor [6] SelectColor [7] SelectColor [8] SelectColor [9] MirrorAround [all four ways around the grid] Withhold CurrentObjects SelectAll InvertSelection SelectColor [4] DeleteSelection SelectAll Underlay
+Puzzle:       b8825c91
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:42.1968
+Nodes:        27

@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [2 cells] ShapeColorMap [1] Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] DeleteSelection SelectAll Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       a09f6c25
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.6205
+Nodes:        30

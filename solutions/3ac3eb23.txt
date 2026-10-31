@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Tile [steps: (2,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Shift [3] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Shift [5] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Tile [steps: (2,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       3ac3eb23
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3477
+Nodes:        81

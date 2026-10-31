@@ -1,6 +1,6 @@
-Input Colors SelectColor[9] DeleteSelection UnionList Panes SelectAll Origin IntersectionList Recolor[8] Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [9] DeleteSelection UnionList Panes SelectAll Origin IntersectionList Recolor [8] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       1b2d62fb
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3576
+Nodes:        15

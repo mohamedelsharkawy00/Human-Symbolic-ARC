@@ -1,6 +1,6 @@
-Input Colors Withhold CurrentObjects SelectAll Trim Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Tile[steps: (0,3) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Tile[steps: (3,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] InvertSelection Tile [steps: (0,3) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] InvertSelection Tile [steps: (3,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       4f537728
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.9473
+Nodes:        51

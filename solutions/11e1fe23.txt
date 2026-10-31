@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Underlay Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendTo [23] IntersectionList Recolor [5] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectRowFromMiddle [0] InvertSelection MoveToward [until it touches, the nearest piece] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       11e1fe23
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4376
+Nodes:        56

@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] SelectAll Trim SelectAll SelectPartner [the piece of its shape, up] InvertSelection DeleteSelection SelectAll Origin Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [0] SelectAll Trim SelectAll SelectPartner [the piece of its shape, up] InvertSelection DeleteSelection SelectAll Origin SelectAll UnionList Trim Recolor [0] AddColor [0] Underlay
+Puzzle:       f5aa3634
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3925
+Nodes:        40

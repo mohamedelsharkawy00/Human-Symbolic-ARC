@@ -1,6 +1,6 @@
-Input SelectAll ScaleUp[2] Split[1] Withhold CurrentObjects SelectAll Trim Union
-
+Input SelectAll ScaleUp [2] Split [1] Withhold CurrentObjects SelectAll Trim Union
 Puzzle:       c59eb873
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.1556
+Nodes:        9

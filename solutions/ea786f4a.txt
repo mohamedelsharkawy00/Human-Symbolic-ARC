@@ -1,6 +1,6 @@
-Input Split [0] Withhold CurrentObjects SelectAll Trim Union Input Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll ExtendDiagonal [29] Recolor [0] Union
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Colors SelectSmallestObject [0] InvertSelection DeleteSelection SelectAll Trim Split [1] SelectAll Trim Union CurrentObjects SelectAll ExtendDiagonal [29] Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
 Puzzle:       ea786f4a
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.3442
-Nodes:        19
+Elapsed:      00:00:00.3263
+Nodes:        25

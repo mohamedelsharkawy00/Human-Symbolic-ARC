@@ -1,6 +1,6 @@
-Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor InvertSelection ColorFrom [the nearest piece] SelectAll Underlay
-
+Input Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectMostCommonColor InvertSelection ColorFrom [the nearest piece] SelectAll Underlay
 Puzzle:       5582e5ca
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.4036
+Nodes:        15

@@ -1,6 +1,6 @@
-Input SelectAll BidiColorMap[20] Union
-
+Input Colors SelectColor [6] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [6] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll AddColor [2] Underlay Output SelectAll AddColor [6] Underlay
 Puzzle:       b1948b0a
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3435
+Nodes:        30

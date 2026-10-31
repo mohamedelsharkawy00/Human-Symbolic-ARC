@@ -1,6 +1,6 @@
-Input SelectAll Tile[steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow[1] FlipVertical Withhold CurrentObjects SelectAll InvertSelection SelectColumn[1] FlipHorizontal SelectAll Union
-
+Input SelectAll Tile [steps: (own height,0) (0,own width), start: 0, end: grid edge, spread: grid] Withhold CurrentObjects SelectAll InvertSelection SelectRow [1] FlipVertical Withhold CurrentObjects SelectAll InvertSelection SelectColumn [1] FlipHorizontal SelectAll Union
 Puzzle:       67e8384a
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:01.9413
+Nodes:        17

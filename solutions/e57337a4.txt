@@ -1,6 +1,6 @@
-Input Colors SelectElectedBackground DeleteSelection UnionList SelectAll ScaleDown[5] Colors Withhold CurrentObjects SelectAll Trim Union Input Colors SelectElectedBackground AddColor[11] Fit[1] Underlay
-
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList SelectAll ScaleDown [5] Colors Withhold CurrentObjects SelectAll Trim Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
 Puzzle:       e57337a4
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3283
+Nodes:        19

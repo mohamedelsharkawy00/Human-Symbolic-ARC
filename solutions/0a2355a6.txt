@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[1] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[2] Recolor[3] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[3] Recolor[2] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles[4] Recolor[4] SelectAll Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [1] Recolor [1] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [2] Recolor [3] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [3] Recolor [2] Withhold CurrentObjects SelectAll InvertSelection SelectObjectsWithHoles [4] Recolor [4] SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       0a2355a6
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3418
+Nodes:        36

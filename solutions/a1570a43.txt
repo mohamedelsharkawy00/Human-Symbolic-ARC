@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] DeleteSelection SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Colors Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] CopyTo [4] Union Output SelectAll AddColor [0] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       a1570a43
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4989
+Nodes:        43

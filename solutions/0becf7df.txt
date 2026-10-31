@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] BidiColorMap [45] SelectAll Union Output SelectAll AddColor [0] Underlay
+Puzzle:       0becf7df
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3772
+Nodes:        22

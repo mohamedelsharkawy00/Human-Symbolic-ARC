@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge [along rows to every one] Recolor [2] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       aa18de87
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4654
+Nodes:        31

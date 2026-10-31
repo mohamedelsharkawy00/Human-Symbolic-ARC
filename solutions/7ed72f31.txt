@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] InvertSelection MirrorAround [across the nearest piece] SelectAll Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       7ed72f31
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.8272
+Nodes:        25

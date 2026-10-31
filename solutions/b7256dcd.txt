@@ -1,0 +1,6 @@
+Input Colors SelectColor [7] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [6] ColorFrom [the piece it shares a side with] Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [2 cells] InvertSelection DeleteSelection SelectAll Union Output SelectAll AddColor [7] Underlay
+Puzzle:       b7256dcd
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3895
+Nodes:        29

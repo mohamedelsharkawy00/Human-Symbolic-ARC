@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Underlay Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] InvertSelection UnionList Trim Shift [4] Tile [steps: (key height,0) (0,0), start: 0, end: grid edge, spread: lines] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       12422b43
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.4817
+Nodes:        36

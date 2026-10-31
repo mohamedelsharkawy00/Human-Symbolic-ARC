@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge [along rows to the one facing it across the grid] SelectAll Underlay Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Bridge [along rows to the one facing it across the grid] SelectAll Underlay Output SelectAll AddColor [0] Underlay
 Puzzle:       22eb0ac0
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3573
+Nodes:        20

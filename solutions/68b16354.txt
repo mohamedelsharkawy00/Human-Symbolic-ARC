@@ -1,6 +1,6 @@
 Input SelectAll FlipVertical Union
-
 Puzzle:       68b16354
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3870
+Nodes:        4

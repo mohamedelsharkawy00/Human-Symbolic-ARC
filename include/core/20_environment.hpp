@@ -182,9 +182,10 @@ namespace arc {
 		// new parameter here. 38_ops.hpp runs it.
 		static grid draw(const node* tree, const example& ex, const puzzle& p, object_list* held = nullptr);
 
-		// Parse pipeline format: "A -> B[v] -> C" (deepest leaf first, root last).
-		// All ops must be unary except the leaf (arity 0). Returns nullptr on failure.
-		static inline node* parse_pipeline(const string& str) {
+		// A program as stringify_flat_program writes it, "Input Recolor [3] Union",
+		// its leaf first and its root last. Nothing when a word names no op or a
+		// value cannot be read.
+		static inline node* parse(const string& str) {
 			vector<flat_program_op> tokens;
 			size_t pos = 0;
 			auto skip_ws = [&]() {
@@ -212,11 +213,10 @@ namespace arc {
 				if (match == -1) return nullptr;
 				flat_program_op token{ (node_type)match };
 				const bool slots = said_in_slots(token.type);
-				// A space may part the name from its brackets: Recolor [3].
-				size_t bracket = pos;
-				while (bracket < str.size() && str[bracket] == ' ') bracket++;
-				if (bracket < str.size() && str[bracket] == '[') {
-					pos = bracket + 1;
+				// One space parts the name from its brackets, as append_annotation
+				// writes it: Recolor [3].
+				if (str.compare(pos, 2, " [") == 0) {
+					pos += 2;
 					size_t vs = pos;
 					while (pos < str.size() && str[pos] != ']') pos++;
 					const string written = str.substr(vs, pos - vs);
@@ -255,13 +255,6 @@ namespace arc {
 				curr = parent;
 			}
 			return curr;
-		}
-
-		static inline node* parse(const string& str) {
-			if (str.empty())
-				return nullptr;
-			// Programs are stored exclusively in the comma-pipeline format.
-			return parse_pipeline(str);
 		}
 	};
 

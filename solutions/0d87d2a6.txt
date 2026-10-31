@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] SelectPartner [a piece in its columns, up] Recolor [1] SelectAll Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] Bridge [both ways to the one facing it across the grid] Underlay Output Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] ColorFrom [the piece it shares a side with] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       0d87d2a6
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.7057
+Nodes:        53

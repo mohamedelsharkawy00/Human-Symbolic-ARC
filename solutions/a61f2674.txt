@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[0] Recolor[1] Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject[1] DeleteSelection Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject[0] Recolor[2] Withhold CurrentObjects SelectAll InvertSelection SelectColor[5] DeleteSelection SelectAll Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectLargestObject [0] Recolor [1] Withhold CurrentObjects SelectAll InvertSelection SelectSmallestObject [0] Recolor [2] Withhold CurrentObjects SelectAll InvertSelection SelectColor [5] DeleteSelection SelectAll Union Output SelectAll AddColor [0] Underlay
 Puzzle:       a61f2674
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3404
+Nodes:        34

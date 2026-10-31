@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [8] ExtendDiagonal [29] IntersectionList Recolor [3] Underlay Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [3] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [2] SelectPartner [the piece it shares a side with, any side] ExtendDiagonal [29] Recolor [3] Underlay Output SelectAll AddColor [0] Underlay
+Puzzle:       508bd3b6
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.5588
+Nodes:        59

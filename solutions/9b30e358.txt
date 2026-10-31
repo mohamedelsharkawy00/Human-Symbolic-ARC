@@ -1,0 +1,6 @@
+Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectElectedBackground [1] DeleteSelection UnionList Split [0] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll Tile [steps: (own height,0) (0,0), start: grid edge, end: grid edge, spread: lines] Union Input Colors SelectElectedBackground [1] AddColor [11] Fit [1] Underlay
+Puzzle:       9b30e358
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.3441
+Nodes:        32

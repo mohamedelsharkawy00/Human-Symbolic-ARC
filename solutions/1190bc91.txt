@@ -1,0 +1,6 @@
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [2 cells] InvertSelection ExtendTo [14] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [3 cells] InvertSelection ExtendTo [10] Union Output SelectAll AddColor [0] Underlay
+Puzzle:       1190bc91
+Train:        Solved
+Test:         Solved
+Elapsed:      00:00:00.8897
+Nodes:        57

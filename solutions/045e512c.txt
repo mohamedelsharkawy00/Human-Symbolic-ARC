@@ -1,6 +1,6 @@
-Input Colors SelectColor[0] DeleteSelection UnionList Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize[0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union Output SelectAll AddColor[0] Underlay
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll SortBySize [0] Withhold CurrentObjects SelectAll ProjectOnSeeds Union Output SelectAll AddColor [0] Underlay
 Puzzle:       045e512c
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3569
+Nodes:        23

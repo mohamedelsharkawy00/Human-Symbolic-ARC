@@ -1,6 +1,6 @@
-Input Split[1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor[1] Recolor[6] Withhold CurrentObjects SelectAll BidiColorMap[21] Withhold CurrentObjects SelectAll BidiColorMap[28] Withhold CurrentObjects SelectAll BidiColorMap[34] Withhold CurrentObjects SelectAll InvertSelection SelectColor[0] ColorFrom [the piece inside it] SelectAll Union
-
+Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll BidiColorMap [13] Withhold CurrentObjects SelectAll BidiColorMap [21] Withhold CurrentObjects SelectAll BidiColorMap [28] Withhold CurrentObjects SelectAll BidiColorMap [34] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] ExtendOrthogonal [1] Recolor [6] Union Input Colors SelectColor [0] DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectColor [1] ExtendDiagonal [1] Recolor [6] Union Output SelectAll AddColor [0] Underlay Output Colors SelectColor [0] Difference CurrentObjects DeleteSelection UnionList Split [1] Withhold CurrentObjects SelectAll Trim Withhold CurrentObjects SelectAll InvertSelection SelectAtLeast [2 cells] InvertSelection ExtendTo [10] Union Output SelectAll AddColor [0] Underlay
 Puzzle:       54d9e175
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.5574
+Nodes:        91

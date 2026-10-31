@@ -1,6 +1,6 @@
-Input Split [0] SelectAll Trim SelectAll ShapeColorMap [1] AddColor [11] Fit [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay
+Input Colors SelectColor [0] DeleteSelection UnionList SelectAll ShapeColorMap [1] AddColor [11] Fit [1] Split [1] Withhold CurrentObjects SelectAll Trim Underlay Output SelectAll AddColor [0] Underlay
 Puzzle:       44f52bb0
 Train:        Solved
 Test:         Solved
-Elapsed:      00:00:00.3446
-Nodes:        14
+Elapsed:      00:00:00.3585
+Nodes:        19

@@ -1,6 +1,6 @@
 Input SelectAll FlipHorizontal Union
-
 Puzzle:       67a3c6ac
 Train:        Solved
 Test:         Solved
-Found by:     inference, no search
+Elapsed:      00:00:00.3572
+Nodes:        4
