@@ -12,8 +12,7 @@
 namespace arc {
 
 // WHAT A CUT IS ALLOWED TO FOLLOW. Where the cut falls -- which axis, which
-// color, how many panes -- is read off the grid; these are only the permissions,
-// the way degrees_of_freedom holds them for matching.
+// color, how many panes -- is read off the grid; these are only the permissions.
 struct split_freedom {
     // A full-span line of one color: a wall.
     bool wall = true;

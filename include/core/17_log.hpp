@@ -36,9 +36,9 @@ inline const char* edge_kind(const correspondence_election::edge& edge) {
     return !edge.same_shape ? "  sits on" : edge.exact ? "  exact" : "  recolored";
 }
 
-// A reading as the readout names it: how it cut, and what a match may change.
+// A reading as the readout names it: how it cut.
 inline string reading_title(const correspondence_election::reading& reading) {
-    return string(segmentation_names[(int)reading.segmentation]) + "  [" + reading.allowed.label() + "]";
+    return segmentation_names[(int)reading.segmentation];
 }
 
 // A box as the readout says it: width x height at column,row.
@@ -205,6 +205,7 @@ inline void report_correspondence_readings(ostream& report, const correspondence
               " the block segmentations never compete, their readings are evidence for rules\n";
     for (size_t i = 0; i < correspondence.readings.size(); ++i) {
         const auto& reading = correspondence.readings[i];
+        if (reading.segmentation == segmentation_methods::unset) continue;
         report << "  reading " << i
           << "  says it in " << (int)(reading.describe_cost * 100.0 + 0.5)
           << "% of plain  segmented into " << reading.objects_found;
@@ -238,12 +239,11 @@ inline void report_correspondence_readings(ostream& report, const correspondence
 inline void report_fired(ostream& report, const correspondence_election& correspondence,
                          const string& title = "[fired] each segmentation's own reading, rule by rule") {
     report << "\n" << title << "\n";
-    for (size_t method = 0; method < correspondence.best_of.size(); ++method) {
-        const int16_t kept = correspondence.best_of[method];
-        if (kept < 0 || !correspondence_election::competes((segmentation_methods)method)) continue;
-        const auto& reading = correspondence.readings[kept];
-        report << "  reading " << kept << "  " << segmentation_names[(int)reading.segmentation]
-          << (kept == correspondence.chosen ? "   ELECTED" : "") << "\n";
+    for (size_t cut = 0; cut < correspondence.readings.size(); ++cut) {
+        const auto& reading = correspondence.readings[cut];
+        if (!correspondence_election::competes(reading.segmentation)) continue;
+        report << "  reading " << cut << "  " << segmentation_names[(int)reading.segmentation]
+          << ((int)cut == correspondence.chosen ? "   ELECTED" : "") << "\n";
         for (const auto& [which, depth] : reading.fired_in_order()) {
             const auto& rule = reading.fired[which];
             report << "    " << string((size_t)depth * 2, ' ') << rule.name;
@@ -490,6 +490,7 @@ inline void report_agreed_moves(ostream& report, const correspondence_election& 
 // handed a screen-shaped copy of them, and could only say what that copy kept.
 inline void report_pieces_seen(ostream& report, const correspondence_election& correspondence) {
     for (size_t i = 0; i < correspondence.readings.size(); ++i) {
+        if (correspondence.readings[i].segmentation == segmentation_methods::unset) continue;
         report << "  reading " << i << " pieces   " << reading_title(correspondence.readings[i]) << "\n";
         const auto& pairs = correspondence.readings[i].pairs;
         for (size_t which = 0; which < pairs.size(); ++which)
@@ -539,9 +540,7 @@ inline void report_one_pair(ostream& report, size_t pair_index,
             report_piece(report, pieces[i], true);
         }
     }
-    static const char* how_name[] = { "PIECES FIT", "no fit, greedy", "GAVE UP" };
-    report << "  edges " << pair.edges.size() << ", "
-      << how_name[(int)pair.verdict] << "\n";
+    report << "  edges " << pair.edges.size() << "\n";
     for (const auto& edge : pair.edges) {
         report << "  " << edge_side(edge) << " [" << (int)edge.from << "] -> ";
         if (edge.to >= 0) report << '[' << (int)edge.to << ']';

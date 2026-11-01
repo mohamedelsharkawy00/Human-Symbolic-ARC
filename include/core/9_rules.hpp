@@ -191,7 +191,7 @@ struct motif_continuation_rule {
     static motif_continuation_rule detect(const vector<example>& train,
                                           const correspondence_election& correspondence) {
         motif_continuation_rule rule;
-        const auto* motif = correspondence.best_reading_of(segmentation_methods::minimal_repeating_set);
+        const auto* motif = correspondence.reading_of(segmentation_methods::minimal_repeating_set);
         if (train.empty() || !motif || motif->pairs.size() != train.size()) return rule;
         for (size_t i = 0; i < train.size(); ++i) {
             const auto& pair = motif->pairs[i];
@@ -596,7 +596,7 @@ struct input_blocks_rule {
         for (const auto& pair : train)
             if (pair.input.empty() ||
                 pair.output.width % pair.input.width || pair.output.height % pair.input.height) return {};
-        const auto* blocks = correspondence.best_reading_of(segmentation_methods::smallest_of_two_grids);
+        const auto* blocks = correspondence.reading_of(segmentation_methods::smallest_of_two_grids);
         if (!blocks || blocks->pairs.size() != train.size()) return {};
         // Background blocks are empty blocks: where a plan deleted the ground
         // the inputs have empty cells, and empty is what the blocks are made of.

@@ -8,8 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <numeric>
-#include <span>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -54,46 +52,12 @@ inline bool same_corner(const Framed& one, const Framed& other) {
     return one.col == other.col && one.row == other.row;
 }
 
-// A reading combines a segmentation with the changes allowed when matching objects.
-struct degrees_of_freedom {
-    bool translate = true;
-    bool pose = true;
-    bool recolor = true;
-    // Allow part of an object to extend beyond the target grid's border.
-    bool hang_off = true;
-    // Allow an object to be found a whole number of times bigger, each of its
-    // cells a square block (same_shape's scale, 1_readings.hpp).
-    bool scale = true;
-    // Each of the five permissions can be on or off, giving 2^5 = 32 combinations.
-    static constexpr int FREEDOMS = 5;
-    // Scale's bit in a reading's packed freedoms.
-    static constexpr int SCALE_BIT = 16;
-    static constexpr int COMBINATIONS = 1 << FREEDOMS;
-    static constexpr degrees_of_freedom from_index(int packed) {
-        return { (packed & 1) != 0, (packed & 2) != 0, (packed & 4) != 0,
-                 (packed & 8) != 0, (packed & SCALE_BIT) != 0 };
-    }
-    // How many of the eight ways round a match may try: all, or only as it is.
-    constexpr int poses() const { return pose ? POSE_COUNT : 1; }
-
-    // Permission labels used to describe a reading.
-    static constexpr const char* const freedom_names[FREEDOMS] =
-        { "Move", "Turn", "Color", "Hang Off", "Scale" };
-    constexpr bool may(int freedom) const {
-        return freedom == 0 ? translate : freedom == 1 ? pose
-             : freedom == 2 ? recolor   : freedom == 3 ? hang_off : scale;
-    }
-    // The names of the freedoms it may use, or "As Is" when it may use none.
-    string label() const {
-        string words;
-        for (int freedom = 0; freedom < FREEDOMS; ++freedom) {
-            if (!may(freedom)) continue;
-            if (!words.empty()) words += ", ";
-            words += freedom_names[freedom];
-        }
-        return words.empty() ? "As Is" : words;
-    }
-};
+// WHAT A MATCH MAY CHANGE, as the readout names what the matching used: where
+// the piece lies, which way round, its colors, how much of it the grid shows,
+// its size -- a whole number of times bigger, each cell a square block
+// (same_shape's scale, 1_readings.hpp). Every match may change any of them,
+// and pays for each it does (freedom_spent).
+inline constexpr const char* const freedom_names[] = { "Move", "Turn", "Color", "Hang Off", "Scale" };
 
 // A match links an object to another object or a position on the other grid.
 struct object_matching {
@@ -141,8 +105,8 @@ struct object_matching {
         }
     };
     // Why a match that was found did not survive.
-    enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, overlaps_a_kept_object,
-                    the_other_examples_disagreed };
+    enum refusal_reason : int8_t { lost_to_chance, cells_already_explained, the_other_examples_disagreed,
+                                   a_freedom_no_cell_needs };
     // A rejected match and its reason travel together through filtering and reporting.
     struct rejection {
         edge match;
@@ -153,17 +117,14 @@ struct object_matching {
     static constexpr const char* const refusal_names[] = {
         "IT WAS LIKELY BY LUCK",
         "ITS CELLS WERE ALREADY EXPLAINED",
-        "IT OVERLAPS AN OBJECT THAT WAS KEPT",
-        "THE OTHER EXAMPLES DID NOT AGREE" };
+        "THE OTHER EXAMPLES DID NOT AGREE",
+        "IT USES A FREEDOM NO CELL NEEDS" };
     // Store each color's move for this training pair, only if every read pair has
     // exactly one move for that color. The move may differ between pairs.
     struct what_the_pairs_agreed {
         bool color_speaks[COLOR_COUNT] = {};
         int8_t down[COLOR_COUNT] = {}, across[COLOR_COUNT] = {};
     };
-
-    // How a pass decided, so a giveup can never be mistaken for an answer.
-    enum class fit_verdict : int8_t { fitted, no_fit, gave_up };
 
     // Operations used by the later chapters.
     // Returns the cells used to work out what a match covers in the target grid.
@@ -228,6 +189,17 @@ struct object_matching {
                                : pair<int, int>{-down, -across};
     }
 
+    // Lower scores prefer matches that did not move, change color, turn or flip,
+    // or show only part of themselves, in that order of importance. Hanging off
+    // the grid and hiding behind another object are the one freedom: some of the
+    // piece is not shown. Free to hide, a piece half behind a frame cost no more
+    // than the same piece in plain sight beside it.
+    static int freedom_spent(const edge& edge) {
+        return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
+               (edge.pose == 0 ? 0 : 2) + (edge.scale == 1 ? 0 : 2) +
+               (edge.outside == 0 && edge.hidden == 0 ? 0 : 1);
+    }
+
     // Reject shape matches whose movement disagrees with the color's agreed move.
     // Stationary matches are always allowed.
     static bool the_pairs_disagree(const what_the_pairs_agreed& agreed,
@@ -246,20 +218,18 @@ struct object_matching {
     }
 
     // Find and select matches from one grid to the other. Swap grids for the reverse direction.
-    static fit_verdict collect_edges(const vector<object_info>& from_info,
+    static void collect_edges(const vector<object_info>& from_info,
                               const vector<object>& from_objects,
                               const vector<object_info>& into_info,
                               const vector<object>& into_objects,
-                              const grid& into, bool from_input, bool may_hang_off,
+                              const grid& into, bool from_input,
                               vector<edge>& edges,
                               vector<rejection>* discarded = nullptr,
-                              degrees_of_freedom allowed = {},
                               const what_the_pairs_agreed* agreed = nullptr,
                               placement_cache* placements = nullptr) {
         ++matching_work.calls;
         matching_work.rematches += agreed != nullptr;
-        vector<edge> found =
-            gather_matches(from_info, from_objects, into_info, into, may_hang_off, discarded, allowed, placements);
+        vector<edge> found = gather_matches(from_info, from_objects, into_info, into, discarded, placements);
         for (auto& edge : found) edge.from_input = from_input;
 
         // Remove conflicting matches before fitting so their alternatives can still be chosen.
@@ -272,19 +242,11 @@ struct object_matching {
                 found.erase(found.begin() + i);
             }
 
-        const fitting laid_out = set_up_the_fitting(found, from_objects, into_objects, into);
+        fitting laid_out = set_up_the_fitting(found, from_objects, into_objects, into);
+        if (drop_freedoms_no_cell_needs(found, laid_out, from_info, discarded))
+            laid_out = set_up_the_fitting(found, from_objects, into_objects, into);
         matching_work.fitting_edges += found.size();
-
-        vector<int> chosen;
-        const fit_verdict searched =
-            fit_the_objects_together(laid_out, chosen);
-        if (searched == fit_verdict::fitted) {
-            keep_what_fitted(chosen, laid_out, found, edges, discarded);
-            return fit_verdict::fitted;
-        }
-
-        fall_back_to_greedy(found, laid_out, edges, discarded);
-        return searched;
+        keep_what_adds_a_cell(found, laid_out, edges, discarded);
     }
 
     // Match each unmatched object to the same-color object with the most overlap,
@@ -325,10 +287,10 @@ struct object_matching {
     }
 
     // Link only the topmost, then leftmost complete motifs.
-    static fit_verdict collect_representative_edge(
+    static void collect_representative_edge(
             const vector<object_info>& from_info, const vector<object>& from_objects,
             const vector<object_info>& into_info, const grid& into,
-            int step_w, int step_h, vector<edge>& edges, degrees_of_freedom allowed) {
+            int step_w, int step_h, vector<edge>& edges) {
         auto first = [&](const vector<object_info>& info) {
             int best = -1;
             for (int i = 0; i < (int)info.size(); ++i) {
@@ -340,50 +302,41 @@ struct object_matching {
             return best;
         };
         const int source = first(from_info), target = first(into_info);
-        if (source < 0 || target < 0) return fit_verdict::no_fit;
+        if (source < 0 || target < 0) return;
         const auto& landing = into_info[target].summary;
         const bool stayed = same_corner(from_info[source].summary, landing);
-        if (!allowed.translate && !stayed) return fit_verdict::no_fit;
-        const auto matches = find_in(from_objects[source].drawn(), into,
-                                    false, landing.row, landing.col, true, allowed.poses());
+        const auto matches = find_in(from_objects[source].drawn(), into, false, landing.row, landing.col, true);
         const object_match* best = nullptr;
         for (const auto& hit : matches.hits) {
-            if (hit.hidden || hit.outside || (!allowed.recolor && !hit.exact)) continue;
+            if (hit.hidden || hit.outside) continue;
             if (!best || (hit.exact && !best->exact)) best = &hit;
         }
-        if (!best) return fit_verdict::no_fit;
+        if (!best) return;
         auto link = edge_from_match(*best, source, stayed);
         link.to = (int16_t)target;
         edges.push_back(link);
-        return fit_verdict::fitted;
     }
 
     // Match repeated blocks in both directions so every matching block gets a partner.
     // Prefer a source block at the same position when possible.
-    static fit_verdict collect_motif_edges(
+    static void collect_motif_edges(
             const vector<object_info>& from_info,
             const vector<object>& from_objects,
             const vector<object_info>& into_info,
             const grid& into, int step_w, int step_h,
-            vector<edge>& edges, degrees_of_freedom allowed = {}) {
-        if (step_w <= 0 || step_h <= 0) return fit_verdict::no_fit;
+            vector<edge>& edges) {
+        if (step_w <= 0 || step_h <= 0) return;
 
         // Does this from block sit at that place on the other grid? The answer is
         // the same question both sweeps ask, so it is written once. `poses` holds
         // every pose in which it sits there in the colors of the one kept.
         auto sits_at = [&](int from_index, const object_info& target,
                            object_match& found, uint8_t& poses) {
-            // A copy on another block has moved, so it needs the freedom to --
-            // the same rule the representative edge above keeps.
-            if (!allowed.translate && !same_corner(from_info[from_index].summary, target.summary))
-                return false;
             const grid cells = from_objects[from_index].drawn();
-            const object_matches matches =
-                find_in(cells, into, true, target.summary.row, target.summary.col, true, allowed.poses());
+            const object_matches matches = find_in(cells, into, true, target.summary.row, target.summary.col, true);
             // Prefer a match with unchanged colors, even if it uses a later rotation or reflection.
             const object_match* best = nullptr;
             for (const object_match& hit : matches.hits) {
-                if (!allowed.recolor && !hit.exact) continue;
                 if (!best || (hit.exact && !best->exact)) best = &hit;
                 if (best->exact) break;
             }
@@ -440,11 +393,10 @@ struct object_matching {
                     break;
                 }
         }
-        return edges.empty() ? fit_verdict::no_fit : fit_verdict::fitted;
     }
 
 private:
-    // 5. How possible placements become a consistent set of matches.
+    // 5. How possible placements become the matches kept.
 
     // A search hit: placement, rotation or reflection, colors, and clipped or hidden cells.
     struct object_match {
@@ -462,11 +414,15 @@ private:
         recoloring color_map;
     };
 
-    // Search hits and the number of placements tried, counting distinct poses only.
+    // Search hits and the placements tried, counting distinct poses only.
     struct object_matches {
         vector<object_match> hits;
-        // Placements summed over the poses that are actually different
-        int places = 0;
+        // THE PLACES A HIT COULD HAVE BEEN LUCK IN, by the freedoms it used:
+        // [turned][hanging off]. As it is, its own way round alone; turned,
+        // every way round tried. On the grid, the places on it; hanging off,
+        // the places off it too.
+        int places[2][2] = {};
+        int places_of(const object_match& hit) const { return places[hit.pose != 0][hit.outside > 0]; }
     };
 public:
     // Owned by one segmentation's reading, separately for each pair and direction.
@@ -476,7 +432,6 @@ public:
         struct drawing {
             grid cells;
             bool clipped;
-            int poses;
             object_matches matches;
         };
         grid target;
@@ -601,13 +556,12 @@ private:
     // Searches for an object in another grid.
     static object_matches find_in(const grid& cells, const grid& where,
                                   bool may_hang_off, int fixed_row = -1, int fixed_col = -1,
-                                  bool match_footprint = false, int max_poses = -1) {
+                                  bool match_footprint = false) {
         object_matches found;
         if (cells.empty()) return found;
         const bool fixed = fixed_row >= 0 && fixed_col >= 0;
         if (fixed) ++matching_work.fixed_scans;
         else ++matching_work.whole_grid_scans;
-        const int pose_limit = max_poses >= 0 ? max_poses : (fixed ? 1 : POSE_COUNT);
 
         // Whether the grid searched has a ground at all: empty cells, where a plan
         // deleted it. A grid read whole has none, and so no negative.
@@ -616,7 +570,7 @@ private:
             for (int col = 0; col < where.width && !empty_ground; ++col)
                 empty_ground = where.data[row][col] == TRANSPARENT;
         vector<grid> tried;
-        for (int pose = 0; pose < pose_limit; ++pose) {
+        for (int pose = 0; pose < POSE_COUNT; ++pose) {
             grid posed = posed_cells(cells, pose);
             // A symmetric object reads the same several ways round; count it once.
             if (ranges::find(tried, posed) != tried.end()) continue;
@@ -633,7 +587,15 @@ private:
                                : may_hang_off ? where.height - 1 : where.height - posed.height;
             const int last_col = fixed ? fixed_col
                                : may_hang_off ? where.width - 1 : where.width - posed.width;
-            found.places += (last_row - first_row + 1) * (last_col - first_col + 1);
+            const int places = (last_row - first_row + 1) * (last_col - first_col + 1);
+            const int on_grid = fixed ? (int)(fixed_row + posed.height <= where.height &&
+                                              fixed_col + posed.width <= where.width)
+                                      : max(0, where.height - posed.height + 1) * max(0, where.width - posed.width + 1);
+            for (const bool turned : { false, true })
+                if (turned || pose == 0) {
+                    found.places[turned][0] += on_grid;
+                    found.places[turned][1] += places;
+                }
             const int lit = lit_cells(posed);
 
             for (int at_row = first_row; at_row <= last_row; ++at_row)
@@ -717,8 +679,8 @@ private:
             const vector<object_info>& from_info,
             const vector<object>& from_objects,
             const vector<object_info>& into_info,
-            const grid& into, bool may_hang_off,
-            vector<rejection>* discarded, degrees_of_freedom allowed,
+            const grid& into,
+            vector<rejection>* discarded,
             placement_cache* shared_placements) {
         ++matching_work.gathers;
         double share[COLOR_COUNT + 1];
@@ -737,9 +699,10 @@ private:
         // its source is drawn. Refused below, in the order found.
         vector<bool> on_figures;
 
-        // A caller can retain these answers across permission variants. Include
-        // poses in the key and invalidate on target changes; recolor and scale
-        // do not affect find_in. Each source still accepts hits in its own order.
+        // A caller can retain these answers for the pair's rematch
+        // (reconcile_examples), invalidated when the target changes; copies of
+        // one drawing share them too. Each source still accepts hits in its own
+        // order.
         placement_cache local_placements;
         auto& placements = shared_placements ? *shared_placements : local_placements;
         if (!(placements.target == into)) {
@@ -748,12 +711,11 @@ private:
         }
         auto places_for = [&](const grid& cells, bool clipped) -> const object_matches& {
             for (const auto& prior : placements.drawings)
-                if (prior.clipped == clipped && prior.poses == allowed.poses() && prior.cells == cells) {
+                if (prior.clipped == clipped && prior.cells == cells) {
                     ++matching_work.placement_cache_hits;
                     return prior.matches;
                 }
-            placements.drawings.push_back({ cells, clipped, allowed.poses(),
-                find_in(cells, into, clipped, -1, -1, false, allowed.poses()) });
+            placements.drawings.push_back({ cells, clipped, find_in(cells, into, clipped) });
             return placements.drawings.back().matches;
         };
 
@@ -781,7 +743,6 @@ private:
             // Positional: own place first, then anywhere only if it was not there.
             auto keep_positional = [&](const object_matches& found_here, bool stationary) {
                 for (const object_match& hit : found_here.hits) {
-                    if (!allowed.recolor && !hit.exact) continue;
                     if (!stationary && hit.pose == 0 &&
                         hit.row == one_object.summary.row && hit.col == one_object.summary.col)
                         continue;
@@ -799,7 +760,7 @@ private:
                             odds *= share[recoloring::slot(hit.color_map[object_color])];
                         }
                     auto edge = edge_from_match(hit, (int)from_index, stationary);
-                    const bool stands_alone = beats_chance(found_here.places, odds);
+                    const bool stands_alone = beats_chance(found_here.places_of(hit), odds);
                     // EXPERIMENT: every match must pass the chance test, not only the
                     // stationary, hidden, or recolored ones.
                     if (!stands_alone) {
@@ -811,14 +772,9 @@ private:
             };
 
             // Search both the original position and other positions: an object can stay and be copied.
-            keep_positional(
-                find_in(cells, into, false,
-                        one_object.summary.row, one_object.summary.col, false, allowed.poses()), true);
+            keep_positional(find_in(cells, into, false, one_object.summary.row, one_object.summary.col), true);
             // Allow clipped matches only when copies establish the shape on either grid.
-            if (allowed.translate)
-                keep_positional(
-                    places_for(cells, may_hang_off && (one_object.motif >= 0 ||
-                                                       twins_over_there(one_object.shape))), false);
+            keep_positional(places_for(cells, one_object.motif >= 0 || twins_over_there(one_object.shape)), false);
 
             // Source 3 — the same shape at another size: a piece there whose shape
             // at any size (scaled_shape) is this one's, grown a whole number of
@@ -826,38 +782,33 @@ private:
             // it may turn -- and every cell, drawn that big, lying on the piece as
             // a match by placement asks. A dot or a filled box has no size but
             // its own (sized_blocks), so none is ever found at another.
-            if (allowed.scale)
-                for (size_t into_index = 0; into_index < into_info.size(); ++into_index) {
-                    const auto& landing = into_info[into_index].summary;
-                    if (into_info[into_index].scaled_shape != one_object.scaled_shape) continue;
-                    if (!allowed.translate && !same_corner(landing, one_object.summary)) continue;
-                    for (const bool sideways : { false, true }) {
-                        if (sideways && !allowed.pose) continue;
-                        const int wide = sideways ? cells.height : cells.width, tall = sideways ? cells.width : cells.height;
-                        const int factor = landing.width / wide;
-                        if (factor < 2 || landing.width != wide * factor || landing.height != tall * factor) continue;
-                        const object_matches grown = find_in(scaled_cells(cells, factor), into, false, landing.row,
-                                                             landing.col, true, allowed.poses());
-                        const object_match* best = nullptr;
-                        for (const object_match& hit : grown.hits) {
-                            const auto [hit_width, hit_height] = posed_size(hit.pose, cells.width * factor,
-                                                                            cells.height * factor);
-                            if (hit_width != landing.width || hit_height != landing.height) continue;
-                            if (!allowed.recolor && !hit.exact) continue;
-                            if (!best || (hit.exact && !best->exact)) best = &hit;
-                        }
-                        if (!best) continue;
-                        auto edge = edge_from_match(*best, (int)from_index, false);
-                        edge.to = (int16_t)into_index;
-                        edge.scale = (int8_t)factor;
-                        keep(edge);
-                        break;
+            for (size_t into_index = 0; into_index < into_info.size(); ++into_index) {
+                const auto& landing = into_info[into_index].summary;
+                if (into_info[into_index].scaled_shape != one_object.scaled_shape) continue;
+                for (const bool sideways : { false, true }) {
+                    const int wide = sideways ? cells.height : cells.width, tall = sideways ? cells.width : cells.height;
+                    const int factor = landing.width / wide;
+                    if (factor < 2 || landing.width != wide * factor || landing.height != tall * factor) continue;
+                    const object_matches grown = find_in(scaled_cells(cells, factor), into, false, landing.row,
+                                                         landing.col, true);
+                    const object_match* best = nullptr;
+                    for (const object_match& hit : grown.hits) {
+                        const auto [hit_width, hit_height] = posed_size(hit.pose, cells.width * factor,
+                                                                        cells.height * factor);
+                        if (hit_width != landing.width || hit_height != landing.height) continue;
+                        if (!best || (hit.exact && !best->exact)) best = &hit;
                     }
+                    if (!best) continue;
+                    auto edge = edge_from_match(*best, (int)from_index, false);
+                    edge.to = (int16_t)into_index;
+                    edge.scale = (int8_t)factor;
+                    keep(edge);
+                    break;
                 }
+            }
 
             // Source 2 — shape: objects there with the same canonical hash (count
             // equality guards hash collisions). Skip placements source 1 found.
-            if (!allowed.translate) continue;
             for (size_t into_index = 0; into_index < into_info.size(); ++into_index) {
                 const auto& landing = into_info[into_index];
                 if (landing.shape != one_object.shape || landing.summary.count != one_object.summary.count) continue;
@@ -875,7 +826,6 @@ private:
                 edge.to = (int16_t)into_index;
                 edge.row = landing.summary.row; edge.col = landing.summary.col;
                 edge.exact = (landing.color == one_object.color);
-                if (!allowed.recolor && !edge.exact) continue;
                 if (!edge.exact && is_color(one_object.color))
                     edge.color_map[one_object.color] = landing.color;
                 const bool stands_alone = beats_chance(
@@ -902,41 +852,23 @@ private:
         return on_a_figure;
     }
 
-    // One candidate object: the match it came from, the piece that match is
-    // of, the cells it paints, and the cells of its own that something else
-    // paints — which is what puts it BEHIND. Where pieces share a cell
-    // (fitting::shared), also the cell of its own grid each painted cell
-    // carries there (each_carried_cell), -1 where it carries none.
+    // One candidate object: the match it came from and the cells it paints.
     struct candidate {
         size_t match_index = 0;
-        int piece = -1;
-        vector<int> cells, behind, carried;
+        vector<int> cells;
     };
 
     // The objects, and which cells each of them could paint.
     struct fitting {
         // Number of target cells, empty ones included.
         size_t cell_count = 0;
-        // Whether two pieces of the grid matched from share a cell: only then
-        // may two landings paint one cell (painters).
-        bool shared = false;
         // One per match, in match order; empty cells mean it shows nothing
         vector<candidate> objects;
-        // Every object, best first (comes_first); a tie keeps match order. Sorted
-        // once: the search, the extras and the greedy pass all try them this way.
+        // Every object, best first (comes_first); a tie keeps match order.
         vector<int> best_first;
-        // Per cell: the objects that can paint it, best first, cell after cell
-        // in one list. options_at reads one cell's share of it.
-        vector<int> option_start, option_list;
-        // Cells an EXACT object could account for — only these drive the search
-        vector<bool> required;
         // How far each match's piece travelled to land, by match index: travel_of.
         vector<int> travel;
 
-        span<const int> options_at(size_t id) const {
-            return { option_list.data() + option_start[id],
-                     (size_t)(option_start[id + 1] - option_start[id]) };
-        }
         // Whether candidate `left` goes before `right`: says_more, below.
         bool comes_first(int left, int right, const vector<edge>& found) const {
             const size_t mine = objects[left].match_index, theirs = objects[right].match_index;
@@ -945,17 +877,6 @@ private:
                              travel[mine], travel[theirs]);
         }
     };
-    // Lower scores prefer matches that did not move, change color, turn or flip,
-    // or show only part of themselves, in that order of importance. Hanging off
-    // the grid and hiding behind another object are the one freedom: some of the
-    // piece is not shown. Free to hide, a piece half behind a frame cost no more
-    // than the same piece in plain sight beside it.
-    static int freedom_spent(const edge& edge) {
-        return (edge.stayed_put ? 0 : 8) + (edge.exact ? 0 : 4) +
-               (edge.pose == 0 ? 0 : 2) + (edge.scale == 1 ? 0 : 2) +
-               (edge.outside == 0 && edge.hidden == 0 ? 0 : 1);
-    }
-
     // HOW FAR A PIECE TRAVELLED to land here: a slide along one line before one
     // that needs both, then the shorter. Asked only once cells and freedoms tie,
     // which is where the order the pieces were listed in used to decide which
@@ -977,288 +898,97 @@ private:
         return left_travel < right_travel;
     }
 
-    // For each target cell, list the matches that can cover it.
+    // For each match, the target cells it paints -- on the grid and not behind
+    // another object -- and the order the matches are tried in.
     static fitting set_up_the_fitting(const vector<edge>& found,
                              const vector<object>& from_objects,
                              const vector<object>& into_objects,
                              const grid& into) {
         fitting laid_out;
         // Index all target cells, empty ones included, where new objects may appear.
-        // Only cells reached by exact matches become required.
         laid_out.cell_count = (size_t)into.width * into.height;
         laid_out.travel.resize(found.size());
         for (size_t found_index = 0; found_index < found.size(); ++found_index)
             laid_out.travel[found_index] =
                 travel_of(found[found_index], from_objects[found[found_index].from]);
-        cell_set held;
-        for (const object& piece : from_objects)
-            piece.each_cell([&](int row, int col, int8_t) {
-                laid_out.shared = laid_out.shared || held.has(row, col);
-                held.add(row, col);
-            });
-        // Where pieces share a cell: the cell of its own grid one landing carries
-        // to each target cell, -1 for none, and the target cells it set, cleared
-        // for the next.
-        vector<int> carried_from(laid_out.shared ? laid_out.cell_count : 0, -1), carried_to;
-
         // Include recolored matches as candidates: their shapes still need to fit.
         for (size_t found_index = 0; found_index < found.size(); ++found_index) {
             const edge& link = found[found_index];
             const grid cells = edge_footprint(link, from_objects, into_objects);
-            candidate candidate{ found_index, link.from };
+            candidate candidate{ found_index };
             for (int row = 0; row < cells.height; ++row)
-                for (int col = 0; col < cells.width; ++col) {
-                    if (cells.data[row][col] == TRANSPARENT) continue;
-                    const int into_row = link.row + row;
-                    const int into_col = link.col + col;
-                    // Off the edge is not a cell of this grid at all: it is
-                    // neither painted nor hidden, it was simply never shown.
-                    if (!into.contains(into_row, into_col)) continue;
-                    const int id = into_row * into.width + into_col;
-                    // The cells it is hidden at are its own too — kept apart,
-                    // because they are what puts it BEHIND whoever paints them.
-                    if (!landing_shows(link, cells, into, row, col)) {
-                        candidate.behind.push_back(id);
-                        continue;
-                    }
-                    candidate.cells.push_back(id);
-                }
-            if (laid_out.shared) {
-                each_carried_cell(link, from_objects[link.from], into,
-                                  [&](int in_row, int in_col, int8_t, int out_row, int out_col, int8_t) {
-                    const int to = link.from_input ? out_row * into.width + out_col : in_row * into.width + in_col;
-                    carried_from[(size_t)to] = link.from_input ? cell_index(in_row, in_col) : cell_index(out_row, out_col);
-                    carried_to.push_back(to);
-                });
-                for (const int id : candidate.cells) candidate.carried.push_back(carried_from[(size_t)id]);
-                for (const int to : carried_to) carried_from[(size_t)to] = -1;
-                carried_to.clear();
-            }
+                for (int col = 0; col < cells.width; ++col)
+                    if (landing_shows(link, cells, into, row, col))
+                        candidate.cells.push_back((link.row + row) * into.width + link.col + col);
             laid_out.objects.push_back(std::move(candidate));
         }
-
-        // Try larger matches first, then lower change scores; the search takes its first solution.
+        // Larger matches first, then lower change scores, then the shorter travel.
         laid_out.best_first.resize(laid_out.objects.size());
         iota(laid_out.best_first.begin(), laid_out.best_first.end(), 0);
         stable_sort(laid_out.best_first.begin(), laid_out.best_first.end(), [&](int left, int right) {
             return laid_out.comes_first(left, right, found);
         });
-        // Each cell's options, listed in that order, come out best first too.
-        laid_out.option_start.assign(laid_out.cell_count + 1, 0);
-        for (const auto& candidate : laid_out.objects)
-            for (int id : candidate.cells) ++laid_out.option_start[(size_t)id + 1];
-        for (size_t id = 0; id < laid_out.cell_count; ++id)
-            laid_out.option_start[id + 1] += laid_out.option_start[id];
-        laid_out.option_list.resize((size_t)laid_out.option_start[laid_out.cell_count]);
-        vector<int> listed(laid_out.option_start.begin(), laid_out.option_start.end() - 1);
-        for (int object_index : laid_out.best_first)
-            for (int id : laid_out.objects[object_index].cells)
-                laid_out.option_list[(size_t)listed[id]++] = object_index;
-
-        // Require only cells reached by exact matches; other cells may be newly created.
-        laid_out.required.assign(laid_out.cell_count, false);
-        for (const auto& candidate : laid_out.objects)
-            if (found[candidate.match_index].exact)
-                for (int id : candidate.cells) laid_out.required[id] = true;
         return laid_out;
     }
 
-    // WHICH OBJECTS PAINT EACH CELL, as they are chosen: the first to paint it,
-    // the cell of its own grid that one carries there, and any after it. One
-    // more may paint a cell only where it is another piece's and carries that
-    // same cell there: the two pieces share it, and its one change is said once
-    // (fitting::shared).
-    struct painters {
-        const fitting& laid_out;
-        vector<int> first, carried;
-        vector<vector<int>> after;
-        explicit painters(const fitting& laid) : laid_out(laid), first(laid.cell_count, -1) {
-            if (!laid.shared) return;
-            carried.assign(laid.cell_count, -1);
-            after.resize(laid.cell_count);
+    // A FREEDOM IS USED ONLY WHERE A CELL NEEDS IT: where every match reaching
+    // some cell uses it. A match using one no cell needs is dropped, the
+    // plainer matches reaching all it would: 18286ef8's ring, found half turned
+    // and half hidden where it is found standing. Says whether any went.
+    static bool drop_freedoms_no_cell_needs(vector<edge>& found, const fitting& laid_out,
+                                            const vector<object_info>& from_info, vector<rejection>* discarded) {
+        // The freedoms each match uses, a bit each in freedom_names' order.
+        vector<unsigned> uses(found.size());
+        for (size_t at = 0; at < found.size(); ++at) {
+            const edge& link = found[at];
+            const auto& source = from_info[link.from].summary;
+            uses[at] = (unsigned)(link.row != source.row || link.col != source.col) | (unsigned)(link.pose != 0) << 1 |
+                       (unsigned)!link.exact << 2 | (unsigned)(link.outside > 0) << 3 | (unsigned)(link.scale != 1) << 4;
         }
-        bool painted(size_t id) const { return first[id] >= 0; }
-        // Every object painting cell `id`, the first first.
-        template <class See>
-        void each(size_t id, See see) const {
-            if (first[id] < 0) return;
-            see(first[id]);
-            if (laid_out.shared) ranges::for_each(after[id], see);
-        }
-        bool paints(int object_index, size_t id) const {
-            bool found = false;
-            each(id, [&](int one) { found = found || one == object_index; });
-            return found;
-        }
-        // Whether the object may paint every cell it shows, `asked()` for
-        // each cell asked.
-        template <class Asked>
-        bool may_paint(int object_index, Asked asked) const {
-            const candidate& mine = laid_out.objects[(size_t)object_index];
-            for (size_t at = 0; at < mine.cells.size(); ++at) {
-                asked();
-                const size_t id = (size_t)mine.cells[at];
-                if (first[id] < 0) continue;
-                if (!laid_out.shared || mine.carried[at] < 0 || mine.carried[at] != carried[id]) return false;
-                bool same_piece = false;
-                each(id, [&](int one) { same_piece = same_piece || laid_out.objects[(size_t)one].piece == mine.piece; });
-                if (same_piece) return false;
-            }
-            return true;
-        }
-        void paint(int object_index) {
-            const candidate& mine = laid_out.objects[(size_t)object_index];
-            for (size_t at = 0; at < mine.cells.size(); ++at) {
-                const size_t id = (size_t)mine.cells[at];
-                if (first[id] < 0) {
-                    first[id] = object_index;
-                    if (laid_out.shared) carried[id] = mine.carried[at];
-                } else after[id].push_back(object_index);
-            }
-        }
-        // Undoes paint, the object painted last undone first.
-        void unpaint(int object_index) {
-            for (const int id : laid_out.objects[(size_t)object_index].cells)
-                if (first[(size_t)id] == object_index) first[(size_t)id] = -1;
-                else after[(size_t)id].pop_back();
-        }
-    };
-
-    // Find objects that cover each required cell, once or by pieces that share
-    // it (painters); store them in `chosen`.
-    static fit_verdict fit_the_objects_together(const fitting& laid_out,
-                                    vector<int>& chosen) {
-        if (!ranges::any_of(laid_out.required, [](bool needed) { return needed; }))
-            return fit_verdict::no_fit;
-
-        painters painting(laid_out);
-        long long work = 0;
-        // Limit the search based on problem size, counting each cell checked.
-        // Report when the limit is reached; a solution may still exist.
-        const auto visible_objects = ranges::count_if(laid_out.objects,
-            [](const candidate& one) { return !one.cells.empty(); });
-        const long long work_budget =
-            (long long)(visible_objects + 1) * (long long)(laid_out.cell_count + 1);
-        bool out_of_budget = false;
-
-        // Reject an object if it would be both in front of and behind another object.
-        auto contradicts = [&](int object_index) {
-            for (int behind_id : laid_out.objects[object_index].behind) {
-                bool both_ways = false;
-                painting.each((size_t)behind_id, [&](int in_front) {
-                    for (int its_behind_id : laid_out.objects[in_front].behind)
-                        both_ways = both_ways || painting.paints(object_index, (size_t)its_behind_id);
-                });
-                if (both_ways) return true;
-            }
-            return false;
-        };
-
-        auto cells_are_free = [&](int object_index) { return painting.may_paint(object_index, [&] { ++work; }); };
-
-        // WHETHER AN OBJECT IS STILL FREE, asked once a step. It covers many
-        // cells, and asked again at every one of them a step cost the square of
-        // the biggest object: a frame of 273 cells asked 273 times is 74,529
-        // checks before anything is chosen. 06df4c85 spent its whole budget on
-        // that first look in 206 of its 240 fittings, one of them with a single
-        // object to choose, and the greedy pass decided those readings instead.
-        // Stamped with the step that asked, so starting a step clears nothing.
-        vector<int> asked_at(laid_out.objects.size(), 0);
-        vector<bool> free_now(laid_out.objects.size(), false);
-        int steps = 0;
-        auto fits_together = [&](auto&& self) -> bool {
-            if (work > work_budget) { out_of_budget = true; return false; }
-            const int this_step = ++steps;
-            auto is_free = [&](int object_index) {
-                if (asked_at[object_index] != this_step) {
-                    asked_at[object_index] = this_step;
-                    free_now[object_index] = cells_are_free(object_index);
-                }
-                return (bool)free_now[object_index];
-            };
-            // The cell with the fewest objects still able to paint it decides next;
-            // zero options means this line of choices is dead. Only required cells
-            // drive the search — a made cell is answered by being left alone.
-            int target = -1, fewest = 0;
-            for (size_t id = 0; id < laid_out.cell_count; ++id) {
-                if (painting.painted(id) || !laid_out.required[id]) continue;
-                int options = 0;
-                for (int object_index : laid_out.options_at(id)) {
-                    ++work;
-                    options += is_free(object_index);
-                }
-                if (options == 0) return false;
-                if (target < 0 || options < fewest) { target = (int)id; fewest = options; }
-                // One object left to paint it is no choice at all: take it now.
-                // A cell further on with none left is still found, one step later.
-                if (fewest == 1) break;
-                if (work > work_budget) { out_of_budget = true; return false; }
-            }
-            if (target < 0) return true;   // every carried-over cell accounted for
-            // Try candidates in preference order; an object does not have to be selected.
-            for (int object_index : laid_out.options_at((size_t)target)) {
-                if (!cells_are_free(object_index)) continue;
-                painting.paint(object_index);
-                chosen.push_back(object_index);
-                if (!contradicts(object_index) && self(self)) return true;
-                chosen.pop_back();
-                painting.unpaint(object_index);
-                if (out_of_budget) return false;
-            }
-            return false;
-        };
-
-        if (fits_together(fits_together)) return fit_verdict::fitted;
-        return out_of_budget ? fit_verdict::gave_up : fit_verdict::no_fit;
+        // For each cell some match reaches, the freedoms every match reaching it uses.
+        vector<unsigned> every_reaching(laid_out.cell_count, ~0u);
+        for (const candidate& one : laid_out.objects)
+            for (const int id : one.cells) every_reaching[(size_t)id] &= uses[one.match_index];
+        unsigned needed = 0;
+        for (const unsigned all : every_reaching)
+            if (all != ~0u) needed |= all;
+        size_t kept = 0;
+        for (size_t at = 0; at < found.size(); ++at)
+            if (uses[at] & ~needed) throw_away(found[at], a_freedom_no_cell_needs, discarded);
+            else found[kept++] = found[at];
+        const bool dropped = kept != found.size();
+        found.resize(kept);
+        return dropped;
     }
 
-    // Keep the chosen matches and any extras that paint no cell another does,
-    // but where pieces share it (painters); log rejected overlaps.
-    static void keep_what_fitted(vector<int>& chosen, const fitting& laid_out,
-                               const vector<edge>& found,
-                               vector<edge>& edges,
-                               vector<rejection>* discarded) {
-        sort(chosen.begin(), chosen.end());
-        vector<bool> kept(found.size(), false);
-        painters painting(laid_out);
-        for (int object_index : chosen) {
-            const size_t match_index = laid_out.objects[object_index].match_index;
-            edges.push_back(found[match_index]);
-            kept[match_index] = true;
-            painting.paint(object_index);
-        }
-        // Add matches that cover cells the solution left free, best matches first.
-        for (int object_index : laid_out.best_first) {
-            const size_t match_index = laid_out.objects[object_index].match_index;
-            if (kept[match_index] || laid_out.objects[object_index].cells.empty()) continue;
-            if (!painting.may_paint(object_index, [] {})) continue;
-            edges.push_back(found[match_index]);
-            kept[match_index] = true;
-            painting.paint(object_index);
-        }
-        for (size_t found_index = 0; found_index < found.size(); ++found_index)
-            if (!kept[found_index])
-                throw_away(found[found_index], object_matching::overlaps_a_kept_object,
-                           discarded);
-    }
-
-    // Try better matches first; keep each only if it covers at least one new cell.
-    static void fall_back_to_greedy(const vector<edge>& found, const fitting& laid_out,
-                                    vector<edge>& edges, vector<rejection>* discarded) {
-        // The fitting owns each match's visible cells and the order they are
-        // tried in. A match that shows nothing is in it too, and is refused there.
-        vector<bool> taken(laid_out.cell_count, false);
+    // THE MATCHES KEPT: the best first (says_more), each kept where it paints
+    // a cell no match before it did; then, the weakest first, each dropped
+    // whose every cell the others kept paint -- fe45cba4's frame, found again a
+    // step over inside the block its partner fills, where its own place and
+    // the partner say every cell. A match that shows nothing is refused too.
+    static void keep_what_adds_a_cell(const vector<edge>& found, const fitting& laid_out,
+                                      vector<edge>& edges, vector<rejection>* discarded) {
+        // How many kept matches paint each cell.
+        vector<int> painters(laid_out.cell_count, 0);
+        vector<int> kept;
         for (int object_index : laid_out.best_first) {
             const auto& candidate = laid_out.objects[object_index];
-            const auto& match = found[candidate.match_index];
-            const bool adds = ranges::any_of(candidate.cells, [&](int id) { return !taken[id]; });
-            if (!adds) {
-                throw_away(match, object_matching::cells_already_explained, discarded);
+            if (ranges::none_of(candidate.cells, [&](int id) { return painters[id] == 0; })) {
+                throw_away(found[candidate.match_index], cells_already_explained, discarded);
                 continue;
             }
-            for (int id : candidate.cells) taken[id] = true;
-            edges.push_back(match);
+            for (int id : candidate.cells) ++painters[id];
+            kept.push_back(object_index);
         }
+        for (size_t at = kept.size(); at-- > 0;) {
+            const auto& candidate = laid_out.objects[kept[at]];
+            if (ranges::any_of(candidate.cells, [&](int id) { return painters[id] == 1; })) continue;
+            for (int id : candidate.cells) --painters[id];
+            throw_away(found[candidate.match_index], cells_already_explained, discarded);
+            kept[at] = -1;
+        }
+        for (const int object_index : kept)
+            if (object_index >= 0) edges.push_back(found[laid_out.objects[object_index].match_index]);
     }
 
 };

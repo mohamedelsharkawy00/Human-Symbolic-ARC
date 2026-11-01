@@ -126,7 +126,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto& election = inf.correspondence;
     if (election.chosen_pairs().empty()) return;
     auto& read = election.readings[election.chosen];
-    const int8_t colors = read.fired_named(degrees_of_freedom::freedom_names[2]);
+    const int8_t colors = read.fired_named(freedom_names[2]);
 
     // A RULE THAT DREW EVERY OUTPUT BY ITSELF from the cut's own pieces is the
     // whole rest of the line: the acts have nothing left to explain, so they stay
@@ -156,8 +156,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return;
     using missing = correspondence_election::missing;
     const auto& shapes = inf.shape_color_map;
-    const bool recolors = read.allowed.recolor && ranges::any_of(read.pairs, [](const auto& pair) {
-        return pair.found_recolored > 0; });
+    const bool recolors = ranges::any_of(read.pairs, [](const auto& pair) { return pair.found_recolored > 0; });
 
     // THE HAND AS THE LINE LEAVES IT: the cut's pieces carried through every rule
     // already on the line, the hand the rules asked below are replayed on, laid
@@ -224,13 +223,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // (repaints_hold), and said only where it holds in every pair
     // (brings_nearer).
     //
-    // AND ONLY WHERE THE READING LET A COLOUR CHANGE AT ALL. A swap IS a
-    // recolour, so a reading that matched every piece without one has already
-    // said these pieces kept their colours -- and over_the_pieces is in no
-    // position to argue, because the cells it reads are the ones a piece LEFT.
-    // 05f2a901 is the puzzle that shows it: the shape slides up against the
-    // block, [Move] matches all six pieces exactly, 0 recoloured, and 0<->2
-    // holds over the pieces for one reason only -- a shape that moves away
+    // AND ONLY WHERE A MATCH RECOLORED A PIECE. A swap IS a recolour, so a
+    // reading that matched every piece without one has already said these
+    // pieces kept their colours -- and over_the_pieces is in no position to
+    // argue, because the cells it reads are the ones a piece LEFT. 05f2a901
+    // is the puzzle that shows it: the shape slides up against the block, all
+    // six pieces match exactly, none recoloured, and 0<->2 holds over the
+    // pieces for one reason only -- a shape that moves away
     // leaves ground where it stood and covers ground where it lands, which
     // reads cell for cell as the two trading places. Said, it paints the shape
     // away and the reading draws an empty grid, while its own list has already
@@ -257,7 +256,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                    one.paint == color;
         });
     };
-    if (read.allowed.recolor && facts.hand_known) {
+    if (recolors && facts.hand_known) {
         vector<int> table;
         uint16_t traded = 0;
         for (int variant = 0; variant < COLOR_PAIR_COUNT; ++variant) {
@@ -517,7 +516,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                                      best.seen.wrong[which].end());
         return read.say_fired(std::move(one), under, best.claims);
     };
-    const int8_t moves = read.fired_named(degrees_of_freedom::freedom_names[0]);
+    const int8_t moves = read.fired_named(freedom_names[0]);
     constexpr int ways = (int)partner_by::count;
     // Claims for a move: the cells the pieces left, on the input, and landed on,
     // on both grids -- an input cell a landing covers is one the move drew over
@@ -1699,10 +1698,18 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // in one turn with another, and only the cells two or more reach are laid
     // (crossing_walk) -- 11e1fe23's 5, where three corners' diagonals meet at
     // the square's middle; 29c11459's 5s, where each row's two dots meet.
+    // Only where two picked pieces lie can any of them meet: a pick that leaves
+    // one alone in a pair still open draws nothing there, every reach alike.
+    auto two_can_meet = [&](size_t at) {
+        for (size_t which = 0; which < handed_by_pick[at].size(); ++which)
+            if (!opened.finished(which) && ranges::count(handed_by_pick[at][which].picked, true) < 2) return false;
+        return true;
+    };
     auto crossing_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
-        for (const size_t at : asked_now)
+        for (const size_t at : asked_now) {
+            if (!two_can_meet(at)) continue;
             for (const int8_t lay : lays())
                 for (int reach = 0; reach < CROSSING_REACHES; ++reach) {
                     const auto seen = laid_from_its_walk(10, at, lay, reach, laying::in_one, [&] {
@@ -1712,6 +1719,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                     weigh_paint(best, reach, draw_picks[at], *seen, covered_claims(seen->drawn));
                     if (best.said > before) best_lay = lay;
                 }
+        }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
             const string reaches = best.value < CROSSING_RAYS

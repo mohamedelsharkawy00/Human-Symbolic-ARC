@@ -1340,8 +1340,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       const auto& R = correspondence.readings[rank];
       const auto& pairs = correspondence.readings[rank].pairs;
       // WHICH CUT THIS IS, in words, and the reading's number, which is what the
-      // log calls it. What its pieces were allowed to do is the list below:
-      // what they actually did.
+      // log calls it. What its pieces did is the list below.
       detail(to_text("%s %s  ---  READING %d", segmentation_names_lead,
                      segmentation_names[clamp((int)R.segmentation, 0,
                                        (int)segmentation_methods::count)],
@@ -1394,7 +1393,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                          (int)at.pair, (int)dr.from, (int)dr.col, (int)dr.row,
                          kind_name[claim_of(dr)],
                          correspondence_election::refusal_names[
-                             clamp((int)reason, 0, 3)]);
+                             clamp((int)reason, 0, (int)size(correspondence_election::refusal_names) - 1)]);
           if (dr.hidden) said += to_text(", %d HIDDEN", (int)dr.hidden);
         }
         detail(said);
@@ -1542,17 +1541,16 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       }
 
       // The same questions asked of every line of the reading, pair by pair, plus
-      // how the pieces were settled and what was thrown out on the way. CLASS is
-      // the two extremes read off the pieces of THIS reading: the most pieces that
-      // met at one landing, and the most places one piece went. So 1-1 is a plain
-      // swap, 1-9 is one piece stamped nine times, 2-1 is two meeting at one.
+      // what was thrown out on the way. CLASS is the two extremes read off the
+      // pieces of THIS reading: the most pieces that met at one landing, and the
+      // most places one piece went. So 1-1 is a plain swap, 1-9 is one piece
+      // stamped nine times, 2-1 is two meeting at one.
       divide();
-      static const char* how_name[] = { "FIT", "GREEDY", "GAVE UP" };
       // ONE ARRAY OF COLUMNS, so the heads and the rows cannot drift apart and
       // EACH HEAD IS ITS OWN CHIP — one chip over the whole line fused ten labels
       // into a single white bar with nothing between them.
       static const struct { const char* name; int width; } pair_columns[] = {
-          {"PAIR", 4}, {"SETTLED", 7}, {"CLASS", 6}, {"EXACT", 6},
+          {"PAIR", 4}, {"CLASS", 6}, {"EXACT", 6},
           {"RECOLORED", 10}, {"SITS ON", 8}, {"HIDDEN", 7}, {"TURNED", 7},
           {"REFUSED", 8}, {"OVER", 5} };
       const int char_w = 4 * scale;
@@ -1591,8 +1589,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
           most_landings = max(most_landings, piece.edges_touching);
         for (const auto& landing : pr.output_info)
           most_sources = max(most_sources, landing.edges_touching);
-        pair_row(to_string(i), how_name[clamp((int)pr.verdict, 0, 2)],
-                 to_text("%d-%d", most_sources, most_landings),
+        pair_row(to_string(i), to_text("%d-%d", most_sources, most_landings),
                  to_string(kinds[0]), to_string(kinds[1]), to_string(kinds[2]),
                  to_string(hidden), to_string(turned),
                  to_string(pr.discarded.size()), to_string(pr.unclaimed()));
@@ -2272,15 +2269,13 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
   // once here, for the wrap and for the pane.
   if (int view = app_state.inference_view.load(); view != global_app_state::INFERENCE_OFF) {
     const auto &correspondence = task.inf.correspondence;
-    // THE STEPPER WALKS THE CUTS, each at the one reading it kept: the
-    // combination of freedoms that entered the election for it. Told which cut
-    // inference chose and how many there are, it hands back the one to show —
-    // following the chosen one until somebody steps away.
+    // THE STEPPER WALKS THE CUTS THAT COMPETE, each at its one reading. Told
+    // which cut inference chose and how many there are, it hands back the one
+    // to show — following the chosen one until somebody steps away.
     vector<int> kept;
-    for (size_t method = 0; method < correspondence.best_of.size(); ++method)
-      if (correspondence.best_of[method] >= 0 &&
-          correspondence_election::competes((segmentation_methods)method))
-        kept.push_back(correspondence.best_of[method]);
+    for (size_t cut = 0; cut < correspondence.readings.size(); ++cut)
+      if (correspondence_election::competes(correspondence.readings[cut].segmentation))
+        kept.push_back((int)cut);
     const int elected_cut = (int)(ranges::find(kept, (int)correspondence.chosen) - kept.begin());
     const int cut = app_state.inference_rank.pick(elected_cut, max(1, (int)kept.size()));
     const int rank = kept.empty() ? 0 : kept[min(cut, (int)kept.size() - 1)];

@@ -9,7 +9,7 @@
 // We try several ways of grouping them, then look for matches in both
 // directions: where did each input object go, and where did each output
 // object come from? We compare these matches across the training examples
-// and choose the grouping and allowed changes that best explain them.
+// and rank the groupings by how well they explain them.
 #pragma once
 #include "5_matching.hpp"
 #include "14_vocabulary.hpp"
@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
@@ -140,9 +141,6 @@ struct correspondence_election {
         // Matches that were found and then thrown away, with why — otherwise
         // "never matched" and "matched and lost" look the same in the log.
         vector<rejection> discarded;
-        // How the fitting decided, the weaker of the two ways it was read: it
-        // fitted, it did not and the greedy pass decided, or it gave up.
-        object_matching::fit_verdict verdict = object_matching::fit_verdict::fitted;
         // Unexplained cells on both grids and the number of matches used.
         vector<left_over_cell> left_over;
         int objects_used = 0;
@@ -356,14 +354,11 @@ struct correspondence_election {
     };
     // The one rule the matching fires that no freedom names.
     static constexpr const char* sits_on_name = "Sits On";
-    // Scores for each segmentation and permission combination.
-    // Table index: segmentation * degrees_of_freedom::COMBINATIONS + allowed.index().
+    // One cut's matching, at its cut's place in readings.
     struct reading {
         // The matched evidence belongs to the interpretation it describes.
         vector<pair_info> pairs;
-        // Which segmentation, and what a match was allowed to change
         segmentation_methods segmentation = segmentation_methods::unset;
-        degrees_of_freedom allowed;
         // How many objects the segmentation FOUND, and how many it USED — the log prints
         // them as "segmented into X, used Y"
         int objects_found = 0, objects_used = 0;
@@ -376,9 +371,8 @@ struct correspondence_election {
         // Used for preliminary ordering and logging; matching still runs when false.
         bool objects_can_fit = true;
         int exact = 0, recolored = 0, sits_on = 0;
-        // WHAT IT WAS TAKEN TO SAY, one rule each, listed for the reading each
-        // segmentation kept -- the one that entered the election -- and empty
-        // for the combinations that lost to it.
+        // WHAT IT WAS TAKEN TO SAY, one rule each, listed for each cut that
+        // competes, and empty for the block claims.
         vector<fired_rule> fired;
         // THE CUT'S OWN LINE, in the order it is said: indices into `fired`. A
         // change no rule says sits where its rule would have been said.
@@ -455,18 +449,15 @@ struct correspondence_election {
         }
     };
     vector<reading> readings;
-    // A READING'S PLACE IN readings: one for every cut and every set of
-    // freedoms, so past what eight bits hold once the freedoms are five.
-    using reading_index = int16_t;
+    // A READING'S PLACE IN readings: its cut's number.
+    using reading_index = int8_t;
     // Index of the selected reading in readings.
     reading_index chosen = 0;
-    // Each segmentation's best reading, as its index in readings, so a rule
-    // about one way of cutting can read that cut's own evidence, elected or not.
-    vector<int16_t> best_of;
-    const reading* best_reading_of(segmentation_methods method) const {
+    // Each cut's reading, so a rule about one way of cutting can read that
+    // cut's own evidence, elected or not; none for a cut not read.
+    const reading* reading_of(segmentation_methods method) const {
         const size_t index = (size_t)method;
-        if (index >= best_of.size() || best_of[index] < 0) return nullptr;
-        return &readings[best_of[index]];
+        return index < readings.size() && readings[index].segmentation == method ? &readings[index] : nullptr;
     }
     // Indices of other segmentations whose best readings tie with the winner.
     vector<reading_index> tied_with_chosen;
@@ -497,9 +488,8 @@ struct correspondence_election {
     // waiting. Asked last, so a rule read off the elected reading after the
     // acts has taken back what it says before anything is called missing.
     void list_what_is_missing() {
-        for (size_t method = 0; method < best_of.size(); ++method) {
-            if (best_of[method] < 0 || !competes((segmentation_methods)method)) continue;
-            auto& read = readings[best_of[method]];
+        for (auto& read : readings) {
+            if (!competes(read.segmentation)) continue;
             for (int change = 0; change < (int)missing::count; ++change) {
                 fired_rule rule;
                 rule.name = "No Rule";
@@ -524,7 +514,7 @@ struct correspondence_election {
     }
     // What a missing rule is listed under: the freedom it needs.
     static int8_t said_under(const reading& read, missing change) {
-        const auto& freedom = degrees_of_freedom::freedom_names;
+        const auto& freedom = freedom_names;
         switch (change) {
             case missing::where_it_went:
             case missing::where_it_was_copied:  return read.fired_named(freedom[0]);
@@ -557,7 +547,7 @@ struct correspondence_election {
     static constexpr int MOST_PIECES_READ = 128;
 
     // 1. Compare the readings and keep the one that best explains the examples.
-    // Try every segmentation and permission combination, then return the selected reading.
+    // Match every segmentation once, then return the selected reading.
     // The pairs are figures: the plan deleted any ground (3_background.hpp).
     // The shape cut is read only where there is a `shape` to cut by.
     static correspondence_election infer(const vector<example>& train, const tiled_pieces& tiles = {},
@@ -608,45 +598,24 @@ struct correspondence_election {
         correspondence_election facts;
         facts.cells = facts_cells;
         facts.shape = shape;
-        // A slot for every cut and every set of freedoms, the shape cut's, the
-        // last, only where there is a shape to cut by.
+        // A slot for every cut, the shape cut's, the last, only where there is
+        // a shape to cut by.
         static_assert((int)segmentation_methods::shape_fits + 1 == (int)segmentation_methods::count);
         const int cuts = (int)segmentation_methods::count - (shape.holds() ? 0 : 1);
-        facts.readings.resize(cuts * degrees_of_freedom::COMBINATIONS);
-        auto better_match = [](const reading& left, const reading& right) {
-            if (left.left_over != right.left_over) return left.left_over < right.left_over;
-            if (left.objects_used != right.objects_used) return left.objects_used < right.objects_used;
-            return left.box_cells < right.box_cells;
-        };
-        // Keep every reading in its final table slot. Only the best permission
-        // combination per segmentation enters the election; ties keep the first.
-        // A claim's best reading is kept too, for its rule to read, but it does
-        // not stand.
-        vector<int> best_of_method;
+        facts.readings.resize(cuts);
+        // Each cut matched once, every match free to change what it needs. A
+        // claim's reading is kept too, for its rule to read, but it does not
+        // stand.
+        vector<int> competing;
         int shape_cut = -1;
-        facts.best_of.assign((size_t)segmentation_methods::count, -1);
         for (const auto& prepared : preparations) {
-            int best = -1;
-            const bool by_size = any_match_by_size(prepared);
-            matching_placements placements(train.size());
-            for (int packed = 0; packed < degrees_of_freedom::COMBINATIONS; ++packed) {
-                const int cell = (int)prepared.look.segmentation * degrees_of_freedom::COMBINATIONS + packed;
-                reading& scored = facts.readings[cell];
-                const degrees_of_freedom allowed = degrees_of_freedom::from_index(packed);
-                // Where no match at another size can be found, Scale finds what
-                // its twin without it does: read once, the twin's reading kept.
-                if (allowed.scale && !by_size) {
-                    scored = facts.readings[cell - degrees_of_freedom::SCALE_BIT];
-                    scored.allowed = allowed;
-                } else scored = detect_correspondence(train, prepared, allowed, placements);
-                if (best < 0 || better_match(scored, facts.readings[best])) best = cell;
-            }
-            facts.best_of[(size_t)prepared.look.segmentation] = (int16_t)best;
+            const int cut = (int)prepared.look.segmentation;
+            reading& read = facts.readings[cut] = detect_correspondence(train, prepared);
             if (!competes(prepared.look.segmentation)) continue;
-            list_what_fired(train, prepared, facts.readings[best]);
-            read_the_acts(train, prepared, facts.readings[best]);
-            if (prepared.look.segmentation == segmentation_methods::shape_fits) shape_cut = best;
-            else best_of_method.push_back(best);
+            list_what_fired(train, prepared, read);
+            read_the_acts(train, prepared, read);
+            if (prepared.look.segmentation == segmentation_methods::shape_fits) shape_cut = cut;
+            else competing.push_back(cut);
         }
 
         // Combine compression cost with the cost of unexplained cells.
@@ -684,7 +653,7 @@ struct correspondence_election {
         };
         // Ranked one at a time, each the first of the rest that none beats, so
         // the first is the one a single election would have chosen.
-        vector<int> unranked = best_of_method;
+        vector<int> unranked = competing;
         while (!unranked.empty()) {
             size_t first = 0;
             for (size_t i = 1; i < unranked.size(); ++i)
@@ -710,7 +679,7 @@ struct correspondence_election {
         if (shape_cut >= 0 && read_in_time(facts.readings[shape_cut])) facts.ranked.push_back((reading_index)shape_cut);
         for (const reading_index one : facts.ranked) {
             vector<reading_index> ties;
-            for (const int other : best_of_method)
+            for (const int other : competing)
                 if (other != one && order(facts.readings[other], facts.readings[one]) == 0)
                     ties.push_back((reading_index)other);
             facts.ties_of_ranked.push_back(std::move(ties));
@@ -721,7 +690,7 @@ struct correspondence_election {
 
 private:
     using matching_placements = vector<array<object_matching::placement_cache, 2>>;
-    // Objects and grid-only scores shared by every permission combination.
+    // Objects and grid-only scores, prepared before the cut is matched.
     struct prepared_segmentation {
         correspondence_election::reading look;
         struct prepared_pair {
@@ -734,33 +703,8 @@ private:
     };
 
     using what_the_pairs_agreed = object_matching::what_the_pairs_agreed;
-    using fit_verdict = object_matching::fit_verdict;
 
-    // WHETHER A MATCH AT ANOTHER SIZE CAN BE FOUND ON A CUT: some piece of one
-    // grid and a piece of the other whose shape at any size is its, grown a
-    // whole number of times either way round -- what gather_matches' Source 3
-    // looks for.
-    static bool any_match_by_size(const prepared_segmentation& prepared) {
-        auto grows_into = [](const object_summary& small, const object_summary& big) {
-            for (const bool turned : { false, true }) {
-                const int wide = turned ? small.height : small.width, tall = turned ? small.width : small.height;
-                if (wide > 0 && big.width % wide == 0 && big.width / wide >= 2 && big.height == tall * (big.width / wide))
-                    return true;
-            }
-            return false;
-        };
-        for (const auto& saved : prepared.pairs) {
-            if (!saved.read) continue;
-            for (const bool from_input : { true, false })
-                for (const auto& one : saved.info.objects_on(from_input))
-                    for (const auto& landing : saved.info.objects_on(!from_input))
-                        if (landing.scaled_shape == one.scaled_shape && grows_into(one.summary, landing.summary))
-                            return true;
-        }
-        return false;
-    }
-
-    // 2. Prepare each segmentation once, before trying its permissions.
+    // 2. Prepare each segmentation once, before matching it.
     static prepared_segmentation prepare_segmentation(const vector<example>& train, segmentation_methods segmentation,
                                                       const tiled_pieces& tiles, const turning_shape& shape) {
         prepared_segmentation prepared;
@@ -815,18 +759,15 @@ private:
 
     // 3. Follow one reading through the examples.
     // One reading: match each example, reconcile their evidence, then describe what survived.
-    static reading detect_correspondence(const vector<example>& train,
-                                                       const prepared_segmentation& prepared,
-                                                       degrees_of_freedom allowed,
-                                                       matching_placements& placements) {
+    static reading detect_correspondence(const vector<example>& train, const prepared_segmentation& prepared) {
         reading facts = prepared.look;
-        facts.allowed = allowed;
         if (train.empty()) return facts;
+        matching_placements placements(train.size());
         for (const auto& pair : prepared.pairs) facts.pairs.push_back(pair.info);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read)
-                match_one_pair(train, prepared, allowed, facts, i, nullptr, placements);
-        reconcile_examples(train, prepared, allowed, facts, placements);
+                match_one_pair(train, prepared, facts, i, nullptr, placements);
+        reconcile_examples(train, prepared, facts, placements);
         for (size_t i = 0; i < train.size(); ++i)
             if (prepared.pairs[i].read) summarize_pair(train, prepared, facts, i);
         add_up_the_pairs(facts);
@@ -854,9 +795,9 @@ private:
         if (!facts.pairs.empty()) facts.describe_cost = shares / facts.pairs.size();
     }
 
-    // Match both directions, merge duplicate links, and record shared movements.
-    static void match_one_pair(const vector<example>& train,
-                               const prepared_segmentation& prepared, degrees_of_freedom allowed,
+    // Match both directions, merge duplicate links, drop what plainer links
+    // say, and record shared movements.
+    static void match_one_pair(const vector<example>& train, const prepared_segmentation& prepared,
                                reading& facts, size_t pair_index,
                                const what_the_pairs_agreed* agreed,
                                matching_placements& placements) {
@@ -871,7 +812,7 @@ private:
         const int step_width = prepared.pairs[pair_index].step_width;
         const int step_height = prepared.pairs[pair_index].step_height;
         pair.edges.clear(); pair.discarded.clear();
-        pair.agreed_moves.clear(); pair.verdict = fit_verdict::fitted;
+        pair.agreed_moves.clear();
         // THE SAME PASS, TWICE, WITH THE SIDES SWAPPED. Nothing below cares
         // which grid it was handed; the side is stamped on the edges afterwards.
         auto read_one_way = [&](bool from_input) {
@@ -882,25 +823,20 @@ private:
             const grid& into = from_input ? output : input;
             vector<edge> edges;
             vector<rejection> discarded;
-            fit_verdict verdict;
             if (facts.segmentation == segmentation_methods::minimal_repeating_set) {
-                verdict = object_matching::collect_representative_edge(from_info, from_objects,
-                    into_info, into, step_width, step_height, edges, allowed);
+                object_matching::collect_representative_edge(from_info, from_objects,
+                    into_info, into, step_width, step_height, edges);
             } else if (pattern_reading) {
-                verdict = object_matching::collect_motif_edges(from_info, from_objects, into_info,
-                                              into, step_width, step_height, edges, allowed);
+                object_matching::collect_motif_edges(from_info, from_objects, into_info,
+                                              into, step_width, step_height, edges);
             } else {
-                verdict = object_matching::collect_edges(from_info, from_objects, into_info,
-                                        into_objects, into, from_input, allowed.hang_off,
-                                        edges, &discarded, allowed, agreed,
+                object_matching::collect_edges(from_info, from_objects, into_info,
+                                        into_objects, into, from_input, edges, &discarded, agreed,
                                         &placements[pair_index][from_input ? 0 : 1]);
                 object_matching::sit_on_top(from_info, from_objects, into_info, into_objects, edges);
             }
             for (auto& edge : edges) edge.from_input = from_input;
             for (auto& rejected : discarded) rejected.match.from_input = from_input;
-            // The weaker of the two readings names the pass: a fit both ways is
-            // a fit, and a giveup anywhere is still a giveup.
-            pair.verdict = max(pair.verdict, verdict);
             pair.edges.insert(pair.edges.end(), edges.begin(), edges.end());
             pair.discarded.insert(pair.discarded.end(), discarded.begin(), discarded.end());
         };
@@ -935,6 +871,7 @@ private:
                 *same = link;
         }
         pair.edges.swap(kept);
+        drop_what_plainer_edges_say(pair, input_objects, output_objects, input, output);
 
         // Sort by source grid, source position, then target position for display.
         stable_sort(pair.edges.begin(), pair.edges.end(), [&](const edge& left, const edge& right) {
@@ -979,8 +916,7 @@ private:
     }
 
     // Let movements supported by all examples constrain ambiguous matches.
-    static void reconcile_examples(const vector<example>& train,
-                                   const prepared_segmentation& prepared, degrees_of_freedom allowed,
+    static void reconcile_examples(const vector<example>& train, const prepared_segmentation& prepared,
                                    reading& facts, matching_placements& placements) {
         // Use a color to constrain matches only when every read pair has one shared,
         // nonzero movement for it. The movement may differ between pairs.
@@ -1022,7 +958,7 @@ private:
                     const object_info* source = pair.source_of(link);
                     return source && object_matching::the_pairs_disagree(agreed[which], link, *source);
                 });
-                if (any_disagrees) match_one_pair(train, prepared, allowed, facts, which, &agreed[which], placements);
+                if (any_disagrees) match_one_pair(train, prepared, facts, which, &agreed[which], placements);
             }
 
     }
@@ -1125,16 +1061,14 @@ private:
         // Find uncovered cells on both grids, counting recolored shape matches as coverage.
         auto unexplained = [&](const grid& one_grid,
                                const vector<edge>& landing_here,
-                               const vector<object>& their_objects,
                                const vector<object>& our_objects,
                                const vector<object_info>& ours,
                                const vector<edge>& leaving_here,
-                               const grid& other_grid,
                                bool from_input) {
-            // Mark cells actually covered by incoming shape matches.
             bool carried[MAX_GRID_DIM][MAX_GRID_DIM] = {};
-            mark_painted(landing_here, their_objects, our_objects, one_grid,
-                         carried, false, true);
+            for (const auto& link : pair.edges)
+                each_cell_carried(link, input_objects, output_objects, input, output,
+                                  [&](bool on_input, int row, int col) { if (on_input == from_input) carried[row][col] = true; });
             // DOES ANYTHING OVER THERE CLAIM TO BE THIS OBJECT — it went
             // somewhere, or something arrived that named it by name.
             vector<bool> has_a_partner(ours.size(), false);
@@ -1144,12 +1078,6 @@ private:
             for (const auto& edge : landing_here)
                 if (edge.to >= 0 && (size_t)edge.to < has_a_partner.size())
                     has_a_partner[edge.to] = true;
-            // Also mark the cells each piece took with it to its landing.
-            for (const auto& edge : leaving_here) {
-                if (edge.from < 0 || (size_t)edge.from >= ours.size()) continue;
-                cells_it_took(edge, our_objects[edge.from], other_grid,
-                              [&](int row, int col) { carried[row][col] = true; });
-            }
             // What every piece holding a cell says of it -- pieces may share a
             // cell: whether one is an instance its matched representative
             // explains, and whether one has a partner.
@@ -1166,10 +1094,8 @@ private:
                                            (int8_t)color });
             });
         };
-        unexplained(output, forward, input_objects, output_objects,
-                    pair.output_info, backward, input, false);
-        unexplained(input, backward, output_objects, input_objects,
-                    pair.input_info, forward, output, true);
+        unexplained(output, forward, output_objects, pair.output_info, backward, false);
+        unexplained(input, backward, input_objects, pair.input_info, forward, true);
 
         // Count output cells covered by exact matches and those left uncovered.
         bool covered[MAX_GRID_DIM][MAX_GRID_DIM] = {};
@@ -1238,6 +1164,18 @@ private:
         });
     }
 
+    // THE CELLS AN EDGE LANDED ON, as far as the grid shows them, handed to
+    // `mark` in grid coordinates.
+    template <class Mark>
+    static void cells_it_landed_on(const edge& link, const vector<object>& from_objects,
+                                   const vector<object>& into_objects, const grid& into, Mark mark) {
+        const grid footprint = object_matching::edge_footprint(link, from_objects, into_objects);
+        for (int row = 0; row < footprint.height; ++row)
+            for (int col = 0; col < footprint.width; ++col)
+                if (object_matching::landing_shows(link, footprint, into, row, col))
+                    mark(link.row + row, link.col + col);
+    }
+
     static void mark_painted(const vector<edge>& edges,
                              const vector<object>& from_objects,
                              const vector<object>& into_objects,
@@ -1248,12 +1186,66 @@ private:
         for (const auto& edge : edges) {
             if (exact_only && !edge.exact) continue;
             if (same_shape_only && !edge.same_shape) continue;
-            const grid footprint = object_matching::edge_footprint(edge, from_objects, into_objects);
-            for (int row = 0; row < footprint.height; ++row)
-                for (int col = 0; col < footprint.width; ++col)
-                    if (object_matching::landing_shows(edge, footprint, into, row, col))
-                        covered[edge.row + row][edge.col + col] = true;
+            cells_it_landed_on(edge, from_objects, into_objects, into, [&](int row, int col) { covered[row][col] = true; });
         }
+    }
+
+    // THE CELLS AN EDGE CARRIES, `visit(on_input, row, col)`: where it landed,
+    // as far as the grid shows it, and the cells it took there (cells_it_took),
+    // what left over counts as carried. One that only sits on a piece carries
+    // none.
+    template <class Visit>
+    static void each_cell_carried(const edge& link, const vector<object>& input_objects,
+                                  const vector<object>& output_objects, const grid& input, const grid& output,
+                                  Visit&& visit) {
+        if (!link.same_shape) return;
+        const auto& from = link.from_input ? input_objects : output_objects;
+        const auto& into = link.from_input ? output_objects : input_objects;
+        const grid& landing = link.from_input ? output : input;
+        cells_it_landed_on(link, from, into, landing, [&](int row, int col) { visit(!link.from_input, row, col); });
+        cells_it_took(link, from[link.from], landing, [&](int row, int col) { visit(link.from_input, row, col); });
+    }
+
+    // AN EDGE SAYS SOMETHING ONLY WHERE NO PLAINER EDGE SAYS IT ALREADY. One
+    // whose every cell an edge spending fewer freedoms (freedom_spent) carries
+    // too is dropped, its cells already explained: 05f2a901's output piece,
+    // found again in the input recolored and turned, says nothing its shape's
+    // move and its block's stay do not. Edges as plain as each other never
+    // drop one another, and one that only sits on a piece carries no cell and
+    // stays.
+    static void drop_what_plainer_edges_say(pair_info& pair, const vector<object>& input_objects,
+                                            const vector<object>& output_objects,
+                                            const grid& input, const grid& output) {
+        auto each_cell = [&](const edge& link, auto&& visit) {
+            each_cell_carried(link, input_objects, output_objects, input, output, visit);
+        };
+        auto spent = [&](size_t at) { return object_matching::freedom_spent(pair.edges[at]); };
+        vector<size_t> plainest_first(pair.edges.size());
+        iota(plainest_first.begin(), plainest_first.end(), size_t{ 0 });
+        ranges::stable_sort(plainest_first, {}, spent);
+        // The cells the plainer edges carry, [true] on the input.
+        bool carried[2][MAX_GRID_DIM][MAX_GRID_DIM] = {};
+        vector<bool> says(pair.edges.size(), true);
+        for (size_t first = 0, last = 0; first < plainest_first.size(); first = last) {
+            while (last < plainest_first.size() && spent(plainest_first[last]) == spent(plainest_first[first])) ++last;
+            for (size_t at = first; at < last; ++at) {
+                const size_t one = plainest_first[at];
+                if (!pair.edges[one].same_shape) continue;
+                bool new_cell = false;
+                each_cell(pair.edges[one], [&](bool on_input, int row, int col) {
+                    new_cell = new_cell || !carried[on_input][row][col]; });
+                says[one] = new_cell;
+            }
+            for (size_t at = first; at < last; ++at)
+                if (says[plainest_first[at]])
+                    each_cell(pair.edges[plainest_first[at]], [&](bool on_input, int row, int col) {
+                        carried[on_input][row][col] = true; });
+        }
+        vector<edge> kept;
+        for (size_t at = 0; at < pair.edges.size(); ++at)
+            if (says[at]) kept.push_back(pair.edges[at]);
+            else pair.discarded.push_back({ pair.edges[at], cells_already_explained });
+        pair.edges.swap(kept);
     }
 
     // 5. What a kept reading's edges were taken to say, rule by rule. An edge
@@ -1265,14 +1257,14 @@ private:
     // of them carried.
     static void list_what_fired(const vector<example>& train,
                                 const prepared_segmentation& prepared, reading& facts) {
-        constexpr int freedoms = degrees_of_freedom::FREEDOMS;
+        constexpr int freedoms = (int)size(freedom_names);
         // As it was, then each freedom in its own place, then the two that are not.
         enum : int { as_it_was, partly_hidden = 1 + freedoms, sitting_on, kinds };
         auto kinds_of = [](const pair_info& pair, const edge& link) {
             if (!link.same_shape) return 1u << sitting_on;
             const object_info* source = pair.source_of(link);
             const auto went = source ? object_matching::move_of(link, *source) : std::pair<int, int>{};
-            // In the order degrees_of_freedom numbers them: move, turn, color, hang off, scale.
+            // In the order freedom_names lists them: move, turn, color, hang off, scale.
             const bool needed[freedoms] = { went.first != 0 || went.second != 0, link.pose != 0,
                                             !link.exact, link.outside > 0, link.scale != 1 };
             unsigned said = link.hidden ? 1u << partly_hidden : 0u;
@@ -1293,17 +1285,12 @@ private:
             vector<vector<bool>> named(kinds, vector<bool>(pair.input_info.size(), false));
             for (const auto& link : pair.edges) {
                 const unsigned said = kinds_of(pair, link);
-                const int from = link.from_input ? 0 : 1, into = 1 - from;
                 const int piece = pair.input_piece_of(link);
                 for (int kind = 0; kind < kinds; ++kind) {
                     if (!(said >> kind & 1)) continue;
                     fired[kind] = true;
-                    // Where it landed, as far as the grid shows it, and the piece it
-                    // left when it went whole -- the two things left over credits.
-                    mark_painted({ link }, *objects[from], *objects[into], *on_grid[into],
-                                 carried[kind][into], false, true);
-                    cells_it_took(link, (*objects[from])[link.from], *on_grid[into],
-                                  [&](int row, int col) { carried[kind][from][row][col] = true; });
+                    each_cell_carried(link, *objects[0], *objects[1], *on_grid[0], *on_grid[1],
+                                      [&](bool on_input, int row, int col) { carried[kind][on_input ? 0 : 1][row][col] = true; });
                     if (piece >= 0 && (size_t)piece < named[kind].size()) named[kind][piece] = true;
                 }
             }
@@ -1315,10 +1302,10 @@ private:
             }
         }
         auto name_of = [](int kind) -> string {
-            if (kind == as_it_was) return degrees_of_freedom::from_index(0).label();
+            if (kind == as_it_was) return "As Is";
             if (kind == partly_hidden) return "Partly Hidden";
             if (kind == sitting_on) return sits_on_name;
-            return degrees_of_freedom::freedom_names[kind - 1];
+            return freedom_names[kind - 1];
         };
         facts.fired.clear();
         facts.line.clear();
@@ -1475,7 +1462,7 @@ private:
             return carried;
         };
 
-        const auto& freedom = degrees_of_freedom::freedom_names;
+        const auto& freedom = freedom_names;
         const int8_t moves = facts.fired_named(freedom[0]), turns = facts.fired_named(freedom[1]),
                      colors = facts.fired_named(freedom[2]);
         auto what_it_did = [](const seen_act& act) -> string {
@@ -1607,8 +1594,7 @@ private:
                 const bool copied = carried && pair.places_went(piece) > 1;
                 const bool went = carried ? moved && !copied : landed_elsewhere;
                 if (!carried) turned = landed_turned;
-                const bool happened[] = { facts.allowed.translate && went, facts.allowed.translate && copied,
-                                          facts.allowed.pose && turned, facts.allowed.scale && scaled };
+                const bool happened[] = { went, copied, turned, scaled };
                 const missing changes[] = { missing::where_it_went, missing::where_it_was_copied,
                                             missing::how_it_turned, missing::how_it_was_scaled };
                 for (const auto& link : pair.edges) {
@@ -1640,8 +1626,8 @@ private:
                 const object_info* source = pair.source_of(link);
                 if (!source || link.from < 0 || (size_t)link.from >= pieces[false]->size()) continue;
                 const auto [down, across] = object_matching::move_of(link, *source);
-                const bool copied = facts.allowed.translate && (down != 0 || across != 0);
-                const bool turned = facts.allowed.pose && link.pose != 0;
+                const bool copied = down != 0 || across != 0;
+                const bool turned = link.pose != 0;
                 if (!copied && !turned) continue;
                 each_end(link, [&](bool from_input, int row, int col, int8_t was, int8_t now) {
                     if (from_input && was != now) return;
