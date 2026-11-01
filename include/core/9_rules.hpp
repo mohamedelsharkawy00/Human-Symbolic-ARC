@@ -155,8 +155,9 @@ struct covered_pattern_rule {
                 } else {
                     const object tile = objects_of(unit, grouping::whole_grid).front();
                     const tile_moves moves = moves_of(tiled_by_its_own_size, { unit.width, unit.height });
-                    const auto [rows, columns] = copy_size(moves, unit.height, unit.width);
-                    each_tile_offset(tiled_by_its_own_size, moves, 0, 0, rows, columns, canvas.width, canvas.height,
+                    const cell_box part = copy_part(moves, unit.height, unit.width);
+                    each_tile_offset(tiled_by_its_own_size, moves, 0, 0, part.height(), part.width(), canvas.width,
+                                     canvas.height,
                         [&](int down, int across) {
                             object copy = tile;
                             copy.row = (int16_t)down; copy.col = (int16_t)across;
@@ -1474,7 +1475,8 @@ struct mark_lattice_rule {
         int first_row = rows, last_row = -1, laid_lines = 0;
         for (const object& mark : marks) {
             const tile_moves spread = moves_of(lines, {});
-            const auto [line_rows, line_columns] = copy_size(spread, tall(mark), wide(mark));
+            const cell_box line = copy_part(spread, tall(mark), wide(mark));
+            const int line_rows = line.height(), line_columns = line.width();
             each_tile_offset(lines, spread, top(mark), left(mark), line_rows, line_columns, across, rows,
                              [&](int, int sideways) {
                 ++laid_lines;
@@ -1494,7 +1496,8 @@ struct mark_lattice_rule {
         const int height = last_row - first_row + 1;
         const tile_moves down = moves_of(lattice, measures_of(lattice, height, across, [&](int row, int col) {
             return picture[first_row + row][col] != TRANSPARENT; }, 0, {}));
-        const auto [copy_rows, copy_columns] = copy_size(down, height, across);
+        const cell_box copy = copy_part(down, height, across);
+        const int copy_rows = copy.height(), copy_columns = copy.width();
         drawn = grid(input.width, input.height);
         auto at = [&](int row, int col) -> int8_t& {
             return turned ? drawn.data[col][row] : drawn.data[row][col];

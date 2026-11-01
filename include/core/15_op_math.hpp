@@ -2288,16 +2288,28 @@ inline tile_moves moves_of(const tile_value& tile, const tile_measures& measures
     return moves;
 }
 
-// HOW MUCH OF A PIECE `height` BY `width` ONE COPY IS: its first rows and
-// columns, as many as the shortest move a step makes that way, where that is
-// shorter than the piece, so no copy lies over the next (5117e062's 3s carried
-// down its columns in its first row's colors). {rows, columns}.
-inline std::pair<int, int> copy_size(const tile_moves& moves, int height, int width) {
+// WHICH PART OF A PIECE `height` BY `width` ONE COPY IS, a box in the piece's
+// own frame: as many of its rows and columns as the shortest move a step makes
+// that way, where that is shorter than the piece, so no copy lies over the next
+// (5117e062's 3s carried down its columns in its first row's colors) -- taken
+// from the side the steps move away from: its first rows where they go down,
+// its last where they go up (12422b43 turned, carried left in its last
+// columns), its first where they go both ways.
+inline cell_box copy_part(const tile_moves& moves, int height, int width) {
+    int rows = height, columns = width;
+    bool up = false, down = false, left = false, right = false;
     for (int which = 0; which < moves.count; ++which) {
-        if (moves.down[which] != 0) height = min(height, abs(moves.down[which]));
-        if (moves.across[which] != 0) width = min(width, abs(moves.across[which]));
+        if (moves.down[which] != 0) {
+            rows = min(rows, abs(moves.down[which]));
+            (moves.down[which] < 0 ? up : down) = true;
+        }
+        if (moves.across[which] != 0) {
+            columns = min(columns, abs(moves.across[which]));
+            (moves.across[which] < 0 ? left : right) = true;
+        }
     }
-    return { height, width };
+    const int row0 = up && !down ? height - rows : 0, col0 = left && !right ? width - columns : 0;
+    return { row0, col0, row0 + rows - 1, col0 + columns - 1 };
 }
 
 // Whole division rounded down, and up, whatever the signs.

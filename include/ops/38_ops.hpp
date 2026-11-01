@@ -1746,8 +1746,9 @@ object_list& op_trim(program_run& run, const object_list& from) {
 // how many colors the picked pieces hold together, and the size of the key,
 // the pieces not picked (measures_of, key_box). A COPY
 // IS A PIECE, keeping the piece's mark, so a row of copies can be picked and
-// turned; want one sheet? Say UnionList after. A copy is one step of the
-// piece where a step is shorter (copy_size). A piece no step moves, and every
+// turned; want one sheet? Say UnionList after. A copy is the part of the
+// piece one step covers where a step is shorter, from the side the steps move
+// away from (copy_part). A piece no step moves, and every
 // piece not picked, rides through as it came; copies past the list's room are
 // dropped, as Split[2] drops cells past it.
 object_list& op_tile(program_run& run, const object_list& from, const tile_value& tile) {
@@ -1769,17 +1770,13 @@ object_list& op_tile(program_run& run, const object_list& from, const tile_value
             res.objects[res.count++] = source;
             continue;
         }
-        const auto [rows, columns] = copy_size(moves, source.height, source.width);
-        each_tile_offset(tile, moves, source.row, source.col, rows, columns, run.canvas.width, run.canvas.height,
+        const held_object part = cut_to(source, copy_part(moves, source.height, source.width));
+        each_tile_offset(tile, moves, part.row, part.col, part.height, part.width, run.canvas.width, run.canvas.height,
             [&](int down, int across) {
                 if (res.count >= MAX_OBJECTS_IN_A_LIST) return false;
-                held_object& copy = res.objects[res.count++] = source;
-                copy.row = (int16_t)(source.row + down);
-                copy.col = (int16_t)(source.col + across);
-                copy.height = (int16_t)rows;
-                copy.width = (int16_t)columns;
-                for (int at = 0; at < MAX_GRID_CELLS; ++at)
-                    if (cell_row(at) >= rows || cell_col(at) >= columns) copy.data.values[at] = TRANSPARENT;
+                held_object& copy = res.objects[res.count++] = part;
+                copy.row = (int16_t)(part.row + down);
+                copy.col = (int16_t)(part.col + across);
                 return true;
             });
     }

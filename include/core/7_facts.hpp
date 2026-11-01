@@ -691,30 +691,32 @@ static_assert(row_of(node_type::Fit).high + 1 == (int)fit_to::count,
 // ONE FIGURE LAID AGAIN WHERE A Tile LAYS IT (each_tile_offset, 15_op_math.hpp,
 // the arithmetic the op runs): `height` by `width`, color_at(row, col) its
 // cells from its box's corner, the corner at (top, left), each step measured
-// off it in a hand of `colors` colors and the key `key`, a copy one step of it
-// where a step is shorter (copy_size), and laid where it lies when no step
-// moves it. Each cell that lands on `output` handed to put(row, col, color),
-// and each copy, before it is laid, to slot(), false where the op's list has
-// no room for it. False where either refused.
+// off it in a hand of `colors` colors and the key `key`, a copy the part of it
+// one step covers where a step is shorter (copy_part), and laid where it lies
+// when no step moves it. Each cell that lands on `output` handed to put(row,
+// col, color), and each copy, before it is laid, to slot(), false where the
+// op's list has no room for it. False where either refused.
 template <class ColorAt, class Slot, class Put>
 inline bool lay_tiled(const tile_value& tile, int height, int width, ColorAt color_at, int top, int left,
                       int colors, const cell_box& key, const grid& output, Slot slot, Put&& put) {
     const tile_moves moves = moves_of(tile, measures_of(tile, height, width, [&](int row, int col) {
         return color_at(row, col) != (int8_t)TRANSPARENT; }, colors, key));
-    const auto [rows, columns] = copy_size(moves, height, width);
+    const cell_box part = copy_part(moves, height, width);
+    const int part_top = top + part.row0, part_left = left + part.col0;
     bool laid = true;
     auto lay_copy = [&](int down, int across) {
         if (!slot()) return laid = false;
-        for (int row = 0; row < rows && laid; ++row)
-            for (int col = 0; col < columns && laid; ++col) {
-                const int8_t color = color_at(row, col);
-                const int at_row = top + down + row, at_col = left + across + col;
+        for (int row = 0; row < part.height() && laid; ++row)
+            for (int col = 0; col < part.width() && laid; ++col) {
+                const int8_t color = color_at(part.row0 + row, part.col0 + col);
+                const int at_row = part_top + down + row, at_col = part_left + across + col;
                 if (color != (int8_t)TRANSPARENT && output.contains(at_row, at_col)) laid = put(at_row, at_col, color);
             }
         return laid;
     };
     if (moves.count == 0) lay_copy(0, 0);
-    else each_tile_offset(tile, moves, top, left, rows, columns, output.width, output.height, lay_copy);
+    else each_tile_offset(tile, moves, part_top, part_left, part.height(), part.width(), output.width, output.height,
+                          lay_copy);
     return laid;
 }
 
