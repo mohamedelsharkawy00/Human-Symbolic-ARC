@@ -127,6 +127,7 @@ namespace arc {
 			for (const tile_bound& bound : { tile.start, tile.end }) {
 				h = hash_fold(h, (uint64_t)bound.edge);
 				h = hash_fold(h, (uint64_t)(uint8_t)bound.steps);
+				h = hash_fold(h, (uint64_t)bound.far);
 			}
 			return hash_fold(h, (uint64_t)tile.spread);
 		}

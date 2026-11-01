@@ -300,7 +300,9 @@ inline void report_periodic_denoise(ostream& report, const periodic_denoise_rule
 
 // Whether the pieces were laid out as one corner chain, each hung off the last.
 inline void report_overlap_corner(ostream& report, const overlap_corner_rule& chain) {
-    report << "[overlap_corner] holds " << chain.holds() << "\n\n";
+    report << "[overlap_corner] holds " << chain.holds();
+    if (chain.holds()) report << "  " << value_written(node_type::OverlapCorner, chain.pose);
+    report << "\n\n";
 }
 
 // Which colour stayed put and which slid up against it.

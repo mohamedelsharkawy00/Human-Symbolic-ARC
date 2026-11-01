@@ -1184,33 +1184,30 @@ object_list& op_shape_to_interior_color_map(program_run& run, const object_list&
 
 // --- Map, by where pieces sit ---
 
-// OverlapCorner: lay the objects out as a diagonal corner-chain. Objects are
-// ordered left-to-right (by column, ties by row); the first is placed with its
-// top-left at the canvas origin (0,0); each later object's top-left cell is
-// set to the previous object's bottom-right cell -- a 1-pixel corner overlap.
-// Only positions change (cells and colors untouched); the trailing Union resolves
-// the shared corner -- the later (further-down-chain) object wins, as Union
-// lays a later object over an earlier.
+// OverlapCorner [pose]: lay the objects out as a diagonal corner-chain, as the
+// canvas seen in that pose lays it plainly (each_corner_link): there the
+// objects are ordered left-to-right (by column, ties by row); the first is
+// placed with its top-left at the canvas origin (0,0); each later object's
+// top-left cell is set to the previous object's bottom-right cell -- a 1-pixel
+// corner overlap. Pose 0 is that chain itself, from the top left by columns.
+// Only positions change (cells and colors untouched); the trailing Union
+// resolves the shared corner -- the later (further-down-chain) object wins, as
+// Union lays a later object over an earlier.
 //
-// GENERAL FORM (not built; promote when a puzzle needs it). This is the
-// sequential / corner / overlap generalization of AlignToCanvas, which is the
-// batch / edge-flush / gap-0 corner of the same space:
+// This is the sequential / corner / overlap generalization of AlignToCanvas,
+// which is the batch / edge-flush / gap-0 corner of the same space:
 //     placement: batch (fixed canvas)   ->  sequential (running canvas)
 //     anchor:    edge-flush             ->  corner-to-corner
 //     offset:    gap = 0                ->  stride = 1 (overlap)
-// Two future annotations, both output-determined:
-//   * direction: the 4 diagonals {DR,DL,UR,UL}. Fixed DR (down-right) here --
-//     the only verified case. Add as [dir]; do NOT try to reach the other three
-//     via Flip*/Turn* composition, which needs an un-flip pass to undo the mirror.
-//   * stride: the per-step diagonal offset (overlap 1 today; 0 = corner-touch,
-//     >0 = gap). Inseparable from this op -- it's the cascade's step, not a
-//     downstream op, because it compounds with chain index (object i shifts i*).
-object_list& op_overlap_corner(program_run& run, const object_list& from) {
+// Not built: the stride, the per-step diagonal offset (overlap 1 today; 0 =
+// corner-touch, >0 = gap). Inseparable from this op -- it's the cascade's step,
+// not a downstream op, because it compounds with chain index (object i shifts i*).
+object_list& op_overlap_corner(program_run& run, const object_list& from, int8_t pose) {
     object_list& res = run.fresh();
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
     if (count <= 0) { copy_list(res, from); return res; }
     // The chain as each_corner_link lays it, the reading's replay the same.
-    each_corner_link(count, [&](int i) {
+    each_corner_link(count, pose, run.canvas.width, run.canvas.height, [&](int i) {
         const held_object& one = from.objects[i];
         return cell_box{ one.row, one.col, one.row + one.height - 1, one.col + one.width - 1 };
     }, [&](int i, int row, int col) {
@@ -2406,7 +2403,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::Layout:                  return op_layout(run, in, value);
     case node_type::Origin:                  return op_origin(run, in);
     case node_type::AlignToCanvas:           return op_align_to_canvas(run, in);
-    case node_type::OverlapCorner:           return op_overlap_corner(run, in);
+    case node_type::OverlapCorner:           return op_overlap_corner(run, in, value);
     case node_type::SnapToAnchors:           return op_snap_to_anchors(run, in);
     case node_type::ShapeColorMap:           return op_shape_color_map(run, in, value);
     case node_type::ExtendOrthogonal:        return op_extend_rays(run, in, value, false);

@@ -1235,11 +1235,12 @@ inline bool say_the_cut(const inference& inf, said_reading& said) {
         return spoken();
     }
 
-    // PIECES LAID INTO A CORNER CHAIN, each hung off the last one's bottom-right
-    // cell. Like the slam, the layout drew every output by itself, so it is the
-    // whole of what happened and the acts below have nothing left to explain.
+    // PIECES LAID INTO A CORNER CHAIN, each hung off the last one's corner, in
+    // the pose the pairs read. Like the slam, the layout drew every output by
+    // itself, so it is the whole of what happened and the acts below have
+    // nothing left to explain.
     if (whole == said_as::corner_chain) {
-        say("OverlapCorner");
+        say(spell("OverlapCorner", inf.overlap_corner.pose));
         return spoken();
     }
 

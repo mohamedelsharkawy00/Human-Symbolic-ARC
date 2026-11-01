@@ -831,12 +831,52 @@ struct snap_to_anchors_rule {
 // a chain that does not come out cell for cell is not what happened.
 struct overlap_corner_rule {
     bool held = false;
+    // The pose the chain is laid in (each_corner_link): its corner and order.
+    int8_t pose = 0;
     bool holds() const { return held; }
 
-    // Lays every input's pieces into the chain and keeps the claim only if that
-    // drew each output on the nose.
+    // THE POSE, READ OFF THE PAIRS, never tried: the one corner of every output
+    // the chain starts in, and the line the input's pieces stand in -- their
+    // columns apart, a row taken by columns; their rows apart, a column taken by
+    // rows -- the same in every pair. -1 where a pair leaves either open.
+    static int8_t pose_read(const vector<example>& train, const vector<figure_pair>& pairs,
+                            const vector<vector<object>>& pieces) {
+        int corner = -1;
+        bool by_columns = true, by_rows = true;
+        for (size_t which = 0; which < train.size(); ++which) {
+            const grid& output = train[which].output;
+            int here = -1, corners = 0;
+            for (const int bottom : { 0, 1 })
+                for (const int right : { 0, 1 })
+                    if (pairs[which].output_figures.has(bottom ? output.height - 1 : 0, right ? output.width - 1 : 0)) {
+                        here = (bottom ? 2 : 0) | (right ? 4 : 0);
+                        ++corners;
+                    }
+            if (corners != 1 || (corner >= 0 && here != corner)) return -1;
+            corner = here;
+            auto apart = [&](bool rows) {
+                const vector<object>& cut = pieces[which];
+                for (size_t i = 0; i < cut.size(); ++i)
+                    for (size_t j = i + 1; j < cut.size(); ++j) {
+                        const cell_box one = cut[i].box(), other = cut[j].box();
+                        const bool meet = rows ? one.row0 <= other.row1 && other.row0 <= one.row1
+                                               : one.col0 <= other.col1 && other.col0 <= one.col1;
+                        if (meet) return false;
+                    }
+                return true;
+            };
+            by_columns = by_columns && apart(false);
+            by_rows = by_rows && apart(true);
+        }
+        if (by_columns == by_rows) return -1;
+        return (int8_t)(corner | (by_rows ? 1 : 0));
+    }
+
+    // Lays every input's pieces into the chain the pairs name and keeps the
+    // claim only if that drew each output on the nose.
     static overlap_corner_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
-                                      const correspondence_election& correspondence, const tiled_pieces& tiles) {
+                                      const correspondence_election& correspondence, const tiled_pieces& tiles,
+                                      const output_dimension_rule& size) {
         // Each piece is hung off the last one's box, so the pieces have to be
         // measured in their own, and the cells no piece reaches are ground.
         if (!boxed_by_its_cells(correspondence.segmentation) ||
@@ -844,31 +884,44 @@ struct overlap_corner_rule {
         // OverlapCorner lays out as many objects as one list holds; a chain this
         // detector verified past that point is one the op would not draw.
         constexpr size_t most_the_op_lays_out = MAX_OBJECTS_IN_A_LIST;
-        bool laid_any_piece_somewhere_new = false;
-        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
-            const auto pieces = pieces_of(pair.input, correspondence.segmentation, tiles.of(pair));
+        vector<vector<object>> pieces;
+        for (const example& pair : train) {
+            pieces.push_back(pieces_of(pair.input, correspondence.segmentation, tiles.of(pair)));
             // One piece put in the corner says nothing about chaining.
-            if (pieces.size() < 2 || pieces.size() > most_the_op_lays_out) return false;
-            // Tied corners leave the order to the op's list, which we can't see.
-            for (size_t i = 0; i < pieces.size(); ++i)
-                for (size_t j = i + 1; j < pieces.size(); ++j)
-                    if (same_corner(pieces[i], pieces[j])) return false;
-            // The chain as the op lays it (each_corner_link), each piece painted
-            // over the last, which is the paint order the closing Union gives them.
-            drawn = grid(pair.output.width, pair.output.height);
-            bool laid = true;
-            each_corner_link((int)pieces.size(), [&](int i) { return pieces[(size_t)i].box(); },
-                             [&](int i, int row, int col) {
-                const object& piece = pieces[(size_t)i];
-                laid = paint_piece(drawn, piece, row, col);
-                laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
-                    col != piece.col || row != piece.row;
+            if (pieces.back().size() < 2 || pieces.back().size() > most_the_op_lays_out) return {};
+        }
+        const int8_t pose = pose_read(train, pairs, pieces);
+        if (pose < 0) return {};
+        bool laid_any_piece_somewhere_new = false;
+        size_t which = 0;
+        const bool redraws = redraws_every_output(train, pairs, [&](const example& pair, grid& drawn) {
+            const vector<object>& cut = pieces[which++];
+            return draw_on_canvas(pair.input, size, drawn, [&](grid& canvas) {
+                // Tied corners, as the pose sees them, leave the order to the
+                // op's list, which we can't see.
+                for (size_t i = 0; i < cut.size(); ++i)
+                    for (size_t j = i + 1; j < cut.size(); ++j) {
+                        const cell_box one = posed_box(pose, canvas.width, canvas.height, cut[i].box());
+                        const cell_box other = posed_box(pose, canvas.width, canvas.height, cut[j].box());
+                        if (one.row0 == other.row0 && one.col0 == other.col0) return false;
+                    }
+                // The chain as the op lays it (each_corner_link), each piece
+                // painted over the last, which is the paint order the closing
+                // Union gives them.
+                bool laid = true;
+                each_corner_link((int)cut.size(), pose, canvas.width, canvas.height,
+                                 [&](int i) { return cut[(size_t)i].box(); }, [&](int i, int row, int col) {
+                    const object& piece = cut[(size_t)i];
+                    laid = paint_piece(canvas, piece, row, col);
+                    laid_any_piece_somewhere_new = laid_any_piece_somewhere_new ||
+                        col != piece.col || row != piece.row;
+                    return laid;
+                });
                 return laid;
             });
-            return laid;
         });
         // Pieces already sitting in the chain were never laid into one.
-        return { redraws && laid_any_piece_somewhere_new };
+        return { redraws && laid_any_piece_somewhere_new, pose };
     }
 };
 
@@ -1360,15 +1413,17 @@ struct bridge_rule {
     }
 };
 
-// THE MARKS AS LINES, REPEATED DOWN THE GRID. Every mark becomes a line
-// across the grid, and the lines together come round again, the same gap
-// after them as between them, to the far edge. That is two Tiles: `lines`,
-// which lays a mark's first column across the grid, then, the lines made one
-// drawing, `lattice`, which lays it down by its own height and its gap; with
-// NormalizeOrientation[0] in front, a pair lying on its side is read turned,
-// so its lines cross the short way. Only held when replaying those operators
-// redraws every output exactly, which is what makes the lattice a rule read
-// off each input rather than rows remembered from the pairs.
+// THE MARKS AS LINES, REPEATED INTO THE ROOM THE GRID LEAVES. Every mark
+// becomes a line across the grid, and the lines together come round again, the
+// same gap after them as between them, to the far edge. That is two Tiles:
+// `lines`, which lays a mark's first column across the grid, then, the lines
+// made one drawing, `lattice`, which lays it on by its own height and its gap
+// toward whichever edge lies farther, down or up as each input has it
+// (0a938d79 turned, pair by pair); with NormalizeOrientation[0] in front, a
+// pair lying on its side is read turned, so its lines cross the short way.
+// Only held when replaying those operators redraws every output exactly,
+// which is what makes the lattice a rule read off each input rather than rows
+// remembered from the pairs.
 //
 // THE CUT IS THE ELECTED ONE WHEN IT CAN SAY THIS, and otherwise the first
 // that can, as for the bridge: a mark is whatever the cut's operator hands
@@ -1390,13 +1445,14 @@ struct mark_lattice_rule {
 
     // The Tiles that say it: each mark's first column laid across the grid
     // both ways, a step at a time; then those lines, made one drawing
-    // (UnionList), laid down from where it stands onward, by its own height and
-    // the gap between its lines -- the whole thing again, its gap after it.
+    // (UnionList), laid again from where it stands, by its own height and the
+    // gap between its lines -- the whole thing again, its gap after it -- into
+    // the room the grid leaves it, as far as the far edge.
     static constexpr tile_value lines{ .steps = { { .down = { 0 }, .across = { 1 } } },
                                        .start = { .edge = true }, .end = { .edge = true }, .spread = tile_spread::lines };
     static constexpr tile_value lattice{
         .steps = { { .down = measured(tile_measure::own_height, tile_measure::row_gap), .across = { 0 } } },
-        .start = {}, .end = { .edge = true }, .spread = tile_spread::lines };
+        .start = {}, .end = { .edge = true, .far = true }, .spread = tile_spread::lines };
 
     // What the operators draw on one input: the cut's marks, trimmed and read
     // the way the pair is turned, each laid as its line, the lines laid again
@@ -1444,10 +1500,12 @@ struct mark_lattice_rule {
             return turned ? drawn.data[col][row] : drawn.data[row][col];
         };
         each_tile_offset(lattice, down, first_row, 0, copy_rows, copy_columns, across, rows, [&](int lower, int) {
-            for (int row = 0; row < copy_rows && first_row + lower + row < rows; ++row)
+            for (int row = 0; row < copy_rows; ++row) {
+                const int at_row = first_row + lower + row;
+                if (at_row < 0 || at_row >= rows) continue;
                 for (int col = 0; col < copy_columns; ++col)
-                    if (const int8_t color = picture[first_row + row][col]; color != TRANSPARENT)
-                        at(first_row + lower + row, col) = color;
+                    if (const int8_t color = picture[first_row + row][col]; color != TRANSPARENT) at(at_row, col) = color;
+            }
             return true;
         });
         return true;

@@ -154,10 +154,16 @@ constexpr tile_number measured(tile_measure first, tile_measure second = tile_me
 }
 
 // WHERE THE COPIES BEGIN OR END: so many steps from the piece -- the piece
-// itself 0, behind it negative -- or as far as the grid goes.
+// itself 0, behind it negative -- or as far as the grid goes. An end at the
+// FAR edge goes as far as the grid goes on whichever side of the piece it goes
+// farther, the start counted that way from the piece, and both ways where the
+// two sides hold as many copies: the lines come round into the room the grid
+// leaves them (0a938d79's marks, near the top or the bottom, the left or the
+// right, pair by pair).
 struct tile_bound {
     bool edge = false;
     int8_t steps = 0;
+    bool far = false;
     bool operator==(const tile_bound&) const = default;
 };
 
@@ -189,7 +195,9 @@ inline std::string number_written(const tile_number& number) {
 }
 
 inline std::string tile_written(const tile_value& tile) {
-    auto bound = [](const tile_bound& at) { return at.edge ? std::string("grid edge") : std::to_string(at.steps); };
+    auto bound = [](const tile_bound& at) {
+        return at.edge ? std::string(at.far ? "far edge" : "grid edge") : std::to_string(at.steps);
+    };
     std::string written = std::string(tile_slot_names[0]) + ":";
     for (const tile_value::step& step : tile.steps)
         written += " (" + number_written(step.down) + "," + number_written(step.across) + ")";
@@ -268,6 +276,7 @@ inline std::optional<tile_value> tile_read(std::string_view text) {
     if (!steps.empty()) return std::nullopt;
     auto bound = [](std::string_view written) -> std::optional<tile_bound> {
         if (written == "grid edge") return tile_bound{ true };
+        if (written == "far edge") return tile_bound{ true, 0, true };
         const auto steps = count_read(written);
         if (!steps) return std::nullopt;
         return tile_bound{ false, (int8_t)*steps };
@@ -477,7 +486,7 @@ enum class inferred_amount { none, some, all };
   /* Colors extracts the palette as objects — a producing act, not a source. */  \
   X(Colors                      , 0                 , 0                        , map      , none, true )        \
   X(Trim                        , 0                 , 0                        , reduce   , none, false)        \
-  X(OverlapCorner               , 0                 , 0                        , map      , none, false)        \
+  X(OverlapCorner               , 0                 , 7                        , map      , none, false)        \
   X(Underlay                    , 0                 , 0                        , combine  , none, false)        \
   /* Withhold closes the beat without painting, so a sentence that only sets  */ \
   /* up the hand is sayable and does not read as damage to the canvas.        */ \
@@ -706,7 +715,7 @@ inline constexpr bool said_by_name(node_type t) {
     case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
     case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
     case node_type::SelectAtLeast: case node_type::FitInto: case node_type::ShapeFrom:
-    case node_type::Pattern: case node_type::MaskBy: case node_type::MaskOut:
+    case node_type::Pattern: case node_type::MaskBy: case node_type::MaskOut: case node_type::OverlapCorner:
         return true;
     default: return false;
     }
@@ -723,6 +732,10 @@ inline std::string value_written(node_type t, int value) {
     auto kind = [&](int at) { return at < ways ? way(at) : "the piece of color " + std::to_string(at - ways); };
     switch (t) {
     case node_type::Pattern: return value == 0 ? "exact" : "visible";
+    // The chain's pose (1_readings): its corner, then the order the pieces go in.
+    case node_type::OverlapCorner:
+        return std::string("from the ") + (value & 2 ? "bottom" : "top") + (value & 4 ? " right" : " left") +
+               (value & 1 ? ", by rows" : ", by columns");
     case node_type::MaskBy: case node_type::MaskOut:
         return value <= COLOR_COUNT ? std::to_string(value) : "rectangles of color " + std::to_string(value - COLOR_COUNT - 1);
     case node_type::ColorFrom:

@@ -1132,30 +1132,37 @@ inline std::pair<int, int> shift_to_touch(const cell_box& moving,
 // MAP · Recolor and AddColor, ShapeColorMap, BidiColorMap, ColorFrom and
 // ShapeFrom, VoteDenoise, SnapToAnchors, ProjectOnSeeds, OverlapCorner
 
-// THE CORNER CHAIN OverlapCorner lays: the pieces in the order of their boxes'
-// left columns, top rows on a tie, the first with its top-left at the grid's
-// corner and each next with its top-left on the last one's bottom-right cell.
-// `box(i)` is piece i's box; `lay(i, row, col)` takes each in chain order with
-// its new top-left, and answers whether to go on.
+// THE CORNER CHAIN OverlapCorner lays, as the canvas seen in `pose` (the eight
+// ways round, 1_readings) lays it plainly: there the pieces in the order of
+// their boxes' left columns, top rows on a tie, the first with its top-left at
+// the corner and each next with its top-left on the last one's bottom-right
+// cell. So pose 0 chains from the top left by columns, a flip left to right
+// from the top right, a quarter turn right from the top right by rows
+// (03560426 turned). `box(i)` is piece i's box on a canvas `width` by `height`;
+// `lay(i, row, col)` takes each in chain order with its new top-left on the
+// canvas, and answers whether to go on.
 template <class Box, class Lay>
-inline void each_corner_link(int count, Box box, Lay lay) {
+inline void each_corner_link(int count, int pose, int width, int height, Box box, Lay lay) {
     count = std::min(count, MAX_GRID_CELLS);
+    auto posed = [&](int i) { return posed_box(pose, width, height, box(i)); };
     int order[MAX_GRID_CELLS];
     for (int i = 0; i < count; ++i) order[i] = i;
     for (int i = 0; i < count; ++i) {
         int best = i;
         for (int j = i + 1; j < count; ++j) {
-            const cell_box one = box(order[j]), other = box(order[best]);
+            const cell_box one = posed(order[j]), other = posed(order[best]);
             if (one.col0 < other.col0 || (one.col0 == other.col0 && one.row0 < other.row0)) best = j;
         }
         std::swap(order[i], order[best]);
     }
     int row = 0, col = 0;
     for (int k = 0; k < count; ++k) {
-        const cell_box at = box(order[k]);
-        if (!lay(order[k], row, col)) return;
-        row += at.height() - 1;
-        col += at.width() - 1;
+        const cell_box at = posed(order[k]);
+        const int last_row = row + at.height() - 1, last_col = col + at.width() - 1;
+        const cell_box laid = posed_box(pose, width, height, { row, col, last_row, last_col }, true);
+        if (!lay(order[k], laid.row0, laid.col0)) return;
+        row = last_row;
+        col = last_col;
     }
 }
 
@@ -2300,8 +2307,9 @@ constexpr int ceil_div(int a, int b) { return -floor_div(-a, b); }
 // WHERE A Tile LAYS ITS COPIES of one piece -- `rows` by `columns` of it, its
 // top-left at (top, left) -- each offset handed once to visit(down, across),
 // which says false to stop: every copy from `start` steps to `end`, as far as
-// the grid goes where either says the edge, that still shows on a canvas
-// `width` by `height`. Counted from where the piece stands, so a piece off the
+// the grid goes where either says the edge -- an end at the far edge the way
+// more copies show (tile_bound) -- that still shows on a canvas `width` by
+// `height`. Counted from where the piece stands, so a piece off the
 // canvas's own count is laid where it lies (4f537728's marker at column 11,
 // three apart). In lines each step is taken from the piece alone, step by step,
 // each count of it in order; in a grid every copy takes every step again, the
@@ -2324,13 +2332,27 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
         }
         return visit(down, across);
     };
+    // The counts of a step taken, of those from `least` to `most` that show:
+    // from start to end, or, the end at the far edge, from start the way more
+    // of them show, both ways where as many show each way. One or two runs.
+    auto counted = [&](int least, int most) {
+        std::array<std::pair<int, int>, 2> runs{ { { 1, 0 }, { 1, 0 } } };
+        if (!tile.end.far) {
+            runs[0] = { max(least, start), min(most, end) };
+            return runs;
+        }
+        const int ahead = max(most, 0), behind = max(-least, 0);
+        if (ahead >= behind) runs[0] = { max(least, start), most };
+        if (behind >= ahead) runs[1] = { least, min(most, -start) };
+        return runs;
+    };
     // Two steps along one line make no grid -- a single step says what they
     // lay -- so they are taken one at a time, as lines are.
     const int det = moves.count < 2 ? 0 : moves.down[0] * moves.across[1] - moves.down[1] * moves.across[0];
     if (tile.spread == tile_spread::lines || det == 0) {
         for (int which = 0; which < moves.count; ++which) {
-            // The counts of this step whose copy can show, within start and end.
-            int least = start, most = end;
+            // The counts of this step whose copy can show.
+            int least = -edge, most = edge;
             auto within = [&](int low, int high, int move) {
                 if (move == 0) return;
                 if (move < 0) {
@@ -2344,8 +2366,9 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
             };
             within(down_low, down_high, moves.down[which]);
             within(across_low, across_high, moves.across[which]);
-            for (int steps = least; steps <= most; ++steps)
-                if (!lay(steps * moves.down[which], steps * moves.across[which])) return;
+            for (const auto& [first, last] : counted(least, most))
+                for (int steps = first; steps <= last; ++steps)
+                    if (!lay(steps * moves.down[which], steps * moves.across[which])) return;
         }
         return;
     }
@@ -2361,10 +2384,14 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
             least[1] = min(least[1], floor_div(second, det));
             most[1] = max(most[1], ceil_div(second, det));
         }
-    for (int first = max(least[0], start); first <= min(most[0], end); ++first)
-        for (int second = max(least[1], start); second <= min(most[1], end); ++second)
-            if (!lay(first * moves.down[0] + second * moves.down[1], first * moves.across[0] + second * moves.across[1]))
-                return;
+    const auto firsts = counted(least[0], most[0]), seconds = counted(least[1], most[1]);
+    for (const auto& [first_low, first_high] : firsts)
+        for (int first = first_low; first <= first_high; ++first)
+            for (const auto& [second_low, second_high] : seconds)
+                for (int second = second_low; second <= second_high; ++second)
+                    if (!lay(first * moves.down[0] + second * moves.down[1],
+                             first * moves.across[0] + second * moves.across[1]))
+                        return;
 }
 
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,

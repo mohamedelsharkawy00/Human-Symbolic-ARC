@@ -555,6 +555,19 @@ inline pair<int, int> posed_place(int pose, int width, int height,
     return (pose & 1) ? pair<int, int>{ across, down } : pair<int, int>{ down, across };
 }
 
+// Where a box of the ORIGINAL lands once posed, its corners carried by
+// posed_place -- or, `back`, which box of the original a posed box is.
+inline cell_box posed_box(int pose, int width, int height, const cell_box& box, bool back = false) {
+    cell_box moved;
+    for (const int row : { box.row0, box.row1 })
+        for (const int col : { box.col0, box.col1 }) {
+            const auto [down, across] = back ? pose_source(pose, width, height, row, col)
+                                             : posed_place(pose, width, height, row, col);
+            moved.include_cell(down, across);
+        }
+    return moved;
+}
+
 // THE EIGHT POSES IN THE ORDER A SHAPE ASKS THEM, turns before flips and
 // rights before lefts: as it lies, a quarter turn right, a half turn, a
 // quarter turn left, then flipped left to right, top to bottom, and across
