@@ -23,10 +23,12 @@
 //      the wrong count not up) and the readouts' fully-explained-but-unsolved
 //      list.
 // Read what earlier paints left on the canvas, so they wait on composition:
-//   Output, ReadUnder, Intersection, Difference (only the input-blocks and pane
-//   rules spell it), AlignToCanvas (only slide-to-touch does). MaskBy and
-//   MaskOut are said only after a paint -- rays, trails, copies, repeats --
-//   laid only onto what is down (MaskBy[10]), or onto or off one color of it.
+//   Output, ReadUnder, Intersection (only the covered-pattern rule spells it),
+//   Difference (only the input-blocks and pane rules spell it), AlignToCanvas
+//   (only slide-to-touch does). MaskBy and MaskOut are said only after a paint
+//   -- rays, trails, copies, repeats -- laid only onto what is down
+//   (MaskBy[10]), or onto or off one color of it; and by the covered-pattern
+//   rule, off one color's solid blocks.
 // IntersectionList: the cells two or more picked pieces hold, where they lie;
 //   said by the pane rules, and after rays grown to the edge, or growths
 //   overrun, where they meet (crossing_walk).
@@ -397,7 +399,8 @@ constexpr int PARTNER_SIDES = 9, SELECT_PARTNER_VALUES = PARTNER_SIDES * (int)pa
 constexpr partner_by partner_way_of(int value) { return (partner_by)(value % (int)partner_by::count); }
 // The direction a SelectPartner value names: -1 for any direction.
 constexpr int partner_direction_of(int value) { return value / (int)partner_by::count - 1; }
-constexpr int MIRRORS = 4, MIRROR_PARTNERS = (int)partner_by::count + 1;
+constexpr int MIRROR_PATTERN = (int)partner_by::count + 1;
+constexpr int MIRRORS = 7, MIRROR_PARTNERS = MIRROR_PATTERN + 1;
 constexpr int TOWARD_FARS = 3;
 constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
 
@@ -407,7 +410,7 @@ constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = 
 inline constexpr const char* const direction_names[] = { "up", "up-right", "right", "down-right",
                                                          "down", "down-left", "left", "up-left" };
 inline constexpr const char* const mirror_names[] = { "left to right around", "top to bottom around",
-                                                      "all four ways around", "across" };
+    "all four ways around", "across", "diagonally down right around", "diagonally up right around", "all eight ways around" };
 inline constexpr const char* const toward_names[] = { "one step", "its own size", "until it touches" };
 inline constexpr const char* const bridge_reach_names[BRIDGE_WAYS] = {
     "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
@@ -487,7 +490,7 @@ enum class inferred_amount { none, some, all };
   X(AlignToCanvas               , 0                 , 0                        , translate, none, false)        \
   X(IntersectionList            , 0                 , 0                        , reduce   , none, false)        \
   X(SizeRankColorMap            , 0                 , 0                        , map      , all , false)        \
-  X(Pattern                     , 0                 , 0                        , generate , none, false)        \
+  X(Pattern                     , 0                 , 1                        , generate , none, false)        \
   X(ProjectOnSeeds              , 0                 , 0                        , map      , some, false)        \
   X(Partition                   , 0                 , 0                        , generate , none, true )        \
   X(RestoreOrientation          , 0                 , 0                        , translate, none, false)        \
@@ -562,8 +565,8 @@ enum class inferred_amount { none, some, all };
   X(SelectLargestObject         , 0                 , arc::SIZE_RANKS + (int)arc::count_kind::count - 1, select, none, false) \
   X(SelectSmallestObject        , 0                 , arc::SIZE_RANKS + (int)arc::count_kind::count - 1, select, none, false) \
   X(AddColor                    , 0                 , 11                       , generate , none, false)        \
-  X(MaskBy                      , 0                 , 10                       , map      , none, false)        \
-  X(MaskOut                     , 0                 , 10                       , map      , none, false)        \
+  X(MaskBy                      , 0                 , 2 * arc::COLOR_COUNT     , map      , none, false)        \
+  X(MaskOut                     , 0                 , 2 * arc::COLOR_COUNT     , map      , none, false)        \
   /* Layout[0] reads its cell size off the pieces instead of being told it. */  \
   X(Layout                      , 0                 , 10                       , translate, none, false)        \
   X(InteriorColor               , -1                , arc::COLOR_COUNT - 1     , map      , none, false)        \
@@ -572,8 +575,8 @@ enum class inferred_amount { none, some, all };
   /* each by every way partner_by finds one.                                   */ \
   X(AlignTo                     , 0                 , 2 * (int)arc::partner_by::count - 1, translate, none, false) \
   /* Each picked piece drawn again mirrored around its partner's middle or the */ \
-  /* grid's: left to right, top to bottom, all four ways, or across the        */ \
-  /* partner, the one way it runs, by mirror_by.                               */ \
+  /* grid's or the pattern's: straight or diagonal mirrors, their combinations, */ \
+  /* or across the partner, the one way it runs, by mirror_by.                 */ \
   X(MirrorAround                , 0                 , arc::MIRRORS * arc::MIRROR_PARTNERS - 1, generate, none, false) \
   /* Where a piece sits among the others, the one thing no other pick says. */   \
   X(SelectRow                   , 0                 , arc::MAX_GRID_DIM - 1    , select   , none, false)        \
@@ -703,6 +706,7 @@ inline constexpr bool said_by_name(node_type t) {
     case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
     case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
     case node_type::SelectAtLeast: case node_type::FitInto: case node_type::ShapeFrom:
+    case node_type::Pattern: case node_type::MaskBy: case node_type::MaskOut:
         return true;
     default: return false;
     }
@@ -718,6 +722,9 @@ inline std::string value_written(node_type t, int value) {
     auto way = [](int at) { return std::string(partner_way_names[at]); };
     auto kind = [&](int at) { return at < ways ? way(at) : "the piece of color " + std::to_string(at - ways); };
     switch (t) {
+    case node_type::Pattern: return value == 0 ? "exact" : "visible";
+    case node_type::MaskBy: case node_type::MaskOut:
+        return value <= COLOR_COUNT ? std::to_string(value) : "rectangles of color " + std::to_string(value - COLOR_COUNT - 1);
     case node_type::ColorFrom:
         if (value < ways) return way(value);
         if (value == KEY_BY_PLACE) return "the key at its place";
@@ -727,7 +734,8 @@ inline std::string value_written(node_type t, int value) {
     case node_type::AlignTo: return (value < ways ? "the rows of " : "the columns of ") + way(value % ways);
     case node_type::MirrorAround:
         return std::string(mirror_names[value / MIRROR_PARTNERS]) + " " +
-               (value % MIRROR_PARTNERS < ways ? way(value % MIRROR_PARTNERS) : std::string("the grid"));
+               (value % MIRROR_PARTNERS < ways ? way(value % MIRROR_PARTNERS)
+                : value % MIRROR_PARTNERS == MIRROR_PATTERN ? std::string("the picked pattern") : std::string("the grid"));
     case node_type::SelectPartner: {
         const int side = partner_direction_of(value);
         return way(value % ways) + ", " + (side < 0 ? "any side" : direction_names[side]);

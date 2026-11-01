@@ -771,7 +771,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // that mirror is said.
     static constexpr mirror_by mirrors_asked[] = { mirror_by::four_ways, mirror_by::left_right,
                                                    mirror_by::top_bottom, mirror_by::across };
-    static_assert(size(mirrors_asked) == (size_t)mirror_by::count);
+    static_assert(size(mirrors_asked) == (size_t)mirror_by::diagonal_down_right);
     // Claims for a copy: the cells waiting on a copy or a turn where what it
     // copies lies (`kept`) or its copies land, and the cells no match covered
     // that its copies land on.
@@ -792,7 +792,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             if (asked.before(handed)) continue;
             for (const mirror_by mirror : mirrors_asked)
-                for (int how = 0; how < MIRROR_PARTNERS; ++how) {
+                for (int how = 0; how < MIRROR_PATTERN; ++how) {
                     if (how < (int)partner_by::count && !facts.asks_way((partner_by)how)) continue;
                     const int value = (int)mirror * MIRROR_PARTNERS + how;
                     const auto seen = mirror_holds(facts, handed, mirror, how);

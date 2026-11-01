@@ -1215,9 +1215,9 @@ inline optional<replayed> shape_from_holds(const replay_facts& facts, const vect
 
 // A PIECE DRAWN AGAIN MIRRORED AROUND ANOTHER'S MIDDLE, replayed. MirrorAround
 // draws every picked piece again mirrored around the middle of its one partner
-// among the rest -- or, for the last of MIRROR_PARTNERS, around the middle of the
-// grid itself (each_mirror) -- laid over what is down (paint_holds); a copy
-// that falls off the grid cannot be drawn, and a row mirrored end to end onto
+// among the rest, the grid, or the picked pattern (each_mirror), laid over
+// what is down (paint_holds). A pattern may be clipped by the grid; other
+// copies must stay inside it. A row mirrored end to end onto
 // itself is no work. Sees the cells the picked pieces sit on (left) and the
 // cells their copies landed on, and how many copies it drew.
 inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
@@ -1232,8 +1232,8 @@ inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<p
             const bool drawn = each_mirror(mirror, how, i, cut, input.width, input.height,
                                            [&](int pose, int row2, int col2) {
                 mirrored(cut.pieces[i], pose, row2, col2).each_cell([&](int row, int col, int8_t color) {
-                    if (!input.contains(row, col)) on_grid = false;
-                    else put(row, col, color);
+                    if (input.contains(row, col)) put(row, col, color);
+                    else if (how != MIRROR_PATTERN) on_grid = false;
                 });
                 ++copies;
             });
@@ -1249,7 +1249,7 @@ inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<p
     return seen;
 }
 static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count * MIRROR_PARTNERS,
-              "MirrorAround takes each way of mirroring around each partner, then the grid");
+              "MirrorAround takes each way of mirroring around each partner, the grid and the pattern");
 
 // PIECES GROWN IN STEP UNTIL THEY MEET, walked: ExtendTo past its eight ways,
 // every picked piece growing along its track at once (grow_in_step, the growth

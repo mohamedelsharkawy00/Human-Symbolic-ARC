@@ -133,6 +133,18 @@ inline inference prepare_figures(const vector<example>& train, const vector<figu
     ++inference_work.preparations;
     inference inf;
     inf.size = output_dimension_rule::infer_rule(train);
+    // A fixed or scaled size, read off the sizes alone, gives way to what is
+    // drawn where a covered pattern's patch redraws every output so. Settled
+    // before any other rule reads the size.
+    inf.covered_pattern = covered_pattern_rule::detect(pairs, inf.size);
+    if (!inf.covered_pattern.holds() && (inf.size.Chosen == output_dimension_rule::Fixed ||
+                                         inf.size.Chosen == output_dimension_rule::Scale)) {
+        const output_dimension_rule drawn{ .Chosen = output_dimension_rule::BoundingBox };
+        if (const covered_pattern_rule patch = covered_pattern_rule::detect(pairs, drawn); patch.holds()) {
+            inf.covered_pattern = patch;
+            inf.size = drawn;
+        }
+    }
     inf.colors = color_facts::detect(train);  // rule-independent
     // No reader is handed a ground color: the ground is empty where a plan
     // deleted it, and a color like any other where a plan kept it.

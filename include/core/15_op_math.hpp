@@ -1922,6 +1922,38 @@ inline bool mask_keeps(int8_t canvas, int8_t color, bool any, bool keep_match) {
     return match == keep_match;
 }
 
+// Rectangles with an interior span both rows and columns. Their cells are
+// exactly the union of their solid 2-by-2 squares, including overlapping covers.
+inline cell_set mask_cells(const grid& canvas, int value) {
+    cell_set marked;
+    for (int row = 0; row < canvas.height; ++row)
+        for (int col = 0; col < canvas.width; ++col) {
+            if (value <= COLOR_COUNT) {
+                if (mask_keeps(canvas.data[row][col], (int8_t)value, value == COLOR_COUNT, true)) marked.add(row, col);
+                continue;
+            }
+            const int color = value - COLOR_COUNT - 1;
+            if (row + 1 >= canvas.height || col + 1 >= canvas.width || canvas.data[row][col] != color ||
+                canvas.data[row + 1][col] != color || canvas.data[row][col + 1] != color || canvas.data[row + 1][col + 1] != color)
+                continue;
+            marked.add(row, col); marked.add(row + 1, col);
+            marked.add(row, col + 1); marked.add(row + 1, col + 1);
+        }
+    return marked;
+}
+
+inline object masked(const object& source, const cell_set& marked, bool keep_match) {
+    object result = source;
+    source.each_cell([&](int row, int col, int8_t) {
+        if (marked.has(row, col) != keep_match) result.data[row - source.row][col - source.col] = (int8_t)TRANSPARENT;
+    });
+    return result;
+}
+
+inline void lay_under(grid& canvas, int row, int col, int8_t color) {
+    if (canvas.contains(row, col) && canvas.data[row][col] == TRANSPARENT) canvas.data[row][col] = color;
+}
+
 // THE TRAIL ExtendTo GROWS, said once for the op and for the reading that
 // replays it: from the cell (row, col) of a piece, step by step that way to the
 // edge of a canvas `width` by `height` or to a cell another piece holds,
@@ -2324,9 +2356,128 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
 // or all four ways at once; or across, the one way the middle's own piece runs
 // (pose_across). The middle is a partner's, one of the partner_by ways, or past
-// those the grid's own -- so MIRROR_PARTNERS counts one more.
-enum class mirror_by : int8_t { left_right, top_bottom, four_ways, across, count };
+// those the grid's own or the picked pattern's axes.
+enum class mirror_by : int8_t { left_right, top_bottom, four_ways, across,
+    diagonal_down_right, diagonal_up_right, eight_ways, count };
 static_assert((int)mirror_by::count == MIRRORS, "MirrorAround names each mirror (mirror_names)");
+
+// How two lines meet where both are visible: they clash where they differ at
+// one, else agree where at least one shows both. Missing cells offer no
+// evidence, so lines that are never both visible never meet.
+enum class lines_meet : int8_t { never, agree, clash };
+template <class Compare>
+inline void each_pair_of_lines(const grid& picture, bool across, Compare compare) {
+    const int lines = across ? picture.width : picture.height;
+    const int length = across ? picture.height : picture.width;
+    auto at = [&](int line, int position) {
+        return across ? picture.data[position][line] : picture.data[line][position];
+    };
+    for (int first = 0; first < lines; ++first)
+        for (int second = first + 1; second < lines; ++second) {
+            lines_meet meet = lines_meet::never;
+            for (int position = 0; position < length && meet != lines_meet::clash; ++position) {
+                const int own = at(first, position), other = at(second, position);
+                if (is_color(own) && is_color(other)) meet = own == other ? lines_meet::agree : lines_meet::clash;
+            }
+            compare(first, second, meet);
+        }
+}
+
+// Clashing lines rule their distance out, and every divisor of it. The repeat
+// is the shortest distance none rules out, so every visible cell agrees with
+// each one a multiple of it away; with no two lines that agree, there is none.
+inline int visible_period(const grid& picture, bool across) {
+    const int lines = across ? picture.width : picture.height;
+    bool clashes_at[MAX_GRID_DIM]{}, agree = false;
+    each_pair_of_lines(picture, across, [&](int first, int second, lines_meet meet) {
+        clashes_at[second - first] = clashes_at[second - first] || meet == lines_meet::clash;
+        agree = agree || meet == lines_meet::agree;
+    });
+    for (int period = 1; agree && period < lines; ++period) {
+        bool ruled_out = false;
+        for (int distance = period; distance < lines; distance += period) ruled_out = ruled_out || clashes_at[distance];
+        if (!ruled_out) return period;
+    }
+    return lines;
+}
+
+// The longest prefix also ending at each line gives the shortest repeat
+// directly. Empty cells count as values; a matching final fragment suffices.
+inline void repeat_periods(const grid& picture, int& width, int& height) {
+    auto period_of = [&](bool across) {
+        const int lines = across ? picture.width : picture.height;
+        const int length = across ? picture.height : picture.width;
+        if (lines == 0) return 0;
+        auto same = [&](int first, int second) {
+            for (int position = 0; position < length; ++position)
+                if ((across ? picture.data[position][first] : picture.data[first][position]) !=
+                    (across ? picture.data[position][second] : picture.data[second][position])) return false;
+            return true;
+        };
+        int prefix[MAX_GRID_DIM]{};
+        for (int line = 1; line < lines; ++line) {
+            int matched = prefix[line - 1];
+            while (matched > 0 && !same(line, matched)) matched = prefix[matched - 1];
+            if (same(line, matched)) ++matched;
+            prefix[line] = matched;
+        }
+        return lines - prefix[lines - 1];
+    };
+    width = period_of(true); height = period_of(false);
+}
+
+// Pattern's visible unit is assembled from all copies, never from an
+// assumed intact corner. An unobserved or disputed cell leaves it uncut.
+inline grid visible_pattern(const grid& picture) {
+    const int width = visible_period(picture, true), height = visible_period(picture, false);
+    grid unit(width, height);
+    for (int row = 0; row < picture.height; ++row)
+        for (int col = 0; col < picture.width; ++col) {
+            const int8_t color = picture.data[row][col];
+            if (!is_color(color)) continue;
+            auto& held = unit.data[row % height][col % width];
+            if (is_color(held) && held != color) return picture;
+            held = color;
+        }
+    for (int row = 0; row < height; ++row)
+        for (int col = 0; col < width; ++col)
+            if (!is_color(unit.data[row][col])) return picture;
+    int unit_width = 0, unit_height = 0;
+    repeat_periods(unit, unit_width, unit_height);
+    unit.width = (int16_t)unit_width; unit.height = (int16_t)unit_height;
+    return unit;
+}
+
+// A line with one matching twin names their midpoint. All such witnesses
+// must agree, and every visible cell across that line must agree too.
+inline int pattern_axis(const grid& picture, bool across) {
+    const int lines = across ? picture.width : picture.height;
+    const int length = across ? picture.height : picture.width;
+    int twins[MAX_GRID_DIM]{}, matches[MAX_GRID_DIM]{};
+    each_pair_of_lines(picture, across, [&](int first, int second, lines_meet meet) {
+        if (meet != lines_meet::agree) return;
+        twins[first] = second; twins[second] = first;
+        ++matches[first]; ++matches[second];
+    });
+    int middle = -1;
+    for (int line = 0; line < lines; ++line) {
+        if (matches[line] != 1) continue;
+        if (middle >= 0 && middle != line + twins[line]) return -1;
+        middle = line + twins[line];
+    }
+    if (middle < 0) return -1;
+    auto at = [&](int line, int position) {
+        return across ? picture.data[position][line] : picture.data[line][position];
+    };
+    for (int line = 0; line < lines; ++line) {
+        const int other = middle - line;
+        if (other < 0 || other >= lines) continue;
+        for (int position = 0; position < length; ++position)
+            if (is_color(at(line, position)) && is_color(at(other, position)) && at(line, position) != at(other, position))
+                return -1;
+    }
+    return middle;
+}
 
 // THE POSE A COPY MIRRORED ACROSS A PIECE TAKES, pose_source's bits, by the way
 // the piece runs (way_it_runs): lying, top to bottom; standing, left to right;
@@ -2347,8 +2498,9 @@ constexpr int pose_across(runs_along way) {
 // col2) -- the pose its cells are read through (pose_source), and the middle it
 // is mirrored around, twice its row and column so a middle between two cells is
 // whole: its one partner's by `how` among the pieces not picked (partner_of),
-// or past those the grid's own. All four ways draws left to right, top to
-// bottom, then both. False, and no copy, for a piece with no one partner, or
+// or past those the grid's own or the picked pattern's axes. Straight mirrors
+// precede diagonals, so Underlay fills from them first. False, and no copy,
+// for a piece with no one partner, or
 // mirrored across a diagonal that runs between cells, or across the grid,
 // which is no piece and runs no way of its own.
 template <class Copy>
@@ -2361,11 +2513,30 @@ inline bool each_mirror(mirror_by mirror, int how, int mine, const partner_piece
         if (partner < 0) return false;
         middle = pieces.box(partner);
     }
-    const int row2 = middle.row0 + middle.row1, col2 = middle.col0 + middle.col1;
+    int row2 = middle.row0 + middle.row1, col2 = middle.col0 + middle.col1;
+    if (how == MIRROR_PATTERN) {
+        if (mirror == mirror_by::across) return false;
+        grid picture(width, height);
+        for (int index = 0; index < pieces.count(); ++index)
+            if (pieces.picked[index]) pieces.pieces[index].each_cell([&](int row, int col, int8_t color) {
+                if (picture.contains(row, col)) picture.data[row][col] = color;
+            });
+        if (mirror != mirror_by::left_right) row2 = pattern_axis(picture, false);
+        if (mirror != mirror_by::top_bottom) col2 = pattern_axis(picture, true);
+        if (row2 < 0 || col2 < 0) return false;
+    }
     if (mirror != mirror_by::across) {
-        constexpr int flips[] = { 4, 2, 6 };
-        for (int flip = 0; flip < 3; ++flip)
-            if (mirror == mirror_by::four_ways || flip == (int)mirror) copy(flips[flip], row2, col2);
+        const bool diagonal = mirror == mirror_by::diagonal_down_right || mirror == mirror_by::diagonal_up_right;
+        const bool between_cells = (row2 + col2) % 2 != 0;
+        if (diagonal && between_cells) return false;
+        constexpr int poses[] = { 4, 2, 6, 1, 7, 3, 5 };
+        for (int index = 0; index < (int)size(poses); ++index) {
+            if (index >= 3 && between_cells) continue;
+            if (mirror == mirror_by::eight_ways || (mirror == mirror_by::four_ways && index < 3) ||
+                (mirror == mirror_by::left_right && index == 0) || (mirror == mirror_by::top_bottom && index == 1) ||
+                (mirror == mirror_by::diagonal_down_right && index == 3) ||
+                (mirror == mirror_by::diagonal_up_right && index == 4)) copy(poses[index], row2, col2);
+        }
         return true;
     }
     if (partner < 0) return false;

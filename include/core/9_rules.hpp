@@ -5,6 +5,7 @@
 #include "8_panes.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -71,6 +72,111 @@ inline constexpr tile_value tiled_by_its_own_size{
     .steps = { { .down = measured(tile_measure::own_height), .across = { 0 } },
                { .down = { 0 }, .across = measured(tile_measure::own_width) } },
     .start = {}, .end = { .edge = true }, .spread = tile_spread::grid };
+
+// The output is the input repaired, or, where the size is what is drawn, the
+// cover's patch alone. The changed input cells name the cover's color; for the
+// patch, the one color whose cells span the output names it. A color no output
+// shows is cover wherever it lies; one the pattern wears too, only in its
+// solid blocks. The visible drawing names its repair: the smaller unit it
+// repeats, else the mirrors its lines name. The same composition must redraw
+// every pair, on the canvas the size rule gives.
+struct covered_pattern_rule {
+    int8_t cover = -1;
+    int8_t mask = -1;
+    int8_t mirror = -1;
+    bool patch_alone = false;
+    bool held = false;
+    bool holds() const { return held; }
+
+    static covered_pattern_rule detect(const vector<figure_pair>& pairs, const output_dimension_rule& size) {
+        covered_pattern_rule rule;
+        rule.patch_alone = size.Chosen == output_dimension_rule::BoundingBox;
+        if (pairs.empty() || (!rule.patch_alone && size.Chosen != output_dimension_rule::Identity)) return {};
+        if (rule.patch_alone) {
+            uint16_t spanning = (1u << COLOR_COUNT) - 1;
+            for (const figure_pair& pair : pairs) {
+                const example& whole = pair.whole;
+                cell_box spans[COLOR_COUNT];
+                whole.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
+                    spans[color].include_cell(row, col);
+                });
+                for (int color = 0; color < COLOR_COUNT; ++color)
+                    if (spans[color].width() != whole.output.width || spans[color].height() != whole.output.height)
+                        spanning &= (uint16_t)~(1u << color);
+            }
+            if (popcount(spanning) != 1) return {};
+            rule.cover = (int8_t)countr_zero(spanning);
+        } else
+            for (const figure_pair& pair : pairs) {
+                const example& whole = pair.whole;
+                if (!whole.input.same_size(whole.output)) return {};
+                for (int row = 0; row < whole.input.height; ++row)
+                    for (int col = 0; col < whole.input.width; ++col) {
+                        if (whole.input.data[row][col] == whole.output.data[row][col]) continue;
+                        const int8_t color = whole.input.data[row][col];
+                        if (rule.cover >= 0 && rule.cover != color) return {};
+                        rule.cover = color;
+                    }
+            }
+        if (rule.cover < 0) return {};
+        const bool worn = ranges::any_of(pairs, [&](const figure_pair& pair) {
+            return color_tally(pair.whole.output)[rule.cover] > 0;
+        });
+        rule.mask = worn ? (int8_t)(COLOR_COUNT + 1 + rule.cover) : rule.cover;
+        bool first = true;
+        for (const figure_pair& pair : pairs) {
+            const grid& input = pair.whole.input;
+            const object visible = masked(objects_of(input, grouping::whole_grid).front(),
+                                          mask_cells(input, rule.mask), false);
+            const grid picture = visible.drawn();
+            const grid unit = visible_pattern(picture);
+            const bool repeats = !unit.same_size(picture);
+            const bool left_right = !repeats && pattern_axis(picture, true) >= 0;
+            const bool top_bottom = !repeats && pattern_axis(picture, false) >= 0;
+            const int8_t mirror = left_right && top_bottom ? (int8_t)mirror_by::eight_ways
+                                : left_right ? (int8_t)mirror_by::left_right
+                                : top_bottom ? (int8_t)mirror_by::top_bottom : (int8_t)-1;
+            if (!repeats && mirror < 0) return {};
+            if (!first && mirror != rule.mirror) return {};
+            first = false;
+            rule.mirror = mirror;
+            grid drawn;
+            const bool repaired = draw_on_canvas(input, size, drawn, [&](grid& canvas) {
+                auto lay = [&](const object& piece) {
+                    piece.each_cell([&](int row, int col, int8_t color) { lay_under(canvas, row, col, color); });
+                };
+                lay(visible);
+                if (mirror >= 0) {
+                    const vector<object> pieces{ visible };
+                    hand_answers answers({ input.width, input.height });
+                    const partner_pieces hand(pieces, vector<bool>{ true }, answers);
+                    if (!each_mirror((mirror_by)mirror, MIRROR_PATTERN, 0, hand, input.width, input.height,
+                        [&](int pose, int row2, int col2) { lay(mirrored(visible, pose, row2, col2)); })) return false;
+                } else {
+                    const object tile = objects_of(unit, grouping::whole_grid).front();
+                    const tile_moves moves = moves_of(tiled_by_its_own_size, { unit.width, unit.height });
+                    const auto [rows, columns] = copy_size(moves, unit.height, unit.width);
+                    each_tile_offset(tiled_by_its_own_size, moves, 0, 0, rows, columns, canvas.width, canvas.height,
+                        [&](int down, int across) {
+                            object copy = tile;
+                            copy.row = (int16_t)down; copy.col = (int16_t)across;
+                            lay(copy);
+                            return true;
+                        });
+                }
+                if (rule.patch_alone)
+                    for (int row = 0; row < canvas.height; ++row)
+                        for (int col = 0; col < canvas.width; ++col)
+                            if (!input.contains(row, col) || input.data[row][col] != rule.cover)
+                                canvas.data[row][col] = TRANSPARENT;
+                return true;
+            });
+            if (!repaired || drawn != pair.whole.output) return {};
+        }
+        rule.held = true;
+        return rule;
+    }
+};
 
 // A repeating pattern carried across the whole output, with its colors remapped.
 struct motif_continuation_rule {
@@ -1663,6 +1769,7 @@ struct inference {
     motif_continuation_rule motif_continuation;
     diagonal_continuation_rule diagonal_continuation;
     periodic_denoise_rule periodic_denoise;
+    covered_pattern_rule covered_pattern;
     piece_slam_rule piece_slam;
     overlap_corner_rule overlap_corner;
     slide_to_touch_rule slide_to_touch;
@@ -1723,7 +1830,7 @@ struct inference {
 // it sits is the corner that crops it, so the corner comes before the pick.
 enum class own_sentences : int8_t { panes, corner_crop, pane_pick, pane_gather, ray_extension,
     mark_lattice, input_blocks, periodic_denoise, bridge, interior_fill, interior_spread,
-    hole_colors, ranked_layout, edge_slide, copy_to, rarest_color, motif_continuation, count };
+    hole_colors, ranked_layout, edge_slide, copy_to, rarest_color, motif_continuation, covered_pattern, count };
 
 // One rule for the elected reading's list: its name, what it says, how it is said.
 inline correspondence_election::fired_rule listed(const char* name, const char* says,
@@ -1772,6 +1879,8 @@ inline void list_the_rivals(inference& inf) {
     rival(inf.rarest_color.holds(), own_sentences::rarest_color, "Rarest Color", "the least common color alone");
     rival(inf.motif_continuation.holds(), own_sentences::motif_continuation, "The Input Repeats",
           "the output carries the repeating block");
+    rival(inf.covered_pattern.holds(), own_sentences::covered_pattern, "Covered Pattern",
+          "visible copies repair the covered rectangles");
 }
 
 }  // namespace arc

@@ -800,6 +800,21 @@ inline bool say_periodic_denoise(const inference& inf, said_reading& said) {
     return true;
 }
 
+inline bool say_covered_pattern(const inference& inf, said_reading& said) {
+    const auto& rule = inf.covered_pattern;
+    if (!rule.holds()) return false;
+    say_sentence(said, "Input", "SelectAll", "", "Union");
+    say_sentence(said, "Input", "SelectAll", spell("MaskOut", rule.mask), "Intersection");
+    const string acts = rule.mirror >= 0 ? spell("MirrorAround", rule.mirror * MIRROR_PARTNERS + MIRROR_PATTERN)
+                                        : spell("Pattern", 1) + " " + spell(tiled_by_its_own_size);
+    say_sentence(said, "CurrentObjects", "SelectAll", acts, "Underlay");
+    // The patch alone: the canvas cut to what the cover's color covered.
+    if (rule.patch_alone)
+        said.sentences.push_back(closed_on_the_pick("Input Colors " + spell("SelectColor", rule.cover), "Intersection"));
+    said.plan_said = true;
+    return true;
+}
+
 // THE GAPS BETWEEN PIECES OF ONE COLOUR, FILLED. Said under the cut its
 // replay held under, which need not be the elected one, and laid under what
 // is there, so a bar that crosses a wall goes behind it. The paint needs the
@@ -1133,7 +1148,7 @@ inline bool say_rival(const correspondence_election::fired_rule& rule, const inf
         say_panes, say_corner_crop, say_pane_pick, say_pane_gather, say_ray_extension,
         say_mark_lattice, say_input_blocks, say_periodic_denoise, say_bridge,
         say_interior_fill, say_interior_spread, say_hole_colors, say_ranked_layout,
-        say_edge_slide, say_copy_to, say_rarest_color, say_motif_continuation };
+        say_edge_slide, say_copy_to, say_rarest_color, say_motif_continuation, say_covered_pattern };
     static_assert(size(by_rule) == (size_t)own_sentences::count);
     return rule.value >= 0 && rule.value < (int)size(by_rule) && by_rule[rule.value](inf, said);
 }

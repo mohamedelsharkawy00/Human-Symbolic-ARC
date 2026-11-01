@@ -509,7 +509,7 @@ object_list& op_withhold(program_run& run, const object_list& from) {
 object_list& op_underlay(program_run& run, const object_list& from) {
     const int count = min(from.count, MAX_OBJECTS_IN_A_LIST);
     each_picked_cell(run, from, count, [&](int row, int col, int8_t color) {
-        if (run.canvas.data[row][col] == TRANSPARENT) run.canvas.data[row][col] = color;
+        lay_under(run.canvas, row, col, color);
     });
     object_list& res = run.fresh();
     copy_objects(res, from, count);
@@ -903,8 +903,8 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
 // MirrorAround[value]: each picked object is drawn again mirrored around the
 // middle of its one partner among the objects not picked -- left to right, top
 // to bottom, all four ways at once, or across it the one way it runs, value /
-// MIRROR_PARTNERS -- or, for the last partner, around the middle of the grid
-// itself, which nothing is mirrored across. partner_of (15_op_math.hpp) finds
+// MIRROR_PARTNERS -- around a partner, the grid or the picked pattern.
+// Across needs a partner with a direction. partner_of (15_op_math.hpp) finds
 // the partner, the walk inference
 // replays. The picked object stays; its copies join the list after every
 // object there was, picked as it is, as CopyTo's are -- a sentence that picked
@@ -1678,13 +1678,20 @@ object_list& op_skew(program_run& run, const object_list& from, int8_t variant) 
 }
 
 // Pattern: each picked object reduced to its smallest repeating unit
-// (repeat_periods, 4_objects.hpp, one finder for everyone).
-object_list& op_pattern(program_run& run, const object_list& from) {
+// (repeat_periods). Visible units combine the evidence of incomplete copies.
+object_list& op_pattern(program_run& run, const object_list& from, int8_t how) {
     object_list& res = run.fresh();
     for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
         const held_object& source = from.objects[i];
         if (source.width <= 0 || source.height <= 0) continue;
         if (!source.selected) { res.objects[res.count++] = source; continue; }
+        if (how == 1) {
+            const grid unit = visible_pattern(source.drawn());
+            held_object one = source;
+            one.width = (int16_t)unit.width; one.height = (int16_t)unit.height; one.data = unit.data;
+            res.objects[res.count++] = one;
+            continue;
+        }
         int unit_width = 0, unit_height = 0;
         repeat_periods(grid(source.width, source.height, source.data), unit_width, unit_height);
         // Every copy agrees with the top-left one, so the unit is that copy.
@@ -2058,14 +2065,20 @@ object_list& op_read_under(program_run& run, const object_list& from) {
 
 // MaskBy[c] / MaskOut[c]: keep a picked object's cells only where the canvas
 // under them is (MaskBy) or is not (MaskOut) color c -- any painted color at
-// c == 10 (mask_keeps). Off the canvas reads transparent, so MaskOut[10] keeps
-// exactly the empty-canvas cells. Non-destructive: it filters the layer, never
-// touches the canvas.
+// c == 10 (mask_keeps), past it the solid blocks of color c - 11 (mask_cells).
+// Off the canvas reads transparent, so MaskOut[10] keeps exactly the
+// empty-canvas cells. Non-destructive: it filters the layer, never touches the
+// canvas.
 object_list& op_mask(program_run& run, const object_list& from, int8_t color, bool keep_match) {
-    const bool any_color = color == COLOR_ANY;
-    return repaint_over_canvas(run, from, [&](int8_t painted, int8_t under) {
-        return mask_keeps(under, color, any_color, keep_match) ? painted : (int8_t)TRANSPARENT;
-    });
+    object_list& res = run.fresh();
+    const cell_set marked = mask_cells(run.canvas, color);
+    for (int index = 0; index < from.count; ++index) {
+        const held_object& source = from.objects[index];
+        if (!source.selected) { res.objects[res.count++] = source; continue; }
+        held_object one{ masked(source, marked, keep_match), true };
+        if (one.cell_count() > 0) res.objects[res.count++] = one;
+    }
+    return res;
 }
 
 // --- Translate, the whole picture ---
@@ -2385,7 +2398,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::Trim:                    return op_trim(run, in);
     case node_type::Fractal:                 return op_fractal(run, in);
     case node_type::Tile:                    return op_tile(run, in, op.tile);
-    case node_type::Pattern:                 return op_pattern(run, in);
+    case node_type::Pattern:                 return op_pattern(run, in, value);
     case node_type::ProjectOnSeeds:          return op_project_on_seeds(run, in);
     case node_type::CopyTo:                  return op_copy_to(run, in, value);
     case node_type::IntersectionList:        return op_intersection_list(run, in);

@@ -4,6 +4,7 @@
 // to the objects. Dividing a grid this way is called segmentation.
 #pragma once
 #include "1_readings.hpp"
+#include "15_op_math.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -82,30 +83,6 @@ inline constexpr grouping grouping_of(segmentation_methods segmentation) {
 // takes pieces of that color alone.
 inline constexpr bool one_color_a_piece(segmentation_methods segmentation) {
     return boxed_by_its_cells(segmentation) && grouping_of(segmentation) != grouping::touching_any_color;
-}
-
-// The unit Pattern cuts: the smallest repeating width and height, or the grid's
-// own. Every cell counts, an empty one too; one copy and a matching fragment do.
-inline void repeat_periods(const grid& g, int& width, int& height) {
-    // Does the grid repeat every `period` cells along one axis? `across` asks
-    // about columns, otherwise rows. One test for both, so they cannot drift.
-    auto repeats_every = [&](int period, bool across) {
-        for (int r = across ? 0 : period; r < g.height; ++r)
-            for (int c = across ? period : 0; c < g.width; ++c) {
-                const int folded_row = across ? r : r % period;
-                const int folded_col = across ? c % period : c;
-                if (g.data[r][c] != g.data[folded_row][folded_col]) return false;
-            }
-        return true;
-    };
-    // Find the shortest valid period, or use the full size if none repeats.
-    auto smallest_period = [&](int size, bool across) {
-        for (int period = 1; period < size; ++period)
-            if (repeats_every(period, across)) return period;
-        return size;
-    };
-    width = smallest_period(g.width, true);
-    height = smallest_period(g.height, false);
 }
 
 // EVERY PLACE A SHAPE FITS ON ONE COLOR of `one_grid`, among the colored cells
