@@ -122,7 +122,9 @@ inline void report_colors(ostream& report, const color_facts& colors, int8_t inp
 inline void report_background(ostream& report, const background_election& background) {
     report << "[background] input=" << (int)background.input_elected()
       << "  output=" << (int)background.output_elected()
-      << (background.is_per_pair() ? "  MODE=PER-PAIR" : "") << "\n "
+      << (background.is_per_pair() ? "  MODE=PER-PAIR" : "");
+    if (is_color(background.cut)) report << "  CUT AGAINST " << (int)background.cut;
+    report << "\n "
       << " across_inputs=" << (int)background_election::top(background.across_inputs)
       << " across_outputs=" << (int)background_election::top(background.across_outputs)
       << " across_inputs_outputs=" << (int)background_election::top(background.across_inputs_outputs)
@@ -130,12 +132,12 @@ inline void report_background(ostream& report, const background_election& backgr
     for (int8_t color : background.across_input_output) report << ' ' << (int)color;
     report << "\n";
     auto dump = [&](const char* name, const vector<background_election::hypothesis>& ranked) {
-        report << "  " << name << " (color embeds dom in_out SCORE span gaps under):\n";
+        report << "  " << name << " (color embeds dom in_out SCORE span gaps):\n";
         for (const auto& candidate : ranked)
             report << "    " << (int)candidate.color << "  " << candidate.embeds << "  "
               << candidate.dominance << "  " << candidate.appears_in_any_output
               << "  " << candidate.score << "  " << candidate.span
-              << "  " << candidate.gaps << "  " << candidate.underneath << "\n";
+              << "  " << candidate.gaps << "\n";
     };
     dump("across_inputs", background.across_inputs);
     dump("across_outputs", background.across_outputs);

@@ -1688,9 +1688,9 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       label_chip(name, ty); ty += line_h;
       // column header, aligned with the rows below
       // Every cell is text in a width, so heads and rows share one shape.
-      static const char* bg_columns = "%7s %10s %10s %8s %7s %6s %6s %6s";
+      static const char* bg_columns = "%7s %10s %10s %8s %7s %6s %6s";
       draw_text(context, font, to_text(bg_columns,
-                "COLOR", "EMBEDS", "DOMINANCE", "IN_OUT", "SCORE", "SPAN", "GAPS", "UNDER"),
+                "COLOR", "EMBEDS", "DOMINANCE", "IN_OUT", "SCORE", "SPAN", "GAPS"),
                 tx + sw + scale, ty, scale);
       ty += line_h;
       for (const auto& c : d) {
@@ -1699,8 +1699,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         string row = to_text(bg_columns,
                              label.c_str(), to_string(c.embeds).c_str(), to_string(c.dominance).c_str(),
                              c.appears_in_any_output ? "YES" : "NO", to_string(c.score).c_str(),
-                             to_string(c.span).c_str(), to_string(c.gaps).c_str(),
-                             c.underneath ? "YES" : "NO");
+                             to_string(c.span).c_str(), to_string(c.gaps).c_str());
         draw_text(context, font, row, tx + sw + scale, ty, scale);
         ty += line_h;
       }

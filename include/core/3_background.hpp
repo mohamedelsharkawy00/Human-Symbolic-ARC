@@ -33,14 +33,16 @@ inline constexpr int BG_DECISIVE = 2;
 inline constexpr int BG_NEAR_TIE_NUM = 4;
 inline constexpr int BG_NEAR_TIE_DEN = 5;
 
-// The score must reach 700 for a candidate to qualify as a background.
-inline constexpr int BG_FLOOR = 700;
+// The score must reach 550 for a candidate to qualify as a background: the bar
+// black cleared when the floor was 700 and black's place in a color order
+// added 150, now the same for every color.
+inline constexpr int BG_FLOOR = 550;
 
 // Each kind of evidence contributes to the score. A larger weight gives
-// that evidence more influence.
+// that evidence more influence. None of it is the color's name: a puzzle
+// repainted, every color for another, elects the same ground repainted.
 inline constexpr double BG_W_AREA = 1.0;      // How much area the color covers.
 inline constexpr double BG_W_STANDOUT = 0.3;  // How often it wins in individual grids.
-inline constexpr double BG_W_PRIOR = 0.15;    // The preference for this color as a background.
 inline constexpr double BG_W_EMBEDS = 0.25;   // How much figure area sits inside this color.
 inline constexpr double BG_W_PUNCHED = 0.2;   // Evidence of a background showing through gaps.
 
@@ -64,7 +66,7 @@ struct background_election {
         // Did this input color also appear in at least one output?
         // A transformation may delete or recolor the figures, so a figure's
         // color can vanish from the output. The background it sat on usually stays.
-        // Worth a small bonus (BG_PERSIST_BONUS, 50 against a floor of 700), so
+        // Worth a small bonus (BG_PERSIST_BONUS, 50 against a floor of 550), so
         // it only separates two candidates that area already left nearly tied.
         bool appears_in_any_output = true;
 
@@ -76,12 +78,9 @@ struct background_election {
         // for the worst example grid; a thin web = ~1000, a solid mass = low
         int gaps = 0;
 
-        // In EVERY grid this color is the quietest present and appears ONLY as
-        // multiple enclosed windows — the ground showing through.
-        bool underneath = false;
-
         // Weighted confidence that this color is the background. The election
-        // takes the top score if it clears BG_FLOOR, else abstains.
+        // takes the top score if it clears BG_FLOOR and no other ties it, else
+        // abstains.
         int score = 0;
     };
 
@@ -97,6 +96,8 @@ struct background_election {
     // Whether every input lies over its output cell for cell (pairs_overlay),
     // which decides whether a plan's fill is ground on the inputs too.
     bool overlays = false;
+    // The color every output's crop cut against (cut_against), -1 for none.
+    int8_t cut = -1;
     static int8_t top(const vector<hypothesis>& ranked) {
         return ranked.empty() ? (int8_t)-1 : ranked[0].color;
     }
@@ -109,10 +110,9 @@ struct background_election {
     // segmentation excludes. Walks input-derived evidence STRONGEST -> WEAKEST
     // and takes the first real background; -1 = backgroundless or per-pair.
     int8_t input_elected() const {
-        // A ground showing through beats the area winner by definition, since
-        // the pattern covering it is what wins the area.
-        for (const auto& candidate : across_inputs)
-            if (candidate.underneath) return candidate.color;
+        // What every output was cropped out of is the ground, before any score:
+        // the crop took it off.
+        if (is_color(cut)) return cut;
         // The background is given in the input, undistorted by the
         // transformation — unless a confident pair contradicts it.
         if (int8_t color = top(across_inputs); color >= 0 && !input_vetoed) return color;
@@ -174,6 +174,7 @@ struct background_election {
     bool is_per_pair() const {
         // Matches input_elected()'s order, so the output-influenced directions
         // cannot suppress a strong per-pair input signal.
+        if (is_color(cut)) return false;
         if (int8_t color = top(across_inputs); color >= 0 && !input_vetoed) return false;
         if (per_pair_majority() >= 0) return false;  // a majority = global
         return is_per_pair_raw();
@@ -185,8 +186,6 @@ struct background_election {
 struct background_evidence {
     // Worst grid, out of 1000
     int embeds[COLOR_COUNT], dominance[COLOR_COUNT], span[COLOR_COUNT], gaps[COLOR_COUNT];
-    // In EVERY grid: the quietest color present, showing only as enclosed windows
-    bool only_windows[COLOR_COUNT];
     // Grids where this color was the standout background, and how many grids voted
     int standout_wins[COLOR_COUNT] = {};
     int grid_count = 0;
@@ -194,21 +193,9 @@ struct background_evidence {
     long long global_cells[COLOR_COUNT] = {};
 
     background_evidence() {
-        for (int i = 0; i < COLOR_COUNT; ++i) {
-            embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
-            only_windows[i] = true;
-        }
+        for (int i = 0; i < COLOR_COUNT; ++i) embeds[i] = dominance[i] = span[i] = gaps[i] = 1000;
     }
 };
-
-// Per-color background-ness prior, most-background first. The LAST tiebreak
-// only, when area/embeds/story can't separate two candidates — a prior, not a
-// verdict, and structure always overrides it.
-inline int background_rank(int color) {
-    constexpr int8_t order[COLOR_COUNT] = { 0, 9, 5, 6, 1, 2, 7, 3, 8, 4 };
-    for (int rank = 0; rank < COLOR_COUNT; ++rank) if (order[rank] == color) return rank;
-    return COLOR_COUNT;
-}
 
 // The box each color's cells fill; a color no cell wears keeps an empty box.
 inline void color_boxes(const grid& one_grid, cell_box boxes[COLOR_COUNT]) {
@@ -251,28 +238,25 @@ inline void measure_area_and_reach(const grid& one_grid, const int cells_of_colo
         evidence.gaps[i] = min(evidence.gaps[i], touching[i] * 1000 / cells_of_color[i]);
     }
 
-    // Standout in this grid: the background among the SUBSTANTIAL colors — those
-    // co-dominant with the leader — where the background-ness prior picks the
-    // quieter one. Not raw-most-cells: a separator grid inflates a foreground
-    // color's area past the true background. Then the corpus VOTES, not unanimity.
+    // Standout in this grid: the one SUBSTANTIAL color, where no other is
+    // co-dominant with it. Of two near equals the grid cannot say which is the
+    // ground, and votes for neither. Then the corpus VOTES, not unanimity.
     int most_cells = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) most_cells = max(most_cells, cells_of_color[i]);
-    int winner = -1;
+    int winner = -1, substantial = 0;
     for (int i = 0; i < COLOR_COUNT; ++i) {
         if (cells_of_color[i] * BG_NEAR_TIE_DEN < most_cells * BG_NEAR_TIE_NUM) continue;
-        if (winner < 0 || background_rank(i) < background_rank(winner)) winner = i;
+        winner = i;
+        ++substantial;
     }
-    if (winner >= 0 && most_cells > 0) evidence.standout_wins[winner]++;
+    if (substantial == 1 && most_cells > 0) evidence.standout_wins[winner]++;
     evidence.grid_count++;
 }
 
 // STAGE 2 — each figure votes for the color it sits in, weighted by its own
 // cells. FIGURE = an object whose outer contour is majority-owned by ONE other
-// object; everything else is BACKDROP. The same pass feeds the UNDERNEATH check:
-// a color is believable as ground showing through only if it is the quietest
-// present and appears solely as enclosed windows.
-inline void measure_embedding(const grid& one_grid, const int cells_of_color[COLOR_COUNT],
-                              background_evidence& evidence) {
+// object; everything else is BACKDROP.
+inline void measure_embedding(const grid& one_grid, background_evidence& evidence) {
     // The objects: same-color cells that touch, corners counting, each the
     // color of its first cell.
     const grid_parts objects(one_grid, grouping::touching_same_color);
@@ -280,7 +264,6 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
         return one_grid.data[objects.rows[objects.first[object]]][objects.cols[objects.first[object]]];
     };
     int figure_area = 0, embedded_area[COLOR_COUNT] = {};
-    int objects_of_color[COLOR_COUNT] = {}, backdrop_objects_of_color[COLOR_COUNT] = {};
 
     // One vote box per object, indexed by the object's own id — no lookup table to
     // run out of, so no contour can be too crowded to count. `voted` names the
@@ -289,10 +272,7 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
     int16_t voted[MAX_GRID_DIM * MAX_GRID_DIM];
     int voted_count = 0;
     for (int this_object = 0; this_object < objects.count; ++this_object) {
-        objects_of_color[color_of(this_object)]++;
-        if (objects.meets[this_object]) {
-            backdrop_objects_of_color[color_of(this_object)]++; continue;
-        }
+        if (objects.meets[this_object]) continue;
         // Outside = everything reachable from the border without entering this
         // object (grid_parts). Four-way space cannot leak through corners
         // joined by the object's eight-way connectivity.
@@ -325,43 +305,18 @@ inline void measure_embedding(const grid& one_grid, const int cells_of_color[COL
         }
         for (int i = 0; i < voted_count; ++i) votes[voted[i]] = 0;
         bool is_figure = best_owner >= 0 && best_votes * 2 > contour_votes_total;
-        if (!is_figure) { backdrop_objects_of_color[color_of(this_object)]++; continue; }
+        if (!is_figure) continue;
         figure_area += objects.size(this_object);
         embedded_area[color_of(best_owner)] += objects.size(this_object);
     }
     for (int i = 0; i < COLOR_COUNT; ++i)
         evidence.embeds[i] = min(evidence.embeds[i],
                                  figure_area ? embedded_area[i] * 1000 / figure_area : 0);
-
-    // UNDERNEATH for this grid: quietest color present, and only enclosed
-    // windows (>= 2 objects, none touching the border). One enclosed object is
-    // just an object; many windows are the ground showing through.
-    int quietest = -1;
-    for (int i = 0; i < COLOR_COUNT; ++i)
-        if (cells_of_color[i] > 0 &&
-            (quietest < 0 || background_rank(i) < background_rank(quietest)))
-            quietest = i;
-    for (int i = 0; i < COLOR_COUNT; ++i)
-        evidence.only_windows[i] = evidence.only_windows[i] && i == quietest &&
-                                   objects_of_color[i] >= 2 && backdrop_objects_of_color[i] == 0;
 }
 
-// STAGE 3 — windows are believable only when cut into a PATTERNED coverer. The
-// coverer is the global area leader; if it is solid, no color may claim
-// underneath.
-inline void close_underneath(background_evidence& evidence) {
-    int coverer = -1;
-    for (int i = 0; i < COLOR_COUNT; ++i)
-        if (evidence.global_cells[i] > 0 &&
-            (coverer < 0 || evidence.global_cells[i] > evidence.global_cells[coverer]))
-            coverer = i;
-    if (coverer >= 0 && evidence.gaps[coverer] < BG_HALF)
-        for (int i = 0; i < COLOR_COUNT; ++i) evidence.only_windows[i] = false;
-}
-
-// STAGE 4 — weighted signals sum to a confidence per color. No single rule is a
-// hard gate. Area leads, standout corroborates, prior is a light tiebreak,
-// punched-through and embeds are graded votes.
+// STAGE 3 — weighted signals sum to a confidence per color. No single rule is a
+// hard gate. Area leads, standout corroborates, punched-through and embeds are
+// graded votes.
 // KNOWN GAP: a background that is a MINORITY in MOST grids is not findable by area
 // at all; that needs the object story.
 inline void score_candidates(vector<background_election::hypothesis>& ranked, const background_evidence& evidence) {
@@ -375,37 +330,31 @@ inline void score_candidates(vector<background_election::hypothesis>& ranked, co
             total_cells ? (int)(evidence.global_cells[color] * 1000 / total_cells) : 0;
         const int standout_share = evidence.grid_count
             ? evidence.standout_wins[color] * 1000 / evidence.grid_count : 0;
-        // Most-background 1000 .. least 100
-        const int prior = 1000 - background_rank(color) * 100;
-        // Everywhere AND thin, believable as ground only for a quiet color
+        // Everywhere AND thin
         const int punched = min(candidate.span, candidate.gaps);
 
         // Summed in this order on purpose: floating-point addition does not
         // associate, so reordering these can move the total across the floor.
         const double from_area     = global_area    * BG_W_AREA;
         const double from_standout = standout_share * BG_W_STANDOUT;
-        const double from_prior    = prior          * BG_W_PRIOR;
         const double from_persists = candidate.appears_in_any_output ? BG_PERSIST_BONUS : 0;
-        const double from_punched  = punched * BG_W_PUNCHED * prior / 1000;
+        const double from_punched  = punched * BG_W_PUNCHED;
         const double from_embeds   = candidate.embeds * BG_W_EMBEDS;
 
-        candidate.score = (int)(from_area + from_standout + from_prior +
-                                from_persists + from_punched + from_embeds);
+        candidate.score = (int)(from_area + from_standout + from_persists + from_punched + from_embeds);
     }
 }
 
-// STAGE 5 — best background first. The top score elects IF it clears BG_FLOOR,
-// else the direction abstains (-1 sorts first) — the honest "ambiguous" answer.
+// STAGE 4 — best background first. The top score elects IF it clears BG_FLOOR
+// and no other candidate ties it, else the direction abstains (-1 sorts first)
+// — the honest "ambiguous" answer: two colors the picture rates alike name no
+// ground.
 inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
-    const auto before = [](const auto& left, const auto& right) {
-        const bool left_electable  = (left.color >= 0 && left.score >= BG_FLOOR);
-        const bool right_electable = (right.color >= 0 && right.score >= BG_FLOOR);
-        if (left_electable != right_electable) return left_electable;
-        if (!left_electable) {                   // none electable: -1 first
-            if ((left.color < 0) != (right.color < 0)) return left.color < 0;
-            return background_rank(left.color) < background_rank(right.color);
-        }
-        return left.score > right.score;         // among electables, top score
+    const auto electable = [](const auto& candidate) { return candidate.color >= 0 && candidate.score >= BG_FLOOR; };
+    const auto before = [&](const auto& left, const auto& right) {
+        if (electable(left) != electable(right)) return electable(left);
+        if (!electable(left) && (left.color < 0) != (right.color < 0)) return left.color < 0;
+        return left.score > right.score;
     };
     // Stable insertion sort: at most eleven candidates.
     for (int i = 1; i < (int)ranked.size(); ++i) {
@@ -416,6 +365,10 @@ inline void rank_candidates(vector<background_election::hypothesis>& ranked) {
             --j;
         }
         ranked[j] = candidate;
+    }
+    if (ranked.size() >= 2 && electable(ranked[0]) && electable(ranked[1]) && ranked[0].score == ranked[1].score) {
+        const auto none = ranges::find_if(ranked, [](const auto& candidate) { return candidate.color < 0; });
+        rotate(ranked.begin(), none, none + 1);
     }
 }
 
@@ -446,9 +399,8 @@ inline vector<background_election::hypothesis> elect_side_background(
         if (one_grid.empty()) continue;
         const color_tally cells_of_color(one_grid);
         measure_area_and_reach(one_grid, cells_of_color.counts, evidence);
-        measure_embedding(one_grid, cells_of_color.counts, evidence);
+        measure_embedding(one_grid, evidence);
     }
-    close_underneath(evidence);
 
     // "None" is always a candidate.
     ranked.push_back({ .color = -1, .appears_in_any_output = false });
@@ -459,8 +411,7 @@ inline vector<background_election::hypothesis> elect_side_background(
                            .dominance = evidence.dominance[candidate],
                            .appears_in_any_output = persists ? persists[candidate] : true,
                            .span = evidence.span[candidate],
-                           .gaps = evidence.gaps[candidate],
-                           .underneath = evidence.only_windows[candidate] });
+                           .gaps = evidence.gaps[candidate] });
     }
     score_candidates(ranked, evidence);
     rank_candidates(ranked);
@@ -476,27 +427,27 @@ inline vector<background_election::hypothesis> elect_grid_background(const grid&
 // saturates, so area is the only honest signal here. Confident = dominates
 // absolutely, OR beats the runner-up DECISIVELY, OR holds the figures while
 // having a BODY rather than being a separator skeleton. This is what keeps a
-// BACKGROUNDLESS puzzle from reading as per-pair. -1 when none is confident.
+// BACKGROUNDLESS puzzle from reading as per-pair. -1 when none is confident, or
+// two colors hold as much.
 inline int8_t confident_background(const vector<background_election::hypothesis>& local) {
     int best_dominance = 0, second_dominance = 0;
+    const background_election::hypothesis* best = nullptr;
     for (const auto& candidate : local) {
         if (candidate.color < 0) continue;
         if (candidate.dominance > best_dominance) {
             second_dominance = best_dominance;
             best_dominance = candidate.dominance;
+            best = &candidate;
         } else if (candidate.dominance > second_dominance) {
             second_dominance = candidate.dominance;
         }
     }
-    for (const auto& candidate : local) {
-        if (candidate.color < 0 || candidate.dominance != best_dominance) continue;
-        const bool dominates = best_dominance >= BG_HALF;
-        const bool beats_runner_up = best_dominance >= BG_DECISIVE * second_dominance;
-        const bool has_body = candidate.gaps * BG_NEAR_TIE_DEN < 1000 * BG_NEAR_TIE_NUM;
-        const bool holds_figures = candidate.embeds >= BG_HALF && has_body;
-        if (dominates || beats_runner_up || holds_figures) return candidate.color;
-    }
-    return -1;
+    if (!best || second_dominance == best_dominance) return -1;
+    const bool dominates = best_dominance >= BG_HALF;
+    const bool beats_runner_up = best_dominance >= BG_DECISIVE * second_dominance;
+    const bool has_body = best->gaps * BG_NEAR_TIE_DEN < 1000 * BG_NEAR_TIE_NUM;
+    const bool holds_figures = best->embeds >= BG_HALF && has_body;
+    return dominates || beats_runner_up || holds_figures ? best->color : (int8_t)-1;
 }
 
 // One side of a plan: a fixed color (including no ground), or election on the
@@ -532,6 +483,56 @@ inline bool vetoes(const vector<background_election::hypothesis>& local,
     return local_dominance >= BG_DECISIVE * global_dominance && global_embeds < BG_HALF;
 }
 
+// THE GROUND A CROP TOOK OFF: where the output's size is what is drawn
+// (BoundingBox) and every output is cut whole out of its input, found there
+// once, the color most of the input's cells just outside the cut wear, the same
+// in every pair -- what the crop cut against (e50d258f's black around the panel
+// kept). -1 where a pair has no such cut, the cells around it tie, or the pairs
+// disagree.
+inline int8_t cut_against(const vector<example>& train) {
+    if (train.empty() || output_dimension_rule::infer_rule(train).Chosen != output_dimension_rule::BoundingBox)
+        return -1;
+    int8_t agreed = -1;
+    for (const example& pair : train) {
+        const grid& in = pair.input;
+        const grid& out = pair.output;
+        int found = 0, top = 0, left = 0;
+        for (int row = 0; row + out.height <= in.height; ++row)
+            for (int col = 0; col + out.width <= in.width; ++col) {
+                bool same = true;
+                for (int down = 0; down < out.height && same; ++down)
+                    for (int across = 0; across < out.width && same; ++across)
+                        same = in.data[row + down][col + across] == out.data[down][across];
+                if (same) {
+                    ++found;
+                    top = row;
+                    left = col;
+                }
+            }
+        if (found != 1) return -1;
+        color_tally around;
+        for (int row = top - 1; row <= top + out.height; ++row)
+            for (int col = left - 1; col <= left + out.width; ++col)
+                if (in.contains(row, col) &&
+                    (row < top || row >= top + out.height || col < left || col >= left + out.width))
+                    around.add(in.data[row][col]);
+        int8_t most = -1;
+        bool tied = false;
+        for (int color = 0; color < COLOR_COUNT; ++color) {
+            if (!around.has(color)) continue;
+            if (most < 0 || around[color] > around[most]) {
+                most = (int8_t)color;
+                tied = false;
+            } else if (around[color] == around[most]) {
+                tied = true;
+            }
+        }
+        if (most < 0 || tied || (agreed >= 0 && most != agreed)) return -1;
+        agreed = most;
+    }
+    return agreed;
+}
+
 // Elect the background in every DIRECTION: across inputs, across outputs, across
 // all grids pooled, and per pair. Same election, different grid sets — they
 // legitimately disagree, and the disagreement IS information.
@@ -558,6 +559,7 @@ inline background_election elect_background(const vector<example>& train) {
     out.across_outputs        = elect_side_background(outputs);
     out.across_inputs_outputs = elect_side_background(both,    persists);
     out.overlays              = pairs_overlay(train);
+    out.cut                   = cut_against(train);
 
     // Per pair: elect over that pair's INPUT alone. NOT input+output pooled —
     // the transformation can flood the output with a new color, so pooling ties
@@ -574,13 +576,17 @@ inline background_election elect_background(const vector<example>& train) {
 
     // A single pair's area flip cannot stand against CROSS-SIDE agreement: when
     // the outputs elect the very color the veto targeted, and it covers the most
-    // of them, the flip was a color, not the background (007bbfb7's outputs are
-    // mostly black). An agreement the color preference decides is none: two
-    // colors, each one pair's ground, tie on area, and the outputs elect
-    // whichever ranks first (7ed72f31's 1 over 8).
+    // of them with no other color near it, the flip was a color, not the
+    // background (007bbfb7's outputs are mostly black). A lead near equals share
+    // is a tie, and agrees on nothing (7ed72f31's 8 over 1, 288 cells to 283).
     const int8_t vetoed = background_election::top(out.across_inputs);
-    if (out.input_vetoed && vetoed == background_election::top(out.across_outputs) && vetoed == output_area.most())
-        out.input_vetoed = false;
+    if (out.input_vetoed && vetoed == background_election::top(out.across_outputs)) {
+        bool covers_most = true;
+        for (int color = 0; color < COLOR_COUNT; ++color)
+            covers_most = covers_most && (color == vetoed ||
+                output_area[color] * BG_NEAR_TIE_DEN < output_area[vetoed] * BG_NEAR_TIE_NUM);
+        if (covers_most) out.input_vetoed = false;
+    }
     return out;
 }
 
