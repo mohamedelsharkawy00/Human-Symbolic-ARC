@@ -282,7 +282,8 @@ struct diagonal_continuation_rule {
     // which diagonal is read off the grid in hand, differently in every pair,
     // and that is what makes this a rule rather than a table.
     static diagonal_continuation_rule detect(const vector<example>& train, const vector<figure_pair>& pairs,
-                                             const correspondence_election& correspondence) {
+                                             const correspondence_election& correspondence,
+                                             const output_dimension_rule& size) {
         // The cycle is read off the cells where they sit, so the pieces have to
         // be the input's own cells in the input's own frame.
         if (train.empty() || !boxed_by_its_cells(correspondence.segmentation)) return {};
@@ -291,8 +292,12 @@ struct diagonal_continuation_rule {
             bool carried_something = false;
             for (size_t which = 0; which < train.size(); ++which) {
                 const example& pair = train[which];
-                // The input's own cells in reading order, each laid again where
-                // the Tile lays it, a later cell's copies over an earlier one's.
+                // Split [2]'s pieces, the input's own cells in reading order,
+                // each laid again where the Tile lays it (lay_tiled) on the
+                // canvas the size rule gives, into the op's one list: copies past
+                // its room are never laid (1190e5a7 turned, its 30 by 30 canvas
+                // filled by two cells' copies). A later cell's copies over an
+                // earlier one's, as Union lays the list.
                 struct cell_at { int row, col, color; };
                 vector<cell_at> cells;
                 pair.input.for_each_colored_cell(TRANSPARENT, [&](int row, int col, int color) {
@@ -301,14 +306,20 @@ struct diagonal_continuation_rule {
                 const int colors = color_count((int)cells.size(), [](int) { return true; },
                                                [&](int i) { return 1u << cells[(size_t)i].color; });
                 if (colors < 2) return false;
-                const tile_moves moves = moves_of(tile, { 1, 1, 0, 0, colors });
-                grid drawn(pair.output.width, pair.output.height);
-                for (const cell_at& cell : cells)
-                    each_tile_offset(tile, moves, cell.row, cell.col, 1, 1, drawn.width, drawn.height, [&](int down, int across) {
-                        drawn.data[cell.row + down][cell.col + across] = (int8_t)cell.color;
-                        return true;
-                    });
-                if (!redraws_the_output(drawn, pairs[which])) return false;
+                grid drawn;
+                int listed = 0;
+                const bool painted = draw_on_canvas(pair.input, size, drawn, [&](grid& canvas) {
+                    for (const cell_at& cell : cells)
+                        if (!lay_tiled(tile, 1, 1, [&](int, int) { return (int8_t)cell.color; }, cell.row, cell.col,
+                                       colors, cell_box{}, canvas, [&] { return ++listed <= MAX_OBJECTS_IN_A_LIST; },
+                                       [&](int row, int col, int8_t color) {
+                                           canvas.data[row][col] = color;
+                                           return true;
+                                       }))
+                            break;
+                    return true;
+                });
+                if (!painted || !redraws_the_output(drawn, pairs[which])) return false;
                 for (int row = 0; row < pair.output.height; ++row)
                     for (int col = 0; col < pair.output.width; ++col)
                         carried_something = carried_something ||

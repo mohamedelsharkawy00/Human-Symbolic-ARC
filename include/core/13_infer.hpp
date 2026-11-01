@@ -351,7 +351,7 @@ inline void read_the_cut(inference& inf, const vector<example>& train, const vec
     inf.motif_continuation = motif_continuation_rule::detect(train, inf.correspondence);
     // The same continuation read along the diagonals. Asked after the motif
     // because a repeating box is the plainer claim and should get first refusal.
-    inf.diagonal_continuation = diagonal_continuation_rule::detect(train, pairs, inf.correspondence);
+    inf.diagonal_continuation = diagonal_continuation_rule::detect(train, pairs, inf.correspondence, inf.size);
     inf.piece_slam = piece_slam_rule::detect(train, pairs, inf.correspondence, tiles);
     inf.overlap_corner = overlap_corner_rule::detect(train, pairs, inf.correspondence, tiles);
     // Pieces that slid up against the ones that stayed. Asked after the chain
