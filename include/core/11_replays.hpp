@@ -1251,29 +1251,83 @@ inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<p
 static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count * MIRROR_PARTNERS,
               "MirrorAround takes each way of mirroring around each partner, the grid and the pattern");
 
+// The cut's pieces grown in step along `track` on a canvas `width` by
+// `height`, a tie taken by the piece lying furthest `side` (takes_the_tie):
+// `owner` comes back holding each cell's piece and `turn` its turn
+// (grow_in_step), and `met` hears each meeting.
+template <class Met>
+inline void grow_the_cut(const partner_pieces& cut, grown_along track, int side, int width, int height,
+                         int16_t* owner, int16_t* turn, Met met) {
+    // Each cell's piece, the first in the cut that holds it, as the op reads its list.
+    int16_t queue[MAX_GRID_CELLS];
+    uint8_t cell_directions[MAX_GRID_CELLS];
+    std::fill_n(owner, width * height, (int16_t)-1);
+    for (int i = 0; i < cut.count(); ++i)
+        cut.pieces[i].each_cell([&](int row, int col, int8_t) {
+            if (row >= 0 && col >= 0 && row < height && col < width && owner[row * width + col] < 0)
+                owner[row * width + col] = (int16_t)i;
+        });
+    grow_in_step(width, height, track, [&](int piece) { return cut.is_picked(piece); },
+                 [&](int one, int other) { return takes_the_tie(side, one, cut.boxes[one], other, cut.boxes[other]); },
+                 owner, turn, queue, cell_directions, met);
+}
+
+// WHICH SIDE TAKES A TIE, read off the pairs, never tried: the cut's picked
+// pieces grown in step along `track` as the list orders a tie, every cell two
+// reached in one turn -- where the output gives it to one of the two, that one
+// takes it -- and of the list's order and the four sides, the one every such
+// cell agrees with: the list's first, else the one side alone; the list's
+// where none or several do, so the replay judges.
+inline int tie_side_read(const replay_facts& facts, const vector<partner_pieces>& handed, grown_along track) {
+    struct tie { int taker, other; cell_box taker_box, other_box; };
+    vector<tie> ties;
+    for (size_t which = 0; which < handed.size(); ++which) {
+        const partner_pieces& cut = handed[which];
+        const grid& output = facts.train[which].output;
+        int16_t owner[MAX_GRID_CELLS], turn[MAX_GRID_CELLS];
+        vector<std::pair<int, int>> reached;
+        grow_the_cut(cut, track, -1, output.width, output.height, owner, turn, [&](int at, int, int piece, bool in_one_turn) {
+            if (in_one_turn) reached.push_back({ at, piece });
+        });
+        for (const auto& [at, lost] : reached) {
+            const int kept = owner[at];
+            if (kept < 0 || kept == lost) continue;
+            const int shown = output.data[at / output.width][at % output.width];
+            if (shown == cut.color(kept)) ties.push_back({ kept, lost, cut.boxes[kept], cut.boxes[lost] });
+            else if (shown == cut.color(lost)) ties.push_back({ lost, kept, cut.boxes[lost], cut.boxes[kept] });
+        }
+    }
+    auto agrees = [&](int side) {
+        return ranges::all_of(ties, [&](const tie& one) {
+            return takes_the_tie(side, one.taker, one.taker_box, one.other, one.other_box);
+        });
+    };
+    if (agrees(-1)) return -1;
+    int found = -1, sides = 0;
+    for (const int side : { (int)direction::up, (int)direction::right, (int)direction::down, (int)direction::left })
+        if (agrees(side)) {
+            found = side;
+            ++sides;
+        }
+    return sides == 1 ? found : -1;
+}
+
 // PIECES GROWN IN STEP UNTIL THEY MEET, walked: ExtendTo past its eight ways,
 // every picked piece growing along its track at once (grow_in_step, the growth
-// the op runs), each cell laid in the color of the piece that took it, and the
-// bodies laid down again where they lie, as the op hands them back. Refused
-// where a ray stops at a meeting but the output carries it on past (23581191).
+// the op runs), a tie taken by the piece lying furthest `side`, each cell laid
+// in the color of the piece that took it, and the bodies laid down again where
+// they lie, as the op hands them back. Refused where a ray stops at a meeting
+// but the output carries it on past (23581191).
 inline optional<paint_walk> grown_walk(const replay_facts& facts, const vector<partner_pieces>& handed,
-                                       grown_along track) {
+                                       grown_along track, int side) {
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
         const int width = output.width, height = output.height;
-        // Each cell's piece, the first in the cut that holds it, as the op reads its list.
-        int16_t owner[MAX_GRID_CELLS], turn[MAX_GRID_CELLS], queue[MAX_GRID_CELLS];
-        uint8_t cell_directions[MAX_GRID_CELLS];
-        std::fill_n(owner, width * height, (int16_t)-1);
-        for (int i = 0; i < cut.count(); ++i)
-            cut.pieces[i].each_cell([&](int row, int col, int8_t) {
-                if (output.contains(row, col) && owner[row * width + col] < 0) owner[row * width + col] = (int16_t)i;
-            });
+        int16_t owner[MAX_GRID_CELLS], turn[MAX_GRID_CELLS];
         vector<array<int16_t, 3>> meetings;
-        grow_in_step(width, height, track, [&](int piece) { return cut.is_picked(piece); }, owner, turn, queue, cell_directions,
-                     [&](int at, int grow_direction, int piece, bool) {
-                         if (!grown_spreads(track)) meetings.push_back({ (int16_t)at, (int16_t)grow_direction, (int16_t)piece });
-                     });
+        grow_the_cut(cut, track, side, width, height, owner, turn, [&](int at, int grow_direction, int piece, bool) {
+            if (!grown_spreads(track)) meetings.push_back({ (int16_t)at, (int16_t)grow_direction, (int16_t)piece });
+        });
         for (const auto& [at, grow_direction, piece] : meetings) {
             const direction_step step = step_of(grow_direction);
             const int row = at / width + step.down, col = at % width + step.across;
@@ -1301,9 +1355,12 @@ inline optional<paint_walk> grown_walk(const replay_facts& facts, const vector<p
 // back the body with its trail, so the paint lays the body down again where it
 // lies: the output must show it there too (66e6c45b's line removed a piece
 // whose trail then drew it back). Past the eight ways, the pieces grow in step
-// until they meet (grown_walk).
+// until they meet (grown_walk), a tie taken as the value's side says.
 inline optional<paint_walk> trail_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int grow_direction) {
-    if (grow_direction >= direction::count) return grown_walk(facts, handed, (grown_along)(grow_direction - direction::count));
+    if (grow_direction >= direction::count) {
+        const auto [growth, side] = growth_of(grow_direction);
+        return grown_walk(facts, handed, (grown_along)growth, side);
+    }
     const direction_step step = step_of(grow_direction);
     return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
@@ -1509,7 +1566,8 @@ inline optional<paint_walk> crossing_walk(const replay_facts& facts, const vecto
                     if (cut.picked[i]) held[(size_t)i][row][col] = color;
                 });
             grow_in_step(width, height, (grown_along)(reach - CROSSING_RAYS), [&](int piece) { return cut.is_picked(piece); },
-                         owner, turn, queue, cell_directions, [&](int at, int, int piece, bool in_one_turn) {
+                         [](int one, int other) { return one < other; }, owner, turn, queue, cell_directions,
+                         [&](int at, int, int piece, bool in_one_turn) {
                              if (in_one_turn) held[(size_t)piece][at / width][at % width] = (int8_t)cut.color(piece);
                          });
             for (int at = 0; at < width * height; ++at)

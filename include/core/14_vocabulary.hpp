@@ -545,7 +545,7 @@ enum class inferred_amount { none, some, all };
   /* to every side and corner [12-17] (grown_along); past those, the same    */ \
   /* growths overrun, each piece keeping the cells it reaches in one turn    */ \
   /* with another [18-27].                                                   */ \
-  X(ExtendTo                    , 0                 , 27                       , generate , none, false)        \
+  X(ExtendTo                    , 0                 , 107                      , generate , none, false)        \
   /* Each picked piece wears its partner's color, each way partner_by finds */ \
   /* one; past those, the color a key drawn in the grid shows at its place, */ \
   /* then the key's one color; past that, its colors cell by cell from the  */ \

@@ -1889,8 +1889,11 @@ object_list& op_move_to_edge(program_run& run, const object_list& from, int8_t m
 // grow_in_step, 15_op_math.hpp, the growth the reading replays -- and hands
 // back its body and every cell it took, in its first color, as a trail hands
 // back its body and its trail. OVERRUN, each keeps too the cells it reached in
-// the turn another did, so IntersectionList keeps where they meet.
-object_list& op_grow_in_step(program_run& run, const object_list& from, grown_along track, bool overrun) {
+// the turn another did, so IntersectionList keeps where they meet. A cell two
+// reach in one turn goes to the one lying furthest `side`, or, -1, to the
+// earlier in the list (takes_the_tie).
+object_list& op_grow_in_step(program_run& run, const object_list& from, grown_along track, bool overrun,
+                             int side) {
     object_list& res = run.fresh();
     int width = run.canvas.width > 0 ? run.canvas.width : run.input.width;
     int height = run.canvas.height > 0 ? run.canvas.height : run.input.height;
@@ -1913,7 +1916,10 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
     }
     // The cells each object reached in the turn another took them, (cell, object).
     vector<std::pair<int, int>> reached_together;
-    grow_in_step(width, height, track, [&](int piece) { return from.objects[piece].selected; },
+    auto first = [&](int one, int other) {
+        return takes_the_tie(side, one, from.objects[one].box(), other, from.objects[other].box());
+    };
+    grow_in_step(width, height, track, [&](int piece) { return from.objects[piece].selected; }, first,
                  owner, turn, queue, cell_directions, [&](int at, int, int piece, bool in_one_turn) {
                      if (overrun && in_one_turn) reached_together.push_back({ at, piece });
                  });
@@ -1960,11 +1966,14 @@ object_list& op_grow_in_step(program_run& run, const object_list& from, grown_al
 // edge, and passes through the object's own body (march_trail, the walk the
 // reading replays). Hands back each object's body and trail, which compose via
 // Union. Past the eight ways, the objects grow in step (op_grow_in_step), and
-// past those, the same growths overrun.
+// past those, the same growths overrun; past those, every growth again with
+// the side that takes a tie (growth_of).
 object_list& op_extend_to(program_run& run, const object_list& from, int8_t grow_direction) {
-    if (grow_direction >= direction::count)
-        return op_grow_in_step(run, from, (grown_along)((grow_direction - direction::count) % (int)grown_along::count),
-                               grow_direction >= OVERRUN_GROWTHS);
+    if (grow_direction >= direction::count) {
+        const auto [growth, side] = growth_of(grow_direction);
+        return op_grow_in_step(run, from, (grown_along)(growth % (int)grown_along::count),
+                               growth >= (int)grown_along::count, side);
+    }
     object_list& res = run.fresh();
     const direction_step step = step_of(grow_direction);
     int width = run.canvas.width > 0 ? run.canvas.width : run.input.width;

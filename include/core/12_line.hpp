@@ -1344,10 +1344,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
 
     // A TRAIL A PIECE GROWS one of the eight ways, in its own color, until it meets
     // the edge of the grid or another piece -- or, past those, every picked piece
-    // grown in step with the others along its track until they meet, the eight
-    // ways asked first and taking a tie -- asked again, like the rays, while a
-    // trail accounts for any cell, laid each way a paint may be.
-    static_assert(OVERRUN_GROWTHS + (int)grown_along::count == row_of(node_type::ExtendTo).high + 1);
+    // grown in step with the others along its track until they meet, a cell two
+    // reach in one turn going to the side the pairs give it to (tie_side_read),
+    // the eight ways asked first and taking a tie -- asked again, like the rays,
+    // while a trail accounts for any cell, laid each way a paint may be.
+    static_assert(TIED_GROWTHS + 4 * GROWTHS == row_of(node_type::ExtendTo).high + 1);
     static constexpr const char* grown_names[] = { "along its rows", "along its columns", "to every side",
                                                    "along the grid's edge", "along its diagonals down to the right",
                                                    "along its diagonals up to the right", "along both its diagonals",
@@ -1357,10 +1358,21 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     auto trail_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
+        // The value each pick's growth is asked with: its tie read once (tie_side_read).
+        map<std::pair<size_t, int>, int> growth_asked;
+        auto asked_value = [&](size_t at, int asked) {
+            if (asked < direction::count) return direction_asked(asked);
+            const auto known = growth_asked.find({ at, asked });
+            if (known != growth_asked.end()) return known->second;
+            const int growth = asked - direction::count;
+            const int value = growth_value(growth, tie_side_read(opened, handed_by_pick[at], (grown_along)growth));
+            growth_asked[{ at, asked }] = value;
+            return value;
+        };
         for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
                 for (int asked = 0; asked < OVERRUN_GROWTHS; ++asked) {
-                    const int grow_direction = asked < direction::count ? direction_asked(asked) : asked;
+                    const int grow_direction = asked_value(at, asked);
                     const auto seen = laid_from_its_walk(1, at, lay, grow_direction, laying::as_drawn, [&] {
                         return trail_walk(opened, handed_by_pick[at], grow_direction); });
                     if (!seen) continue;
@@ -1370,9 +1382,11 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 }
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
+            const auto [growth, side] = growth_of(best.value);
             const string grows = best.value < direction::count
                 ? string("grows a trail ") + direction_names[best.value] + " until it meets something"
-                : string("grows ") + grown_names[best.value - direction::count] + " in step with the others until they meet";
+                : string("grows ") + grown_names[growth] + " in step with the others until they meet" +
+                      (side < 0 ? string() : string(", the piece furthest ") + direction_names[side] + " taking a tie");
             const int8_t said = say_paint(best, rule::trailed, grows + laid_words(best_lay));
             read.fired[said].lay = best_lay;
         } };

@@ -2008,6 +2008,39 @@ enum class grown_along : int8_t {
 // another (op_grow_in_step).
 constexpr int OVERRUN_GROWTHS = direction::count + (int)grown_along::count;
 
+// AND PAST THE OVERRUNS, EVERY GROWTH AGAIN WITH THE SIDE THAT TAKES A TIE: a
+// cell two pieces reach in one turn goes to the piece lying furthest up, then
+// right, down, left (takes_the_tie) rather than to the earlier in the list.
+// A growth value's parts: which growth (in step, then overrun) and that side,
+// -1 for the list's order.
+constexpr int GROWTHS = 2 * (int)grown_along::count, TIED_GROWTHS = OVERRUN_GROWTHS + (int)grown_along::count;
+struct growth_parts { int growth, side; };
+constexpr growth_parts growth_of(int value) {
+    return value < TIED_GROWTHS ? growth_parts{ value - direction::count, -1 }
+                                : growth_parts{ (value - TIED_GROWTHS) % GROWTHS, 2 * ((value - TIED_GROWTHS) / GROWTHS) };
+}
+constexpr int growth_value(int growth, int side) {
+    return side < 0 ? direction::count + growth : TIED_GROWTHS + side / 2 * GROWTHS + growth;
+}
+
+// WHO TAKES A TIE: of two pieces reaching a cell in one turn, the one lying
+// furthest `side` -- up, right, down or left, its box's edge that way -- and
+// where they lie as far, or no side is said (-1), the earlier in the list
+// (0f63c0b9: the upper piece takes it in every pair, the right one turned).
+inline bool takes_the_tie(int side, int one, const cell_box& one_box, int other, const cell_box& other_box) {
+    auto reach = [&](const cell_box& box) {
+        switch (side) {
+        case direction::up: return -box.row0;
+        case direction::right: return box.col1;
+        case direction::down: return box.row1;
+        case direction::left: return -box.col0;
+        default: return 0;
+        }
+    };
+    if (reach(one_box) != reach(other_box)) return reach(one_box) > reach(other_box);
+    return one < other;
+}
+
 // The directions a track grows, one bit for each direction (1_readings.hpp): a line
 // both ways along it, or the sides, the corners, or both, of every cell.
 constexpr uint8_t grown_directions(grown_along track) {
@@ -2040,7 +2073,8 @@ constexpr bool grown_spreads(grown_along track) {
 // cell of a picked piece then grows at once, a step a turn, onto the empty
 // cells its track reaches -- a cell any piece holds is none to grow onto, so a
 // piece not picked stands in the way -- each cell taken by the first piece to
-// reach it and, reached by two in one turn, by the earlier piece in the list.
+// reach it and, reached by two in one turn, by the one `first(one, other)`
+// says takes the tie (takes_the_tie).
 // Along the canvas's edge, a piece grows from its cells on the edge alone.
 // `owner` comes back holding the piece that took each cell and `turn` the turn
 // it was taken in: 0 for a piece's own cell, -1 for one no piece took. `turn`,
@@ -2049,15 +2083,15 @@ constexpr bool grown_spreads(grown_along track) {
 // THROUGH THE OPEN CELLS a piece floods: every cell it takes grows every way
 // of the track. ALONG LINES every cell of a picked piece sends a ray each way
 // of the track, and two rays meet where they reach one cell in one turn -- the
-// earlier piece's goes on, the other stops -- or where one runs into a cell a
+// one taking the tie goes on, the other stops -- or where one runs into a cell a
 // ray along its own line took before it, head-on or behind; a ray of another
 // line taken before it is crossed, as a line drawn across another goes on
 // (21f83797's lines cross; 1190bc91's rays meet in one turn and stop). `met(cell,
 // grow_direction, piece, in_one_turn)` hears of each ray stopped by meeting
 // another, and of each piece a cell it reached in the turn another did went to
 // -- spreading too -- `in_one_turn` saying it reached the cell then.
-template <class Grows, class Met>
-inline void grow_in_step(int width, int height, grown_along track, Grows grows,
+template <class Grows, class First, class Met>
+inline void grow_in_step(int width, int height, grown_along track, Grows grows, First first,
                          int16_t* owner, int16_t* turn, int16_t* queue, uint8_t* cell_directions, Met met) {
     auto on_track = [&](int row, int col) {
         return track != grown_along::canvas_edge || row == 0 || col == 0 || row == height - 1 || col == width - 1;
@@ -2095,8 +2129,9 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                     owner[next] = owner[at];
                     queue[tail++] = (int16_t)next;
                 } else if (turn[next] == turn[at] + 1 && owner[at] != owner[next]) {
-                    met(next, grow_direction, max(owner[at], owner[next]), true);
-                    owner[next] = min(owner[at], owner[next]);
+                    const bool takes = first(owner[at], owner[next]);
+                    met(next, grow_direction, takes ? owner[next] : owner[at], true);
+                    if (takes) owner[next] = owner[at];
                 }
             }
         }
@@ -2122,8 +2157,8 @@ inline void grow_in_step(int width, int height, grown_along track, Grows grows,
                     turn[at] = step_number;
                     owner[at] = owner[from];
                     cell_directions[at] = ray;
-                } else if (turn[at] == step_number && owner[from] < owner[at]) {
-                    // Met in this turn by an earlier piece: the rays that took it stop.
+                } else if (turn[at] == step_number && first(owner[from], owner[at])) {
+                    // Met in this turn by the piece taking the tie: the rays that took it stop.
                     for (int arrival_direction = direction::up; arrival_direction < direction::count; ++arrival_direction) {
                         if (!(cell_directions[at] >> arrival_direction & 1u)) continue;
                         const direction_step back = step_of(arrival_direction);
