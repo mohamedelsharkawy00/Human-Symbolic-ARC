@@ -418,7 +418,12 @@ inline int partner_of_kind(int kind, int mine, const partner_pieces& pieces) {
     return found;
 }
 
-// Share the executor's span grouping between inference and Layout/SelectRow/SelectColumn.
+// THE BANDS SPANS SIT IN, for inference and Layout/SelectRow/SelectColumn: two
+// spans share a band where either overlaps the other by at least half its own
+// length, and a band is all that such overlaps join, numbered from the lowest.
+// Asked of each pair, never of the order the spans come in, so a grid turned
+// or flipped bands alike (0a1d4ef5 turned: a span 5 long meeting one 3 long by
+// 2 had begun a band of its own). `order` is scratch, as many as the spans.
 inline int overlapping_bands(int count, const int16_t* lows,
                                                const int16_t* highs, int8_t* band_of,
                                                int* order) {
@@ -433,17 +438,26 @@ inline int overlapping_bands(int count, const int16_t* lows,
             --j;
         }
     }
-    int bands = 0, band_hi = -1;
-    for (int m = 0; m < count; ++m) {
-        const int i = order[m];
-        const int need = (highs[i] - lows[i] + 2) / 2;
-        if (bands == 0 || band_hi - lows[i] + 1 < need) {
-            ++bands;
-            band_hi = highs[i];
-        } else if (highs[i] > band_hi) {
-            band_hi = highs[i];
+    int joined[MAX_GRID_CELLS];
+    for (int i = 0; i < count; ++i) joined[i] = i;
+    auto root = [&](int i) {
+        while (joined[i] != i) i = joined[i] = joined[joined[i]];
+        return i;
+    };
+    for (int m = 0; m < count; ++m)
+        for (int n = m + 1; n < count && lows[order[n]] <= highs[order[m]]; ++n) {
+            const int i = order[m], j = order[n];
+            const int overlap = min(highs[i], highs[j]) - lows[j] + 1;
+            if (overlap >= (highs[i] - lows[i] + 2) / 2 || overlap >= (highs[j] - lows[j] + 2) / 2)
+                joined[root(j)] = root(i);
         }
-        band_of[i] = (int8_t)(bands - 1);
+    int8_t band_of_root[MAX_GRID_CELLS];
+    for (int i = 0; i < count; ++i) band_of_root[i] = -1;
+    int bands = 0;
+    for (int m = 0; m < count; ++m) {
+        const int i = order[m], top = root(i);
+        if (band_of_root[top] < 0) band_of_root[top] = (int8_t)bands++;
+        band_of[i] = band_of_root[top];
     }
     return bands;
 }
@@ -2442,8 +2456,13 @@ inline grid visible_pattern(const grid& picture) {
     for (int row = 0; row < height; ++row)
         for (int col = 0; col < width; ++col)
             if (!is_color(unit.data[row][col])) return picture;
+    // Smaller only where the unit is whole copies of a smaller one. A last line
+    // matching its first is no repeat of the plane, and where the grid starts
+    // would decide it (1d0a4b61 turned: 7 columns read as 6 and a fragment).
     int unit_width = 0, unit_height = 0;
     repeat_periods(unit, unit_width, unit_height);
+    if (width % unit_width != 0) unit_width = width;
+    if (height % unit_height != 0) unit_height = height;
     unit.width = (int16_t)unit_width; unit.height = (int16_t)unit_height;
     return unit;
 }
