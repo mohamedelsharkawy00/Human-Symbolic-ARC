@@ -283,36 +283,37 @@ inline int draw_header_rows(
 
   int scale = lay.scale;
 
-  // Format display strings.
-  // Width the index/count to the digit-count of puzzle_count so the value never
-  // outgrows its reserved slot (e.g. 1000/1000 on the training set, which used
-  // to overflow the fixed 3-digit reservation and shove the >/>| buttons onto
-  // the number).
-  int puz_digits = (int)to_string(puzzle_count > 0 ? puzzle_count : 1).size();
-  string puz_str = to_text("%0*d/%0*d", puz_digits, puzzle_idx + 1, puz_digits, puzzle_count);
-  string fps_str = to_text("%06.1f", fps);
-  string status_str = string(app_state.is_paused ? "PAUSED" : "RUNNING");
-  string log_state_str = (app_state.log_mode == logging_mode::stream) ? "ON" : "OFF";
+  // A number that counts puzzles, the puzzle counter and LIMIT, gets four
+  // digits whatever the list: every set checked at once is still under 10,000
+  // puzzles, so no list outgrows the slot and checking a set never resizes it.
+  const int count_digits = 4;
+  string puz_str = to_text("%0*d/%0*d", count_digits, puzzle_count ? puzzle_idx + 1 : 0,
+                           count_digits, puzzle_count);
 
   int pad = 2 * scale; // padding on each side of boxed text
   int box_h = 5 * scale + pad * 2;
 
-  // The puzzle counter's slot, widened to the digits the set actually needs so
-  // the value never outgrows it and shoves the nav buttons onto the number.
-  int puz_val_w = text_w(string(puz_digits, '8') + "/" + string(puz_digits, '8'), scale);
+  int count_w = text_w(string(count_digits, '8'), scale);
+  int puz_val_w = text_w(string(count_digits, '8') + "/" + string(count_digits, '8'), scale);
 
   // The whole header is one flow: every piece asks for a spot as wide as it
-  // needs, and the line wraps only when the next piece would not fit. Nothing is
-  // ever stretched -- a line is filled by carrying more, not by spreading gaps,
-  // so a wide screen buys extra pieces per line rather than extra air.
+  // needs, and the line wraps when the next piece would not fit, or where a
+  // piece starts a line of its own. Nothing is ever stretched -- a line is
+  // filled by carrying more, not by spreading gaps, so a wide screen buys extra
+  // pieces per line rather than extra air.
   int row_h = 9 * scale + lay.v_gap;
   int right_edge = lay.screen_w - lay.base_margin;
   int fx = lay.base_margin, fy = lay.row1_y;
 
+  // Moves the flow to the start of the next line, unless it is there already.
+  auto new_line = [&] {
+    if (fx > lay.base_margin) { fx = lay.base_margin; fy += row_h; }
+  };
+
   // Hands back the left edge for a piece `w` wide, wrapping first if it would
   // not fit on what is left of this line. Its top edge is `fy`.
   auto spot = [&](int w) {
-    if (fx > lay.base_margin && fx + w > right_edge) { fx = lay.base_margin; fy += row_h; }
+    if (fx + w > right_edge) new_line();
     int x = fx;
     fx += w + pad;
     return x;
@@ -364,6 +365,21 @@ inline int draw_header_rows(
     x += value_w + pad;
     button_at(">", x, y, up, 1);
   };
+
+  // NAME [a] [b] ...: a dim name, then its switches, each lit while it is on.
+  // They ask for one spot together, so a wrap never lands inside the group.
+  struct switch_box { string label; bool on; ui_action act; };
+  auto group_piece = [&](const string &name, initializer_list<switch_box> boxes) {
+    int nw = box_w(name), total = nw;
+    for (const switch_box &b : boxes) total += pad + box_w(b.label);
+    int x = spot(total), y = fy;
+    box_at(name, x, y, nw, 5, ui_action::none);
+    x += nw + pad;
+    for (const switch_box &b : boxes) {
+      box_at(b.label, x, y, box_w(b.label), b.on ? 4 : 1, b.act);
+      x += box_w(b.label) + pad;
+    }
+  };
   button_piece("EXIT [ESC]", "", ui_action::exit_app, 1);
 
   // Mute toggle: speaker icon tucked right after EXIT. Glyph swaps on/muted
@@ -383,26 +399,29 @@ inline int draw_header_rows(
 
   button_piece("MINIMIZE", "", ui_action::minimize_app, 1);
 
-  // The inference overlay's on/off sits with the buttons, not down in the pane:
-  // at OFF the pane isn't drawn, so a button inside it could never bring it back.
+  // The inference overlay's switches sit with the buttons, not down in the
+  // pane: with both off the pane isn't drawn, so a button inside it could never
+  // bring it back. One view at a time; pressing the lit one turns it off.
   {
-    static const char *view_names[] = { "OFF", "FACTS", "LINES" };
-    int view = app_state.inference_view.load() % global_app_state::INFERENCE_STEPS;
-    button_piece("INFERENCE", to_text("%-5s [I]", view_names[view]),
-                 ui_action::cycle_inference, view ? 4 : 1);
+    int view = app_state.inference_view.load();
+    group_piece("INFERENCE",
+                {{"FACTS [I]", view == global_app_state::INFERENCE_FACTS, ui_action::toggle_inference_facts},
+                 {"LINES [SHIFT I]", view == global_app_state::INFERENCE_LINES, ui_action::toggle_inference_lines}});
   }
 
   button_piece("RESET [R]", "", ui_action::reset_solver, 1);
-  button_piece("LOGGING", to_text("%-3s [L]", log_state_str.c_str()), ui_action::toggle_log, 1);
-  button_piece(to_text("%-7s [SPACE]", status_str.c_str()), "", ui_action::toggle_pause, 1);
+  button_piece("LOGGING [L]", "", ui_action::toggle_log,
+               app_state.log_mode == logging_mode::stream ? 4 : 1);
+  button_piece("RUN [SPACE]", "", ui_action::toggle_pause, app_state.is_paused ? 1 : 4);
   button_piece("IMPORT [N]", "", ui_action::import_sol, 1);
   button_piece("EXPORT [E]", "", ui_action::export_sol, 1);
-  button_piece(to_text("BENCHMARK %-2s [B]", app_state.is_benchmarking ? "ON" : ""), "",
-               ui_action::toggle_benchmark, app_state.is_benchmarking ? 4 : 1);
-  stepper_piece("LIMIT", to_text("%03d", app_state.benchmark_puzzle_limit),
-                text_w("888", scale), ui_action::dec_limit, ui_action::inc_limit);
+  button_piece("BENCHMARK [B]", "", ui_action::toggle_benchmark, app_state.is_benchmarking ? 4 : 1);
+  stepper_piece("LIMIT", to_text("%0*d", count_digits, app_state.benchmark_puzzle_limit),
+                count_w, ui_action::dec_limit, ui_action::inc_limit);
 
   // PUZZLE [|<] [<] 001/600 [>] [>|], one piece for the same reason as a stepper.
+  // It starts a line: the app's controls above, the puzzle and its lists below.
+  new_line();
   {
     int nw = box_w("PUZZLE"), aw = box_w("<"), ew = box_w("|<");
     int x = spot(nw + pad + ew + pad + aw + pad + puz_val_w + pad + aw + pad + ew), y = fy;
@@ -416,66 +435,28 @@ inline int draw_header_rows(
     button_at(">|", x, y, ui_action::last_puzzle, 1);
   }
 
-  // Dataset checkmarks: TRN / EVL / TST / CUS. Each toggles whether that set's tasks
-  // are concatenated into the loaded list; clicking reloads the merged list live
-  // (handled by the worker). On = lit box with a '+' prefix, off = dim with '-'.
-  // Then which generation of ARC they show, lit while it narrows them, as wide
-  // as its widest label so it never shifts.
+  // Dataset checkmarks, in two groups: SETS each add their puzzles to the
+  // loaded list, FILTERS each take out of TRN / EVL / TST the puzzles ARC-AGI-1
+  // already had, or ARC-AGI-2's own. A box is on while its bit is set, which is
+  // while it acts, and its sign says whether those puzzles are in. Clicking
+  // reloads the list live (handled by the worker).
   {
     int ds = app_state.dataset_flags.load();
-    int w = box_w("+TRN"), gw = box_w("AGI 1+2");
-    int x = spot(w * 4 + pad * 4 + gw), y = fy;
-    auto draw_ds = [&](const char *name, int flag, ui_action act) {
-      bool on = (ds & flag) != 0;
-      box_at(string(on ? "+" : "-") + name, x, y, w, on ? 4 : 1, act);
-      x += w + pad;
+    auto mark = [&](const char *name, int flag, ui_action act) {
+      bool on = (ds & flag) != 0, takes_out = (flag & DS_FILTERS) != 0;
+      return switch_box{string(on != takes_out ? "+" : "-") + name, on, act};
     };
-    draw_ds("TRN", DS_TRAIN, ui_action::toggle_ds_train);
-    draw_ds("EVL", DS_EVAL, ui_action::toggle_ds_eval);
-    draw_ds("TST", DS_TEST, ui_action::toggle_ds_test);
-    draw_ds("CUS", DS_CUSTOM, ui_action::toggle_ds_custom);
-    box_at(ds & DS_AGI_1 ? "AGI 1" : ds & DS_AGI_2 ? "AGI 2" : "AGI 1+2", x, y, gw,
-           ds & DS_GENERATIONS ? 4 : 1, ui_action::cycle_generation);
+    group_piece("SETS", {mark("TRN", DS_TRAIN, ui_action::toggle_ds_train),
+                         mark("EVL", DS_EVAL, ui_action::toggle_ds_eval),
+                         mark("TST", DS_TEST, ui_action::toggle_ds_test),
+                         mark("CUS", DS_CUSTOM, ui_action::toggle_ds_custom)});
+    group_piece("FILTERS", {mark("AGI1", DS_HIDE_AGI_1, ui_action::toggle_ds_agi_1),
+                            mark("AGI2", DS_HIDE_AGI_2, ui_action::toggle_ds_agi_2)});
   }
 
-  // Clickable ID field: click to edit (type/paste an ID + Enter to jump), and it
-  // doubles as a copy button via Ctrl+C. The value box renders the edit buffer
-  // with a cursor while editing, otherwise the current ID.
-  {
-    string copy_lbl = string("\xEE\x80\x82") + " [CTRL C]";  // copy glyph U+E002
-    string paste_lbl = string("\xEE\x80\x83") + " [CTRL V]"; // paste glyph U+E003
-    int nw = box_w("ID");
-    // A stable width so the click target doesn't jump around as the typed text
-    // grows ("888..." is wider than any real 8-char ARC id).
-    int vw = box_w("88888888");
-    int x = spot(nw + pad + vw + pad + box_w(copy_lbl) + pad + box_w(paste_lbl)), y = fy;
-    box_at("ID", x, y, nw, 5, ui_action::none);
-    x += nw + pad;
-
-    bool editing;
-    bool error;
-    string shown;
-    {
-      std::lock_guard<std::mutex> lk(app_state.id_edit_mtx);
-      editing = app_state.id_edit.active;
-      error = app_state.id_edit.error;
-      shown = editing ? app_state.id_edit.buffer + "_" : task.id;
-    }
-    // Box the value while editing (or on error) so it reads as an input.
-    if (editing || error)
-      box_at(shown, x, y, vw, error ? 4 : 5, ui_action::edit_id);
-    else {
-      draw_text(context, font, shown, x + pad, y + pad, scale);
-      app_state.click_zones.push_back({x, y, vw, box_h, ui_action::edit_id});
-    }
-    x += vw + pad;
-
-    // Both also answer to their Ctrl key from anywhere, so both wear it.
-    x += button_at(copy_lbl, x, y, ui_action::copy_id, 1) + pad;
-    button_at(paste_lbl, x, y, ui_action::paste_id, 1);
-  }
-
-  pair_piece("FPS", to_text("%-7s", fps_str.c_str()));
+  // Four digits before the point: frames wait for the screen, so the rate
+  // never passes its refresh.
+  pair_piece("FPS", to_text("%06.1f", fps));
 
   // ARC palette reference -- a flush strip of square swatches, each with its
   // index drawn with a black outline.
@@ -483,7 +464,7 @@ inline int draw_header_rows(
     int n_colors = COLOR_COUNT;
     // The white outline lives inside the line's box: swatches are inset by t so
     // the strip's outer edge lands exactly on the line height.
-    int t = max(1, scale / 2);
+    int t = 2 * max(1, scale / 2);
     int sw_side = box_h - t * 2;   // square swatch, inside the outline
     int strip_w = n_colors * sw_side + t * 2;
     int x = spot(strip_w), y = fy;
@@ -511,6 +492,42 @@ inline int draw_header_rows(
       }
       const auto &white_font = colored_fonts.count(UI_COLOR_LINE) ? colored_fonts[UI_COLOR_LINE] : font;
       draw_text(context, white_font, num, nx, ny, scale);
+    }
+  }
+
+  // Clickable ID field: click to edit (type/paste an ID + Enter to jump), and it
+  // doubles as a copy button via Ctrl+C. The value box renders the edit buffer
+  // with a cursor while editing, otherwise the current ID. Last in the flow.
+  {
+    string copy_lbl = string("\xEE\x80\x82") + " [CTRL C]";  // copy glyph U+E002
+    string paste_lbl = string("\xEE\x80\x83") + " [CTRL V]"; // paste glyph U+E003
+    int nw = box_w("ID");
+    // As wide as the longest id on disk with the typing cursor after it, so the
+    // box never changes width.
+    int vw = box_w(string(app_state.longest_id_length.load() + 1, '8'));
+    int x = spot(nw + pad + box_w(copy_lbl) + pad + box_w(paste_lbl) + pad + vw), y = fy;
+    box_at("ID", x, y, nw, 5, ui_action::none);
+    x += nw + pad;
+
+    // Both also answer to their Ctrl key from anywhere, so both wear it.
+    x += button_at(copy_lbl, x, y, ui_action::copy_id, 1) + pad;
+    x += button_at(paste_lbl, x, y, ui_action::paste_id, 1) + pad;
+
+    bool editing;
+    bool error;
+    string shown;
+    {
+      std::lock_guard<std::mutex> lk(app_state.id_edit_mtx);
+      editing = app_state.id_edit.active;
+      error = app_state.id_edit.error;
+      shown = editing ? app_state.id_edit.buffer + "_" : task.id;
+    }
+    // Box the value while editing (or on error) so it reads as an input.
+    if (editing || error)
+      box_at(shown, x, y, vw, error ? 4 : 5, ui_action::edit_id);
+    else {
+      draw_text(context, font, shown, x + pad, y + pad, scale);
+      app_state.click_zones.push_back({x, y, vw, box_h, ui_action::edit_id});
     }
   }
 
@@ -2009,9 +2026,6 @@ inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display
   // top = bottom - panel_h (negative until fully pulled).
   app_state.op_drawer_h_max.store(panel_h);
   int drawer_bottom = app_state.op_drawer_h.load();
-  // Open means all the way out: a release already snaps to full or shut, so a
-  // partly-open default would be a depth you can never drag back to.
-  if (drawer_bottom <= 0) drawer_bottom = panel_h;
   if (drawer_bottom > panel_h) drawer_bottom = panel_h; // can't pull past full
   int panel_top = drawer_bottom - panel_h;
   app_state.op_drawer_bottom.store(drawer_bottom);
@@ -2163,8 +2177,9 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
     draw_footer_rows(context, font, app_state, lay, task, elapsed);
   }
 
-  if (!draw_grid_view(context, font, background, task, state.views, lay))
-    return;
+  // An empty list has no grids, so nothing reads them below; the op drawer
+  // still draws, since an open one swallows clicks on the header seen or not.
+  const bool grids_drawn = draw_grid_view(context, font, background, task, state.views, lay);
 
   // Hover preview: draw the subtree output for every train+test example,
   // overlaid on the right half (cols 2-3). Only the solver's
@@ -2360,7 +2375,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
   // what this puzzle actually offers, which only the readout knows, and they
   // step both ways, so the wrap must carry negatives round to the top. Counted
   // once here, for the wrap and for the pane.
-  if (int view = app_state.inference_view.load(); view != global_app_state::INFERENCE_OFF) {
+  if (int view = app_state.inference_view.load(); grids_drawn && view != global_app_state::INFERENCE_OFF) {
     const auto &correspondence = task.inf.correspondence;
     // THE STEPPER WALKS THE CUTS THAT COMPETE, each at its one reading. Told
     // which cut inference chose and how many there are, it hands back the one

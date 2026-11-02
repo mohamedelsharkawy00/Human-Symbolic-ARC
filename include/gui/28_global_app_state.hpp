@@ -45,10 +45,10 @@ inline int settings_int(const unordered_map<string, string>& kv, const string& k
 enum class logging_mode { none, stream };
 // op_role lives beside the op list in 14_vocabulary.hpp — it is what an op DOES. The
 // op_tab_* actions below are clicks on the drawer tab that draws each role.
-enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, cycle_generation, cycle_inference, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
+enum class ui_action { none, toggle_pause, prev_puzzle, next_puzzle, first_puzzle, last_puzzle, edit_id, copy_id, paste_id, toggle_mute, toggle_log, import_sol, export_sol, reset_solver, toggle_benchmark, inc_limit, dec_limit, exit_app, minimize_app, toggle_ds_train, toggle_ds_eval, toggle_ds_test, toggle_ds_custom, toggle_ds_agi_1, toggle_ds_agi_2, toggle_inference_facts, toggle_inference_lines, cycle_coarseness, cycle_coarseness_back, step_edge, step_edge_back, step_piece, step_piece_back, step_dropped, step_dropped_back, step_motif, step_motif_back, step_left_over, step_left_over_back, toggle_op_list, op_tab_get, op_tab_reduce, op_tab_select, op_tab_translate, op_tab_map, op_tab_generate, op_tab_combine, toggle_programs };
 // The same actions as words, in the same order: the command port's vocabulary.
 // Keep in lockstep with ui_action above.
-inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "toggle_ds_custom", "cycle_generation", "cycle_inference", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "step_left_over", "step_left_over_back", "toggle_op_list", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine", "toggle_programs" };
+inline constexpr const char* ui_action_names[] = { "none", "toggle_pause", "prev_puzzle", "next_puzzle", "first_puzzle", "last_puzzle", "edit_id", "copy_id", "paste_id", "toggle_mute", "toggle_log", "import_sol", "export_sol", "reset_solver", "toggle_benchmark", "inc_limit", "dec_limit", "exit_app", "minimize_app", "toggle_ds_train", "toggle_ds_eval", "toggle_ds_test", "toggle_ds_custom", "toggle_ds_agi_1", "toggle_ds_agi_2", "toggle_inference_facts", "toggle_inference_lines", "cycle_coarseness", "cycle_coarseness_back", "step_edge", "step_edge_back", "step_piece", "step_piece_back", "step_dropped", "step_dropped_back", "step_motif", "step_motif_back", "step_left_over", "step_left_over_back", "toggle_op_list", "op_tab_get", "op_tab_reduce", "op_tab_select", "op_tab_translate", "op_tab_map", "op_tab_generate", "op_tab_combine", "toggle_programs" };
 
 struct click_zone {
 	int x, y, w, h;
@@ -194,10 +194,10 @@ struct global_app_state {
 	atomic<bool> show_whole_programs{false}; // the facts pane shows every row of a long program, not its first few
 	// Overlay: what inference read off the puzzle. Show it, step the coarseness,
 	// walk the lines and pieces. Keys live in key_to_action, buttons in the pane.
-	// It is either/or: the FACTS step reads out everything inference decided and
-	// draws no lines, the LINES step draws the correspondence and the pane says
+	// It is either/or: the FACTS view reads out everything inference decided and
+	// draws no lines, the LINES view draws the correspondence and the pane says
 	// what each thing on the grids is.
-	enum : int { INFERENCE_OFF, INFERENCE_FACTS, INFERENCE_LINES, INFERENCE_STEPS };
+	enum : int { INFERENCE_OFF, INFERENCE_FACTS, INFERENCE_LINES, INFERENCE_VIEWS };
 	atomic<int> inference_view{INFERENCE_OFF};
 	// Which way of cutting the grid up is on screen, each shown at the one
 	// reading it kept, so this counts cuts and not readings — and following the
@@ -222,7 +222,7 @@ struct global_app_state {
 	atomic<int> op_drawer_bottom{0}; // y of drawer's bottom edge; clicks above it are swallowed by the drawer
 	atomic<int> op_handle_x{0}, op_handle_y{0}, op_handle_w{0}, op_handle_h{0}; // pull-handle rect (published for drag hit-test)
 	atomic<bool> op_handle_hot{false}; // mouse is near the handle -> draw it bright
-	atomic<int> op_drawer_h{0};      // current drawer height (dragged); 0 = use default
+	atomic<int> op_drawer_h{0};      // how far the drawer's bottom edge is pulled down; the draw stops it at full
 	atomic<int> op_drawer_h_max{0};  // max height (grid-label row), published for drag clamp
 	atomic<bool> gui_minimized{false};
 	atomic<bool> needs_resize{false};
@@ -233,6 +233,9 @@ struct global_app_state {
 	// Currently loaded dataset selection (bitmask of dataset_flag),
 	// mirrored from the solver so the GUI checkmarks can render their state.
 	atomic<int> dataset_flags{0};
+	// The longest id on disk, measured once, so the ID box fits every one of
+	// them and never changes width.
+	atomic<int> longest_id_length{0};
 
 	// Benchmark mode: the switch, and what a run is asked for (35_benchmark.hpp).
 	atomic<bool> is_benchmarking{false};
@@ -299,7 +302,7 @@ inline string serialize_settings(const global_app_state& app, bool muted, int pu
 inline void apply_settings(global_app_state& app, const unordered_map<string, string>& kv) {
 	app.benchmark_puzzle_limit = settings_int(kv, "benchmark_limit", app.benchmark_puzzle_limit);
 	app.inference_view.store(settings_int(kv, "inference_view", global_app_state::INFERENCE_OFF)
-	                         % global_app_state::INFERENCE_STEPS);
+	                         % global_app_state::INFERENCE_VIEWS);
 	// -1 says nothing was picked, so a fresh app opens on whatever each
 	// puzzle chose rather than on a cell that meant something last time. Saved
 	// under its own name since it counts cuts: a reading number saved by an

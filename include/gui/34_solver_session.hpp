@@ -93,12 +93,16 @@ public:
     // dropped back to here when the next one loads.
     m_base_gpu_buffer_size = gpu_buffer.size();
 
+    // The longest id of every set, read once, so the ID box keeps one width
+    // whichever sets are checked.
+    size_t longest = 0;
+    for (const challenge_task &task : load_task_set(DS_ALL).tasks) longest = max(longest, task.id.size());
+    m_app.longest_id_length.store((int)longest);
+
     // The saved selection, restored before the saved puzzle index is read below
-    // so the index lands in the same list it came from. TRAIN when no set is
-    // saved: a person is looking at the screen and can check another box.
-    int initial = settings_int(read_settings_file(), "datasets", 0) & (DS_ALL | DS_GENERATIONS);
-    if (!(initial & DS_ALL)) initial |= DS_TRAIN;
-    load_dataset(initial);
+    // so the index lands in the same list it came from. TRAIN when none is
+    // saved; a saved one opens as it was left, even with nothing checked.
+    load_dataset(settings_int(read_settings_file(), "datasets", DS_TRAIN) & (DS_ALL | DS_FILTERS));
 
     if (!m_tasks.tasks.empty()) {
       int saved_idx = settings_int(read_settings_file(), "puzzle", -1);
@@ -192,11 +196,10 @@ public:
     if (!m_benchmarking) m_reset_requested = true;
   }
 
-  // Dataset selection bitmask. Applied by the control thread; ignored when it
-  // checks no set, so the list is never blanked out.
+  // Dataset selection bitmask, applied by the control thread.
   inline int get_dataset_flags() const { return m_dataset_flags.load(); }
   inline void set_datasets(int flags) {
-    if (m_benchmarking || !(flags & DS_ALL)) return;
+    if (m_benchmarking) return;
     m_queued_dataset_flags.store(flags);
   }
 
@@ -351,14 +354,15 @@ private:
   }
 
   // Parses the puzzle puzzle_idx names into this side's copy and blanks every
-  // picture, the way a fresh child starts. Nothing is inferred here: that
-  // waits for the pane or SPACE.
+  // picture, the way a fresh child starts. An empty list names none, and
+  // loading nothing empties the copy, so nothing of the last puzzle is drawn
+  // or started. Nothing is inferred here: that waits for the pane or SPACE.
   inline void load_current() {
     sound_manager::get().clear_queue();
     int idx = m_view.puzzle_idx;
     int count = (int)m_tasks.tasks.size();
-    if (idx < 0 || idx >= count) return;
-    const challenge_task &task = m_tasks.tasks[idx];
+    const challenge_task none{};
+    const challenge_task &task = idx >= 0 && idx < count ? m_tasks.tasks[idx] : none;
     {
       scoped_lock lock(m_search.mtx);
       m_loaded = load_task_from_content(task.content, task.id, m_puzzle,
@@ -439,18 +443,14 @@ private:
         int new_flags = m_queued_dataset_flags.exchange(-1);
         int delta = m_queued_puzzle_delta.exchange(0);
         bool reset = m_reset_requested.exchange(false);
-        if (new_flags > 0 && new_flags != m_dataset_flags.load()) {
+        if (new_flags >= 0 && new_flags != m_dataset_flags.load()) {
           kill_child();
           {
             scoped_lock lock(m_search.mtx);
             load_dataset(new_flags);
-            if (m_tasks.tasks.empty()) {
-              m_view.puzzle_idx = 0;
-            } else if (m_view.puzzle_idx >= (int)m_tasks.tasks.size()) {
-              m_view.puzzle_idx = (int)m_tasks.tasks.size() - 1;
-            }
+            m_view.puzzle_idx = clamp(m_view.puzzle_idx.load(), 0, max(0, (int)m_tasks.tasks.size() - 1));
           }
-          if (!m_tasks.tasks.empty()) load_current();
+          load_current();
         } else if (delta != 0 && !m_tasks.tasks.empty()) {
           kill_child();
           {

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdlib>   // std::getenv (ARC_W / ARC_H debug overrides)
 #include <cstring>
+#include <limits>
 
 namespace arc {
 
@@ -169,8 +170,10 @@ private:
     switch (action) {
       case ui_action::toggle_pause:   m_solver_threading.toggle_pause(); break;
       // The drawer opens by dragging its handle, which nothing but a mouse can
-      // do -- so the port could not see the one panel that lists the ops.
+      // do -- so the port could not see the one panel that lists the ops. It
+      // opens all the way: pulled past the end, which the draw stops at full.
       case ui_action::toggle_op_list:
+        m_app_state.op_drawer_h.store(numeric_limits<int>::max());
         m_app_state.show_op_list.store(!m_app_state.show_op_list.load());
         break;
       case ui_action::toggle_programs:
@@ -238,25 +241,28 @@ private:
         m_app_state.is_benchmarking = !m_app_state.is_benchmarking;
         break;
       case ui_action::inc_limit:
-        m_app_state.benchmark_puzzle_limit = min(m_solver_threading.get_puzzle_count(), m_app_state.benchmark_puzzle_limit + 1);
+        m_app_state.benchmark_puzzle_limit = max(1, min(m_solver_threading.get_puzzle_count(), m_app_state.benchmark_puzzle_limit + 1));
         break;
       case ui_action::dec_limit:
         m_app_state.benchmark_puzzle_limit = max(1, m_app_state.benchmark_puzzle_limit - 1);
         break;
       case ui_action::reset_solver:   m_solver_threading.reset_solver(); break;
-      // Dataset checkmarks: toggle one set's bit and apply. Refuse to clear the
-      // last remaining set (set_datasets ignores a mask with no set) so the list
-      // is never empty.
+      // Dataset checkmarks: flip one set's or filter's bit and apply.
       case ui_action::toggle_ds_train:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_TRAIN);
         break;
       case ui_action::toggle_ds_eval:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_EVAL);
         break;
-      case ui_action::cycle_inference:
-        m_app_state.inference_view.store((m_app_state.inference_view.load() + 1) %
-                                         global_app_state::INFERENCE_STEPS);
+      // One view at a time; the one on screen turns the overlay off.
+      case ui_action::toggle_inference_facts:
+      case ui_action::toggle_inference_lines: {
+        const int view = action == ui_action::toggle_inference_facts ? global_app_state::INFERENCE_FACTS
+                                                                     : global_app_state::INFERENCE_LINES;
+        m_app_state.inference_view.store(m_app_state.inference_view.load() == view
+                                             ? global_app_state::INFERENCE_OFF : view);
         break;
+      }
       // Every stepper carries its own count, told to it by the draw — the only
       // place that knows how long this puzzle's list is — so a step here is
       // just a step and each one stops against its own end.
@@ -278,13 +284,12 @@ private:
       case ui_action::toggle_ds_custom:
         m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_CUSTOM);
         break;
-      // Both generations, then only ARC-AGI-1's puzzles, then only ARC-AGI-2's own.
-      case ui_action::cycle_generation: {
-        const int flags = m_solver_threading.get_dataset_flags();
-        const int next = flags & DS_AGI_1 ? DS_AGI_2 : flags & DS_AGI_2 ? 0 : DS_AGI_1;
-        m_solver_threading.set_datasets((flags & ~DS_GENERATIONS) | next);
+      case ui_action::toggle_ds_agi_1:
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_HIDE_AGI_1);
         break;
-      }
+      case ui_action::toggle_ds_agi_2:
+        m_solver_threading.set_datasets(m_solver_threading.get_dataset_flags() ^ DS_HIDE_AGI_2);
+        break;
       case ui_action::exit_app:       PostQuitMessage(0); break;
       case ui_action::minimize_app:   ShowWindow(m_hwnd, SW_MINIMIZE); break;
       default: break;
@@ -550,7 +555,7 @@ private:
       ui_action current_action = m_app_state.active_ui_action.exchange(ui_action::none);
       // A completed drag already sized the drawer; swallow the click so it
       // doesn't toggle. Snap on release: past the halfway point -> fully open;
-      // otherwise -> closed (reset height so it reopens full next time).
+      // otherwise -> closed.
       if (was_drag && drag_consumed) {
         int pmax = m_app_state.op_drawer_h_max.load();
         int cur = m_app_state.op_drawer_h.load();
@@ -685,7 +690,7 @@ private:
   }
 
   // Shift is the "other way" modifier: on a key that steps a counter it picks
-  // the back direction, everywhere else it changes nothing.
+  // the back direction, on I the other view, everywhere else it changes nothing.
   static inline ui_action key_to_action(WPARAM w_param, bool shift) {
     switch (w_param) {
       case VK_ESCAPE: return ui_action::exit_app;
@@ -698,9 +703,10 @@ private:
       case 'N':       return ui_action::import_sol;
       case 'E':       return ui_action::export_sol;
       case 'B':       return ui_action::toggle_benchmark;
-      // The overlay: show it, step the coarseness, flip the direction, walk the
-      // lines one at a time. Hold to keep stepping, shift to step back.
-      case 'I':       return ui_action::cycle_inference;
+      // The overlay: show its facts or its lines, step the coarseness, flip the
+      // direction, walk the lines one at a time. Hold to keep stepping, shift to
+      // step back.
+      case 'I':       return shift ? ui_action::toggle_inference_lines : ui_action::toggle_inference_facts;
       case 'C':       return shift ? ui_action::cycle_coarseness_back : ui_action::cycle_coarseness;
       case 'S':       return shift ? ui_action::step_edge_back : ui_action::step_edge;
       case 'P':       return shift ? ui_action::step_piece_back : ui_action::step_piece;

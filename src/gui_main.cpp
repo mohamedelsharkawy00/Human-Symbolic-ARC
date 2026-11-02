@@ -126,10 +126,10 @@ int main() {
 				context.upload_all_data(gpu_buffer);
 				app_state.needs_upload = false;
 				if (!context.begin_capture(w, h)) return "error could not draw the frame";
-				if (int p_idx = st.puzzle_idx; p_idx >= 0 && p_idx < solver.get_puzzle_count()) {
+				{
 					lock_guard<mutex> lock(st.search.mtx);
 					draw_frame(&context, chars, bg_grid, st, app_state,
-						solver.get_puzzle(), w, h, fps, p_idx,
+						solver.get_puzzle(), w, h, fps, st.puzzle_idx,
 						solver.get_puzzle_count(), gpu_buffer);
 				}
 				if (!context.end_capture(pass == 1 ? path : string()))
@@ -227,16 +227,14 @@ int main() {
 			app_state.needs_upload = false;
 		}
 
-		// Draw frame
+		// Draw frame. An empty list still draws: its header holds the boxes that
+		// fill it again.
 		if (context.begin_frame()) {
-			int p_idx = state.puzzle_idx;
-			int p_count = solver.get_puzzle_count();
-
-			if (p_idx >= 0 && p_idx < p_count) {
+			{
 				lock_guard<mutex> lock(state.search.mtx);
 				draw_frame(&context, chars, bg_grid, state,
-					app_state, solver.get_puzzle(), w, h, fps, p_idx,
-					p_count, gpu_buffer);
+					app_state, solver.get_puzzle(), w, h, fps, state.puzzle_idx,
+					solver.get_puzzle_count(), gpu_buffer);
 			}
 			context.end_frame();
 		}

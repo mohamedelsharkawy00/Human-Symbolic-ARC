@@ -56,7 +56,7 @@ measures the clean-build workflow, not the existing-output rename/cleanup path.
 
 # 6. Benchmark
 1. The BENCHMARK button in the GUI reads the checked datasets from their first puzzle, stopping after LIMIT puzzles: a scored run in the window.
-2. The AGI button beside the dataset boxes narrows them: AGI 1+2 every puzzle, AGI 1 only those ARC-AGI-1 already had (its 800 ids, `assets\arc_agi_1_ids.txt`), AGI 2 only ARC-AGI-2's own. The puzzle list, the benchmark and the saved settings follow it.
+2. The SETS and FILTERS boxes pick the puzzles, and a lit box is one at work. TRN, EVL and TST add their sets, and the filters AGI1 and AGI2 take out of those the puzzles ARC-AGI-1 already had (its 800 ids, `assets\arc_agi_1_ids.txt`) or ARC-AGI-2's own. CUS adds the hand-made puzzles in `tests\puzzles`, which come from neither ARC, so no filter touches them. A box's + or - says whether its puzzles are in. The puzzle list, the benchmark and the saved settings follow them.
 3. The puzzle's process on screen is killed, and each puzzle is read in its own `arc_headless.exe`, one at a time, shown the same way. Stepping puzzles, pause, reset and import do nothing until the run ends; afterwards a fresh process starts, paused, on the last puzzle it read.
 4. Results go to `benchmarks\benchmark_<time>.txt`, summary on top, and the predictions to `kaggle\working\submission.json`. Both are written after every puzzle, so a run stopped early keeps what it finished. Switching BENCHMARK off, or closing the app, kills the puzzle that is running.
 
