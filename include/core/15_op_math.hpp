@@ -6,6 +6,7 @@
 // generate, after what several of them share.
 #pragma once
 #include "1_readings.hpp"
+#include "2_size.hpp"
 #include "14_vocabulary.hpp"  // color_pair, BidiColorMap's key values
 #include <algorithm>
 #include <array>
@@ -1808,6 +1809,28 @@ constexpr int aligned_copy_start(int source_size, int target_start,
     return target_start + (target_size - 1) * anchor / 2 - (source_size - 1) * anchor / 2;
 }
 
+// The nine ways two boxes line up, each a row anchor times three plus a column
+// anchor (aligned_copy_start): CopyTo's values, and where an input lies on its
+// canvas (output_dimension_rule::anchor).
+inline constexpr const char* anchor_names[] = { "top-left", "top", "top-right", "left", "middle", "right",
+                                                "bottom-left", "bottom", "bottom-right" };
+
+// THE INPUT LAID ON ITS CANVAS: a grid the size `canvas` gives the input, empty
+// but where the input lies, at the canvas's anchor -- the input the reading
+// reads and the run runs where the pairs show it lying elsewhere than the
+// top-left (input_laid_on, environment::draw).
+inline grid laid_on_canvas(const grid& input, const output_dimension_rule& canvas) {
+    int width = 0, height = 0;
+    if (!canvas.size_for(input.width, input.height, width, height)) return input;
+    grid laid(width, height);
+    const int down = aligned_copy_start(input.height, 0, height, canvas.anchor / 3);
+    const int across = aligned_copy_start(input.width, 0, width, canvas.anchor % 3);
+    for (int row = 0; row < input.height; ++row)
+        for (int col = 0; col < input.width; ++col)
+            if (laid.contains(row + down, col + across)) laid.data[row + down][col + across] = input.data[row][col];
+    return laid;
+}
+
 // WHAT BRIDGE DRAWS, said once for the op and for the reading that replays it.
 // Each picked piece reaches for the picked pieces of its own colour whose
 // centres share its row, its column or a diagonal, and the gap between two is
@@ -2522,7 +2545,7 @@ inline void each_tile_offset(const tile_value& tile, const tile_moves& moves, in
 // HOW A COPY MIRRORS ITS PIECE around a middle: left to right, top to bottom,
 // or all four ways at once; or across, the one way the middle's own piece runs
 // (pose_across). The middle is a partner's, one of the partner_by ways, or past
-// those the grid's own or the picked pattern's axes.
+// those the grid's own or the picked pattern's axes, or the piece's own sides.
 enum class mirror_by : int8_t { left_right, top_bottom, four_ways, across,
     diagonal_down_right, diagonal_up_right, eight_ways, count };
 static_assert((int)mirror_by::count == MIRRORS, "MirrorAround names each mirror (mirror_names)");
@@ -2670,13 +2693,32 @@ constexpr int pose_across(runs_along way) {
 // is mirrored around, twice its row and column so a middle between two cells is
 // whole: its one partner's by `how` among the pieces not picked (partner_of),
 // or past those the grid's own or the picked pattern's axes. Straight mirrors
-// precede diagonals, so Underlay fills from them first. False, and no copy,
-// for a piece with no one partner, or
+// precede diagonals, so Underlay fills from them first. ACROSS ITS OWN SIDES
+// each copy lies beside the piece, mirrored across the side it lies past: left
+// to right, one past each side of it; top to bottom, one above and one below;
+// all four ways, those and one past each corner, mirrored across both sides
+// (c48954c1's figure, mirrored out from the middle of its canvas). False, and
+// no copy, for a piece with no one partner, or
 // mirrored across a diagonal that runs between cells, or across the grid,
-// which is no piece and runs no way of its own.
+// which is no piece and runs no way of its own, or its own sides any other way.
 template <class Copy>
 inline bool each_mirror(mirror_by mirror, int how, int mine, const partner_pieces& pieces, int width, int height,
                         Copy copy) {
+    if (how == MIRROR_OWN_SIDES) {
+        if (mirror != mirror_by::left_right && mirror != mirror_by::top_bottom && mirror != mirror_by::four_ways)
+            return false;
+        const cell_box own = pieces.box(mine);
+        const int above = 2 * own.row0 - 1, below = 2 * own.row1 + 1;
+        const int before = 2 * own.col0 - 1, after = 2 * own.col1 + 1;
+        if (mirror != mirror_by::top_bottom)
+            for (const int col2 : { before, after }) copy(4, own.row0 + own.row1, col2);
+        if (mirror != mirror_by::left_right)
+            for (const int row2 : { above, below }) copy(2, row2, own.col0 + own.col1);
+        if (mirror == mirror_by::four_ways)
+            for (const int row2 : { above, below })
+                for (const int col2 : { before, after }) copy(6, row2, col2);
+        return true;
+    }
     cell_box middle{ 0, 0, height - 1, width - 1 };
     int partner = -1;
     if (how < (int)partner_by::count) {

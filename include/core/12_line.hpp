@@ -757,8 +757,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
 
     // A COPY ANOTHER PIECE DECIDES: every picked piece is drawn again mirrored
-    // around its partner's middle, or the grid's -- left to right, top to bottom,
-    // all four ways, or across the partner, the one way it runs. The copies are
+    // around its partner's middle, or the grid's, or across its own sides -- left
+    // to right, top to bottom, all four ways, or across the partner, the one way
+    // it runs. The picked pattern's middle is the covered pattern's to read
+    // (covered_pattern_rule). The copies are
     // drawn turned, so it accounts for the copies and the turns of the pieces it
     // mirrors, and for the cells no match covered that the copies land on. All
     // four ways is asked first, so it takes a tie: it holds only where both its
@@ -791,8 +793,9 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             const vector<partner_pieces> handed = handed_pieces(facts, pick);
             if (asked.before(handed)) continue;
             for (const mirror_by mirror : mirrors_asked)
-                for (int how = 0; how < MIRROR_PATTERN; ++how) {
-                    if (how < (int)partner_by::count && !facts.asks_way((partner_by)how)) continue;
+                for (int how = 0; how < MIRROR_PARTNERS; ++how) {
+                    if (how == MIRROR_PATTERN || (how < (int)partner_by::count && !facts.asks_way((partner_by)how)))
+                        continue;
                     const int value = (int)mirror * MIRROR_PARTNERS + how;
                     const auto seen = mirror_holds(facts, handed, mirror, how);
                     if (!seen) continue;
@@ -803,8 +806,10 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             const int how = best.value % MIRROR_PARTNERS;
             carry(say(best, rule::mirror_around,
-                      string("drawn again mirrored ") + mirror_names[best.value / MIRROR_PARTNERS] + " the middle of " +
-                          (how < ways ? partners(how) : string("the grid")), moves)); } };
+                      string("drawn again mirrored ") + mirror_names[best.value / MIRROR_PARTNERS] +
+                          (how == MIRROR_OWN_SIDES ? string(" its own sides")
+                                                   : " the middle of " + (how < ways ? partners(how) : string("the grid"))),
+                      moves)); } };
     };
 
     // A PIECE HOLLOWED TO ITS EDGE: every picked piece keeps only its outline. It
@@ -1409,15 +1414,13 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     };
 
     // THE PICKED PIECES COPIED ONTO THE OTHERS, lined up one of CopyTo's nine ways.
-    static_assert(row_of(node_type::CopyTo).high + 1 == 9);
-    static constexpr const char* lined_up[] = { "top-left", "top", "top-right", "left", "middle", "right",
-                                                "bottom-left", "bottom", "bottom-right" };
+    static_assert(size(anchor_names) == (size_t)row_of(node_type::CopyTo).high + 1);
     auto copy_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
         for (const size_t at : own_color_picks)
             for (const int8_t lay : lays())
-                for (int anchor = 0; anchor < (int)size(lined_up); ++anchor) {
+                for (int anchor = 0; anchor < (int)size(anchor_names); ++anchor) {
                     const auto seen = laid_from_its_walk(2, at, lay, anchor, laying::as_drawn, [&] {
                         return copy_walk(opened, handed_by_pick[at], anchor); });
                     if (!seen) continue;
@@ -1428,7 +1431,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         if (!best.materialize(opened)) return {};
         return { best.said, [&, best, best_lay] {
             const int8_t said = say_paint(best, rule::copied_onto,
-                string("is copied onto the other pieces, lined up ") + lined_up[best.value] + laid_words(best_lay));
+                string("is copied onto the other pieces, lined up ") + anchor_names[best.value] + laid_words(best_lay));
             read.fired[said].lay = best_lay;
         } };
     };
@@ -2030,9 +2033,21 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         // meet, over its rays one cell long); never asked, a change painted
         // whole and its exception set right after could not be said
         // (516b51b7's blocks, filled inside in 2, the rings within set right
-        // by the passes after).
+        // by the passes after). A picture so far that shows every output has
+        // nothing left for such a rule to bring nearer, only cells to lay wrong
+        // (8eb1be9a's band, repeated whole, then mirrored upside down over it).
+        auto picture_shows_every_output = [&] {
+            if (canvas.size() != pairs.size()) return false;
+            for (size_t which = 0; which < pairs.size(); ++which) {
+                const grid& output = pairs[which].whole.output;
+                for (int row = 0; row < output.height; ++row)
+                    for (int col = 0; col < output.width; ++col)
+                        if (!comes_out(pairs[which], row, col, canvas[which][row][col])) return false;
+            }
+            return true;
+        };
         for (const bool lays_wrong : { false, true }) {
-            facts.tolerant = lays_wrong && facts.hand_known && facts.overlays;
+            facts.tolerant = lays_wrong && facts.hand_known && facts.overlays && !picture_shows_every_output();
             if (lays_wrong && !facts.tolerant) break;
             opened.tolerant = facts.tolerant;
             for (size_t kind = 0; kind < size(kinds); ++kind) {

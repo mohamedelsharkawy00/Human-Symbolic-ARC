@@ -1836,6 +1836,10 @@ struct piece_frame_rule {
 // Collects facts, rules, and elections about one puzzle.
 struct inference {
     output_dimension_rule size;
+    // THE CANVAS EACH INPUT WAS LAID ON before the reading, where the pairs show
+    // it lying elsewhere than the top-left (input_laid_on): the size the pairs
+    // read and the input's anchor on it. The run lays each input there too.
+    output_dimension_rule laid_on;
     color_facts colors;
     shape_color_map_rule shape_color_map;
     hole_color_rule hole_colors;

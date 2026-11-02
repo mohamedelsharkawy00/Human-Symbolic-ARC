@@ -264,6 +264,50 @@ inline ground_plan plan_to_read(const vector<example>& train, const background_e
     return plans.front();
 }
 
+// WHERE THE INPUT LIES ON THE CANVAS, read where every output grows from its
+// input by a size the size rule gives: the first of the nine anchors
+// (anchor_names) at which, in every pair, each cell of the input's figures
+// lands on a figure of the output, one color always on one color and no two on
+// one. The size rule with that anchor where it is not the top-left, the canvas
+// each input is laid on (laid_on_canvas); none otherwise, each input read
+// where it is.
+inline output_dimension_rule input_laid_on(const vector<example>& figures) {
+    output_dimension_rule canvas = output_dimension_rule::infer_rule(figures);
+    if (canvas.Chosen != output_dimension_rule::Fixed && canvas.Chosen != output_dimension_rule::Scale) return {};
+    if (!ranges::all_of(figures, [](const example& pair) {
+            return pair.input.width <= pair.output.width && pair.input.height <= pair.output.height; }))
+        return {};
+    auto lies_at = [](const example& pair, int anchor) {
+        const int down = aligned_copy_start(pair.input.height, 0, pair.output.height, anchor / 3);
+        const int across = aligned_copy_start(pair.input.width, 0, pair.output.width, anchor % 3);
+        recoloring to;
+        bool taken[COLOR_COUNT] = {};
+        bool any = false;
+        for (int row = 0; row < pair.input.height; ++row)
+            for (int col = 0; col < pair.input.width; ++col) {
+                const int was = pair.input.data[row][col];
+                if (!is_color(was)) continue;
+                const int now = pair.output.data[row + down][col + across];
+                if (!is_color(now)) return false;
+                if (!to.named(was)) {
+                    if (taken[now]) return false;
+                    to[was] = (int8_t)now;
+                    taken[now] = true;
+                }
+                if (to[was] != now) return false;
+                any = true;
+            }
+        return any;
+    };
+    for (int anchor = 0; anchor < (int)size(anchor_names); ++anchor)
+        if (ranges::all_of(figures, [&](const example& pair) { return lies_at(pair, anchor); })) {
+            if (anchor == 0) return {};
+            canvas.anchor = (int8_t)anchor;
+            return canvas;
+        }
+    return {};
+}
+
 // A reading inside the puzzle's first one -- its framed reading, the passes
 // after it -- cuts by the shape that one learned (`inherited_shape`), the one
 // the program carries; the first reading, handed none, learns it off the pairs
@@ -295,13 +339,25 @@ inline shared_ptr<const inference> read_with_ground(const vector<example>& train
     if (const auto found = readings.completed.find(key); found != readings.completed.end())
         return found->second;
     const vector<int8_t> grounds = plan_grounds(train, plan, elected);
-    const vector<figure_pair> pairs = plan_figures(train, plan, grounds);
-    const vector<example> figures = figures_only(pairs);
+    vector<figure_pair> pairs = plan_figures(train, plan, grounds);
+    vector<example> figures = figures_only(pairs);
+    // Each input laid where the pairs show it lies on its canvas, so what is
+    // read from here on is a same-size puzzle, as the run will lay it.
+    const output_dimension_rule laid_on = input_laid_on(figures);
+    vector<example> laid;
+    if (laid_on.holds()) {
+        laid = train;
+        for (example& pair : laid) pair.input = laid_on_canvas(pair.input, laid_on);
+        pairs = plan_figures(laid, plan, grounds);
+        figures = figures_only(pairs);
+    }
     const tiled_pieces figure_tiles{figures.data(), tiles.originals};
     inference facts = prepare_figures(figures, pairs, figure_tiles,
-                                      inherited_shape ? *inherited_shape : changed_shape(train));
+                                      inherited_shape ? *inherited_shape
+                                                      : changed_shape(laid_on.holds() ? laid : train));
     facts.plan = plan;
     facts.elected_backgrounds = grounds;
+    facts.laid_on = laid_on;
     auto read = make_shared<const inference>(read_figures(figures, pairs, figure_tiles, pass, partners,
         std::move(facts), readings));
     readings.keep(std::move(key), read);

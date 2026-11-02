@@ -910,14 +910,15 @@ object_list& op_move_toward(program_run& run, const object_list& from, int8_t va
 // MirrorAround[value]: each picked object is drawn again mirrored around the
 // middle of its one partner among the objects not picked -- left to right, top
 // to bottom, all four ways at once, or across it the one way it runs, value /
-// MIRROR_PARTNERS -- around a partner, the grid or the picked pattern.
+// MIRROR_PARTNERS -- around a partner, the grid or the picked pattern, or
+// across its own sides.
 // Across needs a partner with a direction. partner_of (15_op_math.hpp) finds
 // the partner, the walk inference
 // replays. The picked object stays; its copies join the list after every
 // object there was, picked as it is, as CopyTo's are -- a sentence that picked
 // every piece paints what it holds without picking again. An object with no
 // partner, or several, gets no copy.
-object_list& op_mirror_around(program_run& run, const object_list& from, int8_t value) {
+object_list& op_mirror_around(program_run& run, const object_list& from, int value) {
     object_list& res = run.fresh();
     copy_list(res, from);
     constexpr int partners = MIRROR_PARTNERS;
@@ -2425,7 +2426,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::WouldFit:                return op_would_fit(run, in, value);
     case node_type::AlignTo:                 return op_align_to(run, in, value);
     case node_type::MoveToward:              return op_move_toward(run, in, value);
-    case node_type::MirrorAround:            return op_mirror_around(run, in, value);
+    case node_type::MirrorAround:            return op_mirror_around(run, in, op.value);
     case node_type::SelectObjectsWithHoles:  return op_select_objects_with_holes(run, in, value);
     case node_type::SelectAtLeast:           return op_select_at_least(run, in, op.value);
     case node_type::SelectRunningAlong:      return op_select_running_along(run, in, value);
@@ -2569,8 +2570,11 @@ inline grid environment::draw(const node* tree, const example& ex, const puzzle&
     // whole of what says whether they were ever meant to be used.
     static const shape_table no_table;
     const inference& read = p.inf;
+    // The input as the reading read it: laid on its canvas where the pairs
+    // showed it lying elsewhere than the top-left.
+    const grid input = read.laid_on.holds() ? laid_on_canvas(ex.input, read.laid_on) : ex.input;
     program_run run{
-        .input = ex.input,
+        .input = input,
         .lists = *lists,
         .colors_by_size = read.colors.output_colors_by_size,
         .colors_by_size_count = read.colors.output_colors_by_size_count,
@@ -2579,15 +2583,15 @@ inline grid environment::draw(const node* tree, const example& ex, const puzzle&
     };
     // The canvas the size rule gives this input, the reading's own sizing.
     int width = 0, height = 0;
-    read.size.canvas_size_for(ex.input.width, ex.input.height, width, height);
+    read.size.canvas_size_for(input.width, input.height, width, height);
     run.canvas.width = width;
     run.canvas.height = height;
-    read_the_seeds(ex.input, read.ground_election.input_elected(), *lists);
+    read_the_seeds(input, read.ground_election.input_elected(), *lists);
     // The cut is a fact the puzzle holds, and a test input is cut by the same
     // reading the pairs were: the fact reads the grid again rather than
     // remembering the pairs, so what the op cuts on and what inference said
     // cannot drift apart.
-    if (!read.pane_split.holds() || !read.pane_split.panes_of(ex.input, run.panes)) run.panes.clear();
+    if (!read.pane_split.holds() || !read.pane_split.panes_of(input, run.panes)) run.panes.clear();
     run_ops(run, program);
     // Under BoundingBox the canvas was the whole ceiling, and the drawing is
     // the box of what was painted on it.

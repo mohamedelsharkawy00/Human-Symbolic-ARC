@@ -34,6 +34,10 @@ struct output_dimension_rule {
     int width = 0, height = 0;
     int width_numerator = 0, width_denominator = 0;
     int height_numerator = 0, height_denominator = 0;
+    // WHERE THE INPUT LIES ON THE CANVAS: one of CopyTo's nine anchors
+    // (anchor_names, aligned_copy_start), 0 the top-left, where the input lies
+    // unless the pairs read it elsewhere (input_laid_on).
+    int8_t anchor = 0;
 
     // True once a sizing policy is selected, including the BoundingBox fallback.
     bool holds() const { return Chosen != NotInferredYet; }

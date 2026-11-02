@@ -1249,7 +1249,7 @@ inline optional<replayed> mirror_holds(const replay_facts& facts, const vector<p
     return seen;
 }
 static_assert(row_of(node_type::MirrorAround).high + 1 == (int)mirror_by::count * MIRROR_PARTNERS,
-              "MirrorAround takes each way of mirroring around each partner, the grid and the pattern");
+              "MirrorAround takes each way of mirroring around each partner, the grid, the pattern and its own sides");
 
 // The cut's pieces grown in step along `track` on a canvas `width` by
 // `height`, a tie taken by the piece lying furthest `side` (takes_the_tie):

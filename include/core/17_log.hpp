@@ -93,9 +93,12 @@ inline void report_header(ostream& report, const string& id,
     report << "\n\n";
 }
 
-inline void report_dims(ostream& report, const output_dimension_rule& size) {
+inline void report_dims(ostream& report, const output_dimension_rule& size, const output_dimension_rule& laid_on) {
     report << "[dims]\n";
-    report << "rule " << (int)size.Chosen << "\n\n";
+    report << "rule " << (int)size.Chosen;
+    if (laid_on.holds())
+        report << "  each input laid " << anchor_names[laid_on.anchor] << " on the canvas of rule " << (int)laid_on.Chosen;
+    report << "\n\n";
 }
 
 inline void report_colors(ostream& report, const color_facts& colors, int8_t input_background) {
@@ -579,7 +582,7 @@ inline void log_inference(const string& id, const inference& inf,
     if (!report.is_open()) return;
 
     report_header(report, id, idx, count, dataset_flags);
-    report_dims(report, inf.size);
+    report_dims(report, inf.size, inf.laid_on);
     report_colors(report, inf.colors, TRANSPARENT);
     // The reading read figures with no ground; its plan came from the election
     // it keeps beside it, and the plan it chose is starred.
