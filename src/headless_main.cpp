@@ -1,7 +1,6 @@
 // THE SOLVER ON ITS OWN. No window, no thread, nothing from include/gui --
-// this program is built with include/core, the ops (include/ops) and the
-// tools that run programs (scripts) alone, so it cannot reach anything else by
-// accident.
+// this program is built with include/core and the tools that run programs
+// (scripts) alone, so it cannot reach anything else by accident.
 //
 // EVERY PUZZLE IN A FRESH PROCESS. A solver that has worked through one puzzle
 // carries its memory into the next, and runs after the first went measurably

@@ -40,17 +40,16 @@ DATASET_METADATA = {
 
 # The complete set of files the Kaggle build needs: its one main, the tools it
 # runs (the scored run's and the spelling bench's, and the header the scored run
-# keeps beside itself), and every header in include/core and include/ops. Those
-# folders ARE the list -- the solver is built from them alone, locally too (the
-# arc_headless target), so a header it needs cannot be missing from them, and
-# none of include/gui is sent.
+# keeps beside itself), and every header in include/core. That folder IS the
+# list -- the solver is built from it alone, locally too (the arc_headless
+# target), so a header it needs cannot be missing from it, and none of
+# include/gui is sent.
 def headers(folder):
     return folder, sorted(f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f)))
 FOLDERS = {
-    "src": (os.path.join(ROOT, "src"), ["kaggle_main.cpp"]),
+    "src": (os.path.join(ROOT, "src"), ["headless_main.cpp"]),
     "scripts": (os.path.join(ROOT, "scripts"), ["said.hpp", "spell.hpp", "in_parallel.hpp"]),
     "include": headers(os.path.join(ROOT, "include", "core")),
-    "ops": headers(os.path.join(ROOT, "include", "ops")),
 }
 
 def git(*args):
@@ -62,25 +61,19 @@ def commit():
     return head + " with uncommitted changes" if git("status", "--porcelain") else head
 
 def sync():
+    # Made anew every time: anything an older push left (a header since moved
+    # or renamed, a folder since gone) would be uploaded with the rest.
+    if os.path.isdir(PKG):
+        shutil.rmtree(PKG)
     digest = hashlib.sha1()
     for name, (origin, files) in FOLDERS.items():
         folder = os.path.join(PKG, name)
-        os.makedirs(folder, exist_ok=True)
+        os.makedirs(folder)
         for f in files:
             shutil.copy2(os.path.join(origin, f), os.path.join(folder, f))
             digest.update(f"{name}/{f}".encode())
             with open(os.path.join(folder, f), "rb") as fh:
                 digest.update(fh.read())
-        # Anything else in there is left from an older push (a header since
-        # moved to include/gui or renamed, an old folder) and would be uploaded
-        # with the rest. Named by what it is rather than one by one, so the
-        # next file to go away needs no edit here.
-        for entry in os.listdir(folder):
-            stale = os.path.join(folder, entry)
-            if os.path.isdir(stale):
-                shutil.rmtree(stale)
-            elif entry not in files:
-                os.remove(stale)
     with open(os.path.join(PKG, "dataset-metadata.json"), "w", newline="\n") as fh:
         json.dump(DATASET_METADATA, fh, indent=2)
     # What the push waits to see Kaggle serve: the commit, and a digest of the files.

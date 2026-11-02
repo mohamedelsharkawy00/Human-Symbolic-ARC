@@ -69,19 +69,17 @@ target_include_directories(arc_core INTERFACE include/core)
 
 # The solver on its own, no window: every reading the GUI shows runs in one of
 # these, and it is what Kaggle runs. Built here too, so what Kaggle compiles is
-# compiled on every build and can be run on a desk. It alone has the ops
-# (include/ops), what runs a program, and the tools that run programs
+# compiled on every build and can be run on a desk. It alone includes the ops
+# (38_ops.hpp), what runs a program, and has the tools that run programs
 # (scripts: said, spell) on its include path.
-add_executable(arc_headless "src/kaggle_main.cpp")
+add_executable(arc_headless "src/headless_main.cpp")
 target_link_libraries(arc_headless PRIVATE arc_core)
-target_include_directories(arc_headless PRIVATE include/ops scripts)
+target_include_directories(arc_headless PRIVATE scripts)
 # It reads its settings with getenv, the call Kaggle's compiler has; MSVC would
 # rather it used its own _dupenv_s.
 target_compile_definitions(arc_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-# The GUI: a window onto the reading, which runs in an arc_headless child. It
-# has the solver's headers and not its ops, so it cannot run a program: GUI
-# code that tried would fail to link.
+# The GUI: a window onto the reading, which runs in an arc_headless child.
 # Its code compiles apart, in arc_gui, because Ninja holds back every compile
 # of a target until the targets it depends on are built: inside ARC, gui_main.cpp
 # waited on arc_headless's whole build. Now only ARC's link waits.

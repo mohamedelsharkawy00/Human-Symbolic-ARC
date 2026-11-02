@@ -1,6 +1,6 @@
 #pragma once
 // A READING WATCHED FROM ANOTHER PROCESS. Every reading the GUI shows runs in a
-// process of its own (arc_headless --serve, see kaggle_main.cpp), and the GUI
+// process of its own (arc_headless --serve, see headless_main.cpp), and the GUI
 // watches it: the process says what it paints as lines of text on stdout, and
 // the watcher replays them into its own copy of the puzzle. The watcher talks
 // back on stdin. Both halves live here so the two sides of the pipe cannot

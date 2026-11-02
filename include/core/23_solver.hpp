@@ -2,7 +2,7 @@
 // THE SOLVER. Give it a puzzle, ask it to read, read the best program off the
 // puzzle. That is the whole contract. It owns no thread, knows no window,
 // reads no settings file and plays no sound: a driver does those. The served
-// process (kaggle_main.cpp) drives it and watches it through solver_observer.
+// process (headless_main.cpp) drives it and watches it through solver_observer.
 // Nothing in this folder may include anything from gui/.
 
 #include "20_environment.hpp"

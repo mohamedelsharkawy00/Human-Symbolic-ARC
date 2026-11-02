@@ -72,8 +72,8 @@ if PROBE or PROBE_ONLY:
 # --- locate inputs --------------------------------------------------------
 # Source dataset (auto-discover via glob -- mount path varies: seen flat at
 # /kaggle/input/<slug>/ and nested at /kaggle/input/datasets/<owner>/<slug>/)
-src_cands = glob.glob("/kaggle/input/**/src/kaggle_main.cpp", recursive=True)
-assert src_cands, "could not find src/kaggle_main.cpp under /kaggle/input"
+src_cands = glob.glob("/kaggle/input/**/src/headless_main.cpp", recursive=True)
+assert src_cands, "could not find src/headless_main.cpp under /kaggle/input"
 SRC_ROOT = src_cands[0].rsplit("/src/", 1)[0]
 print("source root:", SRC_ROOT)
 # The code this run builds, as kaggle_push.py stamped it: the proof it is the code pushed.
@@ -82,12 +82,12 @@ print("source commit:", open(SRC_ROOT + "/commit.txt").read().strip())
 # --- compile -------------------------------------------------------------
 print(subprocess.check_output(["g++", "--version"], text=True))
 
-# The one program, its include path as arc_headless has it locally: the core,
-# the ops, and the tools that run programs.
+# The one program, its include path as arc_headless has it locally: the core
+# and the tools that run programs.
 def compile_to(binary):
     cmd = ["g++", "-std=c++20", "-O2", "-pthread",
-           *(f"-I{SRC_ROOT}/{folder}" for folder in ("include", "ops", "scripts")),
-           SRC_ROOT + "/src/kaggle_main.cpp", "-o", binary]
+           *(f"-I{SRC_ROOT}/{folder}" for folder in ("include", "scripts")),
+           SRC_ROOT + "/src/headless_main.cpp", "-o", binary]
     print("compiling:\n  " + " ".join(cmd))
     t0 = time.time()
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -175,12 +175,12 @@ def submission():
 
     # --- 4. merge shard outputs -> submission.json ----------------------------
     # CROSS-FILE CONTRACT: the "submission_<n>.json" name below is produced by the C++
-    # solver (src/kaggle_main.cpp, the shard_index write path). If you rename it in one place
+    # solver (src/headless_main.cpp, the shard_index write path). If you rename it in one place
     # you MUST rename it in the other, or this merge silently finds nothing.
     # (The Windows build never shards -- it writes a single submission.json directly.)
-    # NAMING CONTRACT (src/kaggle_main.cpp): with >1 shard each writes submission_<n>.json;
+    # NAMING CONTRACT (src/headless_main.cpp): with >1 shard each writes submission_<n>.json;
     # with a SINGLE shard it writes submission.json directly (no suffix). The merge
-    # must read whatever kaggle_main.cpp wrote, or it silently produces an empty file.
+    # must read whatever headless_main.cpp wrote, or it silently produces an empty file.
     if SHARDS > 1:
         merged = {}
         for s in range(SHARDS):

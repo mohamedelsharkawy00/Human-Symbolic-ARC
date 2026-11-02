@@ -1,7 +1,7 @@
 #pragma once
 // WHAT A SOLVED PUZZLE HANDS BACK: its line of submission.json, and a few lines
 // saying how the reading went. Every puzzle is solved in a process of its own
-// (see kaggle_main.cpp), so these are also what crosses from that process to
+// (see headless_main.cpp), so these are also what crosses from that process to
 // the one that started it, as a small file.
 //
 // The submission, in the competition format:

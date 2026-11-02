@@ -1,8 +1,8 @@
 // THE OPS: what each op does to the list a program holds and to the canvas it
 // paints, run one after another on one example (environment::draw). What an op
 // shares with the reading's replay is 15_op_math.hpp's arithmetic, so the two
-// cannot draw differently. Only arc_headless has include/ops on its include
-// path, so only it can run a program: the GUI cannot.
+// cannot draw differently. Only arc_headless includes it: the GUI runs a
+// program through an arc_headless child.
 #pragma once
 #include "20_environment.hpp"
 #include <algorithm>

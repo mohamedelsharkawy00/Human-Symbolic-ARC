@@ -1,6 +1,6 @@
 #pragma once
 // THE GUI'S SIDE OF THE SOLVER. The solver never runs in this process: every
-// puzzle on screen has an arc_headless --serve child (see kaggle_main.cpp), and
+// puzzle on screen has an arc_headless --serve child (see headless_main.cpp), and
 // ending it is ending that process, which takes everything it held with it. A
 // switch to another puzzle, a reset or a dataset change kills it; the next one
 // starts clean.

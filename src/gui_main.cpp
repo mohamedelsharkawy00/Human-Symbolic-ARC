@@ -1,7 +1,7 @@
 // THE GUI: a window onto the solver. The solver never runs in this process:
 // each puzzle's reading is an arc_headless child (see 34_solver_session.hpp),
 // and this process runs no program at all -- it is linked without the ops, so
-// it cannot. The Kaggle run (kaggle_main.cpp) is that same child, alone.
+// it cannot. The Kaggle run (headless_main.cpp) is that same child, alone.
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
