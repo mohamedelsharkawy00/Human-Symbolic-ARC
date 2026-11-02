@@ -138,6 +138,29 @@ struct slider_zone {
 	int stops;
 	int knob; // the handle's width, so the hit test lands where the handle draws
 };
+
+// HOW FAR A REGION TALLER THAN ITS ROOM IS SCROLLED, in pixels. The draw says
+// what it holds and how much taller than its room that is, and reads back how
+// far down to start: the top again for anything new to hold. The wheel moves
+// it, stopping at either end.
+struct scroll {
+	atomic<int> at{0};
+	atomic<int> most{0};
+	atomic<size_t> holding{0};
+	int pick(size_t holds, int taller) {
+		if (holding.exchange(holds) != holds) at.store(0);
+		most.store(max(0, taller));
+		at.store(clamp(at.load(), 0, most.load()));
+		return at.load();
+	}
+	void by(int pixels) { at.store(clamp(at.load() + pixels, 0, most.load())); }
+};
+// A region the wheel scrolls: where it is, and how far one of its lines is.
+struct scroll_zone {
+	int x, y, w, h;
+	scroll* which;
+	int line;
+};
 // THE GUI'S SIDE OF THE SOLVER: which puzzle is up, and the pictures kept of
 // it. `search` holds this side's lock and clock; its mutex guards the puzzle,
 // and this side's pictures with it.
@@ -235,6 +258,10 @@ struct global_app_state {
 
 	vector<click_zone> click_zones;
 	vector<slider_zone> slider_zones;
+	// The regions the wheel scrolls, and how far each is: the inference pane,
+	// and the BEST program under the grids.
+	vector<scroll_zone> scroll_zones;
+	scroll pane_scroll, best_scroll;
 	mutex node_zones_mtx;
 	vector<node_zone> node_zones;
 	atomic<uint64_t> hovered_hash{0};

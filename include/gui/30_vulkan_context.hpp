@@ -30,6 +30,10 @@ public:
 
   inline void draw(int offset, int width, int height, int x = 0, int y = 0,
                    int cell_width = 0, int stride = 0);
+  // DRAWS CUT OFF AT A BOX until unclip, so a region that scrolls never paints
+  // past its own edges. A box of nothing draws nothing.
+  inline void clip(int x, int y, int width, int height);
+  inline void unclip();
   inline bool begin_frame();
   inline void end_frame();
 
@@ -653,6 +657,20 @@ inline void vulkan_context::draw(int offset, int width, int height, int x,
   vkCmdPushConstants(active_command, pipeline_layout,
                      VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);
   vkCmdDraw(active_command, 6, width * height, 0, 0);
+}
+
+inline void vulkan_context::clip(int x, int y, int width, int height) {
+  if (active_command == VK_NULL_HANDLE) return;
+  const int left = clamp(x, 0, (int)active_extent.width);
+  const int top = clamp(y, 0, (int)active_extent.height);
+  const int right = clamp(x + width, left, (int)active_extent.width);
+  const int bottom = clamp(y + height, top, (int)active_extent.height);
+  VkRect2D box{{left, top}, {(uint32_t)(right - left), (uint32_t)(bottom - top)}};
+  vkCmdSetScissor(active_command, 0, 1, &box);
+}
+
+inline void vulkan_context::unclip() {
+  if (active_command != VK_NULL_HANDLE) aim_at_target(active_command, active_extent);
 }
 
 inline void vulkan_context::end_frame() {

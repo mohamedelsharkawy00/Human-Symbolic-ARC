@@ -463,6 +463,23 @@ private:
       m_app_state.hovered_hash.store(hit);
       return 0;
     }
+    // THE WHEEL SCROLLS THE REGION UNDER THE CURSOR, the one drawn last where
+    // two overlap, by as many of its lines a notch as Windows is set to scroll,
+    // or by its whole height where Windows is set to scroll pages.
+    if (u_msg == WM_MOUSEWHEEL) {
+      POINT at{(short)LOWORD(l_param), (short)HIWORD(l_param)};
+      ScreenToClient(hwnd, &at);
+      UINT lines = 0;
+      SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+      const auto &zones = m_app_state.scroll_zones;
+      for (auto z = zones.rbegin(); z != zones.rend(); ++z) {
+        if (at.x < z->x || at.x >= z->x + z->w || at.y < z->y || at.y >= z->y + z->h) continue;
+        const int step = lines == WHEEL_PAGESCROLL ? z->h : (int)lines * z->line;
+        z->which->by(-GET_WHEEL_DELTA_WPARAM(w_param) * step / WHEEL_DELTA);
+        break;
+      }
+      return 0;
+    }
     if (u_msg == WM_LBUTTONDOWN) {
       int x = (short)LOWORD(l_param);
       int y = (short)HIWORD(l_param);

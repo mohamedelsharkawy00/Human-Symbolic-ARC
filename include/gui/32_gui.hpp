@@ -517,6 +517,41 @@ inline int draw_header_rows(
   return fy + row_h;
 }
 
+// KEEPS ONLY WHAT A SCROLLED REGION SHOWS of the zones drawn in it since
+// `from`: each cut to the rows between `top` and `bottom`, gone where none is
+// left, so a control scrolled out of sight cannot be pressed.
+template <class Zone>
+inline void keep_in_sight(vector<Zone> &zones, size_t from, int top, int bottom) {
+  auto kept = zones.begin() + (ptrdiff_t)from;
+  for (auto it = kept; it != zones.end(); ++it) {
+    const int y = max(it->y, top), h = min(it->y + it->h, bottom) - y;
+    if (h <= 0) continue;
+    *kept = *it;
+    kept->y = y;
+    kept->h = h;
+    ++kept;
+  }
+  zones.erase(kept, zones.end());
+}
+
+// A REGION THAT SCROLLS: `draw(down)` draws what it holds `down` pixels up
+// from where it starts, cut off at the box x y w h it shows through. `taller`
+// is how much taller than the box that is, `holds` names it so something new
+// starts at the top, and a wheel notch moves it by lines `line` pixels tall.
+template <class Draw>
+inline void draw_scrolled(vulkan_context *context, global_app_state &app_state, scroll &scrolled,
+                          size_t holds, int x, int y, int w, int h, int taller, int line, Draw draw) {
+  const size_t clicks = app_state.click_zones.size(), slides = app_state.slider_zones.size(),
+               nodes = app_state.node_zones.size();
+  context->clip(x, y, w, h);
+  draw(scrolled.pick(holds, taller));
+  context->unclip();
+  keep_in_sight(app_state.click_zones, clicks, y, y + h);
+  keep_in_sight(app_state.slider_zones, slides, y, y + h);
+  keep_in_sight(app_state.node_zones, nodes, y, y + h);
+  app_state.scroll_zones.push_back({x, y, w, h, &scrolled, line});
+}
+
 // Draws the bottom of the screen: the BEST program pipeline and the elapsed
 // timer.
 inline void draw_footer_rows(
@@ -529,6 +564,8 @@ inline void draw_footer_rows(
 
   int scale = lay.scale;
   int pad = 2 * scale;
+  // A pipeline's line, as tall as frame_layout's row_h.
+  const int line_h = 9 * scale + lay.v_gap;
 
   // Walk a unary tree from the root op outward (Input first), pushing each
   // op as its own colored token. Returns end x.
@@ -539,7 +576,6 @@ inline void draw_footer_rows(
     int box_h = 5 * scale + pad * 2;
     int gap = pad;
     int max_x = lay.screen_w - lay.base_margin;
-    int line_h = 9 * scale + lay.v_gap; // matches frame_layout row_h
     vector<node *> ops;
     collect_pipeline_ops(root, ops);
     (void)max_x;  // sentences decide the wrap now, not the right edge
@@ -576,13 +612,21 @@ inline void draw_footer_rows(
     return end_x;
   };
 
-  // BEST program pipeline
+  // BEST program pipeline, scrolled where it is taller than its room, which
+  // ends where ELAPSED starts.
   {
     int lw = text_w("BEST", scale) + pad * 2;
     int box_h = 5 * scale + pad * 2;
     draw_boxed_text(context, font, "BEST", lay.base_margin, lay.best_y, scale, lw, box_h, 5);
-    if (task.best_tree)
-      draw_pipeline(task.best_tree, lay.base_margin + lw + pad, lay.best_y);
+    if (task.best_tree) {
+      const bool whole = app_state.show_whole_programs.load();
+      const int room = lay.elapsed_y - lay.best_y;
+      draw_scrolled(context, app_state, app_state.best_scroll,
+                    hash<string>{}(to_text("%s %d", task.id.c_str(), (int)whole)),
+                    0, lay.best_y, lay.screen_w, room,
+                    count_pipeline_lines(task.best_tree, whole) * line_h - room, line_h,
+                    [&](int down) { draw_pipeline(task.best_tree, lay.base_margin + lw + pad, lay.best_y - down); });
+    }
   }
 
   // Elapsed timer
@@ -1220,6 +1264,56 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
     ty += line_h;
   };
 
+  // A SENTENCE KEPT INSIDE THE FRAME: its words from `x`, as many a line as
+  // fit, each line after the first starting at `left`, in a chip where `chip`
+  // says, as a name is worn. Hands back where its last word ends.
+  auto wrapped = [&](const string& text, int x, int left, bool chip) {
+    string run;
+    auto draw = [&] {
+      if (run.empty()) return;
+      if (chip) label_chip(run, ty, x);
+      else if (!measuring) draw_text(context, font, run, x, ty, scale);
+    };
+    for (size_t at = 0; at <= text.size();) {
+      const size_t space = min(text.find(' ', at), text.size());
+      const string word = text.substr(at, space - at);
+      at = space + 1;
+      const string longer = run.empty() ? word : run + " " + word;
+      // A word past the frame starts the next line, unless it would start
+      // one anyway: a word wider than the pane is said where it stands.
+      if (x + text_w(longer, scale) > right_x && (!run.empty() || x > left)) {
+        draw();
+        ty += line_h;
+        x = left;
+        run = word;
+      } else {
+        run = longer;
+      }
+    }
+    draw();
+    return run.empty() ? x : x + text_w(run, scale);
+  };
+
+  // ONE BODY, RUN TWICE: measured unseen, then drawn in a frame as tall as it
+  // spent, or as tall as the screen has room for and scrolled past that. `air`
+  // is what the frame keeps above and below it.
+  auto framed = [&](auto paint, int air) {
+    const int ty_top = ty;
+    context->clip(0, 0, 0, 0);
+    measuring = true;  paint();  measuring = false;
+    context->unclip();
+    const int spent = (ty - ty_top) + air;
+    const int frame_h = min(spent, lay.screen_h - lay.base_margin - y0);
+    const int edge = max(1, scale);
+    fill_rect(context, 0, x0, y0, panel_w, frame_h);
+    draw_border(context, x0, y0, panel_w, frame_h, edge);
+    draw_scrolled(context, app_state, app_state.pane_scroll,
+                  hash<string>{}(to_text("%s %d %d", task.id.c_str(), view,
+                                         (int)app_state.show_whole_programs.load())),
+                  x0 + edge, y0 + edge, panel_w - edge * 2, frame_h - edge * 2, spent - frame_h, line_h,
+                  [&](int down) { ty = ty_top - down; paint(); });
+  };
+
   // A boxed word the mouse can press, in the header buttons' clothes. Hoisted
   // out of the controls body so the facts face can fold its programs with one.
   auto button = [&](const string& label, int x, int y, ui_action act) {
@@ -1288,7 +1382,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
         fill_rect(context, UI_COLOR_LINE, x, ty, cap, box_h);
         fill_rect(context, UI_COLOR_LINE, x + w - cap, ty, cap, box_h);
         fill_rect(context, color, kx, ty, knob_w, box_h);
-        app_state.slider_zones.push_back({run_x, ty, run_w, box_h, which, stops, knob_w});
+        if (!measuring) app_state.slider_zones.push_back({run_x, ty, run_w, box_h, which, stops, knob_w});
       };
 
 
@@ -1510,34 +1604,34 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       // rules composed when it reads zero.
       divide();
       {
-        const auto order = R.fired_in_order();
-        // THE NAMES ARE ONE COLUMN however deep they sit, so every count
-        // starts on one edge and a sum can be read straight down.
+        // THE COUNTS FIRST, ONE WIDTH, so a sum reads straight down and every
+        // rule starts on one edge, however long a name runs.
+        auto counts_of = [](int pieces, int cells) {
+          return to_text("%3d %-6s %4d CELLS", pieces, pieces == 1 ? "PIECE" : "PIECES", cells);
+        };
         const int step_in = pad * 6;
-        int name_w = text_w("LEFT OVER", scale);
-        for (const auto& [which, depth] : order)
-          name_w = max(name_w, depth * step_in + text_w(R.fired[which].name, scale));
-        const int said_x = tx + name_w + pad * 6;
-        for (const auto& [which, depth] : order) {
-          const auto& rule = R.fired[which];
-          label_chip(rule.name, ty, tx + depth * step_in);
-          // Counts only for a rule that accounts for something, but always the
-          // same width, so what a rule says starts on one edge down the list.
-          // A rule that stands alone explains every pair by itself, not a share.
-          const string counts = rule.pieces || rule.cells
-              ? to_text("%3d %-6s %4d CELLS", rule.pieces, rule.pieces == 1 ? "PIECE" : "PIECES", rule.cells)
-              : to_text("%-21s", rule.stands_alone ? "BY ITSELF" : "");
-          string said = counts;
-          if (!rule.says.empty()) said += "  " + rule.says;
-          if (!rule.no_rule_for.empty()) said += "  NO RULE FOR " + rule.no_rule_for;
-          if (!measuring) draw_text(context, font, said, said_x, ty, scale);
+        const int rule_x = tx + text_w(counts_of(0, 0), scale) + step_in;
+        // A RULE A ROW: its counts, then its name and what it says, read as
+        // one sentence, a step in for each rule it sits under.
+        auto rule_row = [&](const string& counts, const string& name, const string& says, int depth) {
+          if (!measuring) draw_text(context, font, counts, tx, ty, scale);
+          const int name_x = rule_x + depth * step_in;
+          wrapped(says, wrapped(name, name_x, name_x, true) + pad * 2, name_x, false);
           ty += row_h;
+        };
+        for (const auto& [which, depth] : R.fired_in_order()) {
+          const auto& rule = R.fired[which];
+          string says = rule.says;
+          if (!rule.no_rule_for.empty())
+            says += (says.empty() ? "NO RULE FOR " : "  NO RULE FOR ") + rule.no_rule_for;
+          // Counts only for a rule that accounts for something. A rule that
+          // stands alone explains every pair by itself, not a share.
+          rule_row(rule.pieces || rule.cells ? counts_of(rule.pieces, rule.cells)
+                   : rule.stands_alone       ? "BY ITSELF" : "",
+                   rule.name, says, depth);
         }
-        label_chip("LEFT OVER", ty);
-        if (!measuring)
-          draw_text(context, font, to_text("%11s%4d CELLS OF %d ON BOTH GRIDS", "", R.unclaimed(),
-                                           (int)correspondence.cells), said_x, ty, scale);
-        ty += row_h;
+        rule_row(to_text("%11s%4d CELLS", "", R.unclaimed()), "LEFT OVER",
+                 to_text("OF %d ON BOTH GRIDS", (int)correspondence.cells), 0);
       }
 
       // The same questions asked of every line of the reading, pair by pair, plus
@@ -1618,13 +1712,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       }
     };
 
-    const int ty_top = ty;
-    measuring = true;  paint_the_controls();  measuring = false;
-    const int measured_h = (ty - ty_top) + frame_pad * 2;
-    ty = ty_top;
-    fill_rect(context, 0, x0, y0, panel_w, measured_h);
-    draw_border(context, x0, y0, panel_w, measured_h, max(1, scale));
-    paint_the_controls();
+    framed(paint_the_controls, frame_pad * 2);
     return;
   }
 
@@ -1752,10 +1840,10 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
                           task.suggested_programs.size() == 1 ? "" : "S")}});
       if (folds) ty += row_h - line_h;
       // Folded, a row too wide for the pane ends in "..." at the last word that
-      // fits inside the frame; open, every row is said whole.
+      // fits inside the frame; open, it goes on under itself, past its number.
       auto fitted = [&](string row) {
         const int room = right_x - tx;
-        if (whole || text_w(row, scale) <= room) return row;
+        if (text_w(row, scale) <= room) return row;
         while (!row.empty() && text_w(row + " ...", scale) > room) row.pop_back();
         if (const size_t space = row.rfind(' '); space != string::npos) row.resize(space);
         return row + " ...";
@@ -1763,8 +1851,18 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
       for (size_t which = 0; which < task.suggested_programs.size(); ++which) {
         const vector<string> rows = sentences_of(task.suggested_programs[which]);
         const size_t shown = whole ? rows.size() : min(rows.size(), folded_rows);
-        for (size_t row = 0; row < shown; ++row)
-          line(fitted(to_text("  %s %s", row == 0 ? to_text("%d", (int)which + 1).c_str() : " ", rows[row].c_str())));
+        for (size_t row = 0; row < shown; ++row) {
+          const string number = to_text("  %s ", row == 0 ? to_text("%d", (int)which + 1).c_str() : " ");
+          if (!whole) {
+            line(fitted(number + rows[row]));
+            continue;
+          }
+          if (!measuring) draw_text(context, font, number, tx, ty, scale);
+          // Where the sentence starts after its number on one line.
+          const int said_x = tx + text_w(number, scale) + scale;
+          wrapped(rows[row], said_x, said_x, false);
+          ty += line_h;
+        }
         if (shown < rows.size()) line(to_text("    ... %d MORE", (int)(rows.size() - shown)));
       }
     }
@@ -1805,13 +1903,7 @@ inline void draw_inference_pane(vulkan_context *context, const map<uint32_t, dis
 
   };
 
-  const int ty_top = ty;
-  measuring = true;  paint_the_facts();  measuring = false;
-  const int measured_h = (ty - ty_top) + pad * 3;
-  ty = ty_top;
-  fill_rect(context, 0, x0, y0, panel_w, measured_h);
-  draw_border(context, x0, y0, panel_w, measured_h, max(1, scale));
-  paint_the_facts();
+  framed(paint_the_facts, pad * 3);
 }
 
 inline void draw_op_palette(vulkan_context *context, const map<uint32_t, display_grid> &font,
@@ -2039,6 +2131,7 @@ inline void draw_frame(vulkan_context *context, const map<uint32_t, display_grid
 
   app_state.click_zones.clear();
   app_state.slider_zones.clear();
+  app_state.scroll_zones.clear();
   {
     lock_guard<mutex> lk(app_state.node_zones_mtx);
     app_state.node_zones.clear();
