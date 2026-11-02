@@ -116,6 +116,12 @@ void copy_list(object_list& to, const object_list& from) {
     copy_objects(to, from, clamp(from.count, 0, MAX_OBJECTS_IN_A_LIST));
 }
 
+bool any_selected(const object_list& list) {
+    for (int index = 0; index < list.count; ++index)
+        if (list.objects[index].selected) return true;
+    return false;
+}
+
 // The objects drawn onto a width x height grid, a later one over an earlier.
 void paint_objects(const object_list& from, int width, int height, grid& out) {
     out.width = width;
@@ -453,6 +459,7 @@ object_list& op_panes(program_run& run, const object_list& from) {
             held_object one;
             clip_to(from.objects[i], pane.top, pane.left, pane.top + pane.height, pane.left + pane.width,
                     [](int, int) { return true; }, one);
+            one.selected = from.objects[i].selected;
             // EVERY PANE COMES BACK, even one the source never reached -- empty,
             // but there. Partition drops such a tile because its tiles are
             // whatever the walls happen to leave; panes are a fixed set that gets
@@ -1412,6 +1419,7 @@ object_list& op_select_from_middle(program_run& run, const object_list& from, in
 object_list& op_layout(program_run& run, const object_list& from, int cell) {
     object_list& res = run.fresh();
     held_object& laid = res.objects[0];
+    laid.selected = any_selected(from);
     laid.data.clear();
     const layout_paper paper = lay_out(min(from.count, MAX_OBJECTS_IN_A_LIST), cell,
         [&](int i) { return from.objects[i].box(); },
@@ -1853,6 +1861,37 @@ object_list& op_extend_rays(program_run& run, const object_list& from, int8_t ra
     return res;
 }
 
+// ExtendByPartner[value]: for each picked object, rays across or along the way
+// its partner runs (each_partner_ray), grown from the middle of its box, in the
+// color of its cell nearest that middle, to the canvas's edge. The rays only,
+// in the whole grid's frame and carrying the object's mark; the rest ride
+// through as they came.
+object_list& op_extend_by_partner(program_run& run, const object_list& from, int8_t value) {
+    object_list& res = run.fresh();
+    const listed_pieces pieces(from, run.input);
+    for (int i = 0; i < from.count && res.count < MAX_OBJECTS_IN_A_LIST; ++i) {
+        const held_object& one = from.objects[i];
+        if (one.width <= 0 || one.height <= 0) continue;
+        if (!one.selected) { res.objects[res.count++] = one; continue; }
+        const auto seed = ray_seed_of(one.height, one.width, [&](int row, int col) { return one.data[row][col]; });
+        if (seed.row < 0) continue;
+        held_object& rays = res.objects[res.count];
+        rays.selected = true;
+        rays.col = 0; rays.row = 0;
+        rays.width = rays.height = (int16_t)MAX_GRID_DIM;
+        rays.data.clear();
+        bool drew = false;
+        each_partner_ray(value, i, pieces, seed, [&](int down, int across) {
+            const int row = one.row + seed.row + down, col = one.col + seed.col + across;
+            if (row < 0 || col < 0 || row >= run.canvas.height || col >= run.canvas.width) return;
+            rays.data[row][col] = seed.color;
+            drew = true;
+        });
+        if (drew) ++res.count;
+    }
+    return res;
+}
+
 // Whether the object paints the grid cell (x, y).
 bool paints_at(const held_object& one, int x, int y) {
     const int across = x - one.col, down = y - one.row;
@@ -2261,6 +2300,8 @@ object_list& op_project_on_seeds(program_run& run, const object_list& from) {
     const held_object& stencil = from.objects[0];
     if (stencil.width <= 0 || stencil.height <= 0) return res;
     segment_objects(run.input, res, grouping::whole_grid);
+    const bool selected = any_selected(from);
+    for (int index = 0; index < res.count; ++index) res.objects[index].selected = selected;
     const cell_box stencil_box = stencil.box();
     for (int s = 0; s < seeds.count; ++s) {
         const held_object& seed = seeds.objects[s];
@@ -2270,6 +2311,7 @@ object_list& op_project_on_seeds(program_run& run, const object_list& from) {
                       run.canvas.width, run.canvas.height, [&](int row, int col) {
             if (res.count >= MAX_OBJECTS_IN_A_LIST) return false;
             held_object& stamp = res.objects[res.count++];
+            stamp.selected = selected;
             stamp.col = (int16_t)col; stamp.row = (int16_t)row;
             stamp.width = stencil.width; stamp.height = stencil.height;
             stamp.data.clear();
@@ -2295,6 +2337,7 @@ object_list& op_snap_to_anchors(program_run& run, const object_list& from) {
     paint_objects(from, MAX_GRID_DIM, MAX_GRID_DIM, drawn);
     const int width = drawn.width, height = drawn.height;
     if (width <= 0 || height <= 0) return res;
+    const bool selected = any_selected(from);
     int8_t label[MAX_GRID_DIM][MAX_GRID_DIM];
     snap_to_anchors(width, height, [&](int row, int col) { return (int)drawn.data[row][col]; }, label,
         [&](int body, int way, int key_row, int key_col, int to_row, int to_col) {
@@ -2315,6 +2358,7 @@ object_list& op_snap_to_anchors(program_run& run, const object_list& from) {
                 }
             if (landed.empty()) return false;
             held_object& stamped = res.objects[res.count];
+            stamped.selected = selected;
             stamped.col = (int16_t)landed.col0; stamped.row = (int16_t)landed.row0;
             stamped.width = (int16_t)landed.width(); stamped.height = (int16_t)landed.height();
             stamped.data.clear();
@@ -2414,6 +2458,7 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     case node_type::ShapeColorMap:           return op_shape_color_map(run, in, value);
     case node_type::ExtendOrthogonal:        return op_extend_rays(run, in, value, false);
     case node_type::ExtendDiagonal:          return op_extend_rays(run, in, value, true);
+    case node_type::ExtendByPartner:         return op_extend_by_partner(run, in, value);
     case node_type::ExtendTo:                return op_extend_to(run, in, value);
     case node_type::MaskBy:                  return op_mask(run, in, value, true);
     case node_type::MaskOut:                 return op_mask(run, in, value, false);
@@ -2432,30 +2477,6 @@ object_list& one_op(program_run& run, const flat_program_op& op, const object_li
     }
 }
 
-// ONE HOME FOR THE MARK. Many ops build their objects fresh, so a mark handed
-// in would die unless every op remembered to carry it -- and forgetting means
-// painting nothing, a silent wrong answer rather than a loud one. Carried once,
-// here, so a new op cannot forget: what came in picked comes out picked,
-// object for object when the op handed back as many objects as it took, every
-// one otherwise, since a carve's pieces have no one parent to ask. Only when
-// the op marked NOTHING itself -- an op that has an opinion about which of its
-// objects are picked keeps it. Selectors are excluded by role (marking IS
-// their work), the ops that clear do so for reasons of their own, and Fit
-// carries marks itself, even when an empty target drops every picked object --
-// as UnionList and IntersectionList do, the mark their folds' identity, even
-// when the picked fold keeps no cell and only the unpicked one is handed on.
-void carry_the_marks(node_type type, const object_list* last, object_list& made) {
-    if (!last || !is_act_op(type) || type == node_type::Fit || type == node_type::UnionList ||
-        type == node_type::IntersectionList || clears_the_marks(type))
-        return;
-    bool came_in_picked = false, went_out_picked = false;
-    for (int i = 0; i < last->count; ++i) came_in_picked |= last->objects[i].selected;
-    for (int i = 0; i < made.count; ++i) went_out_picked |= made.objects[i].selected;
-    if (!came_in_picked || went_out_picked) return;
-    const bool one_for_one = made.count == last->count;
-    for (int i = 0; i < made.count; ++i) made.objects[i].selected = one_for_one ? last->objects[i].selected : true;
-}
-
 // The program's ops one after another, from the first.
 void run_ops(program_run& run, const flat_program& program) {
     for (size_t i = 0; i < program.size(); ++i) {
@@ -2472,10 +2493,7 @@ void run_ops(program_run& run, const flat_program& program) {
         // CurrentObjects: the objects in hand are already the ones in hand.
         if (type == node_type::CurrentObjects) continue;
         if (type == node_type::Seeds) { run.current = &run.lists.seeds; continue; }
-        object_list* const last = run.current;
-        object_list& made = one_op(run, program[i], last);
-        carry_the_marks(type, last, made);
-        run.current = &made;
+        run.current = &one_op(run, program[i], run.current);
     }
     if (!run.current) run.current = &run.fresh();
 }

@@ -276,9 +276,7 @@ inline string without_redundant_steps(const string& operators, int background) {
 // the paint was for: every sentence this file spells means to paint the whole
 // hand. So where the operators have not left all of it marked, the hand is said
 // out loud before the paint. Withhold lands nothing, so it asks for nothing.
-// Said at the one point every sentence goes through, for the reason the ops
-// carry their marks at one point: a branch that never heard of the rule cannot
-// forget it, and the next branch written here will not either.
+// Every sentence goes through this closer, so each spells its final selection.
 inline string closed_with(const string& operators, const string& combine) {
     const bool paints = combine != "Withhold";
     return operators + (paints && mark_after(operators) != the_mark::all ? " SelectAll " : " ") + combine;
@@ -963,12 +961,15 @@ inline bool drawn_after(const correspondence_election::fired_rule& rule, beat& d
     if (group_of(rule.as) != rule_group::paints) return false;
     const string pick = pick_operators(rule.pick);
     switch (rule.as) {
-        case said_as::extend_rays: {
+        case said_as::extend_rays:
+        case said_as::partner_rays: {
             // Rays only, the pieces are already down, each in the color of its
             // piece's cell nearest the middle; painted over in the rule's own
             // color unless every piece picked is that one color -- that color
             // picked, on a cut whose pieces each wear one.
-            string act = spell(paint_value::second(rule.value) ? "ExtendDiagonal" : "ExtendOrthogonal", paint_value::number(rule.value));
+            string act = rule.as == said_as::partner_rays
+                ? spell("ExtendByPartner", rule.value)
+                : spell(paint_value::second(rule.value) ? "ExtendDiagonal" : "ExtendOrthogonal", paint_value::number(rule.value));
             if (rule.pick != piece_pick::of_color(rule.paint) || !one_color_a_piece(inf.correspondence.segmentation))
                 act += " " + spell("Recolor", rule.paint);
             drawn = { pick, act + onto_operators(rule) };

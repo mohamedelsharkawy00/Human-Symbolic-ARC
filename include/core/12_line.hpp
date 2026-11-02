@@ -62,7 +62,7 @@ inline constexpr rule_group group_of(correspondence_election::fired_rule::said_a
         case rule::extend_rays: case rule::bridged: case rule::filled: case rule::trailed:
         case rule::boxed: case rule::filled_room: case rule::copied_onto: case rule::tiled_along:
         case rule::repeated_past: case rule::turned_copy: case rule::symmetric: case rule::crossing:
-        case rule::moved_copy:
+        case rule::moved_copy: case rule::partner_rays:
             return rule_group::paints;
         // These rules redraw the whole output and spell their own programs.
         case rule::diagonal_tile: case rule::piece_slam: case rule::corner_chain:
@@ -946,7 +946,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             return (cell.answers_to(missing::a_recolor) || !cell.from_input) && on_cells(changed, which, cell.row, cell.col);
         };
     };
-    auto key_rule = [&](bool changes_allowed) -> offer {
+    auto key_rule = [&]() -> offer {
         const uint16_t from = starts_from(missing::a_recolor);
         if (!facts.hand_known || !from) return {};
         heard best;
@@ -958,7 +958,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                 if (const auto seen = key_swap_holds(facts, handed, value))
                     weigh(best, value, pick, *seen, recolor_claims(*seen));
             for (int color = 0; color < COLOR_COUNT; ++color)
-                if (changes_allowed && (from >> color & 1))
+                if (from >> color & 1)
                     if (const auto seen = empty_swap_holds(facts, handed, color))
                         weigh(best, EMPTY_PAIRS + color, pick, *seen, swap_claims(*seen));
         }
@@ -1315,11 +1315,15 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                                  std::move(laid[(size_t)length]));
         return ray_lays.at(key);
     };
+    // AND RAYS ACROSS OR ALONG THE WAY EACH PIECE'S PARTNER RUNS, to the edge
+    // (partner_rays_walk), each partner kind the hand asks (asks_kind), after
+    // the plain rays: db695cfb's 6s, each crossing the diagonal of 1s it lies on.
     auto ray_paint = [&]() -> offer {
         heard best;
         int8_t best_lay = rule::laid_over;
+        bool by_partner = false;
         for (const size_t at : asked_now)
-            for (const int8_t lay : lays())
+            for (const int8_t lay : lays()) {
                 for (const bool diagonal : { false, true })
                     for (int radius = rays.high; radius >= rays.low; --radius) {
                         if (radius < rays.high && radius > farthest) continue;
@@ -1329,15 +1333,28 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
                         const int before = best.said;
                         weigh_paint(best, paint_value::packed(diagonal, radius), draw_picks[at], *seen,
                                     covered_claims(seen->drawn));
-                        if (best.said > before) best_lay = lay;
+                        if (best.said > before) { best_lay = lay; by_partner = false; }
                     }
+                for (int value = 0; value <= row_of(node_type::ExtendByPartner).high; ++value) {
+                    if (!opened.asks_kind(value % PARTNER_KINDS)) continue;
+                    const auto seen = laid_from_its_walk(15, at, lay, value, laying::in_one, [&] {
+                        return partner_rays_walk(opened, handed_by_pick[at], value); });
+                    if (!seen) continue;
+                    const int before = best.said;
+                    weigh_paint(best, value, draw_picks[at], *seen, covered_claims(seen->drawn));
+                    if (best.said > before) { best_lay = lay; by_partner = true; }
+                }
+            }
         if (!best.materialize(opened)) return {};
-        return { best.said, [&, best, best_lay] {
+        return { best.said, [&, best, best_lay, by_partner] {
             const bool own = best.pick.by_color() && best.pick.colors == (uint16_t)(1u << best.seen.paint);
-            const int8_t said = say_paint(best, rule::extend_rays,
-                string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") + ", " +
-                    to_string(paint_value::number(best.value)) + " long, in " +
-                    (own ? string("its own color") : "color " + to_string(best.seen.paint)) + laid_words(best_lay));
+            const string color = (own ? string("its own color") : "color " + to_string(best.seen.paint)) + laid_words(best_lay);
+            const int8_t said = by_partner
+                ? say_paint(best, rule::partner_rays,
+                            "grows rays " + value_written(node_type::ExtendByPartner, best.value) + " to the edge, in " + color)
+                : say_paint(best, rule::extend_rays,
+                            string("grows rays ") + (paint_value::second(best.value) ? "along the diagonals" : "up, down and to the sides") +
+                                ", " + to_string(paint_value::number(best.value)) + " long, in " + color);
             read.fired[said].lay = best_lay; } };
     };
 
@@ -1582,7 +1599,7 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
         return { best.said, [&, best] {
             say_paint(best, rule::bridged,
                 (best.value < BRIDGE_TO_PARTNER
-                     ? string("bars filled between pieces of one color, reaching ") + bridge_reach_names[best.value]
+                     ? string("bars filled between pieces of one color, reaching ") + bridge_way_written(best.value)
                      : "an L run along its row to the column of " + partner_named(best.value - BRIDGE_TO_PARTNER) +
                            ", then along that column to it") +
                     ", in " + (best.seen.paint < 0 ? string("their own color") : "color " + to_string(best.seen.paint)));
@@ -1935,30 +1952,27 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
     // repeats then finished. Spelled, every paint follows the line, laid over
     // what it leaves -- so a paint laid over needs nothing of the acts around
     // it -- or under it or onto it, reading the canvas: once a paint that reads
-    // it is said, no act that moves, copies, reshapes or removes a piece is
+    // it is said, no act on the hand is
     // asked after it, so the line leaves the canvas as that paint read it. Each
     // kind of act says at most so many acts (rounds). A rule read off the
     // picture so far is said after the line too, last on a tie; once one is
     // said, no act on the hand is asked: every act is drawn before the
     // paints, under the picture it read.
     bool frozen = false, picture_read = false;
-    struct asked { std::function<offer()> offers; bool paint, changes_pieces; };
-    const bool matching_moves = ranges::any_of(matching_changes, [&](int8_t which) {
-        return group_of(read.fired[which].as) == rule_group::changes_pieces;
-    });
-    const asked kinds[] = { { matching_rule, false, matching_moves },
-                            { color_from_rule, false, false }, { move_rule, false, true },
-                            { mirror_rule, false, true }, { outline_rule, false, true },
-                            { recolor_rule, false, false }, { shape_rule, false, false },
-                            { [&] { return key_rule(!frozen); }, false, false },
-                            { removal_rule, false, true }, { socket_rule, false, true },
-                            { shape_from_rule, false, true }, { ray_paint, true, false },
-                            { trail_paint, true, false }, { copy_paint, true, false },
-                            { repeat_paint, true, false }, { turned_paint, true, false },
-                            { bar_paint, true, false }, { fill_paint, true, false }, { box_paint, true, false },
-                            { room_paint, true, false }, { symmetry_paint, true, false },
-                            { crossing_paint, true, false }, { moved_copy_paint, true, false },
-                            { picture_rule, true, false } };
+    struct asked { std::function<offer()> offers; bool paint; };
+    const asked kinds[] = { { matching_rule, false },
+                            { color_from_rule, false }, { move_rule, false },
+                            { mirror_rule, false }, { outline_rule, false },
+                            { recolor_rule, false }, { shape_rule, false },
+                            { key_rule, false },
+                            { removal_rule, false }, { socket_rule, false },
+                            { shape_from_rule, false }, { ray_paint, true },
+                            { trail_paint, true }, { copy_paint, true },
+                            { repeat_paint, true }, { turned_paint, true },
+                            { bar_paint, true }, { fill_paint, true }, { box_paint, true },
+                            { room_paint, true }, { symmetry_paint, true },
+                            { crossing_paint, true }, { moved_copy_paint, true },
+                            { picture_rule, true } };
     static_assert(size(kinds) == size(inference_times::names) - inference_times::first_kind);
     // Whether a paint said reads what is down: laid under it or onto it, or the
     // whole figure where it lies.
@@ -2022,8 +2036,8 @@ inline void finish_the_line(inference& inf, const vector<example>& train, const 
             if (lays_wrong && !facts.tolerant) break;
             opened.tolerant = facts.tolerant;
             for (size_t kind = 0; kind < size(kinds); ++kind) {
-                if ((!kinds[kind].paint && (rules[kind] >= rounds || picture_read)) ||
-                    (frozen && kinds[kind].changes_pieces) || (one_change && kinds[kind].paint && hand_said()))
+                if ((!kinds[kind].paint && (rules[kind] >= rounds || picture_read || frozen)) ||
+                    (one_change && kinds[kind].paint && hand_said()))
                     continue;
                 offer one;
                 {

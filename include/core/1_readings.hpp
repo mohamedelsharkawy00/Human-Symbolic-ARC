@@ -4,6 +4,7 @@
 #include "0_core.hpp"
 #include <bit>
 #include <cstdint>
+#include <numeric>
 #include <utility>
 #include <vector>
 
@@ -59,6 +60,7 @@ struct cell_box {
     int height() const { return empty() ? 0 : row1 - row0 + 1; }
     int width()  const { return empty() ? 0 : col1 - col0 + 1; }
     int area()   const { return width() * height(); }
+    bool contains(int row, int col) const { return row >= row0 && row <= row1 && col >= col0 && col <= col1; }
 
     void include_cell(int row, int col) {
         if (empty()) {
@@ -597,29 +599,48 @@ constexpr bool cells_alike(int one, int other, shape_freedom free) {
     return free.recolor ? (one != TRANSPARENT) == (other != TRANSPARENT) : one == other;
 }
 
-// THE BLOCKS A SHAPE IS DRAWN IN: the most rows, and the most columns, its
-// cells repeat in alike, lined up with its box -- 1 where nothing repeats.
-// Shrunk by them, a shape is its smallest drawing, the one every bigger
-// drawing of it shrinks to: every factor it repeats in divides the largest,
-// so the largest shrinks it all the way.
-struct shape_blocks { int down = 1, across = 1; };
+// THE BLOCKS A SHAPE IS DRAWN IN, as bits: the rows, and the columns, where a
+// block starts -- every row and column its own where nothing is said. Its
+// runs (blocks_of) start where a row, or a column, is not alike the one
+// before it. Shrunk to one row and one column a run, a shape is its smallest
+// drawing at any lengths, the one every drawing of it stretched shrinks to:
+// an H whose bars are longer than its middle is the H three by three.
+struct shape_blocks { uint32_t rows = ~0u, cols = ~0u; };
 template <class Cell>
 inline shape_blocks blocks_of(int width, int height, Cell cell, shape_freedom free) {
-    auto repeats = [&](int factor, bool rows) {
-        if ((rows ? height : width) % factor != 0) return false;
+    shape_blocks runs{ 1u, 1u };
+    for (int row = 1; row < height; ++row)
+        for (int col = 0; col < width; ++col)
+            if (!cells_alike(cell(row, col), cell(row - 1, col), free)) { runs.rows |= 1u << row; break; }
+    for (int col = 1; col < width; ++col)
         for (int row = 0; row < height; ++row)
-            for (int col = 0; col < width; ++col)
-                if (!cells_alike(cell(row, col), cell(rows ? row - row % factor : row, rows ? col : col - col % factor),
-                                 free))
-                    return false;
-        return true;
-    };
-    shape_blocks blocks;
-    for (int factor = height; factor > 1; --factor)
-        if (repeats(factor, true)) { blocks.down = factor; break; }
-    for (int factor = width; factor > 1; --factor)
-        if (repeats(factor, false)) { blocks.across = factor; break; }
-    return blocks;
+            if (!cells_alike(cell(row, col), cell(row, col - 1), free)) { runs.cols |= 1u << col; break; }
+    return runs;
+}
+
+// How many blocks `starts` cuts a side `length` long into; and where each
+// starts, written to `at`.
+inline int block_count(uint32_t starts, int length) { return popcount(starts & ((1u << length) - 1)); }
+inline int block_starts(uint32_t starts, int length, int* at) {
+    int count = 0;
+    for (int line = 0; line < length; ++line)
+        if (starts >> line & 1) at[count++] = line;
+    return count;
+}
+
+// THE EVEN BLOCKS INSIDE RUNS: every `factor` rows, the most that divides
+// every run, as a shape scaled up repeats each cell; and how long each is.
+inline uint32_t even_blocks(uint32_t starts, int length) {
+    int factor = length;
+    for (int line = 1; line < length; ++line)
+        if (starts >> line & 1) factor = gcd(factor, line);
+    uint32_t even = 0;
+    for (int line = 0; line < length; line += factor) even |= 1u << line;
+    return even;
+}
+inline int even_block_length(uint32_t starts, int length) {
+    const uint32_t later = starts & ((1u << length) - 1) & ~1u;
+    return later ? countr_zero(later) : length;
 }
 
 // A SHAPE WITH NO SIZE BUT ITS OWN: one whose smallest drawing is one cell,
@@ -627,40 +648,50 @@ inline shape_blocks blocks_of(int width, int height, Cell cell, shape_freedom fr
 // another size says nothing of it. It keeps its own size: at any size it is
 // the same only as itself. Its blocks, as a shape may shrink by them.
 inline shape_blocks sized_blocks(shape_blocks blocks, int width, int height) {
-    return blocks.down == height && blocks.across == width ? shape_blocks{} : blocks;
+    return block_count(blocks.rows, height) == 1 && block_count(blocks.cols, width) == 1 ? shape_blocks{} : blocks;
 }
 
-// The blocks a shape is shrunk by, as `free` lets its size change: none
-// where it may not, nor where it has no size but its own (sized_blocks).
+// The blocks a shape is shrunk by, its runs `runs` (blocks_of) as `free`
+// lets its size change: none where it may not, nor where it has no size but
+// its own (sized_blocks); the even blocks inside them where it is scaled; every
+// run where it is stretched.
+inline shape_blocks blocks_as(shape_freedom free, shape_blocks runs, int width, int height) {
+    if (!free.scale && !free.stretch) return {};
+    if (!free.stretch) runs = { even_blocks(runs.rows, height), even_blocks(runs.cols, width) };
+    return sized_blocks(runs, width, height);
+}
 template <class Cell>
 inline shape_blocks shrunk_by(int width, int height, Cell cell, shape_freedom free) {
-    return free.scale || free.stretch ? sized_blocks(blocks_of(width, height, cell, free), width, height)
-                                      : shape_blocks{};
+    if (!free.scale && !free.stretch) return {};
+    return blocks_as(free, blocks_of(width, height, cell, free), width, height);
 }
 
 // THE KEY OF A SHAPE, as `free` lets it change: one number every drawing of
 // the same shape shares -- read off its smallest drawing where its size may
-// change (scaled, with its blocks' proportions), the smallest over the eight
-// ways round where it may turn, done by index arithmetic, no pose grids
-// built. Only which cells it paints enters a key, never their colors. Equal
-// shapes have equal keys; collisions are possible. THE KEY OF THE LEARNED
-// SHAPE TABLE: the reading learns it and the ops that read the table look it
-// up, both here, so a shape the pairs showed one way round is the same shape
-// the test shows another (e8593010's L, turned).
+// change (scaled, with its blocks' proportions; stretched, at any lengths),
+// the smallest over the eight ways round where it may turn, done by index
+// arithmetic, no pose grids built. Only which cells it paints enters a key,
+// never their colors. Equal shapes have equal keys; collisions are possible.
+// THE KEY OF THE LEARNED SHAPE TABLE: the reading learns it and the ops that
+// read the table look it up, both here, so a shape the pairs showed one way
+// round is the same shape the test shows another (e8593010's L, turned).
 template <class Cell>
 inline uint32_t key_of_shape(int width, int height, Cell cell, shape_freedom free) {
     const shape_blocks blocks = shrunk_by(width, height, cell, free);
-    const int small_width = width / blocks.across, small_height = height / blocks.down;
+    int rows[MAX_GRID_DIM], cols[MAX_GRID_DIM];
+    const int small_height = block_starts(blocks.rows, height, rows);
+    const int small_width = block_starts(blocks.cols, width, cols);
     uint32_t best = 0xFFFFFFFFu;
     for (int pose = 0; pose < (free.turn ? POSE_COUNT : 1); ++pose) {
         const auto [posed_width, posed_height] = posed_size(pose, small_width, small_height);
         uint32_t hash = shape_occupancy_hash(posed_width, posed_height, [&](int i) {
             const auto [row, col] = pose_source(pose, small_width, small_height, i / posed_width,
                                                 i % posed_width);
-            return cell(row * blocks.down, col * blocks.across) != TRANSPARENT;
+            return cell(rows[row], cols[col]) != TRANSPARENT;
         });
         if (free.scale && !free.stretch) {
-            int down = (pose & 1) ? blocks.across : blocks.down, across = (pose & 1) ? blocks.down : blocks.across;
+            const int tall = even_block_length(blocks.rows, height), wide = even_block_length(blocks.cols, width);
+            int down = (pose & 1) ? wide : tall, across = (pose & 1) ? tall : wide;
             for (int common = down; common > 1; --common)
                 if (down % common == 0 && across % common == 0) { down /= common; across /= common; break; }
             hash = (hash ^ (uint32_t)(down * MAX_GRID_DIM + across)) * 16777619u;
@@ -681,40 +712,51 @@ struct shape_fit {
 // The cell of the second shape that the first's cell (row, col) lies on,
 // read from the top-left of its block, both from their boxes' top-left.
 inline pair<int, int> fit_place(const shape_fit& fit, int row, int col) {
+    auto block_at = [](uint32_t starts, int line) { return popcount(starts & ((2u << line) - 1)) - 1; };
+    auto start_of = [](uint32_t starts, int block) {
+        for (; block > 0; --block) starts &= starts - 1;
+        return countr_zero(starts);
+    };
     const auto [down, across] = posed_place(fit.pose, fit.small_width, fit.small_height,
-                                            row / fit.mine.down, col / fit.mine.across);
-    return { down * fit.theirs.down, across * fit.theirs.across };
+                                            block_at(fit.mine.rows, row), block_at(fit.mine.cols, col));
+    return { start_of(fit.theirs.rows, down), start_of(fit.theirs.cols, across) };
 }
 
 // WHETHER TWO SHAPES ARE THE SAME, as `free` lets them differ: the first
 // `width` by `height`, read by cell(row, col), the second `other_width` by
 // `other_height`, read by other(row, col). Where size may change, each is
-// shrunk to its smallest drawing by its blocks (`mine`, `theirs`: blocks_of,
-// read by the asker where it keeps them -- each piece's once), and a scaled
-// one's blocks keep the other's proportions; then the first, turned one of the
-// ways round it may take, in the order they are asked (pose_asked,
-// pose_source), lies on the second cell for cell alike. How it lies there is
-// handed to `fit`.
+// shrunk to its smallest drawing by its blocks as `free` lets (blocks_as,
+// from its runs `mine`, `theirs`: blocks_of, read by the asker where it keeps
+// them -- each piece's once), and a scaled one's blocks keep the other's
+// proportions; then the first, turned one of the ways round it may take, in
+// the order they are asked (pose_asked, pose_source), lies on the second cell
+// for cell alike. How it lies there is handed to `fit`.
 template <class Cell, class Other>
 inline bool same_shape_in_blocks(int width, int height, Cell cell, shape_blocks mine,
                                  int other_width, int other_height, Other other, shape_blocks theirs,
                                  shape_freedom free, shape_fit* fit = nullptr) {
-    if (!free.scale && !free.stretch) mine = theirs = shape_blocks{};
-    mine = sized_blocks(mine, width, height);
-    theirs = sized_blocks(theirs, other_width, other_height);
-    const int small_width = width / mine.across, small_height = height / mine.down;
+    mine = blocks_as(free, mine, width, height);
+    theirs = blocks_as(free, theirs, other_width, other_height);
+    int my_rows[MAX_GRID_DIM], my_cols[MAX_GRID_DIM], their_rows[MAX_GRID_DIM], their_cols[MAX_GRID_DIM];
+    const int small_height = block_starts(mine.rows, height, my_rows);
+    const int small_width = block_starts(mine.cols, width, my_cols);
+    const int their_height = block_starts(theirs.rows, other_height, their_rows);
+    const int their_width = block_starts(theirs.cols, other_width, their_cols);
+    const int tall = even_block_length(mine.rows, height), wide = even_block_length(mine.cols, width);
+    const int their_tall = even_block_length(theirs.rows, other_height);
+    const int their_wide = even_block_length(theirs.cols, other_width);
     for (int asked = 0; asked < (free.turn ? POSE_COUNT : 1); ++asked) {
         const int pose = pose_asked(asked);
         const auto [posed_width, posed_height] = posed_size(pose, small_width, small_height);
-        if (posed_width * theirs.across != other_width || posed_height * theirs.down != other_height) continue;
-        const int down = (pose & 1) ? mine.across : mine.down, across = (pose & 1) ? mine.down : mine.across;
-        if (!free.stretch && down * theirs.across != across * theirs.down) continue;
+        if (posed_width != their_width || posed_height != their_height) continue;
+        const int down = (pose & 1) ? wide : tall, across = (pose & 1) ? tall : wide;
+        if (!free.stretch && down * their_wide != across * their_tall) continue;
         bool same = true;
         for (int row = 0; row < posed_height && same; ++row)
             for (int col = 0; col < posed_width && same; ++col) {
                 const auto [from_row, from_col] = pose_source(pose, small_width, small_height, row, col);
-                same = cells_alike(cell(from_row * mine.down, from_col * mine.across),
-                                   other(row * theirs.down, col * theirs.across), free);
+                same = cells_alike(cell(my_rows[from_row], my_cols[from_col]),
+                                   other(their_rows[row], their_cols[col]), free);
             }
         if (!same) continue;
         if (fit) *fit = { pose, mine, theirs, small_width, small_height };

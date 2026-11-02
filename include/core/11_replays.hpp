@@ -1528,6 +1528,26 @@ inline optional<paint_walk> rays_walk(const replay_facts& facts, const vector<pa
     });
 }
 
+// RAYS ACROSS OR ALONG A PARTNER, walked: ExtendByPartner's rays from each
+// picked piece's seed (each_partner_ray) to the edge of each pair's output,
+// laid as rays_walk lays them.
+inline optional<paint_walk> partner_rays_walk(const replay_facts& facts, const vector<partner_pieces>& handed, int value) {
+    return walk_paint(facts, handed, [&](size_t which, const partner_pieces& cut, auto&& put) {
+        const grid& output = facts.train[which].output;
+        const vector<ray_seed>& seeds = cut.ray_seeds();
+        for (int i = 0; i < cut.count(); ++i) {
+            if (!cut.picked[i]) continue;
+            const object& box = cut.pieces[i];
+            const ray_seed seed = seeds[(size_t)i];
+            each_partner_ray(value, i, cut, seed, [&](int down, int across) {
+                const int row = box.row + seed.row + down, col = box.col + seed.col + across;
+                if (output.contains(row, col)) put(row, col, (int8_t)TRANSPARENT);
+            });
+        }
+        return true;
+    });
+}
+
 // THE REACHES A CROSSING IS ASKED WITH: rays to the grid's edge, up, down and
 // to the sides [0] or along the diagonals [1]; then each track grown in step,
 // overrun [CROSSING_RAYS + the track].
@@ -2060,6 +2080,8 @@ inline optional<replayed> room_table_holds(const replay_facts& facts, const vect
 // turns is a bar, and which way it turns would be a guess on a test, as a bar is
 // said no wider than the pairs show it (833966f4's column of cells, where the
 // top one ran straight down to the 6 in every pair, a coincidence).
+// Each selected color must contribute a visible bar in each unfinished pair.
+// A color that does nothing supplies no evidence for joining it on a test.
 inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<partner_pieces>& handed,
                                        const vector<cells>& canvas, int way) {
     using rule = correspondence_election::fired_rule;
@@ -2067,16 +2089,25 @@ inline optional<replayed> bridge_holds(const replay_facts& facts, const vector<p
     auto seen = paint_holds(facts, handed, { rule::laid_under, &canvas, laying::own_else_one },
                             [&](size_t which, const partner_pieces& cut, auto&& put) {
         const grid& output = facts.train[which].output;
+        uint16_t selected_colors = 0, bridging_colors = 0;
         // The bars take one place more in the pieces' list, all of them one drawing.
         if (cut.count() >= MAX_OBJECTS_IN_A_LIST) return false;
+        for (int piece = 0; piece < cut.count(); ++piece)
+            if (cut.is_picked(piece) && is_color(cut.color(piece)))
+                selected_colors = (uint16_t)(selected_colors | 1u << cut.color(piece));
         turned = bridge_bars(way, output.width, output.height, cut,
                              [&](const cell_box& bar, int8_t color) {
             for (int row = bar.row0; row <= bar.row1; ++row)
                 for (int col = bar.col0; col <= bar.col1; ++col)
-                    if (output.contains(row, col)) put(row, col, color);
+                    if (output.contains(row, col)) {
+                        if (is_color(color) && lands(rule::laid_under, canvas[which][row][col]) &&
+                            !comes_out(facts.pairs[which], row, col, canvas[which][row][col]))
+                            bridging_colors = (uint16_t)(bridging_colors | 1u << color);
+                        put(row, col, color);
+                    }
             return true;
         }) || turned;
-        return true;
+        return way >= BRIDGE_TO_PARTNER || facts.finished(which) || !(selected_colors & ~bridging_colors);
     });
     if (way >= BRIDGE_TO_PARTNER && !turned) return nullopt;
     return seen;

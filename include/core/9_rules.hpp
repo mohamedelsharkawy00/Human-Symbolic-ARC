@@ -1337,8 +1337,12 @@ struct project_on_seeds_rule {
 // are said no wider than the pairs show them: a699fb00 bridges along rows, and
 // nothing in it says a column would be bridged too; 0d87d2a6's marks face each
 // other from opposite edges, and nothing in its pairs says two marks on one
-// edge would be joined, as the nearest joins them on its test.
-constexpr int bridge_ways_narrowest_first[BRIDGE_WAYS] = { 7, 8, 6, 1, 2, 0, 4, 5, 3 };
+// edge would be joined, as the nearest joins them on its test. The diagonals
+// after every straight way, the same order among them, so a straight bar says
+// what it says first.
+constexpr int bridge_ways_narrowest_first[BRIDGE_WAYS] = {
+    15, 16, 14, 1, 2, 0, 8, 9, 7,
+    18, 19, 17, 20, 4, 5, 3, 6, 11, 12, 10, 13 };
 static_assert(row_of(node_type::Bridge).high + 1 == BRIDGE_VALUES, "Bridge takes one value for each way it reaches");
 
 // THE GAP BETWEEN TWO PIECES OF ONE COLOUR, FILLED, and laid under what is

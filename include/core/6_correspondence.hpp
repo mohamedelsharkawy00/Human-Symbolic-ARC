@@ -286,7 +286,9 @@ struct correspondence_election {
         // level with that partner's rows or columns, or drawn again mirrored around its
         // middle (AlignTo's and MirrorAround's `value`), or grown rays along the
         // diagonals for `value` past 32 and otherwise up, down and to the sides,
-        // `value` % 32 long, painted `paint` (paint_value), or each piece's reach
+        // `value` % 32 long, painted `paint` (paint_value), or grown across or
+        // along the way a partner runs, ExtendByPartner's `value` (partner_rays),
+        // painted `paint`, or each piece's reach
         // kept only where two or more meet -- rays to the edge, along the
         // diagonals for `value` 1, or grown in step, overrun, along the track
         // `value` - CROSSING_RAYS names -- painted `paint` (crossing); the bars bridged between
@@ -325,7 +327,7 @@ struct correspondence_election {
                                 corner_chain, slide_to_touch, project_on_seeds, snap_to_anchors,
                                 turned_copy, move_toward, shape_recolor, symmetric, key_swap,
                                 empty_swap, own_sentences, fit_into, shape_from, crossing, moved_copy,
-                                kind_count } as = unsaid;
+                                partner_rays, kind_count } as = unsaid;
         int8_t value = 0;
         // The Tile it says, where it says one (tiled_along, repeated_past).
         tile_value tile;

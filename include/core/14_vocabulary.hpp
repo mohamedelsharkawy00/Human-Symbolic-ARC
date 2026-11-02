@@ -399,8 +399,8 @@ inline constexpr std::string_view fit_into_ways[] = {
 // cell by cell; SelectPartner's way on any side or wholly on each of the eight
 // directions from up clockwise; MirrorAround's four mirrors by each way's
 // partner or the grid; MoveToward's three ways of going toward each kind of
-// partner, each way and then the one piece holding each color; Bridge's nine
-// reaches, then an L to each kind.
+// partner, each way and then the one piece holding each color; Bridge's ways,
+// then an L to each kind.
 constexpr int KEY_BY_PLACE = (int)partner_by::count, KEY_COLOR = KEY_BY_PLACE + 1,
               COLORS_FROM_ITS_SHAPE = KEY_COLOR + 1;
 constexpr int PARTNER_KINDS = (int)partner_by::count + COLOR_COUNT;
@@ -411,7 +411,8 @@ constexpr int partner_direction_of(int value) { return value / (int)partner_by::
 constexpr int MIRROR_PATTERN = (int)partner_by::count + 1;
 constexpr int MIRRORS = 7, MIRROR_PARTNERS = MIRROR_PATTERN + 1;
 constexpr int TOWARD_FARS = 3;
-constexpr int BRIDGE_WAYS = 9, BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
+constexpr int BRIDGE_AXES = 7, BRIDGE_REACHES = 3, BRIDGE_WAYS = BRIDGE_AXES * BRIDGE_REACHES,
+              BRIDGE_TO_PARTNER = BRIDGE_WAYS, BRIDGE_VALUES = BRIDGE_TO_PARTNER + PARTNER_KINDS;
 
 // The names those choices are written in, each list in its choices' order; a
 // mirror's name runs on into its partner's (left to right around the nearest
@@ -421,11 +422,16 @@ inline constexpr const char* const direction_names[] = { "up", "up-right", "righ
 inline constexpr const char* const mirror_names[] = { "left to right around", "top to bottom around",
     "all four ways around", "across", "diagonally down right around", "diagonally up right around", "all eight ways around" };
 inline constexpr const char* const toward_names[] = { "one step", "its own size", "until it touches" };
-inline constexpr const char* const bridge_reach_names[BRIDGE_WAYS] = {
-    "both ways to the nearest", "along rows to the nearest", "along columns to the nearest",
-    "both ways to every one", "along rows to every one", "along columns to every one",
-    "both ways to the one facing it across the grid", "along rows to the one facing it across the grid",
-    "along columns to the one facing it across the grid" };
+// A bridge's way: along an axis, `way` % BRIDGE_AXES, to a reach, `way` /
+// BRIDGE_AXES (bridge_bars).
+inline constexpr const char* const bridge_axis_names[BRIDGE_AXES] = {
+    "both ways", "along rows", "along columns", "along both diagonals", "along diagonals down-right",
+    "along diagonals up-right", "all eight ways" };
+inline constexpr const char* const bridge_reach_names[BRIDGE_REACHES] = {
+    "to the nearest", "to every one", "to the one facing it across the grid" };
+inline std::string bridge_way_written(int way) {
+    return std::string(bridge_axis_names[way % BRIDGE_AXES]) + " " + bridge_reach_names[way / BRIDGE_AXES];
+}
 static_assert(std::size(direction_names) + 1 == PARTNER_SIDES && std::size(mirror_names) == MIRRORS &&
               std::size(toward_names) == TOWARD_FARS);
 
@@ -530,11 +536,12 @@ enum class inferred_amount { none, some, all };
   /* Tile says its choices in slots (tile_value), not in a number. */            \
   X(Tile                        , 0                 , 0                        , generate , none, false)        \
   X(SelectObjectsWithHoles      , 0                 , 4                        , select   , none, false)        \
-  /* How a bridge reaches (bridge_bars): rows and columns, rows, or columns, */ \
-  /* to the nearest piece, then the same three to every one, then to the one */ \
-  /* facing it across the grid. Only the picked pieces are bridged, and only */ \
-  /* the bars come back picked. Past those [9], an L from each picked piece  */ \
-  /* to its one partner of each kind partner_of_kind names.                  */ \
+  /* How a bridge reaches (bridge_bars): along each of its seven axes, rows   */ \
+  /* and columns to all eight ways, to the nearest piece, then to every one, */ \
+  /* then to the one facing it across the grid. Only the picked pieces are   */ \
+  /* bridged, and only the bars come back picked. Past those                 */ \
+  /* [BRIDGE_TO_PARTNER], an L from each picked piece to its one partner of  */ \
+  /* each kind partner_of_kind names.                                        */ \
   X(Bridge                      , 0                 , arc::BRIDGE_VALUES - 1   , generate , none, false)        \
   X(Shift                       , 0                 , 7                        , translate, none, false)        \
   X(MoveToEdge                  , 0                 , 7                        , translate, none, false)        \
@@ -560,6 +567,9 @@ enum class inferred_amount { none, some, all };
   /* as long as a grid is wide, so a ray can run on to any edge.              */ \
   X(ExtendDiagonal              , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
   X(ExtendOrthogonal            , 1                 , arc::MAX_GRID_DIM - 1    , generate , none, false)        \
+  /* Rays across the way each picked piece's partner of each kind runs, then */ \
+  /* along it [PARTNER_KINDS], to the edge (each_partner_ray).               */ \
+  X(ExtendByPartner             , 0                 , 2 * arc::PARTNER_KINDS - 1, generate, none, false)        \
   X(ScaleUp                     , 2                 , 10                       , translate, none, false)        \
   X(ScaleDown                   , 2                 , 10                       , translate, none, false)        \
   X(SelectColor                 , 0                 , arc::COLOR_COUNT - 1     , select   , none, false)        \
@@ -714,6 +724,7 @@ inline constexpr bool said_by_name(node_type t) {
     switch (t) {
     case node_type::ColorFrom: case node_type::WouldFit: case node_type::SelectLikeKey: case node_type::AlignTo:
     case node_type::MirrorAround: case node_type::SelectPartner: case node_type::MoveToward: case node_type::Bridge:
+    case node_type::ExtendByPartner:
     case node_type::SelectAtLeast: case node_type::FitInto: case node_type::ShapeFrom:
     case node_type::Pattern: case node_type::MaskBy: case node_type::MaskOut: case node_type::OverlapCorner:
         return true;
@@ -755,7 +766,8 @@ inline std::string value_written(node_type t, int value) {
     }
     case node_type::MoveToward: return std::string(toward_names[value / PARTNER_KINDS]) + ", " + kind(value % PARTNER_KINDS);
     case node_type::Bridge:
-        return value < BRIDGE_TO_PARTNER ? std::string(bridge_reach_names[value]) : "an L to " + kind(value - BRIDGE_TO_PARTNER);
+        return value < BRIDGE_TO_PARTNER ? bridge_way_written(value) : "an L to " + kind(value - BRIDGE_TO_PARTNER);
+    case node_type::ExtendByPartner: return (value < PARTNER_KINDS ? "across " : "along ") + kind(value % PARTNER_KINDS);
     case node_type::SelectAtLeast:
         return std::to_string(at_least_many(value)) + " " + measure_written(at_least_kind(value), at_least_many(value));
     case node_type::FitInto: return std::string(fit_into_ways[value]);

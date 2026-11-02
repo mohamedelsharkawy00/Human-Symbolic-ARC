@@ -93,12 +93,12 @@ struct partner_pieces {
     // 10_picks_and_frames.hpp), on the canvas they lie on (hand_answers), where
     // a pick reads the parts walls fence.
     partner_pieces(const vector<object>& cut, const piece_pick& pick, hand_answers& kept);
-    // The blocks piece i's shape is drawn in (blocks_of), its colors aside:
+    // The runs piece i's shape is drawn in (blocks_of), its colors aside:
     // read the first time a partner way at another size asks, and kept.
     shape_blocks blocks(int i) const {
         if (blocks_read.empty()) blocks_read.assign(pieces.size(), shape_blocks{ 0, 0 });
         shape_blocks& kept = blocks_read[(size_t)i];
-        if (kept.down == 0) {
+        if (kept.rows == 0) {
             const cell_box own = boxes[(size_t)i];
             kept = blocks_of(own.width(), own.height(),
                              [&](int row, int col) { return pieces[(size_t)i].color_at(own.row0 + row, own.col0 + col); },
@@ -402,20 +402,29 @@ inline bool any_partner(partner_by how, int mine, const partner_pieces& pieces) 
     return any;
 }
 
-// A PARTNER OF ANY KIND (PARTNER_KINDS): the ways partner_by finds one, then,
-// past those, by color -- the one piece holding a cell of color `kind -
-// partner_by::count` (18286ef8's 9 steps toward the 6, wherever the 6 is).
-// Asked among the pieces not picked, as partner_of asks. -1 when there is
-// none, or several.
-inline int partner_of_kind(int kind, int mine, const partner_pieces& pieces) {
-    if (kind < (int)partner_by::count) return partner_of((partner_by)kind, mine, pieces);
-    int found = -1;
-    for (int other = 0; other < pieces.count(); ++other) {
-        if (other == mine || pieces.is_picked(other) || !pieces.holds(other, kind - (int)partner_by::count)) continue;
-        if (found >= 0) return -1;
-        found = other;
+// EVERY PARTNER OF ANY KIND (PARTNER_KINDS), each handed to visit(other): the
+// ways partner_by finds them, then, past those, by color -- every piece holding
+// a cell of color `kind - partner_by::count`. Asked among the pieces not
+// picked, as partner_of asks.
+template <class Visit>
+inline void each_partner_of_kind(int kind, int mine, const partner_pieces& pieces, Visit visit) {
+    if (kind < (int)partner_by::count) {
+        each_partner((partner_by)kind, mine, pieces, visit);
+        return;
     }
-    return found;
+    for (int other = 0; other < pieces.count(); ++other)
+        if (other != mine && !pieces.is_picked(other) && pieces.holds(other, kind - (int)partner_by::count)) visit(other);
+}
+
+// A PARTNER OF ANY KIND: the one each_partner_of_kind finds (18286ef8's 9
+// steps toward the 6, wherever the 6 is), -1 when there is none, or several.
+inline int partner_of_kind(int kind, int mine, const partner_pieces& pieces) {
+    int found = -1, partners = 0;
+    each_partner_of_kind(kind, mine, pieces, [&](int other) {
+        found = other;
+        ++partners;
+    });
+    return partners == 1 ? found : -1;
 }
 
 // THE BANDS SPANS SIT IN, for inference and Layout/SelectRow/SelectColumn: two
@@ -546,18 +555,18 @@ inline bool counts_at_least(int value, int height, int width, ColorAt color_at) 
 // (grown_along) -- or no way, where two ways tie for the longest (a dot, a
 // square, a plus).
 enum class runs_along : int8_t { rows, columns, diagonals_down_right, diagonals_up_right, no_way, count };
+// Each way by the direction its lines run toward from their first cell.
+inline constexpr int8_t way_runs_toward[] = { direction::right, direction::down, direction::down_right, direction::up_right };
 
 // The way a `height` by `width` piece runs, occupied(row, col) saying which
 // cells of its box it holds. Read here for the op, for the reading that
 // replays it, and for a grid lying on its side (lies_on_its_side).
 template <class Occupied>
 inline runs_along way_it_runs(int height, int width, Occupied occupied) {
-    // Each way by the direction its lines run toward from their first cell.
-    constexpr int8_t toward[] = { direction::right, direction::down, direction::down_right, direction::up_right };
     runs_along way = runs_along::no_way;
     int longest = 0;
     for (int along = 0; along < (int)runs_along::no_way; ++along) {
-        const int line = longest_line(height, width, occupied, toward[along]);
+        const int line = longest_line(height, width, occupied, way_runs_toward[along]);
         if (line > longest) {
             longest = line;
             way = (runs_along)along;
@@ -1801,17 +1810,21 @@ constexpr int aligned_copy_start(int source_size, int target_start,
 
 // WHAT BRIDGE DRAWS, said once for the op and for the reading that replays it.
 // Each picked piece reaches for the picked pieces of its own colour whose
-// centres share its row or its column, and the box between two is filled in
-// that colour; a piece not picked neither reaches nor is reached (0d87d2a6's
-// blue marks are bridged across the red blocks, which are not). HOW IT
-// REACHES is Bridge's value, `way`: along rows and columns both, along rows
-// alone, or along columns alone (way % 3), and to the nearest piece that way,
-// to every one, or only to the one facing it across the grid (way / 3) --
-// Bridge[0] reaching both ways for the nearest. Two pieces face each other
-// across the `width` by `height` grid when one touches its left edge and the
-// other its right, along a row, or its top and its bottom, along a column
-// (0d87d2a6's test: two marks on the left edge share a column and are not
-// joined; each is joined to the mark facing it on the right).
+// centres share its row, its column or a diagonal, and the gap between two is
+// filled in that colour: the box between them along a row or a column, the
+// cells of the diagonal through their centres along one; a piece not picked
+// neither reaches nor is reached (0d87d2a6's blue marks are bridged across the
+// red blocks, which are not). HOW IT REACHES is Bridge's value, `way`: along
+// one of BRIDGE_AXES -- rows and columns both, rows, columns, both diagonals,
+// the diagonals down-right, the diagonals up-right, all eight ways (way %
+// BRIDGE_AXES) -- and to the nearest piece that way, to every one, or only to
+// the one facing it across the grid (way / BRIDGE_AXES), Bridge[0] reaching
+// both ways for the nearest. Two pieces face each other across the `width` by
+// `height` grid when the line between them runs from one edge to the other:
+// along a row one touches the left edge and the other the right, along a
+// column the top and the bottom (0d87d2a6's test: two marks on the left edge
+// share a column and are not joined; each is joined to the mark facing it on
+// the right), along a diagonal each touches the edge its end of the line meets.
 // PAST THOSE, Bridge[BRIDGE_TO_PARTNER + kind] joins each picked piece to its
 // one partner of `kind` (partner_of_kind, among the pieces not picked: each
 // way partner_by finds one, then the piece of each color) with an L: along the
@@ -1873,7 +1886,10 @@ inline bool bridge_bars(int way, int width, int height, const partner_pieces& pi
         }
         return turned;
     }
-    const bool rows = way % 3 != 2, columns = way % 3 != 1, every = way / 3 == 1, facing = way / 3 == 2;
+    const int axis = way % BRIDGE_AXES, reach = way / BRIDGE_AXES;
+    const bool rows = axis == 0 || axis == 1 || axis == 6, columns = axis == 0 || axis == 2 || axis == 6;
+    const bool down_right = axis == 3 || axis == 4 || axis == 6, up_right = axis == 3 || axis == 5 || axis == 6;
+    const bool every = reach == 1, facing = reach == 2;
     auto pair_up = [&](int i, int partner) {
         const int low = min(i, partner), high = max(i, partner);
         bool said = false;
@@ -1890,6 +1906,17 @@ inline bool bridge_bars(int way, int width, int height, const partner_pieces& pi
         return along_rows ? (one.col0 <= 0 && other.col1 >= width - 1) || (other.col0 <= 0 && one.col1 >= width - 1)
                           : (one.row0 <= 0 && other.row1 >= height - 1) || (other.row0 <= 0 && one.row1 >= height - 1);
     };
+    // Whether piece i, at the start of a diagonal that steps `down` and
+    // `across` towards piece j, and j, at its end, each touch the edge the
+    // line meets there.
+    auto face_on_diagonal = [&](int i, int j, int step_down, int step_across) {
+        const cell_box start = box_of_piece(i), end = box_of_piece(j);
+        auto meets = [&](const cell_box& box, int down, int across_way) {
+            return (down > 0 ? box.row1 >= height - 1 : box.row0 <= 0) ||
+                   (across_way > 0 ? box.col1 >= width - 1 : box.col0 <= 0);
+        };
+        return meets(start, -step_down, -step_across) && meets(end, step_down, step_across);
+    };
     for (int i = 0; i < count; ++i) {
         if (!picked(i)) continue;
         const int8_t color = color_of(i);
@@ -1899,15 +1926,20 @@ inline bool bridge_bars(int way, int width, int height, const partner_pieces& pi
         int partner = -1, nearest = 0x7FFF;
         for (int j = 0; j < count; ++j) {
             if (j == i || !picked(j) || color_of(j) != color) continue;
-            const int their_across = across(j), their_down = down(j);
-            const bool on_row = rows && their_down == my_down, on_column = columns && their_across == my_across;
-            if (!on_row && !on_column) continue;
+            const int apart_down = down(j) - my_down, apart_across = across(j) - my_across;
+            const bool on_row = rows && apart_down == 0, on_column = columns && apart_across == 0;
+            const bool on_diagonal = apart_down != 0 && ((down_right && apart_down == apart_across) ||
+                                                         (up_right && apart_down == -apart_across));
+            if (!on_row && !on_column && !on_diagonal) continue;
             if (facing) {
-                if ((on_row && face(i, j, true)) || (on_column && face(i, j, false))) pair_up(i, j);
+                if ((on_row && face(i, j, true)) || (on_column && face(i, j, false)) ||
+                    (on_diagonal && face_on_diagonal(i, j, apart_down > 0 ? 1 : -1, apart_across > 0 ? 1 : -1)))
+                    pair_up(i, j);
                 continue;
             }
             if (every) { pair_up(i, j); continue; }
-            const int distance = abs(their_across - my_across) + abs(their_down - my_down);
+            // How many steps along the line the two lie apart.
+            const int distance = max(abs(apart_across), abs(apart_down));
             if (distance < nearest) { nearest = distance; partner = j; }
         }
         if (partner >= 0) pair_up(i, partner);
@@ -1917,6 +1949,19 @@ inline bool bridge_bars(int way, int width, int height, const partner_pieces& pi
         const int apart_across = abs(across(highs[p]) - across(lows[p]));
         const int apart_down = abs(down(highs[p]) - down(lows[p]));
         if (apart_across == 0 && apart_down == 0) continue;
+        // Apart along a diagonal: the cells of it between the two, one wide,
+        // through their centres, but for those either one's own box holds.
+        if (apart_across != 0 && apart_down != 0) {
+            const int step_down = down(highs[p]) > down(lows[p]) ? 1 : -1;
+            const int step_across = across(highs[p]) > across(lows[p]) ? 1 : -1;
+            const int8_t color = color_of(lows[p]);
+            for (int step = 1; step < apart_down; ++step) {
+                const int row = down(lows[p]) + step * step_down, col = across(lows[p]) + step * step_across;
+                if (one.contains(row, col) || other.contains(row, col)) continue;
+                if (!land(cell_box{ row, col, row, col }, color < 0 ? (int8_t)0 : color)) return false;
+            }
+            continue;
+        }
         // The gap along the way they lie apart, as deep as the two together.
         cell_box bar;
         if (apart_across >= apart_down) {
@@ -2225,6 +2270,39 @@ inline void each_extended_ray(ray_seed seed, int radius, bool diagonal, Paint pa
     for (int ray_direction = diagonal ? 1 : 0; ray_direction < direction::count; ray_direction += 2) {
         const direction_step step = step_of(ray_direction);
         for (int along = 1; along <= radius; ++along) paint(step.down * along, step.across * along, along);
+    }
+}
+
+// RAYS ACROSS OR ALONG A PARTNER, ExtendByPartner's: piece `mine`'s partners of
+// its value's kind (each_partner_of_kind) run one way (way_it_runs) -- every
+// one that runs a way, the same way: a way is agreed among many, as a place is
+// not -- and the piece's rays run from its seed (ray_seed_of) both ways across
+// that way, the other line of its pair, rows against columns, one diagonal
+// against the other, for a value below PARTNER_KINDS, or along it past that,
+// as far as any grid goes, each cell handed to `paint(down, across)` as
+// each_extended_ray hands it: db695cfb's 6s, each lying on a diagonal of 1s
+// that it cuts in two, cross it to the edge. None where no partner runs a way,
+// or two run different ones.
+template <class Paint>
+inline void each_partner_ray(int value, int mine, const partner_pieces& pieces, ray_seed seed, Paint paint) {
+    if (seed.row < 0) return;
+    runs_along way = runs_along::no_way;
+    bool clash = false;
+    each_partner_of_kind(value % PARTNER_KINDS, mine, pieces, [&](int other) {
+        const object& piece = pieces.pieces[(size_t)other];
+        const runs_along runs = way_it_runs(piece.height, piece.width,
+                                            [&](int row, int col) { return piece.data[row][col] != TRANSPARENT; });
+        if (runs == runs_along::no_way) return;
+        clash = clash || (way != runs_along::no_way && runs != way);
+        way = runs;
+    });
+    if (clash || way == runs_along::no_way) return;
+    constexpr int8_t across_it[] = { direction::down, direction::right, direction::up_right, direction::down_right };
+    const int ray_direction = value < PARTNER_KINDS ? across_it[(int)way] : way_runs_toward[(int)way];
+    if (seed.middle_empty) paint(0, 0);
+    for (const int going : { ray_direction, (ray_direction + direction::count / 2) % direction::count }) {
+        const direction_step step = step_of(going);
+        for (int along = 1; along < MAX_GRID_DIM; ++along) paint(step.down * along, step.across * along);
     }
 }
 
